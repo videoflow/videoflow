@@ -18,7 +18,7 @@ class Node():
 
 class Leaf(Node):
     def __init__(self):
-        pass
+        super(Leaf, self).__init__()
     
 
         
