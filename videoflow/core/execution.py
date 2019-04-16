@@ -1,3 +1,5 @@
+from .task import Task
+
 class ExecutionGraph:
     pass
 
@@ -6,6 +8,6 @@ class TaskRegistry:
 
 _execution_graph = Graph()
 
-def add_task():
+def allocate_task(task : Task):
     pass
 

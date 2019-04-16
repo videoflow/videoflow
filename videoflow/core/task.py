@@ -1,19 +1,16 @@
-from .node import Node
-from .producer import Producer
-from .processor import Processor
-from .consumer import Consumer
+from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 
 class Task:
     def run(self):
         raise NotImplemented('Sublcasses need to implement it')
 
 class ProducerTask(Task):
-    def __init__(self, producer : Producer):
+    def __init__(self, producer : ProducerNode):
         self._producer = producer
-        self._output_channel = str(id(self._producer))
+        self._output_channel = self._producer.id
     
-    @property()
-    def output_channel():
+    @property
+    def output_channel(self):
         return self._output_channel
 
     def run(self):
@@ -23,15 +20,15 @@ class ProducerTask(Task):
         #once the producer finishes iterating.
 
 class ProcessorTask(Task):
-    def __init__(self, processor : Processor, input_channel : str,
+    def __init__(self, processor : ProcessorNode, input_channel : str,
                 inputs_needed : list):
         self._processor = processor
         self._input_channel = input_channel
-        self._output_channel = str(id(self._processor))
+        self._output_channel = self._processor.id
         self._inputs_needed = inputs_needed
     
-    @property()
-    def output_channel():
+    @property
+    def output_channel(self):
         return self._output_channel
 
     def run(self):
@@ -48,7 +45,7 @@ class ProcessorTask(Task):
             self._processor.process(input)
         
 class ConsumerTask(Task):
-    def __init__(self, consumer : Consumer, input_channel : str,
+    def __init__(self, consumer : ConsumerNode, input_channel : str,
                 inputs_needed : list):
         self._consumer = consumer
         self._input_channel = input_channel

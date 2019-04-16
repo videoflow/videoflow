@@ -8,8 +8,9 @@ from videoflow.processors.vision import Detector, Tracker, Counter, ImageAnnotat
 from videoflow.consumers import StreamingServer, EndpointPublisher
 
 video_reader = VideoReader()
-detector = Detector()(video_reader)
-tracker = Tracker()(detector)
+detector = Detector()
+detector_1 = detector(video_reader)
+tracker = Tracker()(detector_1)
 counter = Counter()(tracker)
 video_annotator = ImageAnnotator()(video_reader, detector, tracker, counter)
 stream_server = StreamingServer()(video_annotator)
@@ -20,3 +21,5 @@ flow.start()  # So that the run method is non-blocking
 
 # If you want to stop it later on, you can:
 flow.stop()
+
+detecto
