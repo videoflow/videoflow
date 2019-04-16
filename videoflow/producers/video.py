@@ -1,6 +1,6 @@
 import cv2
 
-from .producer import Producer
+from ..core.producer import Producer
 
 class VideoProducer(Producer):
     def __init__(self, video_file : str):

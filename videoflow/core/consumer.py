@@ -1,4 +1,4 @@
-from ..core.node import Leaf
+from .node import Leaf
 
 class Consumer(Leaf): 
     def __init__(self):

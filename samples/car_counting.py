@@ -2,10 +2,10 @@
 An idea of how a programmer should write a streaming program
 '''
 
-from flujo.core import Stream
-from flujo.producers import VideoReader
-from flujo.processors.vision import Detector, Tracker, Counter, ImageAnnotator
-from flujo.consumers import StreamingServer, EndpointPublisher
+from videoflow.core import Flow
+from videoflow.producers import VideoReader
+from videoflow.processors.vision import Detector, Tracker, Counter, ImageAnnotator
+from videoflow.consumers import StreamingServer, EndpointPublisher
 
 video_reader = VideoReader()
 detector = Detector()(video_reader)
@@ -15,5 +15,8 @@ video_annotator = ImageAnnotator()(video_reader, detector, tracker, counter)
 stream_server = StreamingServer()(video_annotator)
 results_publisher = EndpointPublisher()(counter)
 
-stream = Stream(consumers = [video_annotator, results_publisher])
-stream_handler = stream.run()  # So that the run method is non-blocking
+flow = flow(consumers = [video_annotator, results_publisher])
+flow.start()  # So that the run method is non-blocking
+
+# If you want to stop it later on, you can:
+flow.stop()

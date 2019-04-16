@@ -1,4 +1,4 @@
-from ..core.node import Node
+from .node import Node
 
 class Processor(Node):
     def __init__(self):

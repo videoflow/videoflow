@@ -1,4 +1,4 @@
-from ..core.node import Node
+from .node import Node
 
 class Producer(Node):
     def __init__(self):
