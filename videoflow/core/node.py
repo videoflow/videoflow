@@ -19,12 +19,13 @@ class Node:
         return self.__hash__()
     
     def __call__(self, *parents):
-        if self._parents is None:
-            self._parents = set()
+        if self._parents is not None:
+            raise RuntimeError('This method has already been called. It can only be called once.')
+        self._parents = list()
         for parent in parents:
             assert isinstance(parent, Node) and not isinstance(parent, Leaf),
                     '%s is not a non-leaf node' % str(parent)
-            self._parents.add(parent)
+            self._parents.append(parent)
             parent.add_child(self)
         return self
         
@@ -42,6 +43,7 @@ class Node:
 class Leaf(Node):
     def __init__(self):
         super(Leaf, self).__init__()
+        self._children = None
 
 class ConsumerNode(Leaf): 
     def __init__(self):
