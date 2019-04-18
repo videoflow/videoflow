@@ -13,13 +13,16 @@ class ProducerTask(Task):
         self._task_id = task_id
         self._messenger = Messenger(self._producer, task_id, None)
     
+    @property
+    def id(self):
+        return self._task_id
+
     def run(self):
         for a in self._producer:
             self._messenger.publish_message(a)
-        self._messenger.publish_message(STOP_SIGNAL)
-    
-    def send_stop_signal(self):
-        # TODO: Figure out the blocking mechanism here to do thins kind of thing.
+            message = self._messenger.check_for_termination_message()
+            if message is not None and message == STOP_SIGNAL:
+                break
         self._messenger.publish_message(STOP_SIGNAL)
 
 class ProcessorTask(Task):
@@ -29,6 +32,10 @@ class ProcessorTask(Task):
         self._parent_task_id = parent_task_id
         self._messenger = Messenger(self._processor, task_id, parent_task_id)
     
+    @property
+    def id(self):
+        return self._task_id
+
     def run(self):
         while True:
             inputs = self._messenger.receive_message()
@@ -39,7 +46,7 @@ class ProcessorTask(Task):
 
             #3. Pass inputs needed to processor
             output = self._processor.process(*inputs)
-            messenger.publish_message(output)    
+            messenger.publish_message(output)   
         
 class ConsumerTask(Task):
     def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int):
@@ -48,17 +55,22 @@ class ConsumerTask(Task):
         self._parent_task_id = parent_task_id
         self._messenger = Messenger(self._consumer, task_id, parent_task_id)
     
+    @property
+    def id(self):
+        return self._task_id
+
     def run(self):
         while True:
             inputs = self._messenger.receive_message()
             stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
             if stop_signal_received:
-                self._messenger.publish_message(STOP_SIGNAL)
+                # No need to pass through stop signal to children.
+                # If children need to stop, they will receive it from
+                # someone else, so the message that I am passing through
+                # might be the one carrying it.
+                self._messenger.passthrough_message()
                 break
-            
-            #4. Publish same message to someone down the line that might need it.
-            # TODO: Seat down to think about this here.
-            self._messenger.publish_message(inputs)
-            #3. Pass inputs needed to consumer
+
+            self._messenger.passthrough_message()
             self._consumer.consume(*inputs)
     

@@ -1,4 +1,8 @@
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
+from .task import Task, STOP_SIGNAL
+from ..brokers import zeromq
+from .messenger import termination_socket_from_task_id
+from .execution import allocate_tasks
 
 def create_vertex_set(producers):
     V = set()
@@ -61,7 +65,8 @@ class Flow:
             raise AttributeError('Only support flows with 1 producer for now.')
         self._producers = producers
         self._consumers = consumers
-        self._task_registry
+        self._tasks = None
+        self._producer_tasks = []
 
     def _compile(self):
         pass
@@ -97,6 +102,7 @@ class Flow:
             
             if isinstance(node, ProducerNode):
                 task = ProducerTask(node, i)
+                self._producer_tasks.append(task)
             elif isinstance(node, ProcessorNode):
                 task = ProcessorTask(
                     node, 
@@ -115,9 +121,9 @@ class Flow:
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
-        for task in tasks:
-            _allocate_task(task)
-        
+        procs = allocate_tasks(tasks)   
+        self._tasks = tasks
+        self._procs = procs
         
     def stop(self):
         '''
@@ -126,4 +132,9 @@ class Flow:
         that interrupts what they are doing, so that they can publish the 
         STOP_SIGNAL in their message entry.
         '''
-        pass
+        for producer in self._producers:
+            pid = producer.id
+            socket_address = termination_socket_from_task_id(pid)
+            zeromq.publish_next_message(socket_address, STOP_SIGNAL)
+        
+

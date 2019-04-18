@@ -9,8 +9,7 @@ from videoflow.consumers import StreamingServer, EndpointPublisher
 
 video_reader = VideoReader()
 detector = Detector()
-detector_1 = detector(video_reader)
-tracker = Tracker()(detector_1)
+tracker = Tracker()(detector)
 counter = Counter()(tracker)
 video_annotator = ImageAnnotator()(video_reader, detector, tracker, counter)
 stream_server = StreamingServer()(video_annotator)

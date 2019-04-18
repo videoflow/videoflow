@@ -4,6 +4,14 @@ import zmq
 def get_next_message(socket_address):
     pass
 
+def pick_next_message(self._termination_socket_address):
+    '''
+    - DOES NOT BLOCK
+    Returns None if no message is present
+    Returns message if there is one.
+    '''
+    pass
+
 def publish_next_message(socket_address, message):
     pass
 

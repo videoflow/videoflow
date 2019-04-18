@@ -1,19 +1,35 @@
+from .task import Task
+from multiprocessing import Process
 
-_execution_context = {}
+def task_executor_fn(task : Task):
+    task.run()
 
-class ExecutionContext:
-    def __init__(self):
-        self._node_parentnodes_d = {}
-    
-    def add_parent_nodes(self, node_id, parent_nodes_ids):
-        self._node_parentnodes_d[node_id] = parent_nodes_ids
-    
-    def get_parent_nodes(self, node_id):
-        self._node_parentnodes_d.get(node_id, None)
-    
-    def get_input_channel_address(self, node_id):
-        pass
-    
-    def get_output_channel_address(self, node_id):
-        pass
+def allocate_tasks(tasks):
+    '''
+    First version allocates all tasks as a processes
+    '''
+    procs = allocate_process_tasks(tasks)
+    return procs
 
+def allocate_thread_tasks(tasks):
+    pass
+
+def allocate_thread_task(task):
+    pass
+
+def allocate_process_tasks(tasks):
+    procs = []
+    
+    for task in tasks:
+        proc = allocate_process_task(task)
+        procs.append(proc)
+    
+    for proc in procs:
+        proc.start()
+    
+    return procs
+
+def allocate_process_task(task):
+    proc = Process(target = task_executor_fn, args = (task))
+    return proc
+    
