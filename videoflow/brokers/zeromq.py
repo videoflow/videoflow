@@ -1,3 +1,11 @@
+import numpy as np
+import zmq
+
+def get_next_message(socket_address):
+    pass
+
+def publish_next_message(socket_address, message):
+    pass
 
 def recv_zipped_pickle(socket: zmq.Socket, flags: int=0):
     """

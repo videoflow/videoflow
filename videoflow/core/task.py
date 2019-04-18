@@ -1,64 +1,64 @@
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
+from .messenger import Messenger
+
+STOP_SIGNAL = "alalsl;'sdlfj2389jdalskmghsaiaw98y8asdf;askljoa8y;dsf;lkasdb"
 
 class Task:
     def run(self):
         raise NotImplemented('Sublcasses need to implement it')
 
 class ProducerTask(Task):
-    def __init__(self, producer : ProducerNode):
+    def __init__(self, producer : ProducerNode, task_id : int):
         self._producer = producer
-        self._output_channel = self._producer.id
+        self._task_id = task_id
+        self._messenger = Messenger(self._producer, task_id, None)
     
-    @property
-    def output_channel(self):
-        return self._output_channel
-
     def run(self):
         for a in self._producer:
-            broker.publish(self._output_channel, a)
-        #TODO: Add code to add publishing stoppage condition
-        #once the producer finishes iterating.
+            self._messenger.publish_message(a)
+        self._messenger.publish_message(STOP_SIGNAL)
+    
+    def send_stop_signal(self):
+        # TODO: Figure out the blocking mechanism here to do thins kind of thing.
+        self._messenger.publish_message(STOP_SIGNAL)
 
 class ProcessorTask(Task):
-    def __init__(self, processor : ProcessorNode, input_channel : str,
-                inputs_needed : list):
+    def __init__(self, processor : ProcessorNode, task_id : int, parent_task_id : int):
         self._processor = processor
-        self._input_channel = input_channel
-        self._output_channel = self._processor.id
-        self._inputs_needed = inputs_needed
+        self._task_id = task_id
+        self._parent_task_id = parent_task_id
+        self._messenger = Messenger(self._processor, task_id, parent_task_id)
     
-    @property
-    def output_channel(self):
-        return self._output_channel
-
     def run(self):
         while True:
-            #TODO: Add code to stop while loop on stoppage entry
-
-            #1. Wait for input from input channel
-            input = get_from_channel(self._input_channel)
-
-            #2. Filter only what is needed by this processor
-            inputs_needed
+            inputs = self._messenger.receive_message()
+            stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
+            if stop_signal_received:
+                self._messenger.publish_message(STOP_SIGNAL)
+                break
 
             #3. Pass inputs needed to processor
-            self._processor.process(input)
+            output = self._processor.process(*inputs)
+            messenger.publish_message(output)    
         
 class ConsumerTask(Task):
-    def __init__(self, consumer : ConsumerNode, input_channel : str,
-                inputs_needed : list):
+    def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int):
         self._consumer = consumer
-        self._input_channel = input_channel
-        self._inputs_needed = inputs_needed
+        self._task_id = task_id
+        self._parent_task_id = parent_task_id
+        self._messenger = Messenger(self._consumer, task_id, parent_task_id)
     
     def run(self):
         while True:
-            #TODO: Add code to stop while loop on stoppage entry
-
-            #1. Wait for input from input channel
-
-            #2. Select only the inputs needed
-
+            inputs = self._messenger.receive_message()
+            stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
+            if stop_signal_received:
+                self._messenger.publish_message(STOP_SIGNAL)
+                break
+            
+            #4. Publish same message to someone down the line that might need it.
+            # TODO: Seat down to think about this here.
+            self._messenger.publish_message(inputs)
             #3. Pass inputs needed to consumer
-            self._consumer.consume(input)
+            self._consumer.consume(*inputs)
     

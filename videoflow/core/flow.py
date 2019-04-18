@@ -1,5 +1,4 @@
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
-from .execution import allocate_task
 
 def create_vertex_set(producers):
     V = set()
@@ -62,6 +61,7 @@ class Flow:
             raise AttributeError('Only support flows with 1 producer for now.')
         self._producers = producers
         self._consumers = consumers
+        self._task_registry
 
     def _compile(self):
         pass
@@ -96,18 +96,18 @@ class Flow:
             node = tsort[i]
             
             if isinstance(node, ProducerNode):
-                task = ProducerTask(node)
+                task = ProducerTask(node, i)
             elif isinstance(node, ProcessorNode):
                 task = ProcessorTask(
                     node, 
-                    tasks[i - 1].output_channel,
-                    [p.id for p in node.parents]
+                    i,
+                    i - 1
                 )
             elif isinstance(node, ConsumerNode):
                 task = ConsumerTask(
                     node,
-                    tasks[i - 1].output_channel,
-                    [p.id for p in node.parents]
+                    i,
+                    i - 1
                 )
             else:
                 raise ValueError('node is not of one of the valid types')
@@ -116,11 +116,14 @@ class Flow:
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
         for task in tasks:
-            allocate_task(task)
+            _allocate_task(task)
         
         
     def stop(self):
         '''
         It should deallocate all the resources and stop the flow in an organic way.
+        In order for this to happen, producers need to have a method
+        that interrupts what they are doing, so that they can publish the 
+        STOP_SIGNAL in their message entry.
         '''
         pass
