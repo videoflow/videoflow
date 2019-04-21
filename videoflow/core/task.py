@@ -1,5 +1,4 @@
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
-from .messenger import Messenger
 
 STOP_SIGNAL = "alalsl;'sdlfj2389jdalskmghsaiaw98y8asdf;askljoa8y;dsf;lkasdb"
 
@@ -22,7 +21,7 @@ class Task:
     def computation_node(self):
         return self._computation_node
 
-    def set_messenger(self, messenger : Messenger):
+    def set_messenger(self, messenger):
         self._messenger = messenger
 
     def _assert_messenger(self):
@@ -43,7 +42,7 @@ class ProducerTask(Task):
     def _run(self):
         for a in self._producer:
             self._messenger.publish_message(a)
-            if self._messenger.check_for_termination()
+            if self._messenger.check_for_termination():
                 break
         self._messenger.publish_termination_message(STOP_SIGNAL)
 

@@ -1,4 +1,5 @@
 from multiprocessing import Process, Queue, Event
+from ..core.node import Node
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask
 from ..core.environment import ExecutionEnvironment, Messenger
 

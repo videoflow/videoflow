@@ -1,6 +1,7 @@
 """Setup script for realpython-reader"""
 
 import os.path
+import setuptools
 from setuptools import setup
 
 # The directory containing this file
@@ -28,7 +29,7 @@ setup(
         "Programming Language :: Python :: 2",
         "Programming Language :: Python :: 3",
     ],
-    packages = ["videoflow"],
+    packages = setuptools.find_packages(),
     include_package_data = True,
     install_requires = [
         "opencv-python"
