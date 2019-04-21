@@ -1,6 +1,20 @@
 import numpy as np
 import zmq
 
+REFERENCE_SOCKET_NUMBER = 5000
+
+def termination_socket_from_task_id(task_id : int):
+    return REFERENCE_SOCKET_NUMBER - task_id
+
+def socket_from_task_id(task_id : int):
+    return REFERENCE_SOCKET_NUMBER + task_id
+
+def task_id_from_socket(socket_number : int):
+    return socket_number - REFERENCE_SOCKET_NUMBER
+
+def task_id_from_termination_socket(socket_number : int):
+    return REFERENCE_SOCKET_NUMBER - socket_number
+
 def get_next_message(socket_address):
     pass
 

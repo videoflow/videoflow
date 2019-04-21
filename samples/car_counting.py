@@ -20,5 +20,3 @@ flow.start()  # So that the run method is non-blocking
 
 # If you want to stop it later on, you can:
 flow.stop()
-
-detecto

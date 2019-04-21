@@ -1,8 +1,6 @@
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, STOP_SIGNAL
-from ..brokers import zeromq
-from .messenger import termination_socket_from_task_id
-from .execution import allocate_tasks
+from ..environments.queues import RealtimeQueueExecutionEnvironment
 
 def create_vertex_set(producers):
     V = set()
@@ -67,13 +65,11 @@ class Flow:
         self._consumers = consumers
         self._tasks = None
         self._producer_tasks = []
+        self._execution_environment = RealtimeQueueExecutionEnvironment()
 
-    def _compile(self):
-        pass
-
-    def start(self):
+    def run(self):
         '''
-        Starts the flow
+        Starts the flow. It is a blocking method.
         '''
 
         #1. Build a topological sort of the graph.
@@ -121,20 +117,17 @@ class Flow:
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
-        procs = allocate_tasks(tasks)   
-        self._tasks = tasks
-        self._procs = procs
-        
+        self._execution_environment.allocate_and_run_tasks(tasks)
+    
+    def join(self):
+        '''
+        Will make the process that calls this method block until the flow finishes
+        running naturally
+        '''
+        self._execution_environment.join_task_processes()
+
+
     def stop(self):
-        '''
-        It should deallocate all the resources and stop the flow in an organic way.
-        In order for this to happen, producers need to have a method
-        that interrupts what they are doing, so that they can publish the 
-        STOP_SIGNAL in their message entry.
-        '''
-        for producer in self._producers:
-            pid = producer.id
-            socket_address = termination_socket_from_task_id(pid)
-            zeromq.publish_next_message(socket_address, STOP_SIGNAL)
+        self._execution_environment.signal_flow_termination()
         
 

@@ -1,35 +1,22 @@
-from .node import Node
+from ..environments import zeromq
+from ..core.messenger import Messenger
 
-from ..brokers import zeromq as broker
 
-REFERENCE_SOCKET_NUMBER = 5000
 
-def termination_socket_from_task_id(task_id : int):
-    return REFERENCE_SOCKET_NUMBER - task_id
-
-def socket_from_task_id(task_id : int):
-    return REFERENCE_SOCKET_NUMBER + task_id
-
-def task_id_from_socket(socket_number : int):
-    return socket_number - REFERENCE_SOCKET_NUMBER
-
-def task_id_from_termination_socket(socket_number : int):
-    return REFERENCE_SOCKET_NUMBER - socket_number
-
-class Messenger:
+class ZeromqMessenger(Messenger):
     def __init__(self, computation_node : Node, task_id, parent_task_id):
         self._computation_node = computation_node
         self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
         self._task_id = task_id
         self._parent_task_id = parent_task_id
-        self._output_socket_address = socket_from_task_id(self._task_id)
-        self._input_socket_address = socket_from_task_id(self._parent_task_id)
-        self._termination_socket_address = termination_socket_from_task_id(self.task_id)
+        self._output_socket_address = zeromq.socket_from_task_id(self._task_id)
+        self._input_socket_address = zeromq.socket_from_task_id(self._parent_task_id)
+        self._termination_socket_address = zeromq.termination_socket_from_task_id(self.task_id)
         self._last_message_received = None
 
     def publish_message(self, message):
         if self._last_message_received is None:
-            broker.publish_next_message(self._output_socket_address, {
+            zeromq.publish_next_message(self._output_socket_address, {
                 self._computation_node.id: message
             })
         else:
