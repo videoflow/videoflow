@@ -54,12 +54,28 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, processor : Processor):
-        self._processor = processor
+    def __init__(self):
         super(ProcessorNode, self).__init__()
 
     def process(self, inp):
+        raise NotImplemented('process function needs to be implemented\
+                            by subclass')
+
+class ExternalProcessorNode(ProcessorNode):
+    def __init__(self, processor : Processor):
+        self._processor = processor
+        super(ExternalProcessorNode, self).__init__()
+    
+    def process(self, inp):
         return self._processor.process(inp)
+
+class FunctionProcessorNode(ProcessorNode):
+    def __init__(self, processor_function):
+        self._fn = processor_function
+        super(FunctionProcessorNode, self).__init__()
+    
+    def process(self, inp):
+        return self._fn(inp)
 
 class ProducerNode(Node):
     def __init__(self):
