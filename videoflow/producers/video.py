@@ -1,8 +1,8 @@
 import cv2
 
-from ..core.producer import Producer
+from ..core.node import ProducerNode
 
-class VideoProducer(Producer):
+class VideoProducer(ProducerNode):
     def __init__(self, video_file : str):
         '''
         Arguments:
