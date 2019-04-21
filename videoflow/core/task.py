@@ -61,7 +61,7 @@ class ProcessorTask(Task):
 
             #3. Pass inputs needed to processor
             output = self._processor.process(*inputs)
-            messenger.publish_message(output)   
+            self._messenger.publish_message(output)   
         
 class ConsumerTask(Task):
     def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int):

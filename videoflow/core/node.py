@@ -41,8 +41,8 @@ class Node:
 
 class Leaf(Node):
     def __init__(self):
-        super(Leaf, self).__init__()
         self._children = None
+        super(Leaf, self).__init__()
 
 class ConsumerNode(Leaf): 
     def __init__(self):
@@ -82,3 +82,6 @@ class ProducerNode(Node):
 
     def __iter__(self):
         raise NotImplemented('Method needs to be implemented by subclass')
+    
+    def __next__(self):
+        raise NotImplemented('Method __next__ needs to be implemented by subclass')

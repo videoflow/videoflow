@@ -9,14 +9,19 @@ class VideoProducer(ProducerNode):
         - video_file: path to video file
         '''
         self._video_file = video_file
+        self._video = None
+        super(VideoProducer, self).__init__()
 
-    def __iter__(self):
-        video = cv2.VideoCapture(self._video_file)
-        while (video.isOpened()):
+    def __next__(self):
+        while (self._video.isOpened()):
             success, frame = video.read()
             if not success:
                 break
             yield frame
-        video.release()
+        self._video.release()
+        raise StopIteration()
 
-
+    def __iter__(self):
+        self._video = cv2.VideoCapture(self._video_file)
+        return self
+        

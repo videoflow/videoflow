@@ -3,6 +3,7 @@ from ..core.node import ProcessorNode
 class SumAggregator(ProcessorNode):
     def __init__(self):
         self._sum = 0
+        super(SumAggregator, self).__init__()
     
     def process(self, inp):
         self._sum += inp
@@ -11,6 +12,7 @@ class SumAggregator(ProcessorNode):
 class MultiplicationAggregator(ProcessorNode):
     def __init__(self):
         self._mult = 1
+        super(MultiplicationAggregator, self).__init__()
 
     def process(self, inp):
         self._mult *= inp
@@ -19,6 +21,7 @@ class MultiplicationAggregator(ProcessorNode):
 class CountAggregator(ProcessorNode):
     def __init__(self):
         self._count = 0
+        super(CountAggregator, self).__init__()
     
     def process(self, inp):
         self._count += 1
@@ -27,6 +30,7 @@ class CountAggregator(ProcessorNode):
 class MaxAggregator(ProcessorNode):
     def __init__(self):
         self._max = float("-inf")
+        super(MaxAggregator, self).__init__()
     
     def process(self, inp):
         if inp > self._max:
@@ -36,9 +40,9 @@ class MaxAggregator(ProcessorNode):
 class MinAggregator(ProcessorNode):
     def __init__(self):
         self._min = float("inf")
+        super(MinAggregator, self).__init__()
     
     def process(self, inp):
         if inp < self._min:
             self._min = inp
         return self._min
-        

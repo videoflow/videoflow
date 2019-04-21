@@ -1,20 +1,14 @@
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
-from .task import Task, STOP_SIGNAL
+from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
 from ..environments.queues import RealtimeQueueExecutionEnvironment
-
-def create_vertex_set(producers):
-    V = set()
-    for node in producers:
-        V.add(node)
-        for child in node.children:
-            V.add(child)
-    return V
 
 def has_cycle_util(v : Node, visited, rec):
     visited[v] = True
     rec[v] = True
     
     for child in v.children:
+        if not child in visited:
+            visited[child] = False
         if visited[child] == False:
             if has_cycle_util(child, visited, rec):
                 return True
@@ -25,33 +19,34 @@ def has_cycle_util(v : Node, visited, rec):
     return False
 
 def has_cycle(producers):
-    V = create_vertex_set(producers)
     visited = {}
     rec = {}
-    for v in V:
+    for v in producers:
         visited[v] = False
         rec[v] = False
     
-    for v in V:
+    for v in producers:
         if visited[v] == False:
             if has_cycle_util(v, visited, rec):
                 return True
     return False
     
 def topological_sort_util(v : Node, visited, stack):
+    if not v in visited:
+        visited[v] = False
     visited[v] = True
     for child in v.children:
         topological_sort_util(child, visited, stack)
     stack.insert(0, v)
 
 def topological_sort(producers):
-    V = create_vertex_set(producers)
+    
     visited = {}
-    for v in V:
+    for v in producers:
         visited[v] = False
     stack = []
 
-    for v in V:
+    for v in producers:
         if visited[v] == False:
             topological_sort_util(v, visited, stack)
     
@@ -77,6 +72,7 @@ class Flow:
             raise ValueError('Cycle found in graph')
 
         tsort = topological_sort(self._producers)
+        [print(a.id) for a in tsort]
 
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children
@@ -129,5 +125,3 @@ class Flow:
 
     def stop(self):
         self._execution_environment.signal_flow_termination()
-        
-

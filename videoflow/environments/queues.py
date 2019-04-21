@@ -7,7 +7,7 @@ def task_executor_fn(task : Task):
     task.run()
 
 def allocate_process_task(task):
-    proc = Process(target = task_executor_fn, args = (task))
+    proc = Process(target = task_executor_fn, args = (task,))
     return proc
 
 class RealtimeQueueMessenger(Messenger):
@@ -16,7 +16,9 @@ class RealtimeQueueMessenger(Messenger):
         self._computation_node = computation_node
         self._parent_task_queue = parent_task_queue
         self._task_queue = task_queue
-        self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
+        self._parent_nodes_ids = []
+        if self._computation_node.parents is not None:
+            self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
         self._termination_event = termination_event
         self._last_message_received = None
 
@@ -77,20 +79,18 @@ class RealtimeQueueMessenger(Messenger):
         '''
         input_message_dict = self._parent_task_queue.get()
         self._last_message_received = input_message_dict
-        inputs = [input_message[a] for a in self._parent_nodes_ids]
+        inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
         return inputs
 
-def RealtimeQueueExecutionEnvironment(ExecutionEnvironment):
-    '''
-    The Realtime Queue Execution Environment will drop frames
-    if the processors speed is not fast enough.
-    '''
+class RealtimeQueueExecutionEnvironment(ExecutionEnvironment):
+
     def __init__(self):
         self._procs = []
         self._tasks = []
         self._task_output_queues = {}
         self._task_termination_notification_queues = {}
         self._termination_event = None
+        super(RealtimeQueueExecutionEnvironment, self).__init__()
 
     def _al_create_communication_channels(self, tasks):
         #1. Create output queues
