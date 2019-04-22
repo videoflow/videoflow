@@ -1,7 +1,7 @@
 import tensorflow as tf
 
 class TensorflowModel:
-    def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu"):
+    def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu:0"):
         '''
         Arguments:
         - pb_file_path (str): path to pb file
@@ -41,7 +41,7 @@ class TensorflowModel:
     def _close_session(self):
         self._session.close()
     
-    def run_on_input(self, inp_l):
+    def run_on_input(self, *inp_l):
         '''
         Arguments:
         - inp_l: a list of inputs to be passed to the model.  Must be
@@ -60,4 +60,3 @@ class TensorflowModel:
             feed_dict = feed_dict
         )
         return output_l
-        
