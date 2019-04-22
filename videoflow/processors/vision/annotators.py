@@ -12,6 +12,11 @@ class ImageAnnotator(ProcessorNode):
         return self._annotate(to_annotate, annotations)
         
 class BoundingBoxAnnotator(ImageAnnotator):
+    def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255)):
+        self._box_color = box_color
+        self._text_color = text_color
+        self._box_thickness = box_thickness
+
     def _annotate(self, im : np.array, annotations : any) -> np.array:
         '''
         Arguments:
@@ -25,9 +30,11 @@ class BoundingBoxAnnotator(ImageAnnotator):
 
         for i in range(len(boxes)):
             bbox = boxes[i]
-            klass_text = classes[i]
-            cv2.rectangle(im, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (255, 255, 0), 2)
-            cv2.putText(im, klass_text, (bbox[0], bbox[1]), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (255, 255, 255), lineType = cv2.LINE_AA)
-        
+            xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+            confidence = bbox[4]
+            label = "{}: {:.2f}%".format(classes[i], confidence * 100)
+            cv2.rectangle(im, (xmin, ymin), (xmax, ymax), self._box_color, self._box_thickness)
+            y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
+            cv2.putText(im, label, (xmin, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self._text_color, lineType = cv2.LINE_AA)
         return im
 
