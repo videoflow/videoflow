@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-class TensorflowModel():
+class TensorflowModel:
     def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu"):
         '''
         Arguments:
@@ -54,10 +54,10 @@ class TensorflowModel():
         '''
         if self._session is None:
             self._load_model()
-        feed_dict
+        feed_dict = dict(zip(self._input_tensors, inp_l))
         output_l = self._session.run(
             self._output_tensors,
-            feed_dict = {
-
-            }
+            feed_dict = feed_dict
         )
+        return output_l
+        
