@@ -72,7 +72,6 @@ class Flow:
             raise ValueError('Cycle found in graph')
 
         tsort = topological_sort(self._producers)
-        [print(a.id) for a in tsort]
 
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children
@@ -105,7 +104,8 @@ class Flow:
                 task = ConsumerTask(
                     node,
                     i,
-                    i - 1
+                    i - 1,
+                    i < (len(tsort) - 1)
                 )
             else:
                 raise ValueError('node is not of one of the valid types')

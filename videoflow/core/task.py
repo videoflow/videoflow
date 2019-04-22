@@ -68,8 +68,10 @@ class ProcessorTask(Task):
             self._messenger.publish_message(output)   
         
 class ConsumerTask(Task):
-    def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int):
+    def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int,
+                has_children_task : bool):
         self._consumer = consumer
+        self._has_children_task = has_children_task
         super(ConsumerTask, self).__init__(consumer, task_id, parent_task_id)
 
     def _run(self):
@@ -81,9 +83,11 @@ class ConsumerTask(Task):
                 # If children need to stop, they will receive it from
                 # someone else, so the message that I am passing through
                 # might be the one carrying it.
-                self._messenger.passthrough_termination_message()
+                if self._has_children_task:
+                    self._messenger.passthrough_termination_message()
                 break
 
-            self._messenger.passthrough_message()
+            if self._has_children_task:
+                self._messenger.passthrough_message()
             self._consumer.consume(*inputs)
     
