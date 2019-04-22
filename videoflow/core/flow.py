@@ -73,7 +73,6 @@ class Flow:
             raise ValueError('Cycle found in graph')
 
         tsort = topological_sort(self._producers)
-        [print(a) for a in tsort]
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children
         # all of the outputs of parents.  Hence, at a given
