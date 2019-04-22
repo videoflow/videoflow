@@ -1,5 +1,5 @@
-Creating a flow application
-===========================
+Creating a videoflow application
+================================
 
 Defining the graph
 ------------------
