@@ -36,7 +36,8 @@ def topological_sort_util(v : Node, visited, stack):
         visited[v] = False
     visited[v] = True
     for child in v.children:
-        topological_sort_util(child, visited, stack)
+        if not child in visited or visited[child] == False:
+            topological_sort_util(child, visited, stack)
     stack.insert(0, v)
 
 def topological_sort(producers):
@@ -72,7 +73,7 @@ class Flow:
             raise ValueError('Cycle found in graph')
 
         tsort = topological_sort(self._producers)
-
+        [print(a) for a in tsort]
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children
         # all of the outputs of parents.  Hence, at a given
