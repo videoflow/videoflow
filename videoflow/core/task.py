@@ -40,8 +40,12 @@ class ProducerTask(Task):
         super(ProducerTask, self).__init__(producer, task_id)
 
     def _run(self):
-        for a in self._producer:
-            self._messenger.publish_message(a)
+        while True:
+            try:
+                a = self._producer.next()
+                self._messenger.publish_message(a)
+            except StopIteration:
+                break
             if self._messenger.check_for_termination():
                 break
         self._messenger.publish_termination_message(STOP_SIGNAL)

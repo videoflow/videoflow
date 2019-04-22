@@ -1,2 +1,2 @@
-from .video import VideoProducer
+from .video import VideofileReader
 from .basic import IntProducer

@@ -2,26 +2,29 @@ import cv2
 
 from ..core.node import ProducerNode
 
-class VideoProducer(ProducerNode):
+class VideofileReader(ProducerNode):
     def __init__(self, video_file : str):
         '''
         Arguments:
         - video_file: path to video file
+        - retry_attempts: number of retries to read video
+          stream before raising StopIteration exception
         '''
         self._video_file = video_file
         self._video = None
-        super(VideoProducer, self).__init__()
+        super(VideofileReader, self).__init__()
 
-    def __next__(self):
-        while (self._video.isOpened()):
-            success, frame = video.read()
+    def next(self):
+        if self._video is None:
+            self._video = cv2.VideoCapture(self._video_file)
+
+        if self._video.isOpened():
+            success, frame = self._video.read()
             if not success:
-                break
-            yield frame
-        self._video.release()
-        raise StopIteration()
-
-    def __iter__(self):
-        self._video = cv2.VideoCapture(self._video_file)
-        return self
-        
+                self._video.release()
+                raise StopIteration()
+            else:
+                return frame
+        else:
+            self._video.release()
+            raise StopIteration()

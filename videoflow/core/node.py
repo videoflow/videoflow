@@ -80,8 +80,5 @@ class ProducerNode(Node):
     def __init__(self):
         super(ProducerNode, self).__init__()
 
-    def __iter__(self):
+    def next(self):
         raise NotImplemented('Method needs to be implemented by subclass')
-    
-    def __next__(self):
-        raise NotImplemented('Method __next__ needs to be implemented by subclass')
