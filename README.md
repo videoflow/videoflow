@@ -6,7 +6,7 @@ It can be used for any kind of streaming data, but we designed it with video in 
 
 Below there is a quick first sample application.  You can see more examples in the [**samples**](https://github.com/jadielam/videoflow/tree/master/samples) folder.  
 
-The complete documentation to the project is located in [**Read the docs**].(https://videoflow.readthedocs.io)
+The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
 
 ## Installing the framework
 You can install directly using **pip** by doing `pip3 install videoflow`
