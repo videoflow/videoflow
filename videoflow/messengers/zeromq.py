@@ -2,7 +2,6 @@ from ..environments import zeromq
 from ..core.messenger import Messenger
 
 
-
 class ZeromqMessenger(Messenger):
     def __init__(self, computation_node : Node, task_id, parent_task_id):
         self._computation_node = computation_node
