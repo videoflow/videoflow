@@ -8,7 +8,7 @@ Below there is a quick first sample application.  You can see more examples in t
 
 The complete documentation to the project is located in [**Read the docs**](https://readthedocs.io/videoflow)
 
-## Building a simple videoflow application:
+## Simple sample videoflow application:
 
 ```
 from videoflow.core import Flow
@@ -23,7 +23,6 @@ printer = CommandlineConsumer()(sum_agg)
 flow = Flow([producer], [printer])
 flow.run()
 flow.join()
-
 ```
 
 Lines 1-4 import the classes and definitions needed.
@@ -41,4 +40,3 @@ A flow application usually consists of three parts:
 2. To create a flow object, you need to pass to it your list of producers and your list of consumers. Once a flow is defined you can start it.  Starting the flow means that the producers start putting data into the flow and processors and consumers start receiving data.  Starting the flow also means allocating resources for producers, processors and consumers.  For simplicity for now we can say that each producer, processor and consumer will run on its own process space.
 
 3. Once the flow starts, you can also stop it.  When you stop the flow, it will happen organically.  Producers will stop producing data.  The rest of the nodes in the flow will continue running until the pipes run dry.  The resources used in the flow are deallocated progressively (not all at the same time). For example, when a producer stops producing data, it deallocates itself and all the resources that are exclusive to him.  
-
