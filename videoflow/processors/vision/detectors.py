@@ -31,17 +31,13 @@ class TensorflowObjectDetector(ObjectDetector):
         
         Returns:
         - dets: np.array of shape (nb_boxes, 6)
+          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
         im_expanded = np.expand_dims(im, axis = 0)
         boxes, scores, classes, num = self._tensorflow_model.run_on_input(im_expanded)
-        boxes = np.squeeze(boxes)
-        scores = np.squeeze(scores)
-        classes = np.squeeze(classes)
-
+        boxes, scores, classes = np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)
         indexes = np.where(scores > self._min_score_threshold)[0]
-        boxes = boxes[indexes]
-        scores = scores[indexes]
-        classes = classes[indexes]
+        boxes, scores, classes = boxes[indexes], scores[indexes], classes[indexes]
         return np.concatenate((boxes, classes, scores), axis = 1)
 
 
