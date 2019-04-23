@@ -1,3 +1,7 @@
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+
 from multiprocessing import Process, Queue, Event
 from ..core.node import Node
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask
