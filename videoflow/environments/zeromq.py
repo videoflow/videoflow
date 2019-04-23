@@ -50,7 +50,7 @@ def send_array(socket: zmq.Socket, array: np.array, flags: int=0, copy: bool=Tru
 
 def recv_array(socket: zmq.Socket, flags: int=0, copy: int=True, track: bool=False):
     """
-    Recieve a numpy array
+    Receive a numpy array
     """
     dictionary = socket.recv_json(flags=flags)
     message = socket.recv(flags=flags, copy=copy, track=track)

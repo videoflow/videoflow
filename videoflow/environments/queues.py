@@ -15,6 +15,13 @@ def allocate_process_task(task):
     return proc
 
 class RealtimeQueueMessenger(Messenger):
+    '''
+    RealtimeQueueMessenger is a messenquer that communicates through
+    queues of type ``multiprocessing.Queue``.  It is a real time, which 
+    means that if a queue is full when publishing a message to it,
+    it will drop the message and not block.  The methods that 
+    publish and passthrough termination messages will block and not drop.
+    '''
     def __init__(self, computation_node : Node, task_queue : Queue, parent_task_queue : Queue,
                 termination_event : Event):
         self._computation_node = computation_node
@@ -27,6 +34,10 @@ class RealtimeQueueMessenger(Messenger):
         self._last_message_received = None
 
     def publish_message(self, message):
+        '''
+        Publishes output message to a place where the child task will receive it. \
+        Will drop the message is the receiving queue is full.
+        '''
         if self._last_message_received is None:
             try:
                 msg = {
@@ -78,9 +89,6 @@ class RealtimeQueueMessenger(Messenger):
             pass
 
     def receive_message(self):
-        '''
-        Blocking method
-        '''
         input_message_dict = self._parent_task_queue.get()
         self._last_message_received = input_message_dict
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
