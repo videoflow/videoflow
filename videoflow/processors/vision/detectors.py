@@ -17,27 +17,23 @@ class ObjectDetector(ProcessorNode):
     '''
     def _detect(self, im : np.array) -> np.array:
         '''
-        Arguments:
-        ----------
-        - im (np.array): (h, w, 3)
+        - Arguments:
+            - im (np.array): (h, w, 3)
         
-        Returns:
-        --------
-        - dets: np.array of shape (nb_boxes, 6)
-          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        - Returns:
+            - dets: np.array of shape (nb_boxes, 6) \
+              Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
         raise NotImplemented('Subclass must implement it')
     
     def process(self, im : np.array) -> np.array:
         '''
-        Arguments:
-        ----------
-        - im (np.array): (h, w, 3)
+        - Arguments:
+            - im (np.array): (h, w, 3)
         
-        Returns:
-        --------
-        - dets: np.array of shape (nb_boxes, 6)
-          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        - Returns:
+            - dets: np.array of shape (nb_boxes, 6) \
+                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
         return self._detect(im)
 
@@ -52,14 +48,13 @@ class TensorflowObjectDetector(ObjectDetector):
         '''
         Initializes the tensorflow model.  
 
-        Arguments:
-        ----------
-        - path_to_pb_file (str): Path where model pb file is
-          It expects the model to have the following input tensors: `image_tensor:0`, and
-          the following output tensors: `detection_boxes:0`, `detection_scores:0`,
-          `detection_classes:0`, and `num_detections:0`
-        - num_classes (int): number of classes that the detector can recognize
-        - min_score_threshold (float): detection will filter out entries with score below threshold score
+        - Arguments:
+            - path_to_pb_file (str): Path where model pb file is \
+            It expects the model to have the following input tensors: `image_tensor:0`, and \
+            the following output tensors: `detection_boxes:0`, `detection_scores:0`, \
+            `detection_classes:0`, and `num_detections:0`
+            - num_classes (int): number of classes that the detector can recognize
+            - min_score_threshold (float): detection will filter out entries with score below threshold score
         '''
         self._tensorflow_model = TensorflowModel(
             path_to_pb_file,
@@ -71,14 +66,12 @@ class TensorflowObjectDetector(ObjectDetector):
         
     def _detect(self, im : np.array) -> np.array:
         '''
-        Arguments:
-        ----------
-        - im (np.array): (h, w, 3)
+        - Arguments:
+            - im (np.array): (h, w, 3)
         
-        Returns:
-        --------
-        - dets: np.array of shape (nb_boxes, 6)
-          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        - Returns:
+            - dets: np.array of shape (nb_boxes, 6) \
+                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
         im_expanded = np.expand_dims(im, axis = 0)
         boxes, scores, classes, num = self._tensorflow_model.run_on_input(im_expanded)
