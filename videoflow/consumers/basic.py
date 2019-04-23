@@ -7,13 +7,13 @@ from ..core.node import ConsumerNode
 class CommandlineConsumer(ConsumerNode):
     '''
     Writes the input received to the command line.
+    
+    - Arguments:
+        - sep: separator to use between tokens.
+        - end: end of line character
     '''
     def __init__(self, sep = ' ', end = '\n'):
-        '''
-        - Arguments:
-            - sep: separator to use between tokens.
-            - end: end of line character
-        '''
+
         self._end = end
         self._sep = sep
         super(CommandlineConsumer, self).__init__()
