@@ -5,6 +5,10 @@ from __future__ import absolute_import
 from .processor import Processor
 
 class Node:
+    '''
+    Represents a computational node in the graph. It is also a callable object. \
+        It can be call with the list of parents on which it depends.
+    '''
     def __init__(self):
         self._parents = None
         self._children = set()
@@ -20,6 +24,10 @@ class Node:
     
     @property
     def id(self):
+        '''
+        The id of the node.  In this case the id of the node is produced by calling
+        ``id(self)``.
+        '''
         return self.__hash__()
     
     def __call__(self, *parents):
@@ -33,26 +41,44 @@ class Node:
         return self
         
     def add_child(self, child):
+        '''
+        Adds child to the set of childs that depend on it.
+        '''
         self._children.add(child)
     
     @property
     def parents(self):
-        return self._parents
+        '''
+        Returns a list with the parent nodes
+        '''
+        return list(self._parents)
     
     @property
     def children(self):
-        return self._children
+        '''
+        Returns a set of the child nodes
+        '''
+        return set(self._children)
 
 class Leaf(Node):
+    '''
+    Node with no children.
+    '''
     def __init__(self):
         self._children = None
         super(Leaf, self).__init__()
 
-class ConsumerNode(Leaf): 
+class ConsumerNode(Leaf):
     def __init__(self):
         super(ConsumerNode, self).__init__()
     
     def consume(self, item):
+        '''
+        Method definition that needs to be implemented by subclasses. 
+
+        - Arguments:
+            - item: the item being received as input (or consumed).
+        '''
         raise NotImplemented('consume function needs to be implemented\
                             by subclass')
 
@@ -60,7 +86,17 @@ class ProcessorNode(Node):
     def __init__(self):
         super(ProcessorNode, self).__init__()
 
-    def process(self, inp):
+    def process(self, inp : any) -> any:
+        '''
+        Method definition that needs to be implemented by subclasses.
+
+        - Arguments:
+            - inp: object or list of objects being received for processing \
+                from parent nodes.
+        
+        - Returns:
+            - the output being consumed by child nodes.
+        '''
         raise NotImplemented('process function needs to be implemented\
                             by subclass')
 
@@ -81,8 +117,19 @@ class FunctionProcessorNode(ProcessorNode):
         return self._fn(inp)
 
 class ProducerNode(Node):
+    '''
+    The `producer node` does not receive input, and produces input. \
+        Each time the ``next()`` method is called, it produces a new input.
+    
+    It would have been more natural to implement the ``ProducerNode`` as a generator, \
+        but generators cannot be pickled, and hence you cannot easily work with generators \
+        in a multiprocessing setting.
+    '''
     def __init__(self):
         super(ProducerNode, self).__init__()
 
-    def next(self):
+    def next(self) -> any:
+        '''
+        Returns next produced element.
+        '''
         raise NotImplemented('Method needs to be implemented by subclass')
