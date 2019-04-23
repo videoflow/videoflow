@@ -45,6 +45,12 @@ Free and open source
     :hidden:
     :caption: Api documentation
 
-    apidocs/modules
+    apidocs/videoflow.core
+    apidocs/videoflow.environments
+    apidocs/videoflow.producers
+    apidocs/videoflow.processors
+    apidocs/videoflow.consumers
+    apidocs/videoflow.utils
+    
 
 

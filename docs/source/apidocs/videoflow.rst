@@ -9,7 +9,6 @@ Subpackages
     videoflow.consumers
     videoflow.core
     videoflow.environments
-    videoflow.messengers
     videoflow.processors
     videoflow.producers
     videoflow.utils
