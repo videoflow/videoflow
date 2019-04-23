@@ -6,7 +6,7 @@ from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
 from ..environments.queues import RealtimeQueueExecutionEnvironment
 
-def has_cycle_util(v : Node, visited, rec):
+def _has_cycle_util(v : Node, visited, rec):
     visited[v] = True
     rec[v] = True
     
@@ -14,7 +14,7 @@ def has_cycle_util(v : Node, visited, rec):
         if not child in visited:
             visited[child] = False
         if visited[child] == False:
-            if has_cycle_util(child, visited, rec):
+            if _has_cycle_util(child, visited, rec):
                 return True
         elif rec[child] == True:
             return True
@@ -23,6 +23,11 @@ def has_cycle_util(v : Node, visited, rec):
     return False
 
 def has_cycle(producers):
+    '''
+    Used to detect if the graph is not acyclical.  Returns true if it \
+    finds a cycle in the graph.  It begins exploring the graph from producers down \
+    all the way to consumers.
+    '''
     visited = {}
     rec = {}
     for v in producers:
@@ -31,21 +36,31 @@ def has_cycle(producers):
     
     for v in producers:
         if visited[v] == False:
-            if has_cycle_util(v, visited, rec):
+            if _has_cycle_util(v, visited, rec):
                 return True
     return False
     
-def topological_sort_util(v : Node, visited, stack):
+def _topological_sort_util(v : Node, visited, stack):
     if not v in visited:
         visited[v] = False
     visited[v] = True
     for child in v.children:
         if not child in visited or visited[child] == False:
-            topological_sort_util(child, visited, stack)
+            _topological_sort_util(child, visited, stack)
     stack.insert(0, v)
 
 def topological_sort(producers):
+    '''
+    Creates a topological sort of the computation graph.
+
+    - Arguments:
+        - producers: a list of producer nodes, that is, nodes with no parents.
     
+    - Returns:
+        - stack: a list of nodes in topological order.  If \
+            a *node A* appears before a *node B* on the list, it means \
+            that *node A* does not depend on *node B* output
+    '''
     visited = {}
     for v in producers:
         visited[v] = False
@@ -53,11 +68,21 @@ def topological_sort(producers):
 
     for v in producers:
         if visited[v] == False:
-            topological_sort_util(v, visited, stack)
+            _topological_sort_util(v, visited, stack)
     
     return stack
 
 class Flow:
+    '''
+    Represents a linear flow of data from one task to another.\
+    Note that a flow is created from a **directed acyclic graph** of producer, processor \
+    and consumer nodes, but the flow itself is **linear**, because it is an optimized \
+    `topological sort` of the directed acyclic graph.
+
+    - Arguments:
+        - producers: a list of producer nodes of type ``videoflow.core.node.ProducerNode``.
+        - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``.
+    '''
     def __init__(self, producers, consumers):
         if len(producers) != 1:
             raise AttributeError('Only support flows with 1 producer for now.')
@@ -69,7 +94,16 @@ class Flow:
 
     def run(self):
         '''
-        Starts the flow. It is a blocking method.
+        Simple documentation: It starts the flow. 
+
+        More complex documentation: 
+        
+        1. It creates a topological sort of the nodes in the \
+            computation graph, and wraps each node around a ``videoflow.core.task.Task``
+        2. It passes the tasks to the environment, which allocates them and creates the \
+            channels that will be used for communication between tasks. Tasks themselves \
+            do not know where this channels are, but the environment assigns a messenger \
+            to each task that knows how to communicate in those channels.
         '''
 
         #1. Build a topological sort of the graph.
@@ -128,4 +162,7 @@ class Flow:
 
 
     def stop(self):
+        '''
+        Stops the flow.  Makes the execution environment send a flow termination signal.
+        '''
         self._execution_environment.signal_flow_termination()

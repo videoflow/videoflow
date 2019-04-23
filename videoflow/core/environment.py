@@ -52,7 +52,7 @@ class Messenger:
 
     def check_for_termination(self) -> bool:
         '''
-        Returns true if a flow termination signal has been received.  Used by `videoflow.core.task.ProducerTask`.
+        Returns true if a flow termination signal has been received.  Used by ``videoflow.core.task.ProducerTask``.
         '''
         raise NotImplemented('Messenger subclass must implement method')
 
