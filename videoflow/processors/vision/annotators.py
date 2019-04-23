@@ -9,17 +9,26 @@ from ...core.node import ProcessorNode
 from ...utils.parsers import parse_label_map
 
 class ImageAnnotator(ProcessorNode):
+    '''
+    Interface for all image annotators. 
+    All image annotators receive as input an image and annotation
+    metadata, and return as output a copy of the image with
+    the drawings representing the metadata.
+    '''
     def _annotate(self, im : np.array, annotations : any) -> np.array:
         raise NotImplemented('Subclass must implement this method')
 
     def process(self, im : np.array, annotations : any) -> np.array:
         '''
-        Returns a copy of `im` visually annotated with the annotations defined in `annotations`
+        Returns a copy of ``im`` visually annotated with the annotations defined in `annotations`
         '''
         to_annotate = np.array(im)
         return self._annotate(to_annotate, annotations)
         
 class BoundingBoxAnnotator(ImageAnnotator):
+    '''
+    Draws bounding boxes on images.
+    '''
     def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255)):
         self._box_color = box_color
         self._text_color = text_color
@@ -28,10 +37,13 @@ class BoundingBoxAnnotator(ImageAnnotator):
 
     def _annotate(self, im : np.array, boxes : np.array) -> np.array:
         '''
-        Arguments:
-        - im: np.array
-        - annotations: np.array of shape (nb_boxes, 6)
-          second dimension entries are [xmin, ymin, xmax, ymax, class_index, score]
+        - Arguments:
+            - im: np.array
+            - boxes: np.array of shape (nb_boxes, 6) \
+                second dimension entries are [xmin, ymin, xmax, ymax, class_index, score]
+        
+        - Returns:
+            - annotated_im: image with the visual annotations embedded in it.
         '''
 
         for i in range(len(boxes)):
