@@ -79,19 +79,6 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
         for t, trk in enumerate(trackers):
             iou_matrix[d, t] = metric_function(det, trk)
     matched_indices = linear_assignment(-iou_matrix)
-    
-    '''
-    for d, det in enumerate(detections):
-        for t, trk in enumerate(trackers):
-            iou_matrix[d, t] = probability(det, trk, transition_matrix, square_dims, frame_shape)
-    matched_indices = linear_assignment(-iou_matrix)
-    '''
-    '''
-    for d, det in enumerate(detections):
-        for t, trk in enumerate(trackers):
-            iou_matrix[d, t] = eucl(det, trk)
-    matched_indices = linear_assignment(iou_matrix)
-    '''
 
     unmatched_detections = []
     for d,det in enumerate(detections):

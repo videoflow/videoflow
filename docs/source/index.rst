@@ -40,9 +40,11 @@ Free and open source
     user-documentation/task-allocation
     user-documentation/advanced-flowing
 
-.. toctree::
+.. toctree:: 
     :maxdepth: 2
     :hidden:
     :caption: Api documentation
+
+    apidocs/modules
 
 

@@ -15,20 +15,6 @@ def task_id_from_socket(socket_number : int):
 def task_id_from_termination_socket(socket_number : int):
     return REFERENCE_SOCKET_NUMBER - socket_number
 
-def get_next_message(socket_address):
-    pass
-
-def pick_next_message(self._termination_socket_address):
-    '''
-    - DOES NOT BLOCK
-    Returns None if no message is present
-    Returns message if there is one.
-    '''
-    pass
-
-def publish_next_message(socket_address, message):
-    pass
-
 def recv_zipped_pickle(socket: zmq.Socket, flags: int=0):
     """
     Receive a sent zipped pickle.
@@ -36,7 +22,6 @@ def recv_zipped_pickle(socket: zmq.Socket, flags: int=0):
     message = socket.recv(flags)
     object = zlib.decompress(message)
     return pickle.loads(object)
-
 
 def send_zipped_pickle(socket: zmq.Socket, obj: Any, flags: int=0, protocol: int=-1):
     """

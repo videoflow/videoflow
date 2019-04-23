@@ -5,6 +5,9 @@ from ...core.node import ProcessorNode
 from ...utils.tensorflow import TensorflowModel
 
 class ObjectDetector(ProcessorNode):
+    '''
+    Abstract class that defines the interface of object detectors
+    '''
     def _detect(self, im):
         raise NotImplemented('Subclass must implement it')
     
@@ -12,24 +15,41 @@ class ObjectDetector(ProcessorNode):
         return self._detect(im)
 
 class TensorflowObjectDetector(ObjectDetector):
+    '''
+    Finds object detections by running a Tensorflow model
+    on an image.
+    '''
     def __init__(self, path_to_pb_file,
-                num_classes, path_to_labels,
+                num_classes, 
                 min_score_threshold = 0.5):
+        '''
+        Initializes the tensorflow model.  
+
+        Arguments:
+        ----------
+        - path_to_pb_file (str): Path where model pb file is
+          It expects the model to have the following input tensors: `image_tensor:0`, and
+          the following output tensors: `detection_boxes:0`, `detection_scores:0`,
+          `detection_classes:0`, and `num_detections:0`
+        - num_classes (int): number of classes that the detector can recognize
+        - min_score_threshold (float): detection will filter out entries with score below threshold score
+        '''
         self._tensorflow_model = TensorflowModel(
             path_to_pb_file,
             ["image_tensor:0"],
             ["detection_boxes:0", "detection_scores:0", "detection_classes:0", "num_detections:0"]
         )
         self._num_classes = num_classes
-        self._path_to_labels = path_to_labels
         self._min_score_threshold = min_score_threshold
         
     def _detect(self, im : np.array) -> np.array:
         '''
         Arguments:
-        - im: (h, w, 3)
+        ----------
+        - im (np.array): (h, w, 3)
         
         Returns:
+        --------
         - dets: np.array of shape (nb_boxes, 6)
           Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
