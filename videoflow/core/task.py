@@ -7,7 +7,15 @@ from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 STOP_SIGNAL = "alalsl;'sdlfj2389jdalskmghsaiaw98y8asdf;askljoa8y;dsf;lkasdb"
 
 class Task:
-    def __init__(self, computation_node, task_id, parent_task_id = None):
+    '''
+    A ``Task`` is a wrapper around a ``videoflow.core.node.Node`` that \
+        is able to interact with the execution environment through a messenger. \
+        Nodes receive input and/or produce output, but tasks are the ones \
+        that run in infinite loops, receiving inputs from the environment and passing them to the \
+        computation node, and taking outputs from the computation node and passing \
+        them to the environment.
+    '''
+    def __init__(self, computation_node : Node, task_id : int, parent_task_id : int = None):
         self._messenger = None
         self._computation_node = computation_node
         self._task_id = task_id
@@ -15,17 +23,30 @@ class Task:
     
     @property
     def id(self):
+        '''
+        Returns an integer as id.
+        '''
         return self._task_id
     
     @property
     def parent_id(self):
+        '''
+        Returns the id of the parent task.  Id of parent task is lower than id of current task.
+        '''
         return self._parent_task_id
     
     @property
     def computation_node(self):
+        '''
+        Returns the current computation node
+        '''
         return self._computation_node
 
     def set_messenger(self, messenger):
+        '''
+        Used by environment to set the messenger that this task will use to interact with other 
+        tasks
+        '''
         self._messenger = messenger
 
     def _assert_messenger(self):
@@ -35,10 +56,20 @@ class Task:
         raise NotImplemented('Sublcasses need to implement it')
 
     def run(self):
+        '''
+        Starts the task in an infinite loop.  If this method is called and the \
+            ``set_messenger()`` method has not been called yet, an assertion error \
+            will happen.
+        '''
         self._assert_messenger()
         self._run()
 
 class ProducerTask(Task):
+    '''
+    It runs forever calling the ``next()`` method in the producer node. \
+    At each iteration it checks for a termination signal, and if so it \
+    sends a termination message to its child task and breaks the infinite loop.
+    '''
     def __init__(self, producer : ProducerNode, task_id : int):
         self._producer = producer
         super(ProducerTask, self).__init__(producer, task_id)
@@ -55,6 +86,13 @@ class ProducerTask(Task):
         self._messenger.publish_termination_message(STOP_SIGNAL)
 
 class ProcessorTask(Task):
+    '''
+    It runs forever, first blocking until it receives a message from parent nodes through \
+    the messenger.  Then it passes it to the processor node and when it gets back the output \
+    it uses the messenger to publish it down the flow. If among the inputs it received from \
+    a parent it receives a termination message, it passes termination message down the flow \
+    and breaks from infinite loop.
+    '''
     def __init__(self, processor : ProcessorNode, task_id : int, parent_task_id : int):
         self._processor = processor
         super(ProcessorTask, self).__init__(processor, task_id, parent_task_id)    
@@ -72,6 +110,14 @@ class ProcessorTask(Task):
             self._messenger.publish_message(output)   
         
 class ConsumerTask(Task):
+    '''
+    It runs forever, blocking until it receives a message from parent nodes through the messenger.
+    It consumes the message and does not publish anything back down the pipe.
+
+    If a consumer task has tasks after it in the topological sort, it does not mean that
+    those tasks expect any input from the consumer task. It simply means that the consumer
+    task is a passthrough of messages. 
+    '''
     def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int,
                 has_children_task : bool):
         self._consumer = consumer
