@@ -1,3 +1,6 @@
+'''
+Collection of object detection processors
+'''
 import numpy as np
 import tensorflow as tf
 
@@ -8,10 +11,30 @@ class ObjectDetector(ProcessorNode):
     '''
     Abstract class that defines the interface of object detectors
     '''
-    def _detect(self, im):
+    def _detect(self, im : np.array) -> np.array:
+        '''
+        Arguments:
+        ----------
+        - im (np.array): (h, w, 3)
+        
+        Returns:
+        --------
+        - dets: np.array of shape (nb_boxes, 6)
+          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        '''
         raise NotImplemented('Subclass must implement it')
     
-    def process(self, im : np.array):
+    def process(self, im : np.array) -> np.array:
+        '''
+        Arguments:
+        ----------
+        - im (np.array): (h, w, 3)
+        
+        Returns:
+        --------
+        - dets: np.array of shape (nb_boxes, 6)
+          Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        '''
         return self._detect(im)
 
 class TensorflowObjectDetector(ObjectDetector):

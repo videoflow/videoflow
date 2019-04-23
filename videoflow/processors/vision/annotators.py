@@ -9,6 +9,9 @@ class ImageAnnotator(ProcessorNode):
         raise NotImplemented('Subclass must implement this method')
 
     def process(self, im : np.array, annotations : any) -> np.array:
+        '''
+        Returns a copy of `im` visually annotated with the annotations defined in `annotations`
+        '''
         to_annotate = np.array(im)
         return self._annotate(to_annotate, annotations)
         

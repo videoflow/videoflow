@@ -165,6 +165,4 @@ class KalmanBoxTracker(object):
         """
         return convert_x_to_bbox(self.kf.x)
 
-class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
-    def _track(self, dets : np.array) -> np.array:
         

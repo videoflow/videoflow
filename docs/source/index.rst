@@ -32,7 +32,7 @@ Free and open source
 .. toctree::
     :maxdepth: 2
     :hidden:
-    :caption: User documentation
+    :caption: Tutorials
 
     user-documentation/creating-a-flow-application
     user-documentation/writing-your-own-components

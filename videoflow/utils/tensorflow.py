@@ -44,13 +44,12 @@ class TensorflowModel:
     def run_on_input(self, *inp_l):
         '''
         Arguments:
-        - inp_l: a list of inputs to be passed to the model.  Must be
-        given in the same order that the list of `input_tensors_names` was given
-        to the constructor
+        ----------
+        - inp_l: a list of inputs to be passed to the model.  Must be given in the same order that the list of `input_tensors_names` was given to the constructor
 
         Returns:
-        - output_l: a list of outputs of the same length and in the same
-        order as the `output_tensors_names` was provided to the constructor.
+        --------
+        - output_l: a list of outputs of the same length and in the same order as the `output_tensors_names` was provided to the constructor.
         '''
         if self._session is None:
             self._load_model()

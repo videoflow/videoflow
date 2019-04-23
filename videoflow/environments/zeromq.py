@@ -23,7 +23,7 @@ def recv_zipped_pickle(socket: zmq.Socket, flags: int=0):
     object = zlib.decompress(message)
     return pickle.loads(object)
 
-def send_zipped_pickle(socket: zmq.Socket, obj: Any, flags: int=0, protocol: int=-1):
+def send_zipped_pickle(socket: zmq.Socket, obj: any, flags: int=0, protocol: int=-1):
     """
     Pickle an object, and zip the pickle before sending it
     """
