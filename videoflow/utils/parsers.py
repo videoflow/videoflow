@@ -1,4 +1,11 @@
-def read_label_map(path_to_labels: str):
+def parse_label_map(path_to_labels: str):
+    '''
+    Arguments:
+    - path_to_labels (str): path to pbtx file
+
+    Returns:
+    - dict of form { id(int) : label(str)}
+    '''
     with open(path_to_labels, "r") as f:
         text = f.read()
     entry_pairs = []
