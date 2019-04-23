@@ -1,4 +1,3 @@
-import re
 import numpy as np
 import tensorflow as tf
 
@@ -6,9 +5,6 @@ from ...core.node import ProcessorNode
 from ...utils.tensorflow import TensorflowModel
 
 class ObjectDetector(ProcessorNode):
-    def __init__(self, ):
-        pass
-    
     def _detect(self, im):
         raise NotImplemented('Subclass must implement it')
     
