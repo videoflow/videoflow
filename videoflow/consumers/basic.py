@@ -23,4 +23,5 @@ class CommandlineConsumer(ConsumerNode):
         Prints `item` to the command line, adding an end of line character after it.
         - Arguments:
             - item: It can be anything that can be printed with the ``print()`` function
+        '''
         print(item, sep = self._sep, end = self._end)
