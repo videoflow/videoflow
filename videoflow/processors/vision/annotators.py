@@ -23,7 +23,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
         - im: np.array
         - annotations: dict with keys: 'boxes', 'classes'
            - 'boxes': np.array of dimensions (nb_boxes, 5)
-           - 'classes': list with len(list)==nb_boxes
+           - 'classes': list with len(list) == nb_boxes
         '''
         boxes = annotations['boxes']
         classes = annotations['classes']
@@ -31,10 +31,10 @@ class BoundingBoxAnnotator(ImageAnnotator):
         for i in range(len(boxes)):
             bbox = boxes[i]
             xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+            y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
             confidence = bbox[4]
             label = "{}: {:.2f}%".format(classes[i], confidence * 100)
             cv2.rectangle(im, (xmin, ymin), (xmax, ymax), self._box_color, self._box_thickness)
-            y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
             cv2.putText(im, label, (xmin, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self._text_color, lineType = cv2.LINE_AA)
         return im
 

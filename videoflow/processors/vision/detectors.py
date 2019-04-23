@@ -1,3 +1,4 @@
+import re
 import numpy as np
 import tensorflow as tf
 
@@ -26,10 +27,25 @@ class TensorflowObjectDetector(ObjectDetector):
         self._num_classes = num_classes
         self._path_to_labels = path_to_labels
         self._min_score_threshold = min_score_threshold
-        self._category_index = self._read_label_map(path_to_labels)
+        self._index_category = self._read_label_map(path_to_labels)
 
     def _read_label_map(path_to_labels : str):
-        pass
+        with open(path_to_labels, "r") as f:
+            text = f.read()
+        a = text.find('item')
+        entry_pairs = []
+        while a != -1:
+            b = text.find('id:', a)
+            b1 = text.find('\n', b)
+            index = int(text[b + len("id:") : b1])
+            c = text.find('name:', a)
+            c3 = text.find('\n', c)
+            c1 = max(text.find("'", c), text.find('"', c))
+            c2 = max(text.find("'", c1), text.find('"', c1))
+            klass_name = text[c1 + 1 : c2]
+            entry_pairs.append((index, klass_name))
+            a = text.find('item', c)
+        return dict(entry_pairs)
         
     def _detect(self, im : np.array) -> np.array:
         boxes, scores, classes, num = self._tensorflow_model.run_on_input(im)
