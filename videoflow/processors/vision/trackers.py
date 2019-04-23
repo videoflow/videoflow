@@ -10,6 +10,11 @@ import math
 from ...core.node import ProcessorNode
 
 class BoundingBoxTracker(ProcessorNode):
+    '''
+    Tracks bounding boxes from one frame to another.
+    It keeps an internal state representation that allows
+    it to track across frames.
+    '''
     def _track(self, dets : np.array) -> np.array:
         raise NotImplemented("Subclass must implement _track method")
     
@@ -28,8 +33,8 @@ def eucl(bb_test, bb_gt):
 
 def iou(bb_test, bb_gt):
     """
-      Computes IUO between two bboxes in the form [x1, y1, x2, y2]
-      IOU is the intersection of areas.
+    Computes IUO between two bboxes in the form [x1, y1, x2, y2]
+    IOU is the intersection of areas.
     """
     xx1 = np.maximum(bb_test[0], bb_gt[0])
     yy1 = np.maximum(bb_test[1], bb_gt[1])
@@ -44,9 +49,9 @@ def iou(bb_test, bb_gt):
 
 def convert_bbox_to_z(bbox):
     """
-      Takes a bounding box in the form [x1, y1, x2, y2] and returns z in the form
-        [x, y, s, r] where x, y is the centre of the box and s is the scale/area and r is
-        the aspect ratio
+    Takes a bounding box in the form [x1, y1, x2, y2] and returns z in the form
+    [x, y, s, r] where x, y is the centre of the box and s is the scale/area and r is
+    the aspect ratio
     """
     w = bbox[2] - bbox[0]
     h = bbox[3] - bbox[1]
@@ -58,7 +63,7 @@ def convert_bbox_to_z(bbox):
 
 def convert_x_to_bbox(x, score=None):
     """
-      Takes a bounding box in the form [x, y, s, r] and returns it in the form
+    Takes a bounding box in the form [x, y, s, r] and returns it in the form
     [x1, y1, x2, x2] where x1, y1 is the top left and x2, y2 is the bottom right
     """
     w = np.sqrt(x[2]*x[3])
@@ -70,8 +75,8 @@ def convert_x_to_bbox(x, score=None):
 
 def associate_detections_to_trackers(detections, trackers, metric_function, iou_threshold = 0.1):
     """
-      Assigns detections to tracked object (both represented as bounding boxes)
-      Returns 3 lists of matches, unmatched_detections and unmatched_trackers
+    Assigns detections to tracked object (both represented as bounding boxes)
+    Returns 3 lists of matches, unmatched_detections and unmatched_trackers
     """
     distance_threshold = 500
 
@@ -111,7 +116,7 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
 
 class KalmanBoxTracker(object):
     """
-      This class represents the internel state of individual tracked objects observed as bbox.
+    This class represents the internel state of individual tracked objects observed as bbox.
     """
     count = 0
     def __init__(self,bbox):
@@ -168,5 +173,3 @@ class KalmanBoxTracker(object):
         Returns the current bounding box estimate.
         """
         return convert_x_to_bbox(self.kf.x)
-
-        
