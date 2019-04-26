@@ -153,6 +153,49 @@ class RealtimeQueueMessenger(Messenger):
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
         return inputs
 
+class BatchprocessingQueueExecutionEnvironment(ExecutionEnvironment):
+
+    def __init__(self):
+        self._procs = []
+        self._tasks = []
+        self._task_output_queues = {}
+        self._task_termination_notification_queues = {}
+        self._termination_event = None
+        super(BatchprocessingQueueExecutionEnvironment, self).__init__()
+
+    def _al_create_communication_channels(self, tasks):
+        #1. Create output queues
+        for task in tasks:
+            queue = Queue(10)
+            self._task_output_queues[task.id] = queue
+        
+        self._termination_event = Event()
+        
+    def _al_create_and_set_messengers(self, tasks):
+        for task in tasks:
+            task_queue = self._task_output_queues.get(task.id)
+            parent_task_queue = self._task_output_queues.get(task.parent_id, None)
+            computation_node = task.computation_node
+            messenger = BatchprocessingQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
+            task.set_messenger(messenger)
+    
+    def _al_create_and_start_processes(self, tasks):
+        #2. Create processes
+        for task in tasks:
+            proc = allocate_process_task(task)
+            self._procs.append(proc)
+        
+        #3. Start processes
+        for proc in self._procs:
+            proc.start()
+    
+    def signal_flow_termination(self):
+        self._termination_event.set()
+    
+    def join_task_processes(self):
+        for proc in self._procs:
+            proc.join()
+
 class RealtimeQueueExecutionEnvironment(ExecutionEnvironment):
 
     def __init__(self):
