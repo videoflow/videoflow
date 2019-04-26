@@ -14,6 +14,62 @@ def allocate_process_task(task):
     proc = Process(target = task_executor_fn, args = (task,))
     return proc
 
+class BatchprocessingQueueMessenger(Messenger):
+    '''
+    BatchprocessingQueueMessenger is a messenger that communicates
+    through queues of type ``multiprocessing.Queue``.  It is not real
+    time, which means that if a queue is full when publishing a 
+    message to it, it will block until the queue can process it.
+    '''
+    def __init__(self, computation_node : Node, task_queue : Queue, parent_task_queue : Queue,
+        termination_event : Event):
+        self._computation_node = computation_node
+        self._parent_task_queue = parent_task_queue
+        self._task_queue = task_queue
+        self._parent_nodes_ids = []
+        if self._computation_node.parents is not None:
+            self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
+        self._termination_event = termination_event
+        self._last_message_received = None
+    
+    def publish_message(self, message):
+        '''
+        Publishes output message to a place where the child task will receive it. \
+        Will drop the message is the receiving queue is full.
+        '''
+        if self._last_message_received is None:
+            msg = {
+                self._computation_node.id : message
+            }
+            self._task_queue.put(msg, block = True)
+        else:
+            self._last_message_received[self._computation_node.id] = message
+            self._task_queue.put(self._last_message_received, block = True)
+    
+    def check_for_termination(self) -> bool:
+        '''
+        Checks if someone has set a termination event.
+        '''
+        return self._termination_event.is_set()
+
+    def publish_termination_message(self, message):
+        '''
+        This method is identical to publish message
+        '''
+        return self.publish_message(message)
+
+    def passthrough_message(self):
+        self._task_queue.put(self._last_message_received, block = True)
+    
+    def passthrough_termination_message(self):
+        return self.passthrough_message()
+    
+    def receive_message(self):
+        input_message_dict = self._parent_task_queue.get()
+        self._last_message_received = input_message_dict
+        inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
+        return inputs
+    
 class RealtimeQueueMessenger(Messenger):
     '''
     RealtimeQueueMessenger is a messenquer that communicates through
@@ -54,6 +110,9 @@ class RealtimeQueueMessenger(Messenger):
                 pass
     
     def check_for_termination(self) -> bool:
+        '''
+        Checks if someone has set a termination event.
+        '''
         return self._termination_event.is_set()
 
     def publish_termination_message(self, message):
