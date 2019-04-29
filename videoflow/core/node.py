@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 from .processor import Processor
+import allocation
 
 class ContextNode:
     '''
@@ -94,6 +95,26 @@ class ConsumerNode(Leaf):
         '''
         raise NotImplemented('consume function needs to be implemented\
                             by subclass')
+
+class AllocatableConsumerNode(ConsumerNode):
+    def __init__(self, allocation : allocation.Allocation):
+        self._allocation = allocation
+        super(ConsumerNode, self).__init__()
+    
+    def _consume_gpu(self, item):
+        raise NotImplemented('_consume_gpu needs to be implemented by subclass')
+    
+    def _consume_cpu(self, item):
+        raise NotImplemented('_consume_cpu needs to be implemented by sublcass')
+
+    def consume(self, item):
+        if self._allocation.device_type == allocation.GPU:
+            self._consume_gpu(item)
+        elif self._allocation.device_type == allocation.CPU:
+            self._consume_cpu(item)
+        else:
+            
+            self._consume_cpu(item)
 
 class ProcessorNode(Node):
     def __init__(self):
