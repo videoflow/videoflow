@@ -8,7 +8,7 @@ from __future__ import absolute_import
 import numpy as np
 import tensorflow as tf
 
-from ...core.node import ProcessorNode
+from ...core.node import ProcessorNode, ContextNode
 from ...utils.tensorflow import TensorflowModel
 
 class ObjectDetector(ProcessorNode):
@@ -37,7 +37,7 @@ class ObjectDetector(ProcessorNode):
         '''
         return self._detect(im)
 
-class TensorflowObjectDetector(ObjectDetector):
+class TensorflowObjectDetector(ObjectDetector, ContextNode):
     '''
     Finds object detections by running a Tensorflow model
     on an image.
@@ -56,14 +56,29 @@ class TensorflowObjectDetector(ObjectDetector):
             - num_classes (int): number of classes that the detector can recognize
             - min_score_threshold (float): detection will filter out entries with score below threshold score
         '''
+        self._tensorflow_model = None
+        self._num_classes = num_classes
+        self._min_score_threshold = min_score_threshold
+    
+    def __enter__(self):
+        '''
+        Creates session with tensorflow model
+        '''
         self._tensorflow_model = TensorflowModel(
             path_to_pb_file,
             ["image_tensor:0"],
             ["detection_boxes:0", "detection_scores:0", "detection_classes:0", "num_detections:0"]
         )
-        self._num_classes = num_classes
-        self._min_score_threshold = min_score_threshold
-        
+    
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        '''
+        Closes tensorflow model session.
+        '''
+        self._tensorflow_model._close_session()
+        if exc_type is not None:
+            return False
+        return True
+
     def _detect(self, im : np.array) -> np.array:
         '''
         - Arguments:
@@ -79,6 +94,3 @@ class TensorflowObjectDetector(ObjectDetector):
         indexes = np.where(scores > self._min_score_threshold)[0]
         boxes, scores, classes = boxes[indexes], scores[indexes], classes[indexes]
         return np.concatenate((boxes, classes, scores), axis = 1)
-
-
-
