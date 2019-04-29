@@ -17,16 +17,16 @@ def set_verbosity(verbosity : str = "WARNING"):
     _default_logger.setLevel(verbosity_map[verbosity])
     
 def debug(message, *args, **kwargs):
-    _default_logger.debug(message, args, kwargs)
+    _default_logger.debug(message, *args, **kwargs)
 
 def error(message, *args, **kwargs):
-    _default_logger.error(message, args, kwargs)
+    _default_logger.error(message, *args, **kwargs)
 
 def warning(message, *args, **kwargs):
-    _default_logger.warning(message, args, kwargs)
+    _default_logger.warning(message, *args, **kwargs)
 
 def info(message, *args, **kwargs):
-    _default_logger.info(message, args, kwargs)
+    _default_logger.info(message, *args, **kwargs)
 
 def critical(message, *args, **kwargs):
-    _default_logger.critical(message, args, kwargs)
+    _default_logger.critical(message, *args, **kwargs)

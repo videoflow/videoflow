@@ -4,19 +4,19 @@ from __future__ import absolute_import
 
 import cv2
 
-from ..core.node import ConsumerNode, ContextNode
+from ..core.node import ConsumerNode
 
-class VideofileWriter(ConsumerNode, ContextNode):
+class VideofileWriter(ConsumerNode):
     '''
     Opens a video file writer object and writes subsequent
     frames received into the object.
     '''
     pass
 
-    def __enter__(self):
+    def open(self):
         pass
     
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def close():
         pass
 
     def consume(self, item):

@@ -5,19 +5,6 @@ from __future__ import absolute_import
 from .processor import Processor
 import allocation
 
-class ContextNode:
-    '''
-    Used to defined a computation node interface that allows the 
-    computation node to be used within a context.  It is useful
-    for computation nodes that need to open and close resources
-    when a tasks begins and ends.
-    '''
-    def __enter__(self):
-        raise NotImplemented('Subclass must implement __enter__')
-    
-    def __exit__(self, exc_type, exc_value, exc_traceback):
-        raise NotImplemented('Subclass must implement __exit__')
-
 class Node:
     '''
     Represents a computational node in the graph. It is also a callable object. \
@@ -35,6 +22,25 @@ class Node:
     
     def __hash__(self):
         return id(self)
+    
+    def open():
+        '''
+        This method is called by the task runner before doing any consuming,
+        processing or producing.  Should be used to open any resources
+        that will be needed during the life of the task, such as opening files,
+        tensorflow sessions, etc.
+        '''
+        pass
+    
+    def close():
+        '''
+        This method is called by the task running after finishing doing all
+        consuming, processing or producing because of and end signal receival.
+        Should be used to close any resources
+        that were opened by the open() method, such as files,
+        tensorflow sessions, etc.
+        '''
+        pass
     
     @property
     def id(self):
@@ -95,26 +101,6 @@ class ConsumerNode(Leaf):
         '''
         raise NotImplemented('consume function needs to be implemented\
                             by subclass')
-
-class AllocatableConsumerNode(ConsumerNode):
-    def __init__(self, allocation : allocation.Allocation):
-        self._allocation = allocation
-        super(ConsumerNode, self).__init__()
-    
-    def _consume_gpu(self, item):
-        raise NotImplemented('_consume_gpu needs to be implemented by subclass')
-    
-    def _consume_cpu(self, item):
-        raise NotImplemented('_consume_cpu needs to be implemented by sublcass')
-
-    def consume(self, item):
-        if self._allocation.device_type == allocation.GPU:
-            self._consume_gpu(item)
-        elif self._allocation.device_type == allocation.CPU:
-            self._consume_cpu(item)
-        else:
-            
-            self._consume_cpu(item)
 
 class ProcessorNode(Node):
     def __init__(self):

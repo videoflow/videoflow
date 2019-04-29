@@ -4,9 +4,9 @@ from __future__ import absolute_import
 
 import cv2
 
-from ..core.node import ProducerNode, ContextNode
+from ..core.node import ProducerNode
 
-class VideofileReader(ProducerNode, ContextNode):
+class VideofileReader(ProducerNode):
     '''
     Opens a video capture object and returns subsequent frames
     from the video each time ``next`` is called
@@ -20,21 +20,18 @@ class VideofileReader(ProducerNode, ContextNode):
         self._video = None
         super(VideofileReader, self).__init__()
     
-    def __enter__(self):
+    def open(self):
         '''
         Opens the video stream
         '''
         if self._video is None:
             self._video = cv2.VideoCapture(self._video_file)
 
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def close(self, exc_type, exc_value, exc_traceback):
         '''
         Releases the video stream object
         '''
         self._video.release()
-        if exc_type is not None:
-            return False
-        return True
 
     def next(self):
         '''

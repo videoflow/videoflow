@@ -8,7 +8,7 @@ from __future__ import absolute_import
 import numpy as np
 import tensorflow as tf
 
-from ...core.node import ProcessorNode, ContextNode
+from ...core.node import ProcessorNode
 from ...utils.tensorflow import TensorflowModel
 
 class ObjectDetector(ProcessorNode):
@@ -37,7 +37,7 @@ class ObjectDetector(ProcessorNode):
         '''
         return self._detect(im)
 
-class TensorflowObjectDetector(ObjectDetector, ContextNode):
+class TensorflowObjectDetector(ObjectDetector):
     '''
     Finds object detections by running a Tensorflow model
     on an image.
@@ -60,7 +60,7 @@ class TensorflowObjectDetector(ObjectDetector, ContextNode):
         self._num_classes = num_classes
         self._min_score_threshold = min_score_threshold
     
-    def __enter__(self):
+    def open(self):
         '''
         Creates session with tensorflow model
         '''
@@ -70,14 +70,11 @@ class TensorflowObjectDetector(ObjectDetector, ContextNode):
             ["detection_boxes:0", "detection_scores:0", "detection_classes:0", "num_detections:0"]
         )
     
-    def __exit__(self, exc_type, exc_value, exc_traceback):
+    def close(self):
         '''
         Closes tensorflow model session.
         '''
         self._tensorflow_model._close_session()
-        if exc_type is not None:
-            return False
-        return True
 
     def _detect(self, im : np.array) -> np.array:
         '''
