@@ -4,6 +4,13 @@ from __future__ import absolute_import
 
 from .processor import Processor
 
+class ContextNode:
+    def __enter__(self):
+        raise NotImplemented('Subclass must implement __enter__')
+    
+    def __exit__(self, exc_type, exc_value, exc_traceback):
+        raise NotImplemented('Subclass must implement __exit__')
+
 class Node:
     '''
     Represents a computational node in the graph. It is also a callable object. \
@@ -131,5 +138,8 @@ class ProducerNode(Node):
     def next(self) -> any:
         '''
         Returns next produced element.
+
+        Raises ``StopIteration`` after the last element has been produced
+        and a call to self.next happens.
         '''
         raise NotImplemented('Method needs to be implemented by subclass')
