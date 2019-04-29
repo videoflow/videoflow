@@ -5,6 +5,12 @@ from __future__ import absolute_import
 from .processor import Processor
 
 class ContextNode:
+    '''
+    Used to defined a computation node interface that allows the 
+    computation node to be used within a context.  It is useful
+    for computation nodes that need to open and close resources
+    when a tasks begins and ends.
+    '''
     def __enter__(self):
         raise NotImplemented('Subclass must implement __enter__')
     
