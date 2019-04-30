@@ -10,8 +10,9 @@ class Node:
     Represents a computational node in the graph. It is also a callable object. \
         It can be call with the list of parents on which it depends.
     '''
-    def __init__(self):
+    def __init__(self, allocation : allocation.Allocation = None):
         self._parents = None
+        self._allocation = allocation
         self._children = set()
     
     def __repr__(self):
@@ -84,13 +85,14 @@ class Leaf(Node):
     '''
     Node with no children.
     '''
-    def __init__(self):
+    def __init__(self, allocation : allocation.Allocation = None):
         self._children = None
+        self._allocation = allocation
         super(Leaf, self).__init__()
 
 class ConsumerNode(Leaf):
-    def __init__(self):
-        super(ConsumerNode, self).__init__()
+    def __init__(self, allocation : allocation.Allocation = None):
+        super(ConsumerNode, self).__init__(allocation = allocation)
     
     def consume(self, item):
         '''
@@ -103,8 +105,8 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self):
-        super(ProcessorNode, self).__init__()
+    def __init__(self, allocation : allocation.Allocation = None):
+        super(ProcessorNode, self).__init__(allocation = allocation)
 
     def process(self, inp : any) -> any:
         '''
@@ -121,17 +123,17 @@ class ProcessorNode(Node):
                             by subclass')
 
 class ExternalProcessorNode(ProcessorNode):
-    def __init__(self, processor : Processor):
+    def __init__(self, processor : Processor, allocation : allocation.Allocation = None):
         self._processor = processor
-        super(ExternalProcessorNode, self).__init__()
+        super(ExternalProcessorNode, self).__init__(allocation = allocation)
     
     def process(self, inp):
         return self._processor.process(inp)
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function):
+    def __init__(self, processor_function, allocation : allocation.Allocation = None):
         self._fn = processor_function
-        super(FunctionProcessorNode, self).__init__()
+        super(FunctionProcessorNode, self).__init__(allocation = allocation)
     
     def process(self, inp):
         return self._fn(inp)
@@ -145,8 +147,8 @@ class ProducerNode(Node):
         but generators cannot be pickled, and hence you cannot easily work with generators \
         in a multiprocessing setting.
     '''
-    def __init__(self):
-        super(ProducerNode, self).__init__()
+    def __init__(self, allocation : allocation.Allocation = None):
+        super(ProducerNode, self).__init__(allocation = allocation)
 
     def next(self) -> any:
         '''
