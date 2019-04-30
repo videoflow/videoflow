@@ -2,6 +2,8 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+from .task import Task
+
 GPU = 'gpu'
 CPU = 'cpu'
 
@@ -18,22 +20,21 @@ class Allocator:
     2. If not is implemented, then we default to cpu. If gpu is
     implemented, then figure out how to do it.
     '''
-    pass
+    def allocate_task(task : Task):
+        
 
 class Allocation(object):
     '''
     An allocation is defined by the following parameters:
     - machine
-    - device_type
-    - device_count
+    - nb_proc
 
-    The default parameters are `localhost` for machine, `cpu` for device_type,
-    and `1` for device_count
+    The default parameters are `localhost` for `machine`,
+    and `1` for `nb_proc`
     '''
-    def __init__(self, machine : str, device_type : str, device_count : int):
+    def __init__(self, machine : str, nb_proc : int):
         self._machine = machine,
-        self._device_type = device_type
-        self._device_count = device_count
+        self._nb_proc = nb_proc
     
     @property
     def machine(self):
@@ -44,15 +45,8 @@ class Allocation(object):
         return self._machine
     
     @property
-    def device_type(self):
+    def nb_proc(self):
         '''
-        Returns one of `gpu` or `cpu`.
+        Returns the number of processors to allocate.
         '''
-        return self._device_type
-    
-    @property
-    def device_count(self):
-        '''
-        Returns the number of processors to allocate
-        '''
-        return self._device_count
+        return self._nb_proc

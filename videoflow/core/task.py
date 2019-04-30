@@ -62,7 +62,9 @@ class Task:
             will happen.
         '''
         self._assert_messenger()
+        self._computation_node.open()
         self._run()
+        self._computation_node.close()
 
 class ProducerTask(Task):
     '''
@@ -75,7 +77,6 @@ class ProducerTask(Task):
         super(ProducerTask, self).__init__(producer, task_id)
     
     def _run(self):
-        self._producer.open()
         while True:
             try:
                 a = self._producer.next()
@@ -85,7 +86,6 @@ class ProducerTask(Task):
             if self._messenger.check_for_termination():
                 break
         self._messenger.publish_termination_message(STOP_SIGNAL)
-        self._producer.close()
 
 class ProcessorTask(Task):
     '''
@@ -100,7 +100,6 @@ class ProcessorTask(Task):
         super(ProcessorTask, self).__init__(processor, task_id, parent_task_id)    
         
     def _run(self):
-        self._processor.open()
         while True:
             inputs = self._messenger.receive_message()
             stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
@@ -111,7 +110,6 @@ class ProcessorTask(Task):
             #3. Pass inputs needed to processor
             output = self._processor.process(*inputs)
             self._messenger.publish_message(output)
-        self._processor.close() 
         
 class ConsumerTask(Task):
     '''
@@ -129,7 +127,6 @@ class ConsumerTask(Task):
         super(ConsumerTask, self).__init__(consumer, task_id, parent_task_id)
     
     def _run(self):
-        self._consumer.open()
         while True:
             inputs = self._messenger.receive_message()
             stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
@@ -145,5 +142,4 @@ class ConsumerTask(Task):
             if self._has_children_task:
                 self._messenger.passthrough_message()
             self._consumer.consume(*inputs)
-        self._consumer.close()
     
