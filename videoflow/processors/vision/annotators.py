@@ -16,7 +16,7 @@ class ImageAnnotator(ProcessorNode):
     the drawings representing the metadata.
     '''
     def _annotate(self, im : np.array, annotations : any) -> np.array:
-        raise NotImplemented('Subclass must implement this method')
+        raise NotImplementedError('Subclass must implement this method')
 
     def process(self, im : np.array, annotations : any) -> np.array:
         '''

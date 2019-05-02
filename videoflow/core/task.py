@@ -53,7 +53,7 @@ class Task:
         assert self._messenger is not None, 'Task cannot run if messenger has not been set.'
 
     def _run(self):
-        raise NotImplemented('Sublcass needs to implement _run')
+        raise NotImplementedError('Sublcass needs to implement _run')
 
     def run(self):
         '''

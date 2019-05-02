@@ -16,7 +16,7 @@ class BoundingBoxTracker(ProcessorNode):
     it to track across frames.
     '''
     def _track(self, dets : np.array) -> np.array:
-        raise NotImplemented("Subclass must implement _track method")
+        raise NotImplementedError("Subclass must implement _track method")
     
     def process(self, dets : np.array) -> np.array:
         return self._track(dets)

@@ -7,7 +7,7 @@ from .node import Node
 from multiprocessing import Process
 
 class Messenger:
-    '''
+    '''Not
     Utility class that tasks use to receive input and write output. \
     The ``videoflow.core.task.Task`` class knows what are the graph nodes from \
     where it receives computation outputs, and knows what are the graph nodes \
@@ -21,7 +21,7 @@ class Messenger:
         Depending on the kind of environment, this method might drop the message
         if the receiving container (usually a queue) is full.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
     
     def passthrough_message(self):
         '''
@@ -32,7 +32,7 @@ class Messenger:
         Depending on the kind of environment, this method might drop the message \
         if the receiving container (usually a queue) is full.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
     
     def passthrough_termination_message(self):
         '''
@@ -40,7 +40,7 @@ class Messenger:
         of environment, which means that sometimes this method might block until it can deliver \ 
         the message.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
 
     def publish_termination_message(self, message):
         '''
@@ -48,13 +48,13 @@ class Messenger:
         of environment, which means that sometimes this method might block until it can deliver \ 
         the message.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
 
     def check_for_termination(self) -> bool:
         '''
         Returns true if a flow termination signal has been received.  Used by ``videoflow.core.task.ProducerTask``.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
 
     def receive_message(self):
         '''
@@ -63,7 +63,7 @@ class Messenger:
         - Returns:
             - message: the message received from parent task in topological sort.
         '''
-        raise NotImplemented('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method')
 
 
 class ExecutionEnvironment:
@@ -74,13 +74,13 @@ class ExecutionEnvironment:
         pass
     
     def _al_create_communication_channels(self, tasks):
-        raise NotImplemented('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
     
     def _al_create_and_set_messengers(self, tasks):
-        raise NotImplemented('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
     
     def _al_create_and_start_processes(self, tasks):
-        raise NotImplemented('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
     
     def signal_flow_termination(self):
         '''
@@ -89,14 +89,14 @@ class ExecutionEnvironment:
         and pass it together with the flow until they reach every task in \
         the graph and everyone stops working.
         '''
-        raise NotImplemented('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
     
     def join_task_processes(self):
         '''
         Blocking method.  It is supposed to make the calling process sleep until all task \
         processes have finished processing.
         '''
-        raise NotImplemented('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
 
     def allocate_and_run_tasks(self, tasks):
         '''

@@ -102,7 +102,7 @@ class ConsumerNode(Leaf):
         - Arguments:
             - item: the item being received as input (or consumed).
         '''
-        raise NotImplemented('consume function needs to be implemented\
+        raise NotImplementedError('consume function needs to be implemented\
                             by subclass')
 
 class ProcessorNode(Node):
@@ -133,7 +133,7 @@ class ProcessorNode(Node):
         - Returns:
             - the output being consumed by child nodes.
         '''
-        raise NotImplemented('process function needs to be implemented\
+        raise NotImplementedError('process function needs to be implemented\
                             by subclass')
 
 class ExternalProcessorNode(ProcessorNode):
@@ -171,4 +171,4 @@ class ProducerNode(Node):
         Raises ``StopIteration`` after the last element has been produced
         and a call to self.next happens.
         '''
-        raise NotImplemented('Method needs to be implemented by subclass')
+        raise NotImplementedError('Method needs to be implemented by subclass')

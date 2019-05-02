@@ -24,7 +24,7 @@ class ObjectDetector(ProcessorNode):
             - dets: np.array of shape (nb_boxes, 6) \
               Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
-        raise NotImplemented('Subclass must implement it')
+        raise NotImplementedError('Subclass must implement it')
     
     def process(self, im : np.array) -> np.array:
         '''
