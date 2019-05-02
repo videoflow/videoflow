@@ -5,14 +5,15 @@ from __future__ import absolute_import
 from .processor import Processor
 import allocation
 
+devices = [allocation.CPU, allocation.GPU]
+
 class Node:
     '''
     Represents a computational node in the graph. It is also a callable object. \
         It can be call with the list of parents on which it depends.
     '''
-    def __init__(self, allocation : allocation.Allocation = None):
+    def __init__(self):
         self._parents = None
-        self._allocation = allocation
         self._children = set()
     
     def __repr__(self):
@@ -85,14 +86,13 @@ class Leaf(Node):
     '''
     Node with no children.
     '''
-    def __init__(self, allocation : allocation.Allocation = None):
+    def __init__(self):
         self._children = None
-        self._allocation = allocation
         super(Leaf, self).__init__()
 
 class ConsumerNode(Leaf):
-    def __init__(self, allocation : allocation.Allocation = None):
-        super(ConsumerNode, self).__init__(allocation = allocation)
+    def __init__(self):
+        super(ConsumerNode, self).__init__()
     
     def consume(self, item):
         '''
@@ -105,9 +105,22 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, allocation : allocation.Allocation = None):
-        super(ProcessorNode, self).__init__(allocation = allocation)
+    def __init__(self, nb_proc : int = 1, device = allocation.CPU):
+        self._nb_proc = nb_proc
+        if device not in devices:
+            raise ValueError('Device is not one of {}'.format(",".join(devices)))
+        self._device = device
+        super(ProcessorNode, self).__init__()
 
+    @property
+    def nb_proc(self):
+        return self._nb_proc
+    
+    def change_device(self, device):
+        if device not in devices:
+            raise ValueError('Device is not one of {}'.format(",".join(devices)))
+        self._device = device
+    
     def process(self, inp : any) -> any:
         '''
         Method definition that needs to be implemented by subclasses.
@@ -123,17 +136,17 @@ class ProcessorNode(Node):
                             by subclass')
 
 class ExternalProcessorNode(ProcessorNode):
-    def __init__(self, processor : Processor, allocation : allocation.Allocation = None):
+    def __init__(self, processor : Processor, nb_proc : int = 1, device = allocation.CPU):
         self._processor = processor
-        super(ExternalProcessorNode, self).__init__(allocation = allocation)
+        super(ExternalProcessorNode, self).__init__(nb_proc, device)
     
     def process(self, inp):
         return self._processor.process(inp)
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, allocation : allocation.Allocation = None):
+    def __init__(self, processor_function, nb_proc : int = 1, device = allocation.CPU):
         self._fn = processor_function
-        super(FunctionProcessorNode, self).__init__(allocation = allocation)
+        super(FunctionProcessorNode, self).__init__(nb_proc, device)
     
     def process(self, inp):
         return self._fn(inp)
@@ -147,8 +160,8 @@ class ProducerNode(Node):
         but generators cannot be pickled, and hence you cannot easily work with generators \
         in a multiprocessing setting.
     '''
-    def __init__(self, allocation : allocation.Allocation = None):
-        super(ProducerNode, self).__init__(allocation = allocation)
+    def __init__(self):
+        super(ProducerNode, self).__init__()
 
     def next(self) -> any:
         '''
