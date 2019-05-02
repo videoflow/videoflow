@@ -3,9 +3,10 @@ from __future__ import division
 from __future__ import absolute_import
 
 from .processor import Processor
-import allocation
 
-devices = [allocation.CPU, allocation.GPU]
+GPU = 'gpu'
+CPU = 'cpu'
+devices = [CPU, GPU]
 
 class Node:
     '''
@@ -105,7 +106,7 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, nb_proc : int = 1, device = allocation.CPU):
+    def __init__(self, nb_proc : int = 1, device = CPU):
         self._nb_proc = nb_proc
         if device not in devices:
             raise ValueError('Device is not one of {}'.format(",".join(devices)))
@@ -136,7 +137,7 @@ class ProcessorNode(Node):
                             by subclass')
 
 class ExternalProcessorNode(ProcessorNode):
-    def __init__(self, processor : Processor, nb_proc : int = 1, device = allocation.CPU):
+    def __init__(self, processor : Processor, nb_proc : int = 1, device = CPU):
         self._processor = processor
         super(ExternalProcessorNode, self).__init__(nb_proc, device)
     
@@ -144,7 +145,7 @@ class ExternalProcessorNode(ProcessorNode):
         return self._processor.process(inp)
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_proc : int = 1, device = allocation.CPU):
+    def __init__(self, processor_function, nb_proc : int = 1, device = CPU):
         self._fn = processor_function
         super(FunctionProcessorNode, self).__init__(nb_proc, device)
     

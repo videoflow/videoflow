@@ -17,4 +17,12 @@ videoflow.consumers.basic module
     :undoc-members:
     :show-inheritance:
 
+videoflow.consumers.video module
+--------------------------------
+
+.. automodule:: videoflow.consumers.video
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 
