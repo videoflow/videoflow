@@ -45,7 +45,6 @@ class VideofileReader(ProducerNode):
         if self._video.isOpened():
             success, frame = self._video.read()
             if not success:
-                self._video.release()
                 raise StopIteration()
             else:
                 return frame
