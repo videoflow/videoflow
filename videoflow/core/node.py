@@ -6,7 +6,7 @@ from .processor import Processor
 
 GPU = 'gpu'
 CPU = 'cpu'
-devices = [CPU, GPU]
+device_types = [CPU, GPU]
 
 class Node:
     '''
@@ -106,21 +106,31 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, nb_proc : int = 1, device = CPU):
-        self._nb_proc = nb_proc
-        if device not in devices:
-            raise ValueError('Device is not one of {}'.format(",".join(devices)))
-        self._device = device
+    def __init__(self, nb_tasks : int = 1, device_type = CPU):
+        self._nb_tasks = nb_tasks
+        if device_type not in device_types:
+            raise ValueError('Device is not one of {}'.format(",".join(device_types)))
+        self._device_type = device_type
         super(ProcessorNode, self).__init__()
 
     @property
-    def nb_proc(self):
-        return self._nb_proc
+    def nb_tasks(self):
+        '''
+        Returns the number of tasks to allocate to this processor
+        '''
+        return self._nb_tasks
     
-    def change_device(self, device):
-        if device not in devices:
-            raise ValueError('Device is not one of {}'.format(",".join(devices)))
-        self._device = device
+    @property
+    def device_type(self):
+        '''
+        Returns the preferred device type to use to run the processor's code
+        '''
+        return self._device_type
+    
+    def change_device(self, device_type):
+        if device_type not in device_types:
+            raise ValueError('Device is not one of {}'.format(",".join(device_types)))
+        self._device_type = device_type
     
     def process(self, inp : any) -> any:
         '''
