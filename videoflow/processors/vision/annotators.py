@@ -59,3 +59,36 @@ class BoundingBoxAnnotator(ImageAnnotator):
             cv2.putText(im, label, (xmin, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self._text_color, lineType = cv2.LINE_AA)
         return im
 
+class TrackerAnnotator(ImageAnnotator):
+    '''
+    Draws bounding boxes on images with track id.
+    '''
+    def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1):
+        self._box_color = box_color
+        self._text_color = text_color
+        self._box_thickness = box_thickness
+        self._index_label_d = parse_label_map(class_labels_path)
+        super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
+
+    def _annotate(self, im : np.array, boxes : np.array) -> np.array:
+        '''
+        - Arguments:
+            - im: np.array
+            - boxes: np.array of shape (nb_boxes, 5) \
+                second dimension entries are [xmin, ymin, xmax, ymax, track_id]
+        
+        - Returns:
+            - annotated_im: image with the visual annotations embedded in it.
+        '''
+
+        for i in range(len(boxes)):
+            bbox = boxes[i]
+            xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+            y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
+            track_id = bbox[4]
+            label = "{}".format(track_id)
+            cv2.rectangle(im, (xmin, ymin), (xmax, ymax), self._box_color, self._box_thickness)
+            cv2.putText(im, label, (xmin, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self._text_color, lineType = cv2.LINE_AA)
+        return im
+
+
