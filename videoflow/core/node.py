@@ -146,6 +146,15 @@ class ProcessorNode(Node):
         raise NotImplementedError('process function needs to be implemented\
                             by subclass')
 
+class OneTaskProcessorNode(ProcessorNode):
+    '''
+    Used for processes that keep internal state so they are easily parallelizable.
+    The main use of this class if for processes that can only run one
+    task, such as trackers and aggregators.
+    '''
+    def __init__():
+        super(OneTaskProcessorNode, self).__init__(nb_tasks = 1)
+
 class ExternalProcessorNode(ProcessorNode):
     def __init__(self, processor : Processor, nb_proc : int = 1, device = CPU):
         self._processor = processor

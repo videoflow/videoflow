@@ -7,18 +7,31 @@ from filterpy.kalman import KalmanFilter
 from sklearn.utils.linear_assignment_ import linear_assignment
 import math
 
-from ...core.node import ProcessorNode
+from ...core.node import OneTaskProcessorNode
 
-class BoundingBoxTracker(ProcessorNode):
+class BoundingBoxTracker(OneTaskProcessorNode):
     '''
     Tracks bounding boxes from one frame to another.
     It keeps an internal state representation that allows
     it to track across frames.
     '''
     def _track(self, dets : np.array) -> np.array:
+        '''
+        - Arguments: 
+            - dets: np.array of shape (nb_boxes, 6) \
+                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        '''
         raise NotImplementedError("Subclass must implement _track method")
     
     def process(self, dets : np.array) -> np.array:
+        '''
+        - Arguments: 
+            - dets: np.array of shape (nb_boxes, 6) \
+                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+        - Returns:
+            - tracks: np.array of shape (nb_boxes, 5) \
+                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, track_id])
+        '''
         return self._track(dets)
 
 def eucl(bb_test, bb_gt):
@@ -173,3 +186,90 @@ class KalmanBoxTracker(object):
         Returns the current bounding box estimate.
         """
         return convert_x_to_bbox(self.kf.x)
+
+
+def metric_factory(metric_type):
+    if metric_type == "iou":
+        return iou
+    elif metric_type == "euclidean":
+        return eucl
+    else:
+        raise ValueError('Invalid metric type')
+
+class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
+    
+    def __init__(self, max_age = 7, min_hits = 3, metric_function_type = 'iou'):
+        self.max_age = max_age
+        self.min_hits = min_hits
+        self.trackers = []
+        self.frame_count = 0
+        self.metric_function_type = metric_function_type
+        self.previous_fid = -1
+        self.metric_function = metric_factory(metric_function_type)
+
+    def _track(self, dets, fid = None):
+        """
+        Requires: this method must be called once for each frame even with empty detections.
+
+        - Arguments:
+            - dets: a numpy array of detections in the format [[x_min,y_min,x_max,y_max,score],[x_min,y_min,x_max,y_max,score],...]
+                
+        - Returns:
+            - A similar array, where the last column is the object or track id.  The number of objects returned may differ from the number of detections provided.
+        """
+        if fid is None:
+            fid = self.previous_fid + 1
+        
+        self.frame_count += 1
+        #get predicted locations from existing trackers.
+        trks = np.zeros((len(self.trackers), 5))
+        to_del = []
+        ret = []
+        for t, trk in enumerate(trks):
+            pos = self.trackers[t].predict()[0]
+            trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]
+            if(np.any(np.isnan(pos))):
+                to_del.append(t)
+        trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
+        for t in reversed(to_del):
+            self.trackers.pop(t)
+        
+        if self.metric_function_type == 'probability':
+            index = int(fid - self.previous_fid)
+            if index <= 9 and index > 0:
+                tm = self.tm_powers[index]
+            else: 
+                tm = self.tm_powers[9]
+            mf = probability_factory(tm, self.square_dims, self.frame_shape)
+            matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, mf, iou_threshold = 0.00001)    
+        else:
+            matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.metric_function)
+
+        #update matched trackers with assigned detections
+        for t, trk in enumerate(self.trackers):
+            if(t not in unmatched_trks):
+                d = matched[np.where(matched[:,1] == t)[0], 0] 
+                trk.update(dets[d,:][0])
+
+        #create and initialise new trackers for unmatched detections
+        for i in unmatched_dets:
+            trk = KalmanBoxTracker(dets[i,:]) 
+            self.trackers.append(trk)
+        i = len(self.trackers)
+        for trk in reversed(self.trackers):
+            d = trk.get_state()[0]
+            
+            if((trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits)):
+                ret.append(np.concatenate((d,[trk.id + 1], [dets_index[0, 0]])).reshape(1, -1)) # +1 as MOT benchmark requires positive
+            i -= 1
+        
+            #remove dead tracklet
+            if(trk.time_since_update > self.max_age):
+                self.trackers.pop(i)
+        if(len(ret) > 0):
+            return np.concatenate(ret)
+        
+
+        self.previous_fid = fid
+        return np.empty((0, 5))
+        

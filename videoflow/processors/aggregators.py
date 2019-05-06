@@ -2,9 +2,9 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-from ..core.node import ProcessorNode
+from ..core.node import OneTaskProcessorNode
 
-class SumAggregator(ProcessorNode):
+class SumAggregator(OneTaskProcessorNode):
     '''
     Keeps a running sum of all the inputs processed
     '''
@@ -23,7 +23,7 @@ class SumAggregator(ProcessorNode):
         self._sum += inp
         return self._sum
 
-class MultiplicationAggregator(ProcessorNode):
+class MultiplicationAggregator(OneTaskProcessorNode):
     '''
     Keeps a running multiplication of all the inputs processed
     '''
@@ -42,7 +42,7 @@ class MultiplicationAggregator(ProcessorNode):
         self._mult *= inp
         return self._mult  
 
-class CountAggregator(ProcessorNode):
+class CountAggregator(OneTaskProcessorNode):
     '''
     Keeps count of all the items processed
     '''
@@ -61,7 +61,7 @@ class CountAggregator(ProcessorNode):
         self._count += 1
         return self._count
 
-class MaxAggregator(ProcessorNode):
+class MaxAggregator(OneTaskProcessorNode):
     def __init__(self):
         self._max = float("-inf")
         super(MaxAggregator, self).__init__()
@@ -78,7 +78,7 @@ class MaxAggregator(ProcessorNode):
             self._max = inp
         return self._max
 
-class MinAggregator(ProcessorNode):
+class MinAggregator(OneTaskProcessorNode):
     def __init__(self):
         self._min = float("inf")
         super(MinAggregator, self).__init__()
