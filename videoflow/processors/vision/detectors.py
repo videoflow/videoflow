@@ -8,7 +8,7 @@ from __future__ import absolute_import
 import numpy as np
 import tensorflow as tf
 
-from ...core.node import ProcessorNode
+from ...core.node import ProcessorNode, CPU, GPU
 from ...utils.tensorflow import TensorflowModel
 
 class ObjectDetector(ProcessorNode):
@@ -44,7 +44,9 @@ class TensorflowObjectDetector(ObjectDetector):
     '''
     def __init__(self, path_to_pb_file,
                 num_classes, 
-                min_score_threshold = 0.5):
+                min_score_threshold = 0.5,
+                nb_tasks = 1,
+                device_type = CPU):
         '''
         Initializes the tensorflow model.  
 
@@ -59,15 +61,24 @@ class TensorflowObjectDetector(ObjectDetector):
         self._tensorflow_model = None
         self._num_classes = num_classes
         self._min_score_threshold = min_score_threshold
+        super(TensorflowObjectDetector, self).__init__(nb_tasks = nb_tasks, device_type = device_type)
     
     def open(self):
         '''
         Creates session with tensorflow model
         '''
+        if self.device_type() == CPU:
+            device_id = 'cpu'
+        else if self.device_type() == GPU:
+            device_id = 'gpu'
+        else:
+            device_id = 'cpu'
+        
         self._tensorflow_model = TensorflowModel(
             path_to_pb_file,
             ["image_tensor:0"],
-            ["detection_boxes:0", "detection_scores:0", "detection_classes:0", "num_detections:0"]
+            ["detection_boxes:0", "detection_scores:0", "detection_classes:0", "num_detections:0"],
+            device_id = device_id
         )
     
     def close(self):
