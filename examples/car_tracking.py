@@ -16,6 +16,7 @@ def main():
     detector = TensorflowObjectDetector()(reader)
     tracker = KalmanFilterBoundingBoxTracker()(detector)
     annotator = TrackerAnnotator()(reader, tracker)
+    writer = VideofileWriter(output_file, fps = 30)
     flow = videoflow.core.flow.Flow([reader], [writer], flow_type = videoflow.core.flow.REALTIME)
     flow.run()
     flow.join()
