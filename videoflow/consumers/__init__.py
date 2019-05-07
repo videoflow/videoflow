@@ -3,3 +3,4 @@ This package contains a collection of consumers that implement the ``videoflow.c
     interface
 '''
 from .basic import CommandlineConsumer
+from .video import VideofileWriter

@@ -1,3 +1,0 @@
-'''
-Car counting project here.
-'''
