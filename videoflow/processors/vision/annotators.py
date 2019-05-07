@@ -63,11 +63,10 @@ class TrackerAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images with track id.
     '''
-    def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1):
+    def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
-        self._index_label_d = parse_label_map(class_labels_path)
         super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
 
     def _annotate(self, im : np.array, boxes : np.array) -> np.array:
