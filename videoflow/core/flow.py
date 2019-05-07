@@ -4,7 +4,11 @@ from __future__ import absolute_import
 
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
-from ..environments.queues import RealtimeQueueExecutionEnvironment
+from ..environments.queues import RealtimeQueueExecutionEnvironment, BatchprocessingQueueExecutionEnvironment
+
+BATCH = 'batch'
+REALTIME = 'realtime'
+flow_types = [BATCH, REALTIME]
 
 def _has_cycle_util(v : Node, visited, rec):
     visited[v] = True
@@ -83,14 +87,20 @@ class Flow:
         - producers: a list of producer nodes of type ``videoflow.core.node.ProducerNode``.
         - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``.
     '''
-    def __init__(self, producers, consumers):
+    def __init__(self, producers, consumers, flow_type = REALTIME):
         if len(producers) != 1:
             raise AttributeError('Only support flows with 1 producer for now.')
         self._producers = producers
         self._consumers = consumers
         self._tasks = None
         self._producer_tasks = []
-        self._execution_environment = RealtimeQueueExecutionEnvironment()
+        
+        if flow_type == REALTIME:
+            self._execution_environment = RealtimeQueueExecutionEnvironment()
+        elif flow_type == BATCH:
+            self._execution_environment = BatchprocessingQueueExecutionEnvironment()
+        else:
+            raise ValueError('flow_type must be one of {}'.format(','.join(flow_types)))
 
     def run(self):
         '''
