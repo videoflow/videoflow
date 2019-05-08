@@ -69,7 +69,7 @@ class TensorflowObjectDetector(ObjectDetector):
         '''
         if self.device_type() == CPU:
             device_id = 'cpu'
-        else if self.device_type() == GPU:
+        elif self.device_type() == GPU:
             device_id = 'gpu'
         else:
             device_id = 'cpu'
