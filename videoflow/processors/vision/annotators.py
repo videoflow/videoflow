@@ -70,7 +70,7 @@ class TrackerAnnotator(ImageAnnotator):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
-        super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
+        super(TrackerAnnotator, self).__init__(nb_tasks = nb_tasks)
 
     def _annotate(self, im : np.array, boxes : np.array) -> np.array:
         '''

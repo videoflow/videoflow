@@ -152,7 +152,7 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__():
+    def __init__(self):
         super(OneTaskProcessorNode, self).__init__(nb_tasks = 1)
 
 class ExternalProcessorNode(ProcessorNode):
