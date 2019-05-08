@@ -15,6 +15,9 @@ class ImageAnnotator(ProcessorNode):
     metadata, and return as output a copy of the image with
     the drawings representing the metadata.
     '''
+    def __init__(self, nb_tasks = 1):
+        super(ImageAnnotator, self).__init__(nb_tasks = nb_tasks)
+    
     def _annotate(self, im : np.array, annotations : any) -> np.array:
         raise NotImplementedError('Subclass must implement this method')
 
