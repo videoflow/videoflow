@@ -206,6 +206,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
         self.metric_function_type = metric_function_type
         self.previous_fid = -1
         self.metric_function = metric_factory(metric_function_type)
+        super(KalmanFilterBoundingBoxTracker, self).__init__()
 
     def _track(self, dets, fid = None):
         """

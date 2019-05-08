@@ -11,8 +11,9 @@ from videoflow.producers import VideofileReader
 from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator
 
 class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
-    def __init__(class_indexes_to_keep):
+    def __init__(self, class_indexes_to_keep):
         self._class_indexes_to_keep = class_indexes_to_keep
+        super(BoundingBoxesFilter, self).__init__()
     
     def filter_boxes(self, dets):
         '''
@@ -33,8 +34,8 @@ def main():
     output_file = "cars_out.avi"
 
     reader = VideofileReader(input_file)
-    detector = TensorflowObjectDetector()(reader)
-    filter_ = BoundingBoxesFilter([4])(detector)
+    detector = TensorflowObjectDetector("/Users/dearj019/Downloads/ssd_mobilenet_v2_coco_2018_03_29/frozen_inference_graph.pb", num_classes = 90)(reader)
+    filter_ = BoundingBoxesFilter([2])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(reader, tracker)
     writer = VideofileWriter(output_file, fps = 30)
