@@ -5,6 +5,7 @@ from __future__ import absolute_import
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
 from ..environments.queues import RealtimeQueueExecutionEnvironment, BatchprocessingQueueExecutionEnvironment
+from ..core import logger
 
 BATCH = 'batch'
 REALTIME = 'realtime'
@@ -118,6 +119,7 @@ class Flow:
 
         #1. Build a topological sort of the graph.
         if has_cycle(self._producers):
+            logger.error('Cycle detected in computation graph. Exiting now...')
             raise ValueError('Cycle found in graph')
 
         tsort = topological_sort(self._producers)
@@ -161,7 +163,9 @@ class Flow:
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
+        logger.info('Started task allocation for {} tasks'.format(len(tasks)))
         self._execution_environment.allocate_and_run_tasks(tasks)
+        logger.info('Started running flow.')
     
     def join(self):
         '''
