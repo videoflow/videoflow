@@ -26,7 +26,7 @@ class Node:
     def __hash__(self):
         return id(self)
     
-    def open():
+    def open(self):
         '''
         This method is called by the task runner before doing any consuming,
         processing or producing.  Should be used to open any resources
@@ -35,7 +35,7 @@ class Node:
         '''
         pass
     
-    def close():
+    def close(self):
         '''
         This method is called by the task running after finishing doing all
         consuming, processing or producing because of and end signal receival.
@@ -74,6 +74,8 @@ class Node:
         '''
         Returns a list with the parent nodes
         '''
+        if self._parents is None:
+            return None
         return list(self._parents)
     
     @property

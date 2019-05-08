@@ -18,13 +18,14 @@ class TensorflowModel:
         self._pb_file_path = pb_file_path
         self._device_id = device_id
         self._output_tensors_names = output_tensors_names
+        self._input_tensors_names = input_tensors_names
         self._session = None
         self._model_graph = None
         self._output_tensors = None
         self._input_tensors = None
         self._load_model()
     
-    def _load_model():
+    def _load_model(self):
         '''
         Loads model from file and creates the model session to make it ready
         for inference.
@@ -40,7 +41,7 @@ class TensorflowModel:
         
         self._session = tf.Session(graph = self._model_graph)
         self._output_tensors = [self._model_graph.get_tensor_by_name(name) for name in self._output_tensors_names]
-        self._input_tensors = [self._model_graph.get_tensor_by_name(name) for name in self._input_tensors]
+        self._input_tensors = [self._model_graph.get_tensor_by_name(name) for name in self._input_tensors_names]
 
     def _close_session(self):
         '''
