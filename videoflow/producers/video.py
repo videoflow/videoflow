@@ -27,7 +27,7 @@ class VideofileReader(ProducerNode):
         if self._video is None:
             self._video = cv2.VideoCapture(self._video_file)
 
-    def close(self, exc_type, exc_value, exc_traceback):
+    def close(self):
         '''
         Releases the video stream object
         '''

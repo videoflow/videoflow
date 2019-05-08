@@ -1,7 +1,7 @@
 '''
 Car tracking sample here.
 '''
-import sys
+import argparse
 
 import numpy as np
 import videoflow
@@ -15,7 +15,7 @@ class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
         self._class_indexes_to_keep = class_indexes_to_keep
         super(BoundingBoxesFilter, self).__init__()
     
-    def filter_boxes(self, dets):
+    def process(self, dets):
         '''
         Keeps only the boxes with the class indexes
         specified in self._class_indexes_to_keep
@@ -24,22 +24,26 @@ class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
             - dets: np.array of shape (nb_boxes, 6) \
                 Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
-        f = np.array([dets[:, 4] == a for a in self._class_indexes_to_keeep])
+        f = np.array([dets[:, 4] == a for a in self._class_indexes_to_keep])
         f = np.any(f, axis = 0)
         filtered = dets[f]
         return filtered
 
 def main():
-    input_file = "cars_in.mp4"
-    output_file = "cars_out.avi"
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input_file', type = str, required = True)
+    parser.add_argument('--output_file', type = str, required = True)
+    parser.add_argument('--tensorflow_model_path', type = str, default = '/Users/dearj019/Downloads/ssd_mobilenet_v2_coco_2018_03_29/frozen_inference_graph.pb')
+    parser.add_argument('--tensorflow_model_classes', type = int, default = 90)
+    args = parser.parse_args()
 
-    reader = VideofileReader(input_file)
-    detector = TensorflowObjectDetector("/Users/dearj019/Downloads/ssd_mobilenet_v2_coco_2018_03_29/frozen_inference_graph.pb", num_classes = 90)(reader)
-    filter_ = BoundingBoxesFilter([2])(detector)
-    tracker = KalmanFilterBoundingBoxTracker()(filter_)
+    reader = VideofileReader(args.input_file)
+    detector = TensorflowObjectDetector(args.tensorflow_model_path, args.tensorflow_model_classes)(reader)
+    #filter_ = BoundingBoxesFilter([4])(detector)
+    tracker = KalmanFilterBoundingBoxTracker()(detector)
     annotator = TrackerAnnotator()(reader, tracker)
-    writer = VideofileWriter(output_file, fps = 30)
-    fl = flow.Flow([reader], [writer], flow_type = flow.REALTIME)
+    writer = VideofileWriter(args.output_file, fps = 30)(annotator)
+    fl = flow.Flow([reader], [writer], flow_type = flow.BATCH)
     fl.run()
     fl.join()
 

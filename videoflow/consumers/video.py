@@ -23,6 +23,7 @@ class VideofileWriter(ConsumerNode):
         if video_file[-4:] != '.avi':
             raise ValueError("Video extension must be .avi")
         self._video_file = video_file
+        self._fps = fps
         self._out = None
         super(VideofileWriter, self).__init__()
 
@@ -33,7 +34,7 @@ class VideofileWriter(ConsumerNode):
         '''
         pass
     
-    def close():
+    def close(self):
         '''
         Closes the video stream
         '''
@@ -53,7 +54,7 @@ class VideofileWriter(ConsumerNode):
         - Arguments:
             - item: np.array of dimension (height, width, 3)
         '''
-        if not self._out.isOpened():
+        if self._out is None:
             self._height = item.shape[0]
             self._width = item.shape[1]
             self._out = cv2.VideoWriter(self._video_file, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), self._fps, (self._width, self._height))

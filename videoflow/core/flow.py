@@ -122,6 +122,11 @@ class Flow:
             logger.error('Cycle detected in computation graph. Exiting now...')
             raise ValueError('Cycle found in graph')
 
+        #2. TODO: CHeck that all nodes in the graph are
+        # descendants of a producer
+        #3. TODO: Check that all producers' results are
+        #being read by a consumer.
+
         tsort = topological_sort(self._producers)
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children

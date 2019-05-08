@@ -99,7 +99,8 @@ class TensorflowObjectDetector(ObjectDetector):
         '''
         im_expanded = np.expand_dims(im, axis = 0)
         boxes, scores, classes, num = self._tensorflow_model.run_on_input(im_expanded)
-        boxes, scores, classes = np.squeeze(boxes), np.squeeze(scores), np.squeeze(classes)
+        boxes, scores, classes = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0)
         indexes = np.where(scores > self._min_score_threshold)[0]
         boxes, scores, classes = boxes[indexes], scores[indexes], classes[indexes]
+        scores, classes = np.expand_dims(scores, axis = 1), np.expand_dims(classes, axis = 1)
         return np.concatenate((boxes, classes, scores), axis = 1)

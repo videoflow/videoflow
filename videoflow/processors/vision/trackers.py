@@ -261,7 +261,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
             d = trk.get_state()[0]
             
             if((trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits)):
-                ret.append(np.concatenate((d,[trk.id + 1], [dets_index[0, 0]])).reshape(1, -1)) # +1 as MOT benchmark requires positive
+                ret.append(np.concatenate((d,[trk.id + 1])).reshape(1, -1)) # +1 as MOT benchmark requires positive
             i -= 1
         
             #remove dead tracklet
@@ -269,8 +269,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
                 self.trackers.pop(i)
         if(len(ret) > 0):
             return np.concatenate(ret)
-        
-
+    
         self.previous_fid = fid
         return np.empty((0, 5))
         
