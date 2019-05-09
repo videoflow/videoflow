@@ -14,6 +14,7 @@ def task_executor_fn(task : Task):
     task.run()
 
 def task_executor_gpu_fn(task : Task, gpu_id : int):
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
     os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
     task.run()
 
