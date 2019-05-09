@@ -110,7 +110,7 @@ class ProcessorTask(Task):
     def _run(self):
         while True:
             inputs = self._messenger.receive_message()
-            stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
+            stop_signal_received = any([a is STOP_SIGNAL for a in inputs])
             if stop_signal_received:
                 self._messenger.publish_termination_message(STOP_SIGNAL)
                 break
@@ -137,7 +137,7 @@ class ConsumerTask(Task):
     def _run(self):
         while True:
             inputs = self._messenger.receive_message()
-            stop_signal_received = any([a == STOP_SIGNAL for a in inputs])
+            stop_signal_received = any([a is STOP_SIGNAL for a in inputs])
             if stop_signal_received:
                 # No need to pass through stop signal to children.
                 # If children need to stop, they will receive it from
