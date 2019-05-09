@@ -82,7 +82,6 @@ class TrackerAnnotator(ImageAnnotator):
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
         '''
-
         for i in range(len(boxes)):
             bbox = boxes[i]
             xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])

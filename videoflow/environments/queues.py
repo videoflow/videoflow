@@ -2,16 +2,27 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import os
 from multiprocessing import Process, Queue, Event
-from ..core.node import Node
+
+from ..core.node import Node, GPU, CPU
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask
 from ..core.environment import ExecutionEnvironment, Messenger
+from ..utils.system import get_number_of_gpus
 
 def task_executor_fn(task : Task):
     task.run()
 
+def task_executor_gpu_fn(task : Task, gpu_id : int):
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    task.run()
+
 def allocate_process_task(task):
     proc = Process(target = task_executor_fn, args = (task,))
+    return proc
+
+def allocate_process_task_gpu(task, gpu_id):
+    proc = Process(target = task_executor_gpu_fn, args = (task, gpu_id))
     return proc
 
 class BatchprocessingQueueMessenger(Messenger):
@@ -153,16 +164,17 @@ class RealtimeQueueMessenger(Messenger):
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
         return inputs
 
-class BatchprocessingQueueExecutionEnvironment(ExecutionEnvironment):
-
+class QueueExecutionEnvironment(ExecutionEnvironment):
     def __init__(self):
         self._procs = []
         self._tasks = []
         self._task_output_queues = {}
         self._task_termination_notification_queues = {}
         self._termination_event = None
-        super(BatchprocessingQueueExecutionEnvironment, self).__init__()
-
+        self._nb_available_gpus = get_number_of_gpus()
+        self._next_gpu = -1
+        super(QueueExecutionEnvironment, self).__init__()
+    
     def _al_create_communication_channels(self, tasks):
         #1. Create output queues
         for task in tasks:
@@ -170,19 +182,25 @@ class BatchprocessingQueueExecutionEnvironment(ExecutionEnvironment):
             self._task_output_queues[task.id] = queue
         
         self._termination_event = Event()
-        
-    def _al_create_and_set_messengers(self, tasks):
-        for task in tasks:
-            task_queue = self._task_output_queues.get(task.id)
-            parent_task_queue = self._task_output_queues.get(task.parent_id, None)
-            computation_node = task.computation_node
-            messenger = BatchprocessingQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
-            task.set_messenger(messenger)
-    
+
     def _al_create_and_start_processes(self, tasks):
         #2. Create processes
         for task in tasks:
-            proc = allocate_process_task(task)
+            if isinstance(task, ProcessorTask):
+                if task.device_type == GPU:
+                    self._next_gpu += 1
+                    if self._next_gpu < self._nb_available_gpus:
+                        proc = allocate_process_task_gpu(task, self._next_gpu)
+                    else:
+                        try:
+                            task.change_device(CPU)
+                            proc = allocate_process_task(task)
+                        except:
+                            raise RuntimeError('No GPU available to allocate {}'.format(str(task._computation_node)))
+                else:
+                    proc = allocate_process_task(task)
+            else:
+                proc = allocate_process_task(task)
             self._procs.append(proc)
         
         #3. Start processes
@@ -196,24 +214,16 @@ class BatchprocessingQueueExecutionEnvironment(ExecutionEnvironment):
         for proc in self._procs:
             proc.join()
 
-class RealtimeQueueExecutionEnvironment(ExecutionEnvironment):
-
-    def __init__(self):
-        self._procs = []
-        self._tasks = []
-        self._task_output_queues = {}
-        self._task_termination_notification_queues = {}
-        self._termination_event = None
-        super(RealtimeQueueExecutionEnvironment, self).__init__()
-
-    def _al_create_communication_channels(self, tasks):
-        #1. Create output queues
+class BatchprocessingQueueExecutionEnvironment(QueueExecutionEnvironment):
+    def _al_create_and_set_messengers(self, tasks):
         for task in tasks:
-            queue = Queue(10)
-            self._task_output_queues[task.id] = queue
-        
-        self._termination_event = Event()
-        
+            task_queue = self._task_output_queues.get(task.id)
+            parent_task_queue = self._task_output_queues.get(task.parent_id, None)
+            computation_node = task.computation_node
+            messenger = BatchprocessingQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
+            task.set_messenger(messenger)    
+
+class RealtimeQueueExecutionEnvironment(QueueExecutionEnvironment):
     def _al_create_and_set_messengers(self, tasks):
         for task in tasks:
             task_queue = self._task_output_queues.get(task.id)
@@ -221,21 +231,3 @@ class RealtimeQueueExecutionEnvironment(ExecutionEnvironment):
             computation_node = task.computation_node
             messenger = RealtimeQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
             task.set_messenger(messenger)
-    
-    def _al_create_and_start_processes(self, tasks):
-        #2. Create processes
-        for task in tasks:
-            proc = allocate_process_task(task)
-            self._procs.append(proc)
-        
-        #3. Start processes
-        for proc in self._procs:
-            proc.start()
-    
-    def signal_flow_termination(self):
-        self._termination_event.set()
-    
-    def join_task_processes(self):
-        for proc in self._procs:
-            proc.join()
-        

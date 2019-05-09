@@ -97,8 +97,16 @@ class ProcessorTask(Task):
     '''
     def __init__(self, processor : ProcessorNode, task_id : int, parent_task_id : int):
         self._processor = processor
-        super(ProcessorTask, self).__init__(processor, task_id, parent_task_id)    
         
+        super(ProcessorTask, self).__init__(processor, task_id, parent_task_id)    
+    
+    @property
+    def device_type(self):
+        return self._processor.device_type
+    
+    def change_device(self, device_type : str):
+        self._processor.change_device(device_type)
+    
     def _run(self):
         while True:
             inputs = self._messenger.receive_message()

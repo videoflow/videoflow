@@ -8,7 +8,7 @@ import videoflow
 import videoflow.core.flow as flow
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
-from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator
+from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator, BoundingBoxAnnotator
 
 class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
     def __init__(self, class_indexes_to_keep):
@@ -34,14 +34,16 @@ def main():
     parser.add_argument('--input_file', type = str, required = True)
     parser.add_argument('--output_file', type = str, required = True)
     parser.add_argument('--tensorflow_model_path', type = str, default = '/Users/dearj019/Downloads/ssd_mobilenet_v2_coco_2018_03_29/frozen_inference_graph.pb')
+    parser.add_argument('--class_labels_path', type = str, default = '/Users/dearj019/Downloads/')
     parser.add_argument('--tensorflow_model_classes', type = int, default = 90)
     args = parser.parse_args()
 
     reader = VideofileReader(args.input_file)
     detector = TensorflowObjectDetector(args.tensorflow_model_path, args.tensorflow_model_classes)(reader)
-    #filter_ = BoundingBoxesFilter([4])(detector)
-    tracker = KalmanFilterBoundingBoxTracker()(detector)
+    filter_ = BoundingBoxesFilter([4])(detector)
+    tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(reader, tracker)
+    #annotator = BoundingBoxAnnotator()(reader, detector)
     writer = VideofileWriter(args.output_file, fps = 30)(annotator)
     fl = flow.Flow([reader], [writer], flow_type = flow.BATCH)
     fl.run()
