@@ -25,6 +25,14 @@ videoflow.utils.parsers module
     :undoc-members:
     :show-inheritance:
 
+videoflow.utils.system module
+-----------------------------
+
+.. automodule:: videoflow.utils.system
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 videoflow.utils.tensorflow module
 ---------------------------------
 

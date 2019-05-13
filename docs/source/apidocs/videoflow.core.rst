@@ -25,10 +25,10 @@ videoflow.core.flow module
     :undoc-members:
     :show-inheritance:
 
-videoflow.core.logging module
------------------------------
+videoflow.core.logger module
+----------------------------
 
-.. automodule:: videoflow.core.logging
+.. automodule:: videoflow.core.logger
     :members:
     :undoc-members:
     :show-inheritance:

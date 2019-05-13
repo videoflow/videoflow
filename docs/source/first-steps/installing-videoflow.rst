@@ -7,29 +7,21 @@ Also, Python 2 is not supported. You need to be running on Python 3.
 Then you can install Videoflow itself.  There are two ways 
 to install Videoflow:
 
-- Install Videoflow from PyPI (recommended):
+- Install Videoflow from PyPI (recommended)::
 
-``
-sudo pip3 install videoflow
-``
+    sudo pip3 install videoflow
 
-If you are using a virtualenv, you may want to avoid using sudo:
+If you are using a virtualenv, you may want to avoid using sudo::
 
-``
-pip3 install videoflow
-``
+    pip3 install videoflow
 
 - Alternatively: Install Videoflow from the Github source:
 
-First clone Videoflow using `git`:
+First clone Videoflow using `git`::
 
-``
-git clone https://github.com/jadielam/videoflow.git
-``
+    git clone https://github.com/jadielam/videoflow.git
 
-Then, `cd` to the Videoflow folder and run the install command:
+Then, `cd` to the Videoflow folder and run the install command::
 
-``
-cd videoflow
-sudo python setup.py install
-``
+    cd videoflow
+    sudo python setup.py install
