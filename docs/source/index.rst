@@ -25,8 +25,8 @@ Free and open source
     :hidden:
     :caption: First steps
 
+    first-steps/installing-videoflow
     first-steps/getting-started-with-videoflow
-    first-steps/what-is-a-flow
     first-steps/how-to-contribute
 
 .. toctree::
