@@ -30,12 +30,12 @@ A first Videoflow application
 -----------------------------
 
 The sample application that we are going to create does the following:
-It produces integers from 0 to 40 inclusive, at 0.1 second intervals.
+It produces integers from 0 to 40 inclusive, at 0.01 second intervals.
 It computes the aggregate sum of the produced integers and it prints
 the result to the command line.  You can find the complete example 
 `here <https://github.com/jadielam/videoflow/blob/master/examples/simple_example2.py>`_.
 
-**The first section of this example is the importing of the ``Flow`` class
+**The first section of this example is the importing of the Flow class
 and of the nodes that are going to be used**::
 
     from videoflow.core import Flow
