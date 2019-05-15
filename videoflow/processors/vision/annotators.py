@@ -50,8 +50,6 @@ class BoundingBoxAnnotator(ImageAnnotator):
             - im: np.array
             - boxes: np.array of shape (nb_boxes, 6) \
                 second dimension entries are [xmin, ymin, xmax, ymax, class_index, score]
-                The coordinates are normalized and need to be denormalized to the
-                size of the image.
         
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
