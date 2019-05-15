@@ -40,7 +40,7 @@ def main():
 
     reader = VideofileReader(args.input_file)
     detector = TensorflowObjectDetector(args.tensorflow_model_path, args.tensorflow_model_classes)(reader)
-    filter_ = BoundingBoxesFilter([4])(detector)
+    filter_ = BoundingBoxesFilter([3])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(reader, tracker)
     writer = VideofileWriter(args.output_file, fps = 30)(annotator)

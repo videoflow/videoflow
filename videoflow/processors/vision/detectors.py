@@ -22,7 +22,7 @@ class ObjectDetector(ProcessorNode):
         
         - Returns:
             - dets: np.array of shape (nb_boxes, 6) \
-              Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+              Specifically (nb_boxes, [ymin, xmin, ymax, xmax, class_index, score])
         '''
         raise NotImplementedError('Subclass must implement it')
     
@@ -33,7 +33,7 @@ class ObjectDetector(ProcessorNode):
         
         - Returns:
             - dets: np.array of shape (nb_boxes, 6) \
-                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+                Specifically (nb_boxes, [ymin, xmin, ymax, xmax, class_index, score])
                 The box coordinates are returned unnormalized (values NOT between 0 and 1, \
                 but using the original dimension of the image)
         '''
@@ -97,7 +97,7 @@ class TensorflowObjectDetector(ObjectDetector):
         
         - Returns:
             - dets: np.array of shape (nb_boxes, 6) \
-                Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+                Specifically (nb_boxes, [ymin, xmin, ymax, xmax, class_index, score])
         '''
         h, w, _ = im.shape
         im_expanded = np.expand_dims(im, axis = 0)
@@ -105,8 +105,8 @@ class TensorflowObjectDetector(ObjectDetector):
         boxes, scores, classes = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0)
         
         # boxes denormalization
-        boxes[:,[0, 2]] = boxes[:,[0, 2]] * w
-        boxes[:,[1, 3]] = boxes[:,[1, 3]] * h
+        boxes[:,[0, 2]] = boxes[:,[0, 2]] * h
+        boxes[:,[1, 3]] = boxes[:,[1, 3]] * w
 
         indexes = np.where(scores > self._min_score_threshold)[0]
         boxes, scores, classes = boxes[indexes], scores[indexes], classes[indexes]
