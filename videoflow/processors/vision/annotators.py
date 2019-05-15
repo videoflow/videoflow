@@ -82,7 +82,7 @@ class TrackerAnnotator(ImageAnnotator):
         - Arguments:
             - im: np.array
             - boxes: np.array of shape (nb_boxes, 5) \
-                second dimension entries are [xmin, ymin, xmax, ymax, track_id]
+                second dimension entries are [ymin, xmin, ymax, xmax, track_id]
         
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
