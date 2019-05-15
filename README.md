@@ -16,7 +16,7 @@ Alternatively, you can install by:
 1. Clone this repository
 2. Inside the repository folder, execute `pip3 install . --user`
 
-Python 2 is **NOT SUPPORTED**
+Python 2 is **NOT SUPPORTED**.  Requies Python 3.5+
 
 ## Simple sample videoflow application:
 
