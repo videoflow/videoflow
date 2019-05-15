@@ -11,13 +11,16 @@ class VideofileReader(ProducerNode):
     Opens a video capture object and returns subsequent frames
     from the video each time ``next`` is called
     '''
-    def __init__(self, video_file : str):
+    def __init__(self, video_file : str, nb_frames = -1):
         '''
         - Arguments:
             - video_file: path to video file
+            - nb_frames: number of frames to process. -1 means all of them
         '''
         self._video_file = video_file
         self._video = None
+        self._nb_frames = nb_frames
+        self._frame_count = 0
         super(VideofileReader, self).__init__()
     
     def open(self):
@@ -44,7 +47,8 @@ class VideofileReader(ProducerNode):
         
         if self._video.isOpened():
             success, frame = self._video.read()
-            if not success:
+            self._frame_count += 1
+            if not success or self._frame_count == self._nb_frames:
                 raise StopIteration()
             else:
                 return frame
