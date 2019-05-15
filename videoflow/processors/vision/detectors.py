@@ -34,6 +34,8 @@ class ObjectDetector(ProcessorNode):
         - Returns:
             - dets: np.array of shape (nb_boxes, 6) \
                 Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
+                The box coordinates are returned unnormalized (values NOT between 0 and 1, \
+                but using the original dimension of the image)
         '''
         return self._detect(im)
 
@@ -97,9 +99,15 @@ class TensorflowObjectDetector(ObjectDetector):
             - dets: np.array of shape (nb_boxes, 6) \
                 Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
         '''
+        h, w, _ = im.shape
         im_expanded = np.expand_dims(im, axis = 0)
         boxes, scores, classes, num = self._tensorflow_model.run_on_input(im_expanded)
         boxes, scores, classes = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0)
+        
+        # boxes denormalization
+        boxes[:,[0, 2] = boxes[:,[0, 2]] * w
+        boxes[:,[1, 3]] = boxes[:,[1, 3]] * h
+
         indexes = np.where(scores > self._min_score_threshold)[0]
         boxes, scores, classes = boxes[indexes], scores[indexes], classes[indexes]
         scores, classes = np.expand_dims(scores, axis = 1), np.expand_dims(classes, axis = 1)

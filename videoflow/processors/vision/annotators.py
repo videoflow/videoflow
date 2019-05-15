@@ -57,11 +57,9 @@ class BoundingBoxAnnotator(ImageAnnotator):
             - annotated_im: image with the visual annotations embedded in it.
         '''
 
-        h, w, _ = im.shape
-
         for i in range(len(boxes)):
             bbox = boxes[i]
-            xmin, ymin, xmax, ymax = int(w * bbox[0]), int(h * bbox[1]), int(w * bbox[2]), int(h * bbox[3])
+            xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
             y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
             klass_id = bbox[4]
             klass_text = self._index_label_d[klass_id]
@@ -91,11 +89,9 @@ class TrackerAnnotator(ImageAnnotator):
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
         '''
-        h, w, _ = im.shape
-
         for i in range(len(boxes)):
             bbox = boxes[i]
-            xmin, ymin, xmax, ymax = int(w * bbox[0]), int(h * bbox[1]), int(w * bbox[2]), int(h * bbox[3])
+            xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
             y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
             track_id = bbox[4]
             label = "{}".format(track_id)
