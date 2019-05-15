@@ -105,7 +105,7 @@ class TensorflowObjectDetector(ObjectDetector):
         boxes, scores, classes = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0)
         
         # boxes denormalization
-        boxes[:,[0, 2] = boxes[:,[0, 2]] * w
+        boxes[:,[0, 2]] = boxes[:,[0, 2]] * w
         boxes[:,[1, 3]] = boxes[:,[1, 3]] * h
 
         indexes = np.where(scores > self._min_score_threshold)[0]
