@@ -82,9 +82,9 @@ def convert_x_to_bbox(x, score=None):
     w = np.sqrt(x[2]*x[3])
     h = x[2]/w
     if(score==None):
-        return np.array([ x[1] - h/2., x[0] - w/2.,  x[1] + h/2., x[0] + w/2.,]).reshape((1, 4))
+        return np.array([ x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2.,]).reshape((1, 4))
     else:
-        return np.array([ x[1] - h/2.,x[0] - w/2.,  x[1] + h/2., x[0] + w/2., score]).reshape((1, 5))
+        return np.array([ x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2., score]).reshape((1, 5))
 
 def associate_detections_to_trackers(detections, trackers, metric_function, iou_threshold = 0.1):
     """
@@ -197,6 +197,14 @@ def metric_factory(metric_type):
         raise ValueError('Invalid metric type')
 
 class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
+    '''
+    - Arguments:
+        - max_age: If no bounding box is matched to an internal tracklet for ``max_age`` steps \
+            the internal tracklet is considered dead and is removed.
+        - min_hits: A tracklet is considered a valid track if it has a hit streak larger \
+            than or equal to ``min_hits``
+        - metric_function_type : str, one of ``iou`` or ``euclidean`` 
+    '''
     
     def __init__(self, max_age = 7, min_hits = 3, metric_function_type = 'iou'):
         self.max_age = max_age
