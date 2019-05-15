@@ -59,7 +59,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
             bbox = boxes[i]
             xmin, ymin, xmax, ymax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
             y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
-            klass_id = bbox[4]
+            klass_id = int(bbox[4])
             klass_text = self._index_label_d[klass_id]
             confidence = bbox[5]
             label = "{}: {:.2f}%".format(klass_text, confidence * 100)
