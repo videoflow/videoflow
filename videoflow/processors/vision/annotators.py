@@ -31,8 +31,13 @@ class ImageAnnotator(ProcessorNode):
 class BoundingBoxAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images.
+    - Arguments:
+        - class_labels_path: path to pbtxt file that defines the labels indexes
+        - box_color: color to use to draw the boxes
+        - box_thickness: thickness of boxes to draw
+        - text_color: color of text to draw
     '''
-    def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1):
+    def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness

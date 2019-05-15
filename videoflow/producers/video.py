@@ -42,7 +42,9 @@ class VideofileReader(ProducerNode):
             - frame: np.array of shape (h, w, 3)
         
         - Raises:
-            - StopIteration: after it finishes reading the videofile.
+            - StopIteration: after it finishes reading the videofile \
+                or when it reaches the specified number of frames to \
+                process.
         '''
         
         if self._video.isOpened():

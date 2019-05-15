@@ -8,7 +8,7 @@ import videoflow
 import videoflow.core.flow as flow
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
-from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator
+from videoflow.processors.vision import TensorflowObjectDetector, BoundingBoxAnnotator
 
 class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
     def __init__(self, class_indexes_to_keep):
@@ -38,11 +38,9 @@ def main():
     parser.add_argument('--tensorflow_model_classes', type = int, default = 90)
     args = parser.parse_args()
 
-    reader = VideofileReader(args.input_file)
+    reader = VideofileReader(args.input_file, 15)
     detector = TensorflowObjectDetector(args.tensorflow_model_path, args.tensorflow_model_classes)(reader)
-    filter_ = BoundingBoxesFilter([4])(detector)
-    tracker = KalmanFilterBoundingBoxTracker()(filter_)
-    annotator = TrackerAnnotator()(reader, tracker)
+    annotator = BoundingBoxAnnotator(args.class_labels_path)(detector)
     writer = VideofileWriter(args.output_file, fps = 30)(annotator)
     fl = flow.Flow([reader], [writer], flow_type = flow.BATCH)
     fl.run()
