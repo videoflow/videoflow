@@ -37,7 +37,7 @@ class BoundingBoxTracker(OneTaskProcessorNode):
 def eucl(bb_test, bb_gt):
     '''
     Computes the euclidean distance between two boxes
-    in the form  y1, x1, y2, x2]
+    in the form [x1, y1, x2, y2]
     '''
     center_1 = [(bb_test[0] + bb_test[2]) / 2.0, (bb_test[1] + bb_test[3]) / 2.0]
     center_2 = [(bb_gt[0] + bb_gt[2]) / 2.0, (bb_gt[1] + bb_gt[3]) / 2.0]
@@ -46,8 +46,8 @@ def eucl(bb_test, bb_gt):
 
 def iou(bb_test, bb_gt):
     """
-    Computes IUO between two bboxes in the form [ y1, x1, y2, x2]
-    IOU is the intersection of areas.
+      Computes IUO between two bboxes in the form [y1, x1, y2, x2]
+      IOU is the intersection of areas.
     """
     yy1 = np.maximum(bb_test[0], bb_gt[0])
     xx1 = np.maximum(bb_test[1], bb_gt[1])
@@ -60,14 +60,26 @@ def iou(bb_test, bb_gt):
               + (bb_gt[2] - bb_gt[0]) * (bb_gt[3] - bb_gt[1]) - wh)
     return(o)
 
+def metric_factory(metric_type, metric_params = {}):
+    if metric_type == "iou":
+        return iou
+    elif metric_type == "euclidean":
+        return eucl
+    elif metric_type == "probability":
+        return probability_factory(metric_params['transition_matrix'], 
+                                    metric_params['square_dims'],
+                                    metric_params['frame_shape'])
+    else:
+        raise ValueError("Cannot identify metric_type {}".format(metric_type))
+
 def convert_bbox_to_z(bbox):
     """
-    Takes a bounding box in the form [ y1, x1, y2, x2] and returns z in the form
-    [x, y, s, r] where x, y is the centre of the box and s is the scale/area and r is
-    the aspect ratio
+      Takes a bounding box in the form [x1, y1, x2, y2] and returns z in the form
+        [x, y, s, r] where x, y is the centre of the box and s is the scale/area and r is
+        the aspect ratio
     """
-    w = bbox[1] - bbox[3]
-    h = bbox[0] - bbox[2]
+    h = bbox[2] - bbox[0]
+    w = bbox[3] - bbox[1]
     x = bbox[1] + w/2.
     y = bbox[0] + h/2.
     s = w * h    #scale is just area
@@ -76,20 +88,20 @@ def convert_bbox_to_z(bbox):
 
 def convert_x_to_bbox(x, score=None):
     """
-    Takes a bounding box in the form [x, y, s, r] and returns it in the form
+      Takes a bounding box in the form [x, y, s, r] and returns it in the form
     [y1, x1, y2, x2] where x1, y1 is the top left and x2, y2 is the bottom right
     """
     w = np.sqrt(x[2]*x[3])
-    h = x[2]/w
+    h = x[2]/ w
     if(score==None):
-        return np.array([ x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2.,]).reshape((1, 4))
+        return np.array([x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2.]).reshape((1, 4))
     else:
-        return np.array([ x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2., score]).reshape((1, 5))
+        return np.array([x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2., score]).reshape((1, 5))
 
 def associate_detections_to_trackers(detections, trackers, metric_function, iou_threshold = 0.1):
     """
-    Assigns detections to tracked object (both represented as bounding boxes)
-    Returns 3 lists of matches, unmatched_detections and unmatched_trackers
+      Assigns detections to tracked object (both represented as bounding boxes)
+      Returns 3 lists of matches, unmatched_detections and unmatched_trackers
     """
     distance_threshold = 500
 
@@ -101,7 +113,7 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
         for t, trk in enumerate(trackers):
             iou_matrix[d, t] = metric_function(det, trk)
     matched_indices = linear_assignment(-iou_matrix)
-
+    
     unmatched_detections = []
     for d,det in enumerate(detections):
         if(d not in matched_indices[:,0]):
@@ -129,7 +141,7 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
 
 class KalmanBoxTracker(object):
     """
-    This class represents the internel state of individual tracked objects observed as bbox.
+      This class represents the internel state of individual tracked objects observed as bbox.
     """
     count = 0
     def __init__(self,bbox):
@@ -180,21 +192,13 @@ class KalmanBoxTracker(object):
         self.history.append(convert_x_to_bbox(self.kf.x))
         
         return self.history[-1]
-    
+
     def get_state(self):
         """
         Returns the current bounding box estimate.
         """
         return convert_x_to_bbox(self.kf.x)
 
-
-def metric_factory(metric_type):
-    if metric_type == "iou":
-        return iou
-    elif metric_type == "euclidean":
-        return eucl
-    else:
-        raise ValueError('Invalid metric type')
 
 class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
     '''
@@ -213,7 +217,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
         self.frame_count = 0
         self.metric_function_type = metric_function_type
         self.previous_fid = -1
-        self.metric_function = metric_factory(metric_function_type)
+        self.metric_function = metric_factory(metric_function_type, metric_params)
         super(KalmanFilterBoundingBoxTracker, self).__init__()
 
     def _track(self, dets, fid = None):
@@ -267,7 +271,6 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
         i = len(self.trackers)
         for trk in reversed(self.trackers):
             d = trk.get_state()[0]
-            
             if((trk.time_since_update < 1) and (trk.hit_streak >= self.min_hits or self.frame_count <= self.min_hits)):
                 ret.append(np.concatenate((d,[trk.id + 1])).reshape(1, -1)) # +1 as MOT benchmark requires positive
             i -= 1
@@ -277,7 +280,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
                 self.trackers.pop(i)
         if(len(ret) > 0):
             return np.concatenate(ret)
-    
+        
         self.previous_fid = fid
         return np.empty((0, 5))
         
