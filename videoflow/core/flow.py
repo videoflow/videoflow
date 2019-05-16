@@ -5,7 +5,9 @@ from __future__ import absolute_import
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
 from ..environments.queues import RealtimeQueueExecutionEnvironment, BatchprocessingQueueExecutionEnvironment
-from ..core import logger
+import logging
+
+logger = logging.getLogger(__package__)
 
 BATCH = 'batch'
 REALTIME = 'realtime'
@@ -118,6 +120,7 @@ class Flow:
         '''
 
         #1. Build a topological sort of the graph.
+        
         if has_cycle(self._producers):
             logger.error('Cycle detected in computation graph. Exiting now...')
             raise ValueError('Cycle found in graph')
@@ -178,10 +181,12 @@ class Flow:
         running naturally
         '''
         self._execution_environment.join_task_processes()
+        logger.info('Finished running flow.')
 
 
     def stop(self):
         '''
         Stops the flow.  Makes the execution environment send a flow termination signal.
         '''
+        logger.debug('Stop termination signal sent to flow.')
         self._execution_environment.signal_flow_termination()
