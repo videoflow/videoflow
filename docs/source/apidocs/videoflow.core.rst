@@ -25,14 +25,6 @@ videoflow.core.flow module
     :undoc-members:
     :show-inheritance:
 
-videoflow.core.logger module
-----------------------------
-
-.. automodule:: videoflow.core.logger
-    :members:
-    :undoc-members:
-    :show-inheritance:
-
 videoflow.core.node module
 --------------------------
 

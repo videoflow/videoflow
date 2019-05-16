@@ -9,6 +9,22 @@ videoflow.utils package
 Submodules
 ----------
 
+videoflow.utils.downloader module
+---------------------------------
+
+.. automodule:: videoflow.utils.downloader
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+videoflow.utils.generic\_utils module
+-------------------------------------
+
+.. automodule:: videoflow.utils.generic_utils
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 videoflow.utils.keras module
 ----------------------------
 

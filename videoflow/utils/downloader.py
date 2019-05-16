@@ -32,6 +32,7 @@ def get_file(fname,
     Files in tar, tar.gz, tar.bz, and zip formats can also be extracted.
     Passing a hash will verify the file after download. The command line
     programs `shasum` and `sha256sum` can compute the hash.
+    
     - Arguments:
         - fname: Name of the file. If an absolute path `/path/to/file.txt` is
             specified the file will be saved at that location.
@@ -56,6 +57,7 @@ def get_file(fname,
             None or an empty list will return no matches found.
         - cache_dir: Location to store cached files, when None it
             defaults to the [Keras Directory](/faq/#where-is-the-keras-configuration-filed-stored).
+    
     - Returns
         - Path to the downloaded file
     """
@@ -135,16 +137,18 @@ def get_file(fname,
 
 def _extract_archive(file_path, path='.', archive_format='auto'):
     """Extracts an archive if it matches tar, tar.gz, tar.bz, or zip formats.
-    # Arguments
-        file_path: path to the archive file
-        path: path to extract the archive file
-        archive_format: Archive format to try for extracting the file.
-            Options are 'auto', 'tar', 'zip', and None.
-            'tar' includes tar, tar.gz, and tar.bz files.
-            The default 'auto' is ['tar', 'zip'].
+    
+    - Arguments
+        - file_path: path to the archive file
+        - path: path to extract the archive file
+        - archive_format: Archive format to try for extracting the file.\
+            Options are 'auto', 'tar', 'zip', and None.\
+            'tar' includes tar, tar.gz, and tar.bz files.\
+            The default 'auto' is ['tar', 'zip'].\
             None or an empty list will return no matches found.
-    # Returns
-        True if a match was found and an archive extraction was completed,
+    
+    - Returns
+        - True if a match was found and an archive extraction was completed,\
         False otherwise.
     """
     if archive_format is None:
@@ -179,18 +183,21 @@ def _extract_archive(file_path, path='.', archive_format='auto'):
 
 def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
     """Calculates a file sha256 or md5 hash.
-    # Example
+    
+    - Example
     ```python
         >>> from keras.data_utils import _hash_file
         >>> _hash_file('/path/to/file.zip')
         'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     ```
-    # Arguments
-        fpath: path to the file being validated
-        algorithm: hash algorithm, one of 'auto', 'sha256', or 'md5'.
+    
+    - Arguments
+        - fpath: path to the file being validated
+        - algorithm: hash algorithm, one of 'auto', 'sha256', or 'md5'. \
             The default 'auto' detects the hash algorithm in use.
-        chunk_size: Bytes to read at a time, important for large files.
-    # Returns
+        - chunk_size: Bytes to read at a time, important for large files.
+    
+    - Returns
         The file hash
     """
     if (algorithm == 'sha256') or (algorithm == 'auto' and len(hash) == 64):
@@ -207,14 +214,16 @@ def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
 
 def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535):
     """Validates a file against a sha256 or md5 hash.
-    # Arguments
-        fpath: path to the file being validated
-        file_hash:  The expected hash string of the file.
+    
+    - Arguments:
+        - fpath: path to the file being validated
+        - file_hash:  The expected hash string of the file.\
             The sha256 and md5 hash algorithms are both supported.
-        algorithm: Hash algorithm, one of 'auto', 'sha256', or 'md5'.
+        - algorithm: Hash algorithm, one of 'auto', 'sha256', or 'md5'.\
             The default 'auto' detects the hash algorithm in use.
-        chunk_size: Bytes to read at a time, important for large files.
-    # Returns
+        - chunk_size: Bytes to read at a time, important for large files.
+    
+    - Returns:
         Whether the file is valid
     """
     if ((algorithm == 'sha256') or
