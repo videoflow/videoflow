@@ -33,8 +33,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--input_file', type = str, required = True)
     parser.add_argument('--output_file', type = str, required = True)
-    parser.add_argument('--tensorflow_model_path', type = str, default = '/Users/dearj019/Downloads/ssd_mobilenet_v2_coco_2018_03_29/frozen_inference_graph.pb')
-    parser.add_argument('--class_labels_path', type = str, default = '/Users/dearj019/Downloads/')
+    parser.add_argument('--tensorflow_model_path', type = str, default = '/Users/dearj019/Downloads/faster_rcnn_resnet101_coco_2018_01_28/frozen_inference_graph.pb')
+    parser.add_argument('--class_labels_path', type = str, default = 'mscoco_labels.pbtxt')
     parser.add_argument('--tensorflow_model_classes', type = int, default = 90)
     args = parser.parse_args()
 

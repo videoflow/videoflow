@@ -91,7 +91,7 @@ class TrackerAnnotator(ImageAnnotator):
             bbox = boxes[i]
             ymin, xmin, ymax, xmax = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
             y_label = ymin - 15 if ymin - 15 > 15 else min(ymin + 15, ymax)
-            track_id = bbox[4]
+            track_id = int(bbox[4])
             label = "{}".format(track_id)
             cv2.rectangle(im, (xmin, ymin), (xmax, ymax), self._box_color, self._box_thickness)
             cv2.putText(im, label, (xmin, y_label), cv2.FONT_HERSHEY_SIMPLEX, 0.5, self._text_color, lineType = cv2.LINE_AA)

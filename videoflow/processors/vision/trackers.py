@@ -60,15 +60,11 @@ def iou(bb_test, bb_gt):
               + (bb_gt[2] - bb_gt[0]) * (bb_gt[3] - bb_gt[1]) - wh)
     return(o)
 
-def metric_factory(metric_type, metric_params = {}):
+def metric_factory(metric_type):
     if metric_type == "iou":
         return iou
     elif metric_type == "euclidean":
         return eucl
-    elif metric_type == "probability":
-        return probability_factory(metric_params['transition_matrix'], 
-                                    metric_params['square_dims'],
-                                    metric_params['frame_shape'])
     else:
         raise ValueError("Cannot identify metric_type {}".format(metric_type))
 
@@ -217,7 +213,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
         self.frame_count = 0
         self.metric_function_type = metric_function_type
         self.previous_fid = -1
-        self.metric_function = metric_factory(metric_function_type, metric_params)
+        self.metric_function = metric_factory(metric_function_type)
         super(KalmanFilterBoundingBoxTracker, self).__init__()
 
     def _track(self, dets, fid = None):
