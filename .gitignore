@@ -7,6 +7,13 @@ __pycache__/
 *.mp4
 *.avi
 
+# Folder with models downloaded
+models/
+
+# Folder with files to include in different
+# release versions
+releases/
+
 # C extensions
 *.so
 

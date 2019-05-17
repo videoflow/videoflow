@@ -10,6 +10,7 @@ import tensorflow as tf
 
 from ...core.node import ProcessorNode, CPU, GPU
 from ...utils.tensorflow import TensorflowModel
+from ...utils.downloader import get_file
 
 class ObjectDetector(ProcessorNode):
     '''
@@ -41,28 +42,56 @@ class ObjectDetector(ProcessorNode):
 
 class TensorflowObjectDetector(ObjectDetector):
     '''
-    Finds object detections by running a Tensorflow model
-    on an image.
+    Finds object detections by running a Tensorflow model on an image.
+
+    Initializes the tensorflow model.  If ``path_to_pb_file`` is provided, it uses a local
+    model. If not, it uses ``architecture`` and ``dataset`` parameters to download tensorflow
+    pretrained models.  
+    
+    .. csv-table:: Models supported
+        
+        "Model","Speed (ms)","COCO mAP"
+        "ssd-mobilenetv2_coco","30","21"
+        "ssd-resnet50-fpn_coco","76","35"
+        "fasterrcnn-resnet101_coco","106","32"
+
+    - Arguments:
+        - num_classes (int): number of classes that the detector can recognize.
+        - path_to_pb_file (str): Path where model pb file is \
+            It expects the model to have the following input tensors: ``image_tensor:0``, and \
+            the following output tensors: ``detection_boxes:0``, ``detection_scores:0``, \
+            ``detection_classes:0``, and `num_detections:0`.  If no path is provided, then \
+            it will download the model from the internet using the values provided for ``architecture``\
+            and ``dataset``.
+        - architecture (str): One of `fasterrcnn-resnet101` or `ssd-mobilenetv2`
+        - dataset (str): For now, only `coco` is accepted.
+        - min_score_threshold (float): detection will filter out entries with score below threshold score
     '''
-    def __init__(self, path_to_pb_file,
-                num_classes, 
+    def __init__(self, 
+                num_classes = 90,
+                path_to_pb_file = None,
+                architecture = 'fasterrcnn-resnet101',
+                dataset = 'coco',
                 min_score_threshold = 0.5,
                 nb_tasks = 1,
                 device_type = CPU):
-        '''
-        Initializes the tensorflow model.  
-
-        - Arguments:
-            - path_to_pb_file (str): Path where model pb file is \
-            It expects the model to have the following input tensors: `image_tensor:0`, and \
-            the following output tensors: `detection_boxes:0`, `detection_scores:0`, \
-            `detection_classes:0`, and `num_detections:0`
-            - num_classes (int): number of classes that the detector can recognize
-            - min_score_threshold (float): detection will filter out entries with score below threshold score
-        '''
         self._tensorflow_model = None
         self._num_classes = num_classes
         self._path_to_pb_file = path_to_pb_file
+        
+        if path_to_pb_file is None and (architecture is None or dataset is None):
+            raise ValueError('If path_to_pb_file is None, then architecture and dataset cannot be None')
+
+        supported_architectures = ['fasterrcnn-resnet101', 'ssd-mobilenetv2']
+        if architecture not in supported_architectures:
+            raise ValueError('architecture is not one of {}'.format(', '.join(supported_architectures)))
+        self._architecture = architecture
+
+        supported_datasets = ['coco']
+        if dataset not in supported_datasets:
+            raise ValueError('dataset is not one of {}'.format(', '.join(supported_datasets)))
+        self._dataset = dataset
+
         self._min_score_threshold = min_score_threshold
         super(TensorflowObjectDetector, self).__init__(nb_tasks = nb_tasks, device_type = device_type)
     
@@ -77,6 +106,11 @@ class TensorflowObjectDetector(ObjectDetector):
         else:
             device_id = 'cpu'
         
+        if self._path_to_pb_file is None:
+            origin = 'https://github.com/jadielam/videoflow/releases/download/detection'
+            remote_file_name = f'{self._architecture}_{self._dataset}.pb'
+            self._path_to_pb_file = get_file(remote_file_name, origin)
+
         self._tensorflow_model = TensorflowModel(
             self._path_to_pb_file,
             ["image_tensor:0"],

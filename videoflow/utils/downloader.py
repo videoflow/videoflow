@@ -20,7 +20,7 @@ def get_file(fname,
              untar=False,
              md5_hash=None,
              file_hash=None,
-             cache_subdir='datasets',
+             cache_subdir='models',
              hash_algorithm='auto',
              extract=False,
              archive_format='auto',
@@ -30,9 +30,9 @@ def get_file(fname,
 
     Downloads a file from a URL if it not already in the cache.
     By default the file at the url `origin` is downloaded to the
-    cache_dir `~/.keras`, placed in the cache_subdir `datasets`,
+    cache_dir `~/.videoflow`, placed in the cache_subdir `models`,
     and given the filename `fname`. The final location of a file
-    `example.txt` would therefore be `~/.keras/datasets/example.txt`.
+    `example.txt` would therefore be `~/.videoflow/models/example.txt`.
     Files in tar, tar.gz, tar.bz, and zip formats can also be extracted.
     Passing a hash will verify the file after download. The command line
     programs `shasum` and `sha256sum` can compute the hash.
@@ -75,7 +75,7 @@ def get_file(fname,
         hash_algorithm = 'md5'
     datadir_base = os.path.expanduser(cache_dir)
     if not os.access(datadir_base, os.W_OK):
-        datadir_base = os.path.join('/tmp', '.keras')
+        datadir_base = os.path.join('/tmp', '.videoflow')
     datadir = os.path.join(datadir_base, cache_subdir)
     if not os.path.exists(datadir):
         os.makedirs(datadir)

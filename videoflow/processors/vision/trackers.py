@@ -83,10 +83,10 @@ def convert_bbox_to_z(bbox):
     return np.array([x, y, s, r]).reshape((4, 1))
 
 def convert_x_to_bbox(x, score=None):
-    """
-      Takes a bounding box in the form [x, y, s, r] and returns it in the form
+    '''
+    Takes a bounding box in the form [x, y, s, r] and returns it in the form
     [y1, x1, y2, x2] where x1, y1 is the top left and x2, y2 is the bottom right
-    """
+    '''
     w = np.sqrt(x[2]*x[3])
     h = x[2]/ w
     if(score==None):
