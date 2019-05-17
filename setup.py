@@ -35,7 +35,6 @@ setup(
     classifiers = [
         'Intended Audience :: Developers',
         'Intended Audience :: Education',
-        'Intended Audience :: Application Development',
         'License :: OSI Approved :: MIT License',
         'Programming Language :: Python :: 3.6',
         'Topic :: Software Development :: Libraries',
