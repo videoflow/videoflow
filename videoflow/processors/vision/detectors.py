@@ -12,6 +12,8 @@ from ...core.node import ProcessorNode, CPU, GPU
 from ...utils.tensorflow import TensorflowModel
 from ...utils.downloader import get_file
 
+BASE_URL_DETECTION = 'https://github.com/jadielam/videoflow/releases/download/detection/'
+
 class ObjectDetector(ProcessorNode):
     '''
     Abstract class that defines the interface of object detectors
@@ -70,7 +72,7 @@ class TensorflowObjectDetector(ObjectDetector):
     def __init__(self, 
                 num_classes = 90,
                 path_to_pb_file = None,
-                architecture = 'fasterrcnn-resnet101',
+                architecture = 'ssd-resnet50-fpn',
                 dataset = 'coco',
                 min_score_threshold = 0.5,
                 nb_tasks = 1,
@@ -107,9 +109,9 @@ class TensorflowObjectDetector(ObjectDetector):
             device_id = 'cpu'
         
         if self._path_to_pb_file is None:
-            origin = 'https://github.com/jadielam/videoflow/releases/download/detection'
-            remote_file_name = f'{self._architecture}_{self._dataset}.pb'
-            self._path_to_pb_file = get_file(remote_file_name, origin)
+            model_file_name = f'{self._architecture}_{self._dataset}.pb'
+            remote_url = BASE_URL_DETECTION + model_file_name
+            self._path_to_pb_file = get_file(model_file_name, remote_url)
 
         self._tensorflow_model = TensorflowModel(
             self._path_to_pb_file,

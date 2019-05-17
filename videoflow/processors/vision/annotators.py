@@ -9,6 +9,8 @@ from ...core.node import ProcessorNode
 from ...utils.parsers import parse_label_map
 from ...utils.downloader import get_file
 
+from .detectors import BASE_URL_DETECTION
+
 class ImageAnnotator(ProcessorNode):
     '''
     Interface for all image annotators. 
@@ -50,9 +52,9 @@ class BoundingBoxAnnotator(ImageAnnotator):
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
 
         if class_labels_path is None:
-            origin = 'https://github.com/jadielam/videoflow/releases/download/detection'
-            remote_file_name = f'labels_{dataset}.pbtxt'
-            class_labels_path = get_file(remote_file_name, origin)
+            labels_file_name = f'labels_{dataset}.pbtxt'
+            remote_url = BASE_URL_DETECTION + labels_file_name
+            class_labels_path = get_file(labels_file_name, remote_url)
 
         self._index_label_d = parse_label_map(class_labels_path)
         super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
