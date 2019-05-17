@@ -188,5 +188,5 @@ class Flow:
         '''
         Stops the flow.  Makes the execution environment send a flow termination signal.
         '''
-        logger.debug('Stop termination signal sent to flow.')
+        logger.info('Stop termination signal sent to flow.')
         self._execution_environment.signal_flow_termination()
