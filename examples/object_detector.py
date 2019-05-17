@@ -15,7 +15,7 @@ from videoflow.utils.downloader import get_file
 def main():
     input_file = get_file(
         "intersection.mp4", 
-        "https://github.com/jadielam/videoflow/releases/download/samples")
+        "https://github.com/jadielam/videoflow/releases/download/examples")
     output_file = "output.avi"
     reader = VideofileReader(input_file, 15)
     detector = TensorflowObjectDetector()(reader)
