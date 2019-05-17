@@ -23,15 +23,22 @@ setup(
     author = "Jadiel de Armas",
     author_email = "jadielam@gmail.com",
     license = "MIT",
-    classifiers = [
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-    ],
     packages = setuptools.find_packages(),
     include_package_data = True,
     install_requires = [
-        "opencv-python",
-        "filterpy",
-        "scikit-learn"
+        'numpy>=1.9.1',
+        'opencv-python',
+        'filterpy',
+        'six>=1.9.0',
+        'scikit-learn'
+    ],
+    classifiers = [
+        'Intended Audience :: Developers',
+        'Intended Audience :: Education',
+        'Intended Audience :: Application Development',
+        'License :: OSI Approved :: MIT License',
+        'Programming Language :: Python :: 3.6',
+        'Topic :: Software Development :: Libraries',
+        'Topic :: Software Development :: Libraries :: Python Modules'
     ]
 )
