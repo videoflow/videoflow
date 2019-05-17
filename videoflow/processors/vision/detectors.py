@@ -84,7 +84,7 @@ class TensorflowObjectDetector(ObjectDetector):
         if path_to_pb_file is None and (architecture is None or dataset is None):
             raise ValueError('If path_to_pb_file is None, then architecture and dataset cannot be None')
 
-        supported_architectures = ['fasterrcnn-resnet101', 'ssd-mobilenetv2']
+        supported_architectures = ['fasterrcnn-resnet101', 'ssd-mobilenetv2', 'ssd-resnet50-fpn']
         if architecture not in supported_architectures:
             raise ValueError('architecture is not one of {}'.format(', '.join(supported_architectures)))
         self._architecture = architecture
