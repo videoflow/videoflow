@@ -1,3 +1,7 @@
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+
 import hashlib
 import os
 import shutil
@@ -186,7 +190,7 @@ def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
     
     - Example
     ```python
-        >>> from keras.data_utils import _hash_file
+        >>> from videoflow.utils.generic_utils import _hash_file
         >>> _hash_file('/path/to/file.zip')
         'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     ```
