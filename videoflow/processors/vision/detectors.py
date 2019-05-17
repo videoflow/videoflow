@@ -76,7 +76,7 @@ class TensorflowObjectDetector(ObjectDetector):
                 dataset = 'coco',
                 min_score_threshold = 0.5,
                 nb_tasks = 1,
-                device_type = CPU):
+                device_type = GPU):
         self._tensorflow_model = None
         self._num_classes = num_classes
         self._path_to_pb_file = path_to_pb_file
