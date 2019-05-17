@@ -87,9 +87,9 @@ def convert_x_to_bbox(x, score=None):
     Takes a bounding box in the form [x, y, s, r] and returns it in the form
     [y1, x1, y2, x2] where x1, y1 is the top left and x2, y2 is the bottom right
     '''
-    w = np.sqrt(x[2]*x[3])
-    h = x[2]/ w
-    if(score==None):
+    w = np.sqrt(x[2] * x[3])
+    h = x[2] / w
+    if score == None:
         return np.array([x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2.]).reshape((1, 4))
     else:
         return np.array([x[1] - h/2., x[0] - w/2., x[1] + h/2., x[0] + w/2., score]).reshape((1, 5))
@@ -101,7 +101,7 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
     """
     distance_threshold = 500
 
-    if(len(trackers) == 0):
+    if len(trackers) == 0:
         return np.empty((0, 2), dtype = int), np.arange(len(detections)), np.empty((0, 5), dtype = int)
     iou_matrix = np.zeros((len(detections), len(trackers)), dtype=np.float32)
 
@@ -122,13 +122,13 @@ def associate_detections_to_trackers(detections, trackers, metric_function, iou_
     #filter out matched with low IOU
     matches = []
     for m in matched_indices:
-        if(iou_matrix[m[0], m[1]] < iou_threshold):
+        if iou_matrix[m[0], m[1]] < iou_threshold:
         #if(iou_matrix[m[0], m[1]] > distance_threshold):
             unmatched_detections.append(m[0])
             unmatched_trackers.append(m[1])
         else:
             matches.append(m.reshape(1, 2))
-    if(len(matches)==0):
+    if len(matches) == 0:
         matches = np.empty((0, 2), dtype = int)
     else:
         matches = np.concatenate(matches, axis = 0)

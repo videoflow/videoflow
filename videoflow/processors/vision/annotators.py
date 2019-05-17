@@ -7,6 +7,7 @@ import cv2
 
 from ...core.node import ProcessorNode
 from ...utils.parsers import parse_label_map
+from ...utils.downloader import get_file
 
 class ImageAnnotator(ProcessorNode):
     '''
@@ -33,14 +34,26 @@ class BoundingBoxAnnotator(ImageAnnotator):
     Draws bounding boxes on images.
     - Arguments:
         - class_labels_path: path to pbtxt file that defines the labels indexes
+        - class_labels_dataset: If class_labels_path is None, then we use this attribute to \
+            download the file from the releases folder.
         - box_color: color to use to draw the boxes
         - box_thickness: thickness of boxes to draw
         - text_color: color of text to draw
     '''
-    def __init__(self, class_labels_path, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
+    def __init__(self, class_labels_path = None, class_labels_dataset = None, 
+                box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
+
+        if class_labels_path is None and class_labels_dataset is None:
+            raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
+
+        if class_labels_path is None:
+            origin = 'https://github.com/jadielam/videoflow/releases/download/detection'
+            remote_file_name = f'labels_{dataset}.pbtxt'
+            class_labels_path = get_file(remote_file_name, origin)
+
         self._index_label_d = parse_label_map(class_labels_path)
         super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
 

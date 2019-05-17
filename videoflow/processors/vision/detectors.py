@@ -60,7 +60,7 @@ class TensorflowObjectDetector(ObjectDetector):
         - path_to_pb_file (str): Path where model pb file is \
             It expects the model to have the following input tensors: ``image_tensor:0``, and \
             the following output tensors: ``detection_boxes:0``, ``detection_scores:0``, \
-            ``detection_classes:0``, and `num_detections:0`.  If no path is provided, then \
+            ``detection_classes:0``, and ``num_detections:0``.  If no path is provided, then \
             it will download the model from the internet using the values provided for ``architecture``\
             and ``dataset``.
         - architecture (str): One of `fasterrcnn-resnet101` or `ssd-mobilenetv2`
