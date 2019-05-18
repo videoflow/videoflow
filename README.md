@@ -9,6 +9,9 @@ Below there is a quick first sample application.  You can see more examples in t
 The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
 
 ## Installing the framework
+Before installing, be sure that you have `cv2` and `tensorflow` already 
+installed.
+
 You can install directly using **pip** by doing `pip3 install videoflow`
 
 Alternatively, you can install by:
