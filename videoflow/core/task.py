@@ -2,9 +2,13 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import logging
+
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 
 STOP_SIGNAL = "alalsl;'sdlfj2389jdalskmghsaiaw98y8asdf;askljoa8y;dsf;lkasdb"
+
+logger = logging.getLogger(__package__)
 
 class Task:
     '''
@@ -83,6 +87,9 @@ class ProducerTask(Task):
                 self._messenger.publish_message(a)
             except StopIteration:
                 break
+            except KeyboardInterrupt:
+                logger.info("Interrupt signal received. Sending signal to stop flow.")
+                break
             if self._messenger.check_for_termination():
                 break
         self._messenger.publish_termination_message(STOP_SIGNAL)
@@ -109,15 +116,18 @@ class ProcessorTask(Task):
     
     def _run(self):
         while True:
-            inputs = self._messenger.receive_message()
-            stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
-            if stop_signal_received:
-                self._messenger.publish_termination_message(STOP_SIGNAL)
-                break
+            try:
+                inputs = self._messenger.receive_message()
+                stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+                if stop_signal_received:
+                    self._messenger.publish_termination_message(STOP_SIGNAL)
+                    break
 
-            #3. Pass inputs needed to processor
-            output = self._processor.process(*inputs)
-            self._messenger.publish_message(output)
+                #3. Pass inputs needed to processor
+                output = self._processor.process(*inputs)
+                self._messenger.publish_message(output)
+            except KeyboardInterrupt:
+                continue
         
 class ConsumerTask(Task):
     '''
@@ -136,18 +146,21 @@ class ConsumerTask(Task):
     
     def _run(self):
         while True:
-            inputs = self._messenger.receive_message()
-            stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
-            if stop_signal_received:
-                # No need to pass through stop signal to children.
-                # If children need to stop, they will receive it from
-                # someone else, so the message that I am passing through
-                # might be the one carrying it.
-                if self._has_children_task:
-                    self._messenger.passthrough_termination_message()
-                break
+            try:
+                inputs = self._messenger.receive_message()
+                stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+                if stop_signal_received:
+                    # No need to pass through stop signal to children.
+                    # If children need to stop, they will receive it from
+                    # someone else, so the message that I am passing through
+                    # might be the one carrying it.
+                    if self._has_children_task:
+                        self._messenger.passthrough_termination_message()
+                    break
 
-            if self._has_children_task:
-                self._messenger.passthrough_message()
-            self._consumer.consume(*inputs)
+                if self._has_children_task:
+                    self._messenger.passthrough_message()
+                self._consumer.consume(*inputs)
+            except KeyboardInterrupt:
+                continue
     

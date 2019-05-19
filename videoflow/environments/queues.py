@@ -213,7 +213,11 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
     
     def join_task_processes(self):
         for proc in self._procs:
-            proc.join()
+            try:
+                proc.join()
+            except KeyboardInterrupt:
+                proc.join()
+                continue
 
 class BatchprocessingQueueExecutionEnvironment(QueueExecutionEnvironment):
     def _al_create_and_set_messengers(self, tasks):
