@@ -4,16 +4,12 @@ from __future__ import absolute_import
 
 import logging
 
+from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
-from .task import Task, ProducerTask, ProcessorTask, ConsumerTask, STOP_SIGNAL
-from ..environments.queues import RealtimeQueueExecutionEnvironment, BatchprocessingQueueExecutionEnvironment
-
+from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
+from ..environments.queues import QueueExecutionEnvironment
 
 logger = logging.getLogger(__package__)
-
-BATCH = 'batch'
-REALTIME = 'realtime'
-flow_types = [BATCH, REALTIME]
 
 def _has_cycle_util(v : Node, visited, rec):
     visited[v] = True
@@ -91,21 +87,16 @@ class Flow:
     - Arguments:
         - producers: a list of producer nodes of type ``videoflow.core.node.ProducerNode``.
         - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``.
+        - flow_type: one of 'realtime' or 'batch'
     '''
     def __init__(self, producers, consumers, flow_type = REALTIME):
         if len(producers) != 1:
             raise AttributeError('Only support flows with 1 producer for now.')
         self._producers = producers
         self._consumers = consumers
-        self._tasks = None
-        self._producer_tasks = []
-        
-        if flow_type == REALTIME:
-            self._execution_environment = RealtimeQueueExecutionEnvironment()
-        elif flow_type == BATCH:
-            self._execution_environment = BatchprocessingQueueExecutionEnvironment()
-        else:
-            raise ValueError('flow_type must be one of {}'.format(','.join(flow_types)))
+        if flow_type not in FLOW_TYPES:
+            raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
+        self._execution_environment = QueueExecutionEnvironment(flow_type)
 
     def run(self):
         '''
@@ -147,34 +138,25 @@ class Flow:
         
         #3. Create the tasks and the input/outputs
         # for them
-        tasks = []
+        # task_data is a list of tuples (node, task_id, parent_task_id, has_chilren)
+        tasks_data = []
+
         for i in range(len(tsort)):
             node = tsort[i]
-            
             if isinstance(node, ProducerNode):
-                task = ProducerTask(node, i)
-                self._producer_tasks.append(task)
+                task_data = (node, i, None, i < (len(tsort) - 1))
             elif isinstance(node, ProcessorNode):
-                task = ProcessorTask(
-                    node, 
-                    i,
-                    i - 1
-                )
+                task_data = (node, i, i - 1, i < (len(tsort) - 1))
             elif isinstance(node, ConsumerNode):
-                task = ConsumerTask(
-                    node,
-                    i,
-                    i - 1,
-                    i < (len(tsort) - 1)
-                )
+                task_data = (node, i, i -1, i < (len(tsort) - 1))
             else:
                 raise ValueError('node is not of one of the valid types')
-            tasks.append(task)
+            tasks_data.append(task_data)
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
-        logger.info('Started task allocation for {} tasks'.format(len(tasks)))
-        self._execution_environment.allocate_and_run_tasks(tasks)
+        self._execution_environment.allocate_and_run_tasks(tasks_data)
+        logger.info('Allocated processes for {} tasks'.format(len(tasks_data)))
         logger.info('Started running flow.')
     
     def join(self):

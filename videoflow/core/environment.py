@@ -72,14 +72,13 @@ class ExecutionEnvironment:
     '''
     def __init__(self):
         pass
-    
-    def _al_create_communication_channels(self, tasks):
-        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
-    
-    def _al_create_and_set_messengers(self, tasks):
-        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
-    
-    def _al_create_and_start_processes(self, tasks):
+        
+    def _al_create_and_start_processes(self, tasks_data):
+        '''
+        - Arguments:
+            - tasks_data: list of tuples. The list is of the form \
+                [(node : Node, node_index : int, parent_index : int, has_children : bool)]
+        '''
         raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
     
     def signal_flow_termination(self):
@@ -98,16 +97,18 @@ class ExecutionEnvironment:
         '''
         raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
 
-    def allocate_and_run_tasks(self, tasks):
+    def allocate_and_run_tasks(self, tasks_data):
         '''
         Defines a template with the order of methods that need to run in order to \
         allocate and run tasks.  How those methods are implemented corresponds to \
         subclasses of this class that implement different `execution environments`.
 
+        - Arguments:
+            - tasks_data: list of tuples. The list is of the form \
+                [(node : Node, node_index : int, parent_index : int, has_children : bool)]
+
         '''
-        self._al_create_communication_channels(tasks)
-        self._al_create_and_set_messengers(tasks)
-        self._al_create_and_start_processes(tasks)
+        self._al_create_and_start_processes(tasks_data)
     
     
 

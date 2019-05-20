@@ -5,8 +5,7 @@ from __future__ import absolute_import
 import logging
 
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
-
-STOP_SIGNAL = "alalsl;'sdlfj2389jdalskmghsaiaw98y8asdf;askljoa8y;dsf;lkasdb"
+from .constants import STOP_SIGNAL
 
 logger = logging.getLogger(__package__)
 

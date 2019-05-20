@@ -3,10 +3,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 from .processor import Processor
-
-GPU = 'gpu'
-CPU = 'cpu'
-device_types = [CPU, GPU]
+from .constants import GPU, CPU, DEVICE_TYPES
 
 class Node:
     '''
@@ -110,8 +107,8 @@ class ConsumerNode(Leaf):
 class ProcessorNode(Node):
     def __init__(self, nb_tasks : int = 1, device_type = CPU):
         self._nb_tasks = nb_tasks
-        if device_type not in device_types:
-            raise ValueError('Device is not one of {}'.format(",".join(device_types)))
+        if device_type not in DEVICE_TYPES:
+            raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
         super(ProcessorNode, self).__init__()
 
@@ -130,8 +127,8 @@ class ProcessorNode(Node):
         return self._device_type
     
     def change_device(self, device_type):
-        if device_type not in device_types:
-            raise ValueError('Device is not one of {}'.format(",".join(device_types)))
+        if device_type not in DEVICE_TYPES:
+            raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
     
     def process(self, inp : any) -> any:
