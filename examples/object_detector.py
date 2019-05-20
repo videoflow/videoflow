@@ -17,16 +17,24 @@ BASE_URL_EXAMPLES = "https://github.com/jadielam/videoflow/releases/download/exa
 VIDEO_NAME = 'intersection.mp4'
 URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
 
+class frameIndexSplitter(videoflow.core.node.ProcessorNode):
+    def __init__(self):
+        super(frameIndexSplitter, self).__init__()
+    def process(self, data):
+        index,frame = data
+        return frame
+
 def main():
     input_file = get_file(
         VIDEO_NAME, 
         URL_VIDEO)
     output_file = "output.avi"
     reader = VideofileReader(input_file, 15)
-    detector = TensorflowObjectDetector()(reader)
-    annotator = BoundingBoxAnnotator()(reader, detector)
+    frame = frameIndexSplitter(reader)
+    detector = TensorflowObjectDetector()(frame)
+    annotator = BoundingBoxAnnotator()(frame, detector)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([reader], [writer], flow_type = flow.BATCH)
+    fl = flow.Flow([frame], [writer], flow_type = flow.BATCH)
     fl.run()
     fl.join()
 

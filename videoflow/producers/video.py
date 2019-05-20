@@ -39,6 +39,7 @@ class VideofileReader(ProducerNode):
     def next(self):
         '''
         - Returns:
+            = frame no / index  : integer value of the frame read
             - frame: np.array of shape (h, w, 3)
         
         - Raises:
@@ -53,6 +54,6 @@ class VideofileReader(ProducerNode):
             if not success or self._frame_count == self._nb_frames:
                 raise StopIteration()
             else:
-                return frame
+                return (self._frame_count,frame)
         else:
             raise StopIteration()
