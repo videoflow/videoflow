@@ -1,6 +1,6 @@
 # Videoflow
 
-**Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of streaming applications.
+**Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of stream processing applications.
 
 It can be used for any kind of streaming data, but we designed it with video in mind.  For example, in the computer vision domain it can be used to quickly develop video streaming analytics applications such as people detection, people tracking, people counting.
 
