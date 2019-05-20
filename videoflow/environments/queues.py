@@ -195,37 +195,36 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
             parent_node_id = data[2]
             has_children = data[3]
 
+            #1.1 Creating messenger for task
+            task_queue = self._task_output_queues.get(node_id)
+            parent_task_queue = self._task_output_queues.get(parent_node_id, None)
+        
+            if self._flow_type == BATCH:
+                messenger = BatchprocessingQueueMessenger(node, task_queue, parent_task_queue, self._termination_event)
+            elif self._flow_type == REALTIME:
+                messenger = RealtimeQueueMessenger(node, task_queue, parent_task_queue, self._termination_event)
+
             task = None
             if isinstance(node, ProducerNode):
-                task = ProducerTask(node, node_id)
+                task = ProducerTask(node, messenger, node_id)
             elif isinstance(node, ProcessorNode):
                 task = ProcessorTask(
                     node,
+                    messenger,
                     node_id,
                     parent_node_id
                 )
             elif isinstance(node, ConsumerNode):
                 task = ConsumerTask(
                     node,
+                    messenger,
                     node_id,
                     parent_node_id,
                     has_children
                 )
             tasks.append(task)
         
-        #2. Create and set messengers   
-        # TODO: Make messenger part of the task constructor     
-        for task in tasks:
-            task_queue = self._task_output_queues.get(task.id)
-            parent_task_queue = self._task_output_queues.get(task.parent_id, None)
-            computation_node = task.computation_node
-            if self._flow_type == BATCH:
-                messenger = BatchprocessingQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
-            elif self._flow_type == REALTIME:
-                messenger = RealtimeQueueMessenger(computation_node, task_queue, parent_task_queue, self._termination_event)
-            task.set_messenger(messenger)
-        
-        #3. Create processes
+        #2. Create processes
         for task in tasks:
             if isinstance(task, ProcessorTask):
                 if task.device_type == GPU:
@@ -244,7 +243,7 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
                 proc = create_process_task(task)
             self._procs.append(proc)
         
-        #4. Start processes
+        #3. Start processes
         for proc in self._procs:
             proc.start()
     

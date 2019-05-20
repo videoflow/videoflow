@@ -10,33 +10,46 @@ from .constants import STOP_SIGNAL
 logger = logging.getLogger(__package__)
 
 class Task:
+    def run(self):
+        '''
+        Starts the task in an infinite loop.
+        '''
+        raise NotImplementedError('Subclass needs to implement run')
+
+class NodeTask(Task):
     '''
-    A ``Task`` is a wrapper around a ``videoflow.core.node.Node`` that \
+    A ``NodeTask`` is a wrapper around a ``videoflow.core.node.Node`` that \
         is able to interact with the execution environment through a messenger. \
         Nodes receive input and/or produce output, but tasks are the ones \
         that run in infinite loops, receiving inputs from the environment and passing them to the \
         computation node, and taking outputs from the computation node and passing \
         them to the environment.
+
+    - Arguments:
+        - computation_node
+        - messenger (Messenger): the messenger that will communicate between nodes.
+        - tsort_id (int): the position of the node in the topological sort
+        - parent_tsort_id: the position of the parent node in the topological sort.
     '''
-    def __init__(self, computation_node : Node, task_id : int, parent_task_id : int = None):
-        self._messenger = None
+    def __init__(self, computation_node : Node, messenger, tsort_id : int, parent_tsort_id : int = None):
+        self._messenger = messenger
         self._computation_node = computation_node
-        self._task_id = task_id
-        self._parent_task_id = parent_task_id
+        self._tsort_id = tsort_id
+        self._parent_tsort_id = parent_tsort_id
     
     @property
     def id(self):
         '''
         Returns an integer as id.
         '''
-        return self._task_id
+        return self._tsort_id
     
     @property
     def parent_id(self):
         '''
         Returns the id of the parent task.  Id of parent task is lower than id of current task.
         '''
-        return self._parent_task_id
+        return self._parent_tsort_id
     
     @property
     def computation_node(self):
@@ -44,13 +57,6 @@ class Task:
         Returns the current computation node
         '''
         return self._computation_node
-
-    def set_messenger(self, messenger):
-        '''
-        Used by environment to set the messenger that this task will use to interact with other 
-        tasks
-        '''
-        self._messenger = messenger
 
     def _assert_messenger(self):
         assert self._messenger is not None, 'Task cannot run if messenger has not been set.'
@@ -69,15 +75,16 @@ class Task:
         self._run()
         self._computation_node.close()
 
-class ProducerTask(Task):
+
+class ProducerTask(NodeTask):
     '''
     It runs forever calling the ``next()`` method in the producer node. \
     At each iteration it checks for a termination signal, and if so it \
     sends a termination message to its child task and breaks the infinite loop.
     '''
-    def __init__(self, producer : ProducerNode, task_id : int):
+    def __init__(self, producer : ProducerNode, messenger, task_id : int):
         self._producer = producer
-        super(ProducerTask, self).__init__(producer, task_id)
+        super(ProducerTask, self).__init__(producer, messenger, task_id)
     
     def _run(self):
         while True:
@@ -93,7 +100,7 @@ class ProducerTask(Task):
                 break
         self._messenger.publish_termination_message(STOP_SIGNAL)
 
-class ProcessorTask(Task):
+class ProcessorTask(NodeTask):
     '''
     It runs forever, first blocking until it receives a message from parent nodes through \
     the messenger.  Then it passes it to the processor node and when it gets back the output \
@@ -101,10 +108,10 @@ class ProcessorTask(Task):
     a parent it receives a termination message, it passes termination message down the flow \
     and breaks from infinite loop.
     '''
-    def __init__(self, processor : ProcessorNode, task_id : int, parent_task_id : int):
+    def __init__(self, processor : ProcessorNode, messenger, task_id : int, parent_task_id : int):
         self._processor = processor
         
-        super(ProcessorTask, self).__init__(processor, task_id, parent_task_id)    
+        super(ProcessorTask, self).__init__(processor, messenger, task_id, parent_task_id)    
     
     @property
     def device_type(self):
@@ -128,7 +135,7 @@ class ProcessorTask(Task):
             except KeyboardInterrupt:
                 continue
         
-class ConsumerTask(Task):
+class ConsumerTask(NodeTask):
     '''
     It runs forever, blocking until it receives a message from parent nodes through the messenger.
     It consumes the message and does not publish anything back down the pipe.
@@ -137,11 +144,11 @@ class ConsumerTask(Task):
     those tasks expect any input from the consumer task. It simply means that the consumer
     task is a passthrough of messages. 
     '''
-    def __init__(self, consumer : ConsumerNode, task_id : int, parent_task_id : int,
+    def __init__(self, consumer : ConsumerNode, messenger, task_id : int, parent_task_id : int,
                 has_children_task : bool):
         self._consumer = consumer
         self._has_children_task = has_children_task
-        super(ConsumerTask, self).__init__(consumer, task_id, parent_task_id)
+        super(ConsumerTask, self).__init__(consumer, messenger, task_id, parent_task_id)
     
     def _run(self):
         while True:
