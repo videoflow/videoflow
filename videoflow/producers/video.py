@@ -39,7 +39,7 @@ class VideofileReader(ProducerNode):
     def next(self):
         '''
         - Returns:
-            = frame no / index  : integer value of the frame read
+            - frame no / index  : integer value of the frame read
             - frame: np.array of shape (h, w, 3)
         
         - Raises:
