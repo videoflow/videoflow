@@ -174,7 +174,7 @@ class DelayedInterrupt(object):
     '''
     class based on: http://stackoverflow.com/a/21919644/487556
     
-    It delayes interrupts until the code exits the entered block
+    It delays interrupts until the code exits the entered block
     '''
     def __init__(self, signals):
         if not isinstance(signals, list) and not isinstance(signals, tuple):
