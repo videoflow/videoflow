@@ -5,6 +5,8 @@ from __future__ import print_function
 import time
 import sys
 import collections
+import signal
+import logging
 
 import numpy as np
 
@@ -167,3 +169,36 @@ class Progbar(object):
 
     def add(self, n, values=None):
         self.update(self._seen_so_far + n, values)
+
+class DelayedInterrupt(object):
+    '''
+    class based on: http://stackoverflow.com/a/21919644/487556
+    
+    It delayes interrupts until the code exits the entered block
+    '''
+    def __init__(self, signals):
+        if not isinstance(signals, list) and not isinstance(signals, tuple):
+            signals = [signals]
+        self.sigs = signals        
+
+    def __enter__(self):
+        self.signal_received = {}
+        self.old_handlers = {}
+        for sig in self.sigs:
+            self.signal_received[sig] = False
+            self.old_handlers[sig] = signal.getsignal(sig)
+            def handler(s, frame):
+                self.signal_received[sig] = (s, frame)
+                # Note: in Python 3.5, you can use signal.Signals(sig).name
+            self.old_handlers[sig] = signal.getsignal(sig)
+            signal.signal(sig, handler)
+
+    def __exit__(self, type, value, traceback):
+        for sig in self.sigs:
+            signal.signal(sig, self.old_handlers[sig])
+            if self.signal_received[sig] and self.old_handlers[sig]:
+                self.old_handlers[sig](*self.signal_received[sig])
+
+class DelayedKeyboardInterrupt(DelayedInterrupt):
+    def __init__(self):
+        super(DelayedKeyboardInterrupt, self).__init__([signal.SIGINT])

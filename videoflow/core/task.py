@@ -3,9 +3,12 @@ from __future__ import division
 from __future__ import absolute_import
 
 import logging
+from multiprocessing import Queue
+from threading import Thread
 
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 from .constants import STOP_SIGNAL
+from ..utils.generic_utils import DelayedKeyboardInterrupt
 
 logger = logging.getLogger(__package__)
 
@@ -89,8 +92,9 @@ class ProducerTask(NodeTask):
     def _run(self):
         while True:
             try:
-                a = self._producer.next()
-                self._messenger.publish_message(a)
+                with DelayedKeyboardInterrupt():
+                    a = self._producer.next()
+                    self._messenger.publish_message(a)
             except StopIteration:
                 break
             except KeyboardInterrupt:
@@ -123,15 +127,16 @@ class ProcessorTask(NodeTask):
     def _run(self):
         while True:
             try:
-                inputs = self._messenger.receive_message()
-                stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
-                if stop_signal_received:
-                    self._messenger.publish_termination_message(STOP_SIGNAL)
-                    break
+                with DelayedKeyboardInterrupt():
+                    inputs = self._messenger.receive_message()
+                    stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+                    if stop_signal_received:
+                        self._messenger.publish_termination_message(STOP_SIGNAL)
+                        break
 
-                #3. Pass inputs needed to processor
-                output = self._processor.process(*inputs)
-                self._messenger.publish_message(output)
+                    #3. Pass inputs needed to processor
+                    output = self._processor.process(*inputs)
+                    self._messenger.publish_message(output)
             except KeyboardInterrupt:
                 continue
         
@@ -153,20 +158,57 @@ class ConsumerTask(NodeTask):
     def _run(self):
         while True:
             try:
+                with DelayedKeyboardInterrupt():
+                    inputs = self._messenger.receive_message()
+                    stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+                    if stop_signal_received:
+                        # No need to pass through stop signal to children.
+                        # If children need to stop, they will receive it from
+                        # someone else, so the message that I am passing through
+                        # might be the one carrying it.
+                        if self._has_children_task:
+                            self._messenger.passthrough_termination_message()
+                        break
+
+                    if self._has_children_task:
+                        self._messenger.passthrough_message()
+                    self._consumer.consume(*inputs)
+            except KeyboardInterrupt:
+                continue
+
+class MultiprocessingReceiveTask(Task):
+    def __init__(self, messenger, receiveQueue : Queue, accountingQueue : Queue, 
+                shutdown_queues : [Queue]):
+        self._messenger = messenger
+        self._rq = receiveQueue
+        self._aq = accountingQueue
+        self._sqs = shutdown_queues
+
+    def run(self):
+        while True:
+            try:
                 inputs = self._messenger.receive_message()
                 stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                 if stop_signal_received:
-                    # No need to pass through stop signal to children.
-                    # If children need to stop, they will receive it from
-                    # someone else, so the message that I am passing through
-                    # might be the one carrying it.
-                    if self._has_children_task:
-                        self._messenger.passthrough_termination_message()
+                    for sq in self._sqs:
+                        sq.put(STOP_SIGNAL)
                     break
-
-                if self._has_children_task:
-                    self._messenger.passthrough_message()
-                self._consumer.consume(*inputs)
+            
             except KeyboardInterrupt:
                 continue
+
+
+
+class MultiprocessingProcessorTask(Task):
+    def __init__(self):
+        pass
     
+    def run(self):
+        pass
+
+class MultiprocessingOutputTask(Task):
+    def __init__(self):
+        pass
+    
+    def run(self):
+        pass
