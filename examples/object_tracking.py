@@ -36,6 +36,12 @@ class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
         f = np.any(f, axis = 0)
         filtered = dets[f]
         return filtered
+class frameIndexSplitter(videoflow.core.node.ProcessorNode):
+    def __init__(self):
+        super(frameIndexSplitter, self).__init__()
+    def process(self, data):
+        index,frame = data
+        return frame
 
 def main():
     input_file = get_file(
@@ -45,12 +51,14 @@ def main():
     output_file = "output.avi"
 
     reader = VideofileReader(input_file)
-    detector = TensorflowObjectDetector()(reader)
+    frame = frameIndexSplitter(reader)
+
+    detector = TensorflowObjectDetector()(frame)
     filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
-    annotator = TrackerAnnotator()(reader, tracker)
+    annotator = TrackerAnnotator()(frame, tracker)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([reader], [writer], flow_type = flow.BATCH)
+    fl = flow.Flow([frame], [writer], flow_type = flow.BATCH)
     fl.run()
     fl.join()
 
