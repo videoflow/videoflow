@@ -2,6 +2,9 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import logging
+
+from .constants import LOGGING_LEVEL
 from .processor import Processor
 from .constants import GPU, CPU, DEVICE_TYPES
 
@@ -12,8 +15,21 @@ class Node:
     '''
     def __init__(self):
         self._parents = None
+        self._id = id(self)
         self._children = set()
+        self._logger = self._configure_logger()
+        self._logger.debug(f'Created Node with id {self._id}')
     
+    def _configure_logger(self):
+        logger = logging.getLogger(f'{self.__repr__()}_{self._id}')
+        logger.setLevel(LOGGING_LEVEL)
+        ch = logging.StreamHandler()
+        ch.setLevel(LOGGING_LEVEL)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+        return logger
+
     def __repr__(self):
         return self.__class__.__name__
     
@@ -21,7 +37,7 @@ class Node:
         return self is other
     
     def __hash__(self):
-        return id(self)
+        return self._id
     
     def open(self):
         '''
@@ -48,7 +64,7 @@ class Node:
         The id of the node.  In this case the id of the node is produced by calling
         ``id(self)``.
         '''
-        return self.__hash__()
+        return self._id
     
     def __call__(self, *parents):
         if self._parents is not None:

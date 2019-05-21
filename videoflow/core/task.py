@@ -210,6 +210,10 @@ class MultiprocessingProcessorTask(Task):
         self._aq = accountingQueue
         self._oq = outputQueue
     
+    @property
+    def device_type(self):
+        return self._processor.device_type
+
     def run(self):
         while True:
             try:

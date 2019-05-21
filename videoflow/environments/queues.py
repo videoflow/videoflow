@@ -2,14 +2,20 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+from ..core.constants import LOGGING_LEVEL
+
+import logging
+
 import os
-from multiprocessing import Process, Queue, Event
+from multiprocessing import Process, Queue, Event, Lock
 
 from ..core.constants import BATCH, REALTIME, GPU, CPU
 from ..core.node import Node, ProducerNode, ConsumerNode, ProcessorNode
-from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask
+from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask, MultiprocessingReceiveTask, MultiprocessingProcessorTask, MultiprocessingOutputTask
 from ..core.environment import ExecutionEnvironment, Messenger
 from ..utils.system import get_number_of_gpus
+
+import logging
 
 def task_executor_fn(task : Task):
     task.run()
@@ -44,7 +50,18 @@ class BatchprocessingQueueMessenger(Messenger):
             self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
         self._termination_event = termination_event
         self._last_message_received = None
+        self._logger = self._configure_logger()
     
+    def _configure_logger(self):
+        logger = logging.getLogger(f'{self._computation_node.id}')
+        logger.setLevel(LOGGING_LEVEL)
+        ch = logging.StreamHandler()
+        ch.setLevel(LOGGING_LEVEL)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+        return logger
+
     def publish_message(self, message):
         '''
         Publishes output message to a place where the child task will receive it. \
@@ -55,9 +72,11 @@ class BatchprocessingQueueMessenger(Messenger):
                 self._computation_node.id : message
             }
             self._task_queue.put(msg, block = True)
+            self._logger.debug(f'Published message {msg}')
         else:
             self._last_message_received[self._computation_node.id] = message
             self._task_queue.put(self._last_message_received, block = True)
+            self._logger.debug(f'Published message {msg}')
     
     def check_for_termination(self) -> bool:
         '''
@@ -79,6 +98,7 @@ class BatchprocessingQueueMessenger(Messenger):
     
     def receive_message(self):
         input_message_dict = self._parent_task_queue.get()
+        self._logger.debug(f'Received message: {input_message_dict}')
         self._last_message_received = input_message_dict
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
         return inputs
@@ -101,6 +121,17 @@ class RealtimeQueueMessenger(Messenger):
             self._parent_nodes_ids = [a.id for a in self._computation_node.parents]
         self._termination_event = termination_event
         self._last_message_received = None
+        self._logger = self._configure_logger()
+
+    def _configure_logger(self):
+        logger = logging.getLogger(f'{self._computation_node.id}')
+        logger.setLevel(LOGGING_LEVEL)
+        ch = logging.StreamHandler()
+        ch.setLevel(LOGGING_LEVEL)
+        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+        return logger
 
     def publish_message(self, message):
         '''
@@ -113,13 +144,17 @@ class RealtimeQueueMessenger(Messenger):
                     self._computation_node.id : message
                 }
                 self._task_queue.put(msg, block = False)
+                self._logger.debug(f'Published message {msg}')
             except:
+                self._logger.debug(f'Queue is full.')
                 pass
         else:
             self._last_message_received[self._computation_node.id] = message
             try:
                 self._task_queue.put(self._last_message_received, block = False)
+                self._logger.debug(f'Published message {self._last_message_received}')
             except:
+                self._logger.debug(f'Queue is full.')
                 pass
     
     def check_for_termination(self) -> bool:
@@ -162,6 +197,7 @@ class RealtimeQueueMessenger(Messenger):
 
     def receive_message(self):
         input_message_dict = self._parent_task_queue.get()
+        self._logger.debug(f'Received message: {input_message_dict}')
         self._last_message_received = input_message_dict
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
         return inputs
@@ -204,16 +240,53 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
             elif self._flow_type == REALTIME:
                 messenger = RealtimeQueueMessenger(node, task_queue, parent_task_queue, self._termination_event)
 
-            task = None
             if isinstance(node, ProducerNode):
                 task = ProducerTask(node, messenger, node_id)
+                tasks.append(task)
+
             elif isinstance(node, ProcessorNode):
-                task = ProcessorTask(
-                    node,
-                    messenger,
-                    node_id,
-                    parent_node_id
-                )
+                if node.nb_tasks > 1:
+                    receiveQueue = Queue(10)
+                    accountingQueue = Queue()
+                    output_queues = [Queue() for _ in range(node.nb_tasks)]
+
+                    # Create receive task
+                    receive_task = MultiprocessingReceiveTask(
+                        messenger,
+                        receiveQueue,
+                        self._flow_type
+                    )
+                    tasks.append(receive_task)
+
+                    # Create processor tasks
+                    mp_tasks_lock = Lock()
+                    for idx in range(node.nb_tasks):
+                        mp_task = MultiprocessingProcessorTask(
+                            idx,
+                            node,
+                            mp_tasks_lock,
+                            receiveQueue,
+                            accountingQueue,
+                            output_queues[idx]
+                        )
+                        tasks.append(mp_task)
+                    
+                    # Create output task
+                    output_task = MultiprocessingOutputTask(
+                        messenger,
+                        accountingQueue,
+                        output_queues
+                    )
+                    tasks.append(output_task)
+                else:
+                    task = ProcessorTask(
+                        node,
+                        messenger,
+                        node_id,
+                        parent_node_id
+                    )
+                    tasks.append(task)
+
             elif isinstance(node, ConsumerNode):
                 task = ConsumerTask(
                     node,
@@ -222,11 +295,11 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
                     parent_node_id,
                     has_children
                 )
-            tasks.append(task)
+                tasks.append(task)
         
         #2. Create processes
         for task in tasks:
-            if isinstance(task, ProcessorTask):
+            if isinstance(task, ProcessorTask) or isinstance(task, MultiprocessingProcessorTask):
                 if task.device_type == GPU:
                     self._next_gpu += 1
                     if self._next_gpu < self._nb_available_gpus:
@@ -243,7 +316,7 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
                 proc = create_process_task(task)
             self._procs.append(proc)
         
-        #3. Start processes
+        #3. Start processes.
         for proc in self._procs:
             proc.start()
     
