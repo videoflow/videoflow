@@ -63,7 +63,7 @@ class Messenger:
         - Returns:
             - message: the message received from parent task in topological sort.
         '''
-        raise NotImplementedError('Messenger subclass must implement method')
+        raise NotImplementedError('Messenger subclass must implement method.')
 
 
 class ExecutionEnvironment:

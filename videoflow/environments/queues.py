@@ -2,18 +2,17 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-from ..core.constants import LOGGING_LEVEL
-
 import logging
 
 import os
 from multiprocessing import Process, Queue, Event, Lock
 
-from ..core.constants import BATCH, REALTIME, GPU, CPU
+from ..core.constants import BATCH, REALTIME, GPU, CPU, LOGGING_LEVEL
 from ..core.node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask, MultiprocessingReceiveTask, MultiprocessingProcessorTask, MultiprocessingOutputTask
 from ..core.environment import ExecutionEnvironment, Messenger
 from ..utils.system import get_number_of_gpus
+from ..core.constants import STOP_SIGNAL
 
 import logging
 
@@ -96,6 +95,21 @@ class BatchprocessingQueueMessenger(Messenger):
     def passthrough_termination_message(self):
         return self.passthrough_message()
     
+    def receive_raw_message(self):
+        input_message_dict = self._parent_task_queue.get()
+        self._last_message_received = input_message_dict
+        self._logger.debug(f'Received message: {input_message_dict}')
+        
+        #1. Check for STOP_SIGNAL before returning
+        inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
+        stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+        
+        #2. Returns one or the other.
+        if stop_signal_received:
+            return STOP_SIGNAL
+        else:
+            return dict(input_message_dict)
+
     def receive_message(self):
         input_message_dict = self._parent_task_queue.get()
         self._logger.debug(f'Received message: {input_message_dict}')
@@ -252,7 +266,8 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
 
                     # Create receive task
                     receive_task = MultiprocessingReceiveTask(
-                        messenger,
+                        node,
+                        parent_task_queue,
                         receiveQueue,
                         self._flow_type
                     )
@@ -273,9 +288,11 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
                     
                     # Create output task
                     output_task = MultiprocessingOutputTask(
-                        messenger,
+                        node,
+                        task_queue,
                         accountingQueue,
-                        output_queues
+                        output_queues,
+                        self._flow_type
                     )
                     tasks.append(output_task)
                 else:

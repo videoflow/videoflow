@@ -176,84 +176,109 @@ class ConsumerTask(NodeTask):
             except KeyboardInterrupt:
                 continue
 
-class MultiprocessingReceiveTask(Task):
-    def __init__(self, messenger, receiveQueue : Queue, flow_type : str):
-        self._messenger = messenger
+class MultiprocessingTask(Task):
+    def __init__(self, processor : ProcessorNode):
+        self._processor = processor
+        self._parent_nodes_ids = [a.id for a in self._processor.parents]
+    
+    def _inputs_from_raw_inputs(self, raw_inputs):
+        inputs = [raw_inputs[a] for a in self._parent_nodes_ids]
+        return inputs
+
+    def _has_stop_signal(self, raw_inputs):
+        inputs = self._inputs_from_raw_inputs(raw_inputs)
+        stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+        return stop_signal_received
+
+class MultiprocessingReceiveTask(MultiprocessingTask):
+    def __init__(self, processor: ProcessorNode, parent_task_queue : Queue, receiveQueue : Queue, flow_type : str):
+        self._parent_task_queue = parent_task_queue
         self._rq = receiveQueue
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         self._flow_type = flow_type
+        super(MultiprocessingReceiveTask, self).__init__(processor)
 
     def run(self):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
-                    inputs = self._messenger.receive_message()
-                    stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
-                    if stop_signal_received:
-                        self._rq.put(STOP_SIGNAL, block = True)
+                    raw_inputs = self._parent_task_queue.get()
+                    if self._has_stop_signal(raw_inputs):
+                        self._rq.put(raw_inputs, block = True)
                         break
                     if self._flow_type == BATCH:
-                        self._rq.put(inputs, block = True)
+                        self._rq.put(raw_inputs, block = True)
                     elif self._flow_type == REALTIME:
-                        self._rq.put(inputs, block = False)
+                        self._rq.put(raw_inputs, block = False)
             except KeyboardInterrupt:
                 continue
 
-class MultiprocessingProcessorTask(Task):
+class MultiprocessingProcessorTask(MultiprocessingTask):
     def __init__(self, idx : int, processor: ProcessorNode, lock : Lock,
                 receiveQueue : Queue, accountingQueue : Queue, outputQueue : Queue):
         self._idx = idx
-        self._processor = processor
         self._lock = lock
         self._rq = receiveQueue
         self._aq = accountingQueue
         self._oq = outputQueue
+        super(MultiprocessingProcessorTask, self).__init__(processor)
     
     @property
     def device_type(self):
         return self._processor.device_type
-
+    
     def run(self):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
                     #1. Read from rq and update aq
                     with self._lock:
-                        inputs = self._rq.get(block = True)
+                        raw_inputs = self._rq.get(block = True)
                         self._aq.put(self._idx)
 
                     #2. If STOP_SIGNAL, place it in output, place it back in receiver, and break loop
-                    if isinstance(inputs, str) and inputs == STOP_SIGNAL:
-                        self._oq.put(inputs)
-                        self._rq.put(inputs, block = True)
+                    if self._has_stop_signal(raw_inputs):
+                        self._rq.put(raw_inputs, block = True)
+                        raw_outputs = dict(raw_inputs)
+                        raw_outputs[self._processor.id] = STOP_SIGNAL
+                        self._oq.put(raw_outputs)
                         break
                     
                     #3. Else: process it, and place result in oq
+                    inputs = self._inputs_from_raw_inputs(raw_inputs)
                     output = self._processor.process(*inputs)
-                    self._oq.put(output)
+                    raw_inputs[self._processor.id] = output
+                    self._oq.put(raw_inputs)
             except KeyboardInterrupt:
                 continue
 
-class MultiprocessingOutputTask(Task):
-    def __init__(self, messenger, accountingQueue : Queue,
-                output_queues : [Queue]):
-        self._messenger = messenger
+class MultiprocessingOutputTask(MultiprocessingTask):
+    def __init__(self, processor : ProcessorNode, task_queue : Queue, accountingQueue : Queue,
+                output_queues : [Queue], flow_type : str):
         self._aq = accountingQueue
+        self._task_queue = task_queue
         self._output_queues = output_queues
         self._finish_count = 0
+        if flow_type not in FLOW_TYPES:
+            raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
+        self._flow_type = flow_type
+        super(MultiprocessingOutputTask, self).__init__(processor)
     
     def run(self):
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
                     next_idx = self._aq.get(block = True)
-                    next_output = self._output_queues[next_idx].get(block = True)
-                    if isinstance(next_output, str) and next_output == STOP_SIGNAL:
+                    raw_outputs = self._output_queues[next_idx].get(block = True)
+                    if self._has_stop_signal(raw_outputs):
                         self._finish_count += 1
+                    if self._flow_type == BATCH:
+                        self._task_queue.put(raw_outputs, block = True)
+                    elif self._flow_type == REALTIME:
+                        self._task_queue.put(raw_outputs, block = False)
                     if self._finish_count == len(self._output_queues):
-                        self._messenger.publish_termination_message(STOP_SIGNAL)
                         break
-                    self._messenger.publish_message(next_output)
+                    
             except KeyboardInterrupt:
                 continue
