@@ -167,7 +167,6 @@ class Flow:
         self._execution_environment.join_task_processes()
         logger.info('Finished running flow.')
 
-
     def stop(self):
         '''
         Blocking method. Stops the flow.  Makes the execution environment send a flow termination signal.

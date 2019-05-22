@@ -7,6 +7,7 @@ it.  Will output annotated video to output.avi
 import numpy as np
 import videoflow
 import videoflow.core.flow as flow
+from videoflow.core.constants import BATCH
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
 from videoflow.processors.vision import TensorflowObjectDetector, BoundingBoxAnnotator
@@ -17,11 +18,12 @@ BASE_URL_EXAMPLES = "https://github.com/jadielam/videoflow/releases/download/exa
 VIDEO_NAME = 'intersection.mp4'
 URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
 
-class frameIndexSplitter(videoflow.core.node.ProcessorNode):
+class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
     def __init__(self):
-        super(frameIndexSplitter, self).__init__()
+        super(FrameIndexSplitter, self).__init__()
+    
     def process(self, data):
-        index,frame = data
+        index, frame = data
         return frame
 
 def main():
@@ -30,11 +32,11 @@ def main():
         URL_VIDEO)
     output_file = "output.avi"
     reader = VideofileReader(input_file, 15)
-    frame = frameIndexSplitter(reader)
+    frame = FrameIndexSplitter()(reader)
     detector = TensorflowObjectDetector()(frame)
     annotator = BoundingBoxAnnotator()(frame, detector)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([frame], [writer], flow_type = flow.BATCH)
+    fl = flow.Flow([frame], [writer], flow_type = BATCH)
     fl.run()
     fl.join()
 

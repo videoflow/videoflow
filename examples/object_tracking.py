@@ -9,6 +9,7 @@ Will output annotated video to output.avi
 import numpy as np
 import videoflow
 import videoflow.core.flow as flow
+from videoflow.core.constants import BATCH
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
 from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator
@@ -36,11 +37,13 @@ class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
         f = np.any(f, axis = 0)
         filtered = dets[f]
         return filtered
-class frameIndexSplitter(videoflow.core.node.ProcessorNode):
+
+class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
     def __init__(self):
-        super(frameIndexSplitter, self).__init__()
+        super(FrameIndexSplitter, self).__init__()
+    
     def process(self, data):
-        index,frame = data
+        index, frame = data
         return frame
 
 def main():
@@ -51,14 +54,14 @@ def main():
     output_file = "output.avi"
 
     reader = VideofileReader(input_file)
-    frame = frameIndexSplitter(reader)
+    frame = FrameIndexSplitter()(reader)
 
     detector = TensorflowObjectDetector()(frame)
     filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(frame, tracker)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([frame], [writer], flow_type = flow.BATCH)
+    fl = flow.Flow([frame], [writer], flow_type = BATCH)
     fl.run()
     fl.join()
 
