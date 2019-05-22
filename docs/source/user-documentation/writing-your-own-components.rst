@@ -138,7 +138,7 @@ the allocation process fail.
 
 When to extend ``OneTaskProcessorNode``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-In the future, **Videoflow** will support the parallelization of a processor in multiple
+**Videoflow** supports the parallelization of a processor in multiple
 processes.  That functionality is very useful whenever to have whenever the processor is or
 may become a bottleneck in the flow.
 

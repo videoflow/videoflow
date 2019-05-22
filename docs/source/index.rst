@@ -37,9 +37,9 @@ Free and open source
     user-documentation/writing-your-own-components
     user-documentation/object-tracking-sample-application
     user-documentation/batch-versus-realtime-mode
-    user-documentation/debugging-flow-applications
     user-documentation/task-allocation
     user-documentation/advanced-flowing
+    user-documentation/debugging-flow-applications
     user-documentation/common-patterns
 
 .. toctree:: 
