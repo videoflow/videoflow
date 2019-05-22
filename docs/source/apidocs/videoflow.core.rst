@@ -9,6 +9,14 @@ videoflow.core package
 Submodules
 ----------
 
+videoflow.core.constants module
+-------------------------------
+
+.. automodule:: videoflow.core.constants
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 videoflow.core.environment module
 ---------------------------------
 
