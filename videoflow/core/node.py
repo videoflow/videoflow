@@ -64,6 +64,11 @@ class Node:
         The id of the node.  In this case the id of the node is produced by calling
         ``id(self)``.
         '''
+        # ****IMPORTANT********
+        # Must not be changed. Computing the id at call time will likely introduce errors
+        # because the Python built-in `id` function might return different ids for the same
+        # graph node if called from different processes.  So is better to compute it once
+        # from the process where all constructors are called, and then save it for later.
         return self._id
     
     def __call__(self, *parents):
