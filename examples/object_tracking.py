@@ -55,13 +55,12 @@ def main():
 
     reader = VideofileReader(input_file)
     frame = FrameIndexSplitter()(reader)
-
     detector = TensorflowObjectDetector()(frame)
     filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(frame, tracker)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([frame], [writer], flow_type = BATCH)
+    fl = flow.Flow([reader], [writer], flow_type = BATCH)
     fl.run()
     fl.join()
 

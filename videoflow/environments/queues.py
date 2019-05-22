@@ -75,7 +75,7 @@ class BatchprocessingQueueMessenger(Messenger):
         else:
             self._last_message_received[self._computation_node.id] = message
             self._task_queue.put(self._last_message_received, block = True)
-            self._logger.debug(f'Published message {msg}')
+            self._logger.debug(f'Published message {self._last_message_received}')
     
     def check_for_termination(self) -> bool:
         '''
@@ -247,7 +247,10 @@ class QueueExecutionEnvironment(ExecutionEnvironment):
 
             #1.1 Creating messenger for task
             task_queue = self._task_output_queues.get(node_id)
-            parent_task_queue = self._task_output_queues.get(parent_node_id, None)
+            if parent_node_id is not None:
+                parent_task_queue = self._task_output_queues.get(parent_node_id)
+            else:
+                parent_task_queue = None
         
             if self._flow_type == BATCH:
                 messenger = BatchprocessingQueueMessenger(node, task_queue, parent_task_queue, self._termination_event)

@@ -42,7 +42,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
         - box_thickness: thickness of boxes to draw
         - text_color: color of text to draw
     '''
-    def __init__(self, class_labels_path = None, class_labels_dataset = None, 
+    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco', 
                 box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
         self._box_color = box_color
         self._text_color = text_color
@@ -52,7 +52,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
 
         if class_labels_path is None:
-            labels_file_name = f'labels_{dataset}.pbtxt'
+            labels_file_name = f'labels_{class_labels_dataset}.pbtxt'
             remote_url = BASE_URL_DETECTION + labels_file_name
             class_labels_path = get_file(labels_file_name, remote_url)
 

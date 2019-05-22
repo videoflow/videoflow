@@ -92,6 +92,10 @@ class Flow:
     def __init__(self, producers, consumers, flow_type = REALTIME):
         if len(producers) != 1:
             raise AttributeError('Only support flows with 1 producer for now.')
+        for producer in producers:
+            if not isinstance(producer, ProducerNode):
+                raise AttributeError('{} is not instance of ProducerNode'.format(producer))
+         
         self._producers = producers
         self._consumers = consumers
         if flow_type not in FLOW_TYPES:
@@ -149,7 +153,7 @@ class Flow:
             elif isinstance(node, ProcessorNode):
                 task_data = (node, i, i - 1, i < (len(tsort) - 1))
             elif isinstance(node, ConsumerNode):
-                task_data = (node, i, i -1, i < (len(tsort) - 1))
+                task_data = (node, i, i - 1, i < (len(tsort) - 1))
             else:
                 raise ValueError('node is not of one of the valid types')
             tasks_data.append(task_data)

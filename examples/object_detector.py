@@ -31,12 +31,12 @@ def main():
         VIDEO_NAME, 
         URL_VIDEO)
     output_file = "output.avi"
-    reader = VideofileReader(input_file, 15)
+    reader = VideofileReader(input_file)
     frame = FrameIndexSplitter()(reader)
     detector = TensorflowObjectDetector()(frame)
     annotator = BoundingBoxAnnotator()(frame, detector)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
-    fl = flow.Flow([frame], [writer], flow_type = BATCH)
+    fl = flow.Flow([reader], [writer], flow_type = BATCH)
     fl.run()
     fl.join()
 
