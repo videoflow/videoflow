@@ -96,6 +96,17 @@ class Flow:
         self._consumers = consumers
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
+        
+        if has_cycle(self._producers):
+            logger.error('Cycle detected in computation graph. Exiting now...')
+            raise ValueError('Cycle found in graph')
+        # **** IMPORTANT****** This should be done in the
+        # constructor
+        #2. TODO: CHeck that all nodes in the graph are
+        # descendants of a producer
+        #3. TODO: Check that all producers' results are
+        #being read by a consumer.
+
         self._execution_environment = QueueExecutionEnvironment(flow_type)
 
     def run(self):
@@ -113,16 +124,6 @@ class Flow:
         '''
 
         #1. Build a topological sort of the graph.
-        
-        if has_cycle(self._producers):
-            logger.error('Cycle detected in computation graph. Exiting now...')
-            raise ValueError('Cycle found in graph')
-
-        #2. TODO: CHeck that all nodes in the graph are
-        # descendants of a producer
-        #3. TODO: Check that all producers' results are
-        #being read by a consumer.
-
         tsort = topological_sort(self._producers)
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children

@@ -1,5 +1,5 @@
 videoflow's documentation
-==========================
+=========================
 
 .. meta::
    :description lang=en: video processing, video analytics framework, object detection, object tracking.
@@ -40,6 +40,7 @@ Free and open source
     user-documentation/debugging-flow-applications
     user-documentation/task-allocation
     user-documentation/advanced-flowing
+    user-documentation/common-patterns
 
 .. toctree:: 
     :maxdepth: 2
