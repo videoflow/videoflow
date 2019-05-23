@@ -9,7 +9,8 @@ import videoflow.core.flow as flow
 from videoflow.core.constants import BATCH
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
-from videoflow.processors.vision import TensorflowObjectDetector, BoundingBoxAnnotator
+from videoflow.processors.vision.detectors import TensorflowObjectDetector
+from videoflow.processors.vision.annotators import BoundingBoxAnnotator
 from videoflow.utils.downloader import get_file
 
 
