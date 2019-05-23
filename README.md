@@ -1,5 +1,8 @@
 # Videoflow
 
+[![Build Status](https://travis-ci.org/videoflow/videoflow.svg?branch=master)](https://travis-ci.org/videoflow/videoflow)
+[![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/videoflow/videoflow/blob/master/LICENSE)
+
 **Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of stream processing applications.
 
 It can be used for any kind of streaming data, but we designed it with video in mind.  For example, in the computer vision domain it can be used to quickly develop video streaming analytics applications such as people detection, people tracking, people counting.
