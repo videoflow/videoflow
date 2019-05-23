@@ -7,6 +7,8 @@ matrix:
     include:
         - python: 3.6
           env: TEST_MODE=INTEGRATION_TESTS PIL=Pillow
+        - python: 3.6
+          env: PIL=Pillow
 install:
   # code below is taken from http://conda.pydata.org/docs/travis.html
   # We do this conditionally because it saves us some downloading if the
