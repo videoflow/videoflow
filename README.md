@@ -4,7 +4,7 @@
 
 It can be used for any kind of streaming data, but we designed it with video in mind.  For example, in the computer vision domain it can be used to quickly develop video streaming analytics applications such as people detection, people tracking, people counting.
 
-Below there is a quick first sample application.  You can see more examples in the [**examples**](https://github.com/jadielam/videoflow/tree/master/examples) folder.  
+Below there is a quick first sample application.  You can see more examples in the [**examples**](https://github.com/videoflow/videoflow/tree/master/examples) folder.  
 
 The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
 

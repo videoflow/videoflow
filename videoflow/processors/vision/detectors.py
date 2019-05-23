@@ -12,7 +12,7 @@ from ...core.node import ProcessorNode, CPU, GPU
 from ...utils.tensorflow import TensorflowModel
 from ...utils.downloader import get_file
 
-BASE_URL_DETECTION = 'https://github.com/jadielam/videoflow/releases/download/detection/'
+BASE_URL_DETECTION = 'https://github.com/videoflow/videoflow/releases/download/detection/'
 
 class ObjectDetector(ProcessorNode):
     '''

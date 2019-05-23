@@ -15,7 +15,7 @@ from videoflow.producers import VideofileReader
 from videoflow.processors.vision import TensorflowObjectDetector, KalmanFilterBoundingBoxTracker, TrackerAnnotator
 from videoflow.utils.downloader import get_file
 
-BASE_URL_EXAMPLES = "https://github.com/jadielam/videoflow/releases/download/examples/"
+BASE_URL_EXAMPLES = "https://github.com/videoflow/videoflow/releases/download/examples/"
 VIDEO_NAME = "intersection.mp4"
 URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
 
