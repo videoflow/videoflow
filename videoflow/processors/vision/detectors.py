@@ -6,13 +6,12 @@ from __future__ import division
 from __future__ import absolute_import
 
 import numpy as np
-import tensorflow as tf
 
 from ...core.node import ProcessorNode, CPU, GPU
 from ...utils.tensorflow import TensorflowModel
 from ...utils.downloader import get_file
 
-
+import tensorflow as tf
 
 BASE_URL_DETECTION = 'https://github.com/videoflow/videoflow/releases/download/detection/'
 
