@@ -29,7 +29,7 @@ install:
   - travis_retry conda create -q -n test-environment python=$TRAVIS_PYTHON_VERSION
   - source activate test-environment
 
-  - travis_retry pip install --only-binary=numpy,scipy,pandas numpy filterpy nose scipy h5py pytest pandas --progress-bar off
+  - travis_retry pip install --only-binary=numpy,scipy,pandas numpy filterpy nose scipy h5py pytest pytest-timeout pandas --progress-bar off
 
   # set library path
   - export LD_LIBRARY_PATH=$HOME/miniconda/envs/test-environment/lib/:$LD_LIBRARY_PATH

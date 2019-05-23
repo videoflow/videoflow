@@ -4,7 +4,6 @@ intersection, and will run the detector on
 it.  Will output annotated video to output.avi
 '''
 
-import numpy as np
 import videoflow
 import videoflow.core.flow as flow
 from videoflow.core.constants import BATCH
