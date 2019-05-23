@@ -19,7 +19,7 @@ setup(
     description="Python video streams processing library",
     long_description = README,
     long_description_content_type = "text/markdown",
-    url = "https://github.com/jadielam/videoflow",
+    url = "https://github.com/videoflow/videoflow",
     author = "Jadiel de Armas",
     author_email = "jadielam@gmail.com",
     license = "MIT",
