@@ -105,7 +105,7 @@ class TensorflowObjectDetector(ObjectDetector):
             raise ValueError('If path_to_pb_file is None, then architecture and dataset cannot be None')
 
         if path_to_pb_file is None:
-            self._remote_model_file_name = f'{self._architecture}_{self._dataset}.pb'
+            self._remote_model_file_name = f'{architecture}_{dataset}.pb'
             if self._remote_model_file_name not in self.supported_models:
                 raise ValueError('model is not one of supported models: {}'.format(', '.join(self.supported_models)))        
 
