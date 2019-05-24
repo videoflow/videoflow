@@ -13,6 +13,7 @@ The complete documentation to the project is located in [**Read the docs.**](htt
 ### Requirements
 Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed.
 
+### Installation
 You can install directly using **pip** by doing `pip3 install videoflow`
 
 Alternatively, you can install by:
@@ -23,27 +24,46 @@ Alternatively, you can install by:
 Python 2 is **NOT SUPPORTED**.  Requies Python 3.6+
 
 ## Simple sample videoflow application:
+Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the ![examples](examples/) folder.
 
 ```
-from videoflow.core import Flow
-from videoflow.producers import IntProducer
-from videoflow.processors.aggregators import SumAggregator
-from videoflow.consumers import CommandlineConsumer
+import videoflow
+import videoflow.core.flow as flow
+from videoflow.core.constants import BATCH
+from videoflow.consumers import VideofileWriter
+from videoflow.producers import VideofileReader
+from videoflow.processors.vision.detectors import TensorflowObjectDetector
+from videoflow.processors.vision.annotators import BoundingBoxAnnotator
+from videoflow.utils.downloader import get_file
 
-producer = IntProducer(0, 40, 0.01)
-sum_agg = SumAggregator()(producer)
-printer = CommandlineConsumer()(sum_agg)
+BASE_URL_EXAMPLES = "https://github.com/videoflow/videoflow/releases/download/examples/"
+VIDEO_NAME = 'intersection.mp4'
+URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
 
-flow = Flow([producer], [printer])
-flow.run()
-flow.join()
+class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
+    def __init__(self):
+        super(FrameIndexSplitter, self).__init__()
+    
+    def process(self, data):
+        index, frame = data
+        return frame
+
+input_file = get_file(
+    VIDEO_NAME, 
+    URL_VIDEO)
+output_file = "output.avi"
+reader = VideofileReader(input_file)
+frame = FrameIndexSplitter()(reader)
+detector = TensorflowObjectDetector()(frame)
+annotator = BoundingBoxAnnotator()(frame, detector)
+writer = VideofileWriter(output_file, fps = 30)(annotator)
+fl = flow.Flow([reader], [writer], flow_type = BATCH)
+fl.run()
+fl.join()
 ```
 
-Lines 1-4 import the classes and definitions needed.
+The output of the application is an annotated video:
 
-Lines 6-8 define a simple linear graph of nodes where a stream of integers from 0 to 40 are added and the running addition gets printed in the command line.  You can define any kind of directed graph for as long as it has no cycles.
-
-Lines 10-12 create the flow, start it, and wait for it to finish.
 
 ## The Structure of a flow application
 
