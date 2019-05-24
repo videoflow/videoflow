@@ -126,7 +126,7 @@ class TensorflowObjectDetector(ObjectDetector):
         
         if self._path_to_pb_file is None:
             remote_url = BASE_URL_DETECTION + self._remote_model_file_name
-            self._path_to_pb_file = get_file(model_file_name, remote_url)
+            self._path_to_pb_file = get_file(self._remote_model_file_name, remote_url)
 
         self._tensorflow_model = TensorflowModel(
             self._path_to_pb_file,
