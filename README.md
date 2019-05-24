@@ -1,6 +1,7 @@
 # Videoflow
 
 ![Videoflow](assets/videoflow_logo.png)
+
 [![Build Status](https://travis-ci.org/videoflow/videoflow.svg?branch=master)](https://travis-ci.org/videoflow/videoflow)
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/videoflow/videoflow/blob/master/LICENSE)
 
