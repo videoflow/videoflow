@@ -13,7 +13,6 @@ from videoflow.processors.vision.detectors import TensorflowObjectDetector
 from videoflow.processors.vision.annotators import BoundingBoxAnnotator
 from videoflow.utils.downloader import get_file
 
-
 BASE_URL_EXAMPLES = "https://github.com/videoflow/videoflow/releases/download/examples/"
 VIDEO_NAME = 'intersection.mp4'
 URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
