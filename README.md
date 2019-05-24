@@ -24,7 +24,7 @@ Alternatively, you can install by:
 Python 2 is **NOT SUPPORTED**.  Requies Python 3.6+
 
 ## Simple sample videoflow application:
-Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the ![examples](examples/) folder.
+Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
 
 ```
 import videoflow
@@ -36,9 +36,7 @@ from videoflow.processors.vision.detectors import TensorflowObjectDetector
 from videoflow.processors.vision.annotators import BoundingBoxAnnotator
 from videoflow.utils.downloader import get_file
 
-BASE_URL_EXAMPLES = "https://github.com/videoflow/videoflow/releases/download/examples/"
-VIDEO_NAME = 'intersection.mp4'
-URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
+URL_VIDEO = "https://github.com/videoflow/videoflow/releases/download/examples/intersection.mp4"
 
 class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
     def __init__(self):
@@ -48,9 +46,7 @@ class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
         index, frame = data
         return frame
 
-input_file = get_file(
-    VIDEO_NAME, 
-    URL_VIDEO)
+input_file = get_file("intersection.mp4", URL_VIDEO)
 output_file = "output.avi"
 reader = VideofileReader(input_file)
 frame = FrameIndexSplitter()(reader)
