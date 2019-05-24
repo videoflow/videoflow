@@ -170,12 +170,12 @@ class Flow:
         running naturally.
         '''
         self._execution_environment.join_task_processes()
-        logger.info('Finished running flow.')
+        logger.info('Flow has stopped.')
 
     def stop(self):
         '''
         Blocking method. Stops the flow.  Makes the execution environment send a flow termination signal.
         '''
-        logger.info('Stop termination signal sent to flow.')
+        logger.info('Stop termination signal placed on flow.')
         self._execution_environment.signal_flow_termination()
         self.join()
