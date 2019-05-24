@@ -49,15 +49,13 @@ class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
         return frame
 
 def main():
-    input_file = get_file(
-        VIDEO_NAME, 
-        URL_VIDEO
-        )
+    input_file = get_file(VIDEO_NAME, URL_VIDEO)
     output_file = "output.avi"
-
+    
     reader = VideofileReader(input_file)
     frame = FrameIndexSplitter()(reader)
     detector = TensorflowObjectDetector()(frame)
+    # keeps only automobile classes: autos, buses, cycles, etc.
     filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
     tracker = KalmanFilterBoundingBoxTracker()(filter_)
     annotator = TrackerAnnotator()(frame, tracker)

@@ -51,13 +51,23 @@ class TensorflowObjectDetector(ObjectDetector):
     model. If not, it uses ``architecture`` and ``dataset`` parameters to download tensorflow
     pretrained models.  
     
-    .. csv-table:: Models supported
+    .. csv-table:: Models supported COCO Dataset
         
         "Model","Speed (ms)","COCO mAP"
         "ssd-mobilenetv2_coco","30","21"
         "ssd-resnet50-fpn_coco","76","35"
         "fasterrcnn-resnet101_coco","106","32"
 
+    .. csv-table:: Models supported Kitti Dataset
+        
+        "Model","Speed (ms)", "Pascal mAP@0.5"
+        "fasterrcnn-resnet101_kitti","79","87"
+
+    .. csv-table:: Models supported Open Images V4 Dataset
+        "Model","Speed (ms)", "Open Images V4 mAP@0.5"
+        "fasterrcnn-inception-resnetv2-atrous_oidv4","425","54"
+        "ssd-mobilenetv2_oidv4","89","36"
+    
     - Arguments:
         - num_classes (int): number of classes that the detector can recognize.
         - path_to_pb_file (str): Path where model pb file is \
