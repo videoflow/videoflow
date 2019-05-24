@@ -7,13 +7,11 @@
 
 **Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of computer vision stream processing applications. It empowers developers to build applications and systems with self-contained Deep Learning and Computer Vision capabilities using simple and few lines of code.  It contains off-the-shelf components for object detection, object tracking, human pose estimation, etc, and it is easily extensible.
 
-Below there is a quick first sample application.  You can see more examples in the [**examples**](https://github.com/videoflow/videoflow/tree/master/examples) folder.  
-
 The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
 
 ## Installing the framework
-Before installing, be sure that you have `cv2` and `tensorflow` already 
-installed.
+### Requirements
+Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed.
 
 You can install directly using **pip** by doing `pip3 install videoflow`
 
@@ -22,7 +20,7 @@ Alternatively, you can install by:
 1. Clone this repository
 2. Inside the repository folder, execute `pip3 install . --user`
 
-Python 2 is **NOT SUPPORTED**.  Requies Python 3.5+
+Python 2 is **NOT SUPPORTED**.  Requies Python 3.6+
 
 ## Simple sample videoflow application:
 

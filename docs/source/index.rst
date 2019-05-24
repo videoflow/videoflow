@@ -4,9 +4,7 @@ videoflow's documentation
 .. meta::
    :description lang=en: video processing, video analytics framework, object detection, object tracking.
 
-**Videoflow** is a Python framework that facilitates the quick development of complex video analysis applications and other series-processing based applications in a multiprocessing environment.
-
-It can be used for any kind of streaming data, but we designed it with video in mind.  For example, in the computer vision domain it can be used to quickly develop video streaming analytics applications such as people detection, people tracking, people counting.
+**Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of computer vision stream processing applications. It empowers developers to build applications and systems with self-contained Deep Learning and Computer Vision capabilities using simple and few lines of code.  It contains off-the-shelf components for object detection, object tracking, human pose estimation, etc, and it is easily extensible.
 
 Developer friendly
     Even complex flow applications can be defined in a simple file with less than 20 lines of code.
