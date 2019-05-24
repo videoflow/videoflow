@@ -23,7 +23,7 @@ Alternatively, you can install by:
 
 Python 2 is **NOT SUPPORTED**.  Requies Python 3.6+
 
-## Simple sample videoflow application:
+## Sample Videoflow application:
 Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
 
 ```
