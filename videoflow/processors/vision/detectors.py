@@ -80,6 +80,15 @@ class TensorflowObjectDetector(ObjectDetector):
         - dataset (str): For now, only `coco` is accepted.
         - min_score_threshold (float): detection will filter out entries with score below threshold score
     '''
+    supported_models = [
+        "ssd-mobilenetv2_coco",
+        "ssd-resnet50-fpn_coco",
+        "fasterrcnn-resnet101_coco",
+        "fasterrcnn-resnet101_kitti",
+        "fasterrcnn-inception-resnetv2-atrous_oidv4",
+        "ssd-mobilenetv2_oidv4"
+    ]
+
     def __init__(self, 
                 num_classes = 90,
                 path_to_pb_file = None,
@@ -95,15 +104,10 @@ class TensorflowObjectDetector(ObjectDetector):
         if path_to_pb_file is None and (architecture is None or dataset is None):
             raise ValueError('If path_to_pb_file is None, then architecture and dataset cannot be None')
 
-        supported_architectures = ['fasterrcnn-resnet101', 'ssd-mobilenetv2', 'ssd-resnet50-fpn']
-        if architecture not in supported_architectures:
-            raise ValueError('architecture is not one of {}'.format(', '.join(supported_architectures)))
-        self._architecture = architecture
-
-        supported_datasets = ['coco']
-        if dataset not in supported_datasets:
-            raise ValueError('dataset is not one of {}'.format(', '.join(supported_datasets)))
-        self._dataset = dataset
+        if path_to_pb_file is None:
+            self._remote_model_file_name = f'{self._architecture}_{self._dataset}.pb'
+            if self._remote_model_file_name not in self.supported_models:
+                raise ValueError('model is not one of supported models: {}'.format(', '.join(self.supported_models)))        
 
         self._min_score_threshold = min_score_threshold
         super(TensorflowObjectDetector, self).__init__(nb_tasks = nb_tasks, device_type = device_type)
@@ -120,8 +124,7 @@ class TensorflowObjectDetector(ObjectDetector):
             device_id = 'cpu'
         
         if self._path_to_pb_file is None:
-            model_file_name = f'{self._architecture}_{self._dataset}.pb'
-            remote_url = BASE_URL_DETECTION + model_file_name
+            remote_url = BASE_URL_DETECTION + self._remote_model_file_name
             self._path_to_pb_file = get_file(model_file_name, remote_url)
 
         self._tensorflow_model = TensorflowModel(
