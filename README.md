@@ -24,7 +24,7 @@ Alternatively, you can install by:
 Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+
 
 ## Sample Videoflow application:
-Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
+Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
 
 ```
 import videoflow
