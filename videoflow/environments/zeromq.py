@@ -3,6 +3,8 @@ from __future__ import division
 from __future__ import absolute_import
 
 import numpy as np
+import pickle
+import zlib
 import zmq
 
 REFERENCE_SOCKET_NUMBER = 5000
