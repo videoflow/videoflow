@@ -21,7 +21,7 @@ Alternatively, you can install by:
 1. Clone this repository
 2. Inside the repository folder, execute `pip3 install . --user`
 
-Python 2 is **NOT SUPPORTED**.  Requies Python 3.6+
+Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+
 
 ## Sample Videoflow application:
 Below a sample videoflow applicaiton that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
