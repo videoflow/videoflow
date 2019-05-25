@@ -19,7 +19,7 @@ If you are using a virtualenv, you may want to avoid using sudo::
 
 First clone Videoflow using `git`::
 
-    git clone https://github.com/jadielam/videoflow.git
+    git clone https://github.com/videoflow/videoflow.git
 
 Then, `cd` to the Videoflow folder and run the install command::
 
