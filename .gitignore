@@ -74,6 +74,9 @@ db.sqlite3
 instance/
 .webassets-cache
 
+# Mac file
+.DS_Store
+
 # Scrapy stuff:
 .scrapy
 
