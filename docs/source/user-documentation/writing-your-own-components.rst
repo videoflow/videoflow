@@ -3,7 +3,7 @@ Writing your own components
 
 One of the best features of **Videoflow** is that it can be easily extended.
 Videoflow has a good collection of components (producers, processors and consumers)
-that can help you quickly boostrap a computer vision application.  Sometimes the components
+that can help you quickly bootstrap a computer vision application.  Sometimes the components
 provided are not enough because you need to bring your own models, or you need to 
 implement a complex algorithm, or you are dealing with a non-standard data source. 
 
