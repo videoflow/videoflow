@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y \
 
 
 COPY . /videoflow
-COPY examples /examples
 RUN pip install /videoflow --find-links /videoflow
-
-CMD ["python", "/examples/object_detector.py"]
+RUN mkdir -p /usr/src/app
+WORKDIR /usr/src/app
+CMD ["python", "/videoflow/examples/object_detector.py"]
