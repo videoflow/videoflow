@@ -242,17 +242,7 @@ class KalmanFilterBoundingBoxTracker(BoundingBoxTracker):
         trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
         for t in reversed(to_del):
             self.trackers.pop(t)
-        
-        if self.metric_function_type == 'probability':
-            index = int(fid - self.previous_fid)
-            if index <= 9 and index > 0:
-                tm = self.tm_powers[index]
-            else: 
-                tm = self.tm_powers[9]
-            mf = probability_factory(tm, self.square_dims, self.frame_shape)
-            matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, mf, iou_threshold = 0.00001)    
-        else:
-            matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.metric_function)
+        matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets, trks, self.metric_function)
 
         #update matched trackers with assigned detections
         for t, trk in enumerate(self.trackers):
