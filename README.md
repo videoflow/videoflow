@@ -9,6 +9,10 @@
 
 The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
 
+[1.2]: http://i.imgur.com/wWzX9uB.png
+[1]: http://www.twitter.com/videoflow_py
+Follow us on [![alt text][1.1]][1]
+
 ## Installing the framework
 ### Requirements
 Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed.
