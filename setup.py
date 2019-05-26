@@ -11,9 +11,9 @@ HERE = os.path.abspath(os.path.dirname(__file__))
 with open(os.path.join(HERE, "README.md")) as fid:
     README = fid.read()
 
-# This call to setup() does all the work
+__version__ = None  # set __version__ in this exec() call
 exec(open('videoflow/version.py').read())
-__version__ = __version__  # noqa
+# This call to setup() does all the work
 setup(
     name = "videoflow",
     version = __version__,
