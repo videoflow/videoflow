@@ -11,7 +11,7 @@ The complete documentation to the project is located in [**Read the docs.**](htt
 
 [1.2]: http://i.imgur.com/wWzX9uB.png
 [1]: http://www.twitter.com/videoflow_py
-Follow us on [![alt text][1.1]][1]
+Follow us on ![alt text][1.1]][1]
 
 ## Installing the framework
 ### Requirements
