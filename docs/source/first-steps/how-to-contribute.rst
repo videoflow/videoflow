@@ -85,7 +85,7 @@ Videoflow folder, simply run ``py.test tests/``
 passing.
 
 
-6. When comitting, use appropriate, descriptive 
+6. When committing, use appropriate, descriptive 
 commit messages.
 
 7. Update the documentation.  If introducing new functionality,
