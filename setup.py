@@ -13,7 +13,7 @@ with open(os.path.join(HERE, "README.md")) as fid:
 
 # This call to setup() does all the work
 exec(open('videoflow/version.py').read())
-global __version__  # noqa
+__version__ = __version__  # noqa
 setup(
     name = "videoflow",
     version = __version__,
