@@ -5,7 +5,7 @@ The main datastructure of Videoflow is a **Flow**. A **Flow** is defined as
 a directed acyclic graph (DAG) of nodes that can be of three types: **producers**,
 **processors** and **consumers**. Directed edges in the graph represent dependency relationships:
 A **node B** as a child of **node A** in the computation graph means that
-**node B** receives as its input(s) the ouput(s) of **node A**.
+**node B** receives as its input(s) the output(s) of **node A**.
 
 Producer Node
     Producer nodes generate data and "place it" on the flow. They have no parents.  

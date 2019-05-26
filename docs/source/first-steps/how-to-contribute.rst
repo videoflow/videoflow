@@ -29,7 +29,7 @@ Any issue that cannot be reproduced is likely to be closed.
 
 5. If possible, take a shot at fixing the bug yourself --if you can!
 
-The more information you provide, the easir it is for us to validate that
+The more information you provide, the easier it is for us to validate that
 there is a bug and the faster we'll be able to take action.
 If you want your issue to be resolved quickly, following the steps
 above is crucial.
@@ -46,7 +46,7 @@ users and not just a small subset.  If you are targeting
 a minority of users, consider writing and add-on library
 for Videoflow.
 
-2. Provide code snippets demostrating the API you have in
+2. Provide code snippets demonstrating the API you have in
 mind and illustrating the use cases of your feature.
 
 3. After discussing the feature you may choose to attempt 
@@ -58,7 +58,7 @@ the process along.
 Pull Requests (PRs)
 -------------------
 **Where should I submit my pull request?** Videoflow
-improvements and bug gixes should go to the Videoflow
+improvements and bug fixes should go to the Videoflow
 `master` branch.
 
 Here is a quick guide on how to submit your improvements::
