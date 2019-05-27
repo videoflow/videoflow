@@ -25,3 +25,20 @@ class CommandlineConsumer(ConsumerNode):
             - item: It can be anything that can be printed with the ``print()`` function
         '''
         print(item, sep = self._sep, end = self._end)
+
+class WebhookConsumer(ConsumerNode):
+    def __init__(self):
+        # TODO: Add other pertinent parameters to the init method.
+        pass
+
+    def consume(self, item):
+        raise NotImplementedError()
+
+class FileAppenderConsumer(ConsumerNode):
+    def __init__(self):
+        # TODO: Add other pertinent parameters to init method.
+        pass
+
+    def consume(self, item):
+        # item should be serializable, otherwise error.
+        raise NotImplementedError()
