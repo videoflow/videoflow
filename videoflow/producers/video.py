@@ -6,7 +6,7 @@ import cv2
 
 from ..core.node import ProducerNode
 
-class ImageFolderReader(ProducerNode):
+class ImagefolderReader(ProducerNode):
     '''
     Reads from a folder of images and returns them one by one.
     Passes through images in alphabetical order.
@@ -17,7 +17,7 @@ class ImageFolderReader(ProducerNode):
     def next(self) -> np.array:
         raise NotImplementedError()
 
-class VideoFolderReader(ProducerNode):
+class VideofolderReader(ProducerNode):
     '''
     Reads videos from a folder of videos and returns the frames of 
     the videos one by one.
@@ -28,6 +28,17 @@ class VideoFolderReader(ProducerNode):
     
     def next(self) -> np.array:
         raise NotImplementedError()
+    
+class VideostreamReader(ProducerNode):
+    '''
+    Opens a video capture object and returns subsequent frames
+    from the video each time ``next`` is called.
+    Similar to ``VideofileReader``, but should read from a device.
+    Add nb_retries parameter in case of failures reading video.
+    Add other parameters as appropriate.
+    '''
+    def __init__(self):
+        pass
 
 class VideofileReader(ProducerNode):
     '''
