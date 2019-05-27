@@ -7,10 +7,11 @@ import logging
 import os
 from multiprocessing import Process, Queue, Event, Lock
 
+from .task_functions import create_process_task, create_process_task_gpu, task_executor_fn, task_executor_gpu_fn
 from ..core.constants import BATCH, REALTIME, GPU, CPU, LOGGING_LEVEL
 from ..core.node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask, MultiprocessingReceiveTask, MultiprocessingProcessorTask, MultiprocessingOutputTask
-from ..core.engines import ExecutionEnvironment, Messenger
+from ..core.engine import ExecutionEngine, Messenger
 from ..utils.system import get_number_of_gpus
 from ..core.constants import STOP_SIGNAL
 
@@ -165,7 +166,7 @@ class RealtimeExecutionEngine(ExecutionEngine):
                         node,
                         parent_task_queue,
                         receiveQueue,
-                        self._flow_type
+                        REALTIME
                     )
                     tasks.append(receive_task)
 
@@ -188,7 +189,7 @@ class RealtimeExecutionEngine(ExecutionEngine):
                         task_queue,
                         accountingQueue,
                         output_queues,
-                        self._flow_type
+                        REALTIME
                     )
                     tasks.append(output_task)
                 else:

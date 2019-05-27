@@ -61,7 +61,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
 
         if class_labels_path is None:
-            if class_labels_dataset is not in self.supported_datasets:
+            if class_labels_dataset not in self.supported_datasets:
                 raise ValueError('dataset is not one of supported datasets: {}'.format(', '.join(self.supported_datasets)))
             labels_file_name = f'labels_{class_labels_dataset}.pbtxt'
             remote_url = BASE_URL_DETECTION + labels_file_name
