@@ -9,6 +9,10 @@ matrix:
           env: TEST_MODE=INTEGRATION_TESTS PIL=Pillow
         - python: 3.6
           env: PIL=Pillow
+        - python: 3.6
+          env: TEST_MODE=EXAMPLES_TESTS
+        - python: 3.6
+          env: TEST_MODE=RESOURCES_TESTS
 install:
   # code below is taken from http://conda.pydata.org/docs/travis.html
   # We do this conditionally because it saves us some downloading if the
@@ -59,8 +63,12 @@ script:
   
   - if [[ "$TEST_MODE" == "INTEGRATION_TESTS" ]]; then
       PYTHONPATH=$PWD:$PYTHONPATH py.test tests/integration_tests;
+    elif [[ "$TEST_MODE" == "EXAMPLES_TESTS"]]; then
+      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/examples_tests;
+    elif [[ "$TEST_MODE" == "EXAMPLES_TESTS"]]; then
+      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/resources_tests;
     elif [[ "$TEST_MODE" == "PEP8_DOC" ]]; then
       PYTHONPATH=$PWD:$PYTHONPATH py.test --pep8 -m pep8 -n0 && py.test tests/docs;
     else
-      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/ --ignore=tests/integration_tests --ignore=tests/docs;
+      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/ --ignore=tests/integration_tests --ignore=tests/docs --ignore=tests/examples_tests --ignore=tests/resources_tests;
     fi
