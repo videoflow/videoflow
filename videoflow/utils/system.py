@@ -17,5 +17,6 @@ def get_available_gpus() -> [int]:
     available by ``CUDA_VISIBLE_DEVICES``. It returns the intersection of those
     two sets as a list.
     '''
+    # Remember that an empty ``CUDA_VISIBLE_DEVICES`` means that all devices are visible.
     pass
     
