@@ -14,6 +14,12 @@ class ImagefolderReader(ProducerNode):
     def __init__(self):
         pass
     
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
+    
     def next(self) -> np.array:
         raise NotImplementedError()
 
@@ -25,6 +31,12 @@ class VideofolderReader(ProducerNode):
     '''
     def __init__(self):
         pass
+
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
     
     def next(self) -> np.array:
         raise NotImplementedError()
@@ -39,6 +51,13 @@ class VideostreamReader(ProducerNode):
     '''
     def __init__(self):
         pass
+
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
+
 
 class VideofileReader(ProducerNode):
     '''
