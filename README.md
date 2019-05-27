@@ -27,7 +27,7 @@ Alternatively, you can install by:
 
 **Usage with docker**
 ```bash
-# clone and cd into repo
+# clone repo
 docker build -t repo/videoflow:latest .
 # runs examples/object_detector.py by default
 docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow
