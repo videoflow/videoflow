@@ -16,6 +16,7 @@ class CropImageTransformer(ProcessorNode):
         to_transform = np.array(im)
         return self._crop(im, crop_dimensions)
 
+
 class MaskImageTransformer(ProcessorNode):
     def _mask(self, im : np.array, mask : np.array) -> np.array:
         raise NotImplementedError()
@@ -23,6 +24,7 @@ class MaskImageTransformer(ProcessorNode):
     def process(self, im : np.array, mask : np.array) -> np.array:
         to_transform = np.array(im)
         return self._crop(im, mask)
+
 
 class ResizeImageTransformer(ProcessorNode):
     def _resize(self, im : np.array, new_size) -> np.array:
