@@ -25,6 +25,16 @@ Alternatively, you can install by:
 1. Clone this repository
 2. Inside the repository folder, execute `pip3 install . --user`
 
+**Usage with docker**
+```bash
+# clone and cd into repo
+docker build -t repo/videoflow:latest .
+# runs examples/object_detector.py by default
+docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow
+# or mount the volume from your code directory  to /usr/src/app
+docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow python /usr/src/app/yourown.py
+```
+
 Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+
 
 ## Sample Videoflow application:
