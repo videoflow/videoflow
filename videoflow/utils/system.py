@@ -9,4 +9,13 @@ def get_number_of_gpus() -> int:
         return n
     except FileNotFoundError:
         return 0
+
+def get_available_gpus() -> [int]:
+    '''
+    Returns the list of ids of the gpus available to the process calling the function.
+    It first gets the set of ids of the gpus in the system.  Then it gets the set of ids marked as
+    available by ``CUDA_VISIBLE_DEVICES``. It returns the intersection of those
+    two sets as a list.
+    '''
+    pass
     
