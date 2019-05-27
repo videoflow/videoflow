@@ -58,7 +58,7 @@ script:
   - export MKL_THREADING_LAYER="GNU"
   
   - if [[ "$TEST_MODE" == "EXAMPLES_TESTS" ]]; then
-      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/integration_tests;
+      PYTHONPATH=$PWD:$PYTHONPATH py.test tests/examples_tests;
     elif [[ "$TEST_MODE" == "PEP8_DOC" ]]; then
       PYTHONPATH=$PWD:$PYTHONPATH py.test --pep8 -m pep8 -n0 && py.test tests/docs;
     else
