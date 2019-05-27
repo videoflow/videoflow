@@ -33,3 +33,17 @@ class IntProducer(ProducerNode):
         self._current_value += 1
         time.sleep(self._wait_time_in_seconds)
         return to_return
+
+class ImageFolderProducer(ProducerNode):
+    '''
+    Reads from a folder of images and produces them.
+    Order consistency from one run to another if folder has not changed.
+    '''
+    def __init__(self):
+        pass
+    
+    def next(self) -> np.array:
+        raise NotImplementedError()
+
+
+
