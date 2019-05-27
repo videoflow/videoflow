@@ -34,6 +34,10 @@ docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow
 # or mount the volume from your code directory  to /usr/src/app
 docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow python /usr/src/app/yourown.py
 ```
+## Contributing:
+A tentative [roadmap](ROADMAP.md) of where we are headed.
+
+[Contribution rules](CONTRIBUTING.md)
 
 ## Sample Videoflow application:
 Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
