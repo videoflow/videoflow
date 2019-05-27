@@ -3,8 +3,62 @@ from __future__ import division
 from __future__ import absolute_import
 
 import cv2
+import numpy as np
 
 from ..core.node import ProducerNode
+
+class ImagefolderReader(ProducerNode):
+    '''
+    Reads from a folder of images and returns them one by one.
+    Passes through images in alphabetical order.
+    '''
+    def __init__(self):
+        pass
+    
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
+    
+    def next(self) -> np.array:
+        raise NotImplementedError()
+
+class VideofolderReader(ProducerNode):
+    '''
+    Reads videos from a folder of videos and returns the frames of 
+    the videos one by one.
+    Passes through videos in alphabetical order.
+    '''
+    def __init__(self):
+        pass
+
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
+    
+    def next(self) -> np.array:
+        raise NotImplementedError()
+    
+class VideostreamReader(ProducerNode):
+    '''
+    Opens a video capture object and returns subsequent frames
+    from the video each time ``next`` is called.
+    Similar to ``VideofileReader``, but should read from a device.
+    Add nb_retries parameter in case of failures reading video.
+    Add other parameters as appropriate.
+    '''
+    def __init__(self):
+        pass
+
+    def open(self):
+        raise NotImplementedError()
+    
+    def close(self):
+        raise NotImplementedError()
+
 
 class VideofileReader(ProducerNode):
     '''
