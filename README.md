@@ -15,7 +15,7 @@ The complete documentation to the project is located in [**Read the docs.**](htt
 
 ## Installing the framework
 ### Requirements
-Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed.
+Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed. Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+
 
 ### Installation
 You can install directly using **pip** by doing `pip3 install videoflow`
@@ -34,8 +34,6 @@ docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow
 # or mount the volume from your code directory  to /usr/src/app
 docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow python /usr/src/app/yourown.py
 ```
-
-Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+
 
 ## Sample Videoflow application:
 Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
