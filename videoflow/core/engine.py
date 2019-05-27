@@ -66,7 +66,7 @@ class Messenger:
         raise NotImplementedError('Messenger subclass must implement method.')
 
 
-class ExecutionEnvironment:
+class ExecutionEngine:
     '''
     Defines the interface of the `execution environment`
     '''

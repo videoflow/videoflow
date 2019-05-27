@@ -7,7 +7,8 @@ import logging
 from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
-from ..environments.queues import QueueExecutionEnvironment
+from ..engines.realtime import RealtimeExecutionEngine
+from ..engines.batch import BatchExecutionEngine
 
 logger = logging.getLogger(__package__)
 
@@ -98,8 +99,6 @@ class Flow:
          
         self._producers = producers
         self._consumers = consumers
-        if flow_type not in FLOW_TYPES:
-            raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         
         if has_cycle(self._producers):
             logger.error('Cycle detected in computation graph. Exiting now...')
@@ -110,8 +109,14 @@ class Flow:
         # descendants of a producer
         #3. TODO: Check that all producers' results are
         #being read by a consumer.
+        
+        if flow_type not in FLOW_TYPES:
+            raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
+        if flow_type == BATCH:
+            self._execution_engine = BatchExecutionEngine()
+        elif flow_type == REALTIME:
+            self._execution_engine = RealtimeExecutionEngine()
 
-        self._execution_environment = QueueExecutionEnvironment(flow_type)
 
     def run(self):
         '''
@@ -160,7 +165,7 @@ class Flow:
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.
-        self._execution_environment.allocate_and_run_tasks(tasks_data)
+        self._execution_engine.allocate_and_run_tasks(tasks_data)
         logger.info('Allocated processes for {} tasks'.format(len(tasks_data)))
         logger.info('Started running flow.')
     
@@ -169,7 +174,7 @@ class Flow:
         Blocking method. Will make the process that calls this method block until the flow finishes
         running naturally.
         '''
-        self._execution_environment.join_task_processes()
+        self._execution_engine.join_task_processes()
         logger.info('Flow has stopped.')
 
     def stop(self):
@@ -177,5 +182,5 @@ class Flow:
         Blocking method. Stops the flow.  Makes the execution environment send a flow termination signal.
         '''
         logger.info('Stop termination signal placed on flow.')
-        self._execution_environment.signal_flow_termination()
+        self._execution_engine.signal_flow_termination()
         self.join()
