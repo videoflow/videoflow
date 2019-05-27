@@ -37,11 +37,20 @@ class BoundingBoxAnnotator(ImageAnnotator):
     - Arguments:
         - class_labels_path: path to pbtxt file that defines the labels indexes
         - class_labels_dataset: If class_labels_path is None, then we use this attribute to \
-            download the file from the releases folder.
+            download the file from the releases folder.  Currently supported datasets \
+            are: ``coco``, ``oidv4``, ``pascal`` and ``kitti``.
         - box_color: color to use to draw the boxes
         - box_thickness: thickness of boxes to draw
         - text_color: color of text to draw
     '''
+
+    supported_datasets = [
+        'coco',
+        'oidv4',
+        'pascal',
+        'kitti'
+    ]
+
     def __init__(self, class_labels_path = None, class_labels_dataset = 'coco', 
                 box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
         self._box_color = box_color
@@ -52,6 +61,8 @@ class BoundingBoxAnnotator(ImageAnnotator):
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
 
         if class_labels_path is None:
+            if class_labels_dataset not in self.supported_datasets:
+                raise ValueError('dataset is not one of supported datasets: {}'.format(', '.join(self.supported_datasets)))
             labels_file_name = f'labels_{class_labels_dataset}.pbtxt'
             remote_url = BASE_URL_DETECTION + labels_file_name
             class_labels_path = get_file(labels_file_name, remote_url)
