@@ -58,8 +58,7 @@ class VideostreamReader(ProducerNode):
     
     def close(self):
         raise NotImplementedError()
-
-
+    
 class VideofileReader(ProducerNode):
     '''
     Opens a video capture object and returns subsequent frames

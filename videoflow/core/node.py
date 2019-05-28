@@ -208,7 +208,7 @@ class SequenceProcessorNode(ProcessorNode):
             - There is at least one node in the sequence that has device_type GPU
             - The sequence length is less than 1.
     '''
-    def __init__(self, processor_nodes : [ProcessorNode], nb_tasks : int = 1)
+    def __init__(self, processor_nodes : [ProcessorNode], nb_tasks : int = 1):
         if any([not isinstance(p, ProcessorNode) for p in processor_nodes]):
             raise ValueError('There is at least one node that is not instance of ProcessorNode')
         if any([isistance(p, OneTaskProcessorNode) for p in processor_nodes]) and nb_tasks > 1:
@@ -218,6 +218,8 @@ class SequenceProcessorNode(ProcessorNode):
         if len(processor_nodes) < 1:
             raise ValueError('Must pass a list of at least one processor node')
         self._processor_nodes = processor_nodes
+        # TODO: Check what to do with a call to __call__ that might have happened in processor 
+        # nodes that are part of the sequence.
         super(SequenceProcessorNode, self).__init__(nb_tasks, device_type = CPU)
     
     def process(self, *inp):

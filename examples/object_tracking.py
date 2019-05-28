@@ -54,10 +54,9 @@ def main():
     
     reader = VideofileReader(input_file)
     frame = FrameIndexSplitter()(reader)
-    detector = TensorflowObjectDetector()(frame)
+    detector = TensorflowObjectDetector(num_classes = 2, architecture = 'fasterrcnn-resnet101', dataset = 'kitti')(frame)
     # keeps only automobile classes: autos, buses, cycles, etc.
-    filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
-    tracker = KalmanFilterBoundingBoxTracker()(filter_)
+    tracker = KalmanFilterBoundingBoxTracker()(detector)
     annotator = TrackerAnnotator()(frame, tracker)
     writer = VideofileWriter(output_file, fps = 30)(annotator)
     fl = flow.Flow([reader], [writer], flow_type = BATCH)
