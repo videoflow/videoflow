@@ -7,7 +7,7 @@ import numpy as np
 
 from ..core.node import ProducerNode
 
-class ImagefolderReader(ProducerNode):
+class ImageFolderReader(ProducerNode):
     '''
     Reads from a folder of images and returns them one by one.
     Passes through images in alphabetical order.
@@ -24,7 +24,7 @@ class ImagefolderReader(ProducerNode):
     def next(self) -> np.array:
         raise NotImplementedError()
 
-class VideofolderReader(ProducerNode):
+class VideoFolderReader(ProducerNode):
     '''
     Reads videos from a folder of videos and returns the frames of 
     the videos one by one.
@@ -116,7 +116,7 @@ class VideoUrlReader(VideostreamReader):
         - nb_frames: number of frames to process. -1 means all of them
     '''
     def __init__(self, url : str, nb_frames : int = -1, nb_retries = 0):
-        super(VideourlReader, self).__init__(url, nb_frames = nb_frames, nb_retries = nb_retries)
+        super(VideoUrlReader, self).__init__(url, nb_frames = nb_frames, nb_retries = nb_retries)
 
 class VideoDeviceReader(VideostreamReader):
     '''
@@ -128,7 +128,7 @@ class VideoDeviceReader(VideostreamReader):
         - nb_frames: number of frames to process. -1 means all of them
     '''
     def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0):
-        super(VideodeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries)    
+        super(VideoDeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries)    
 
 class VideoFileReader(VideostreamReader):
     '''
@@ -140,7 +140,7 @@ class VideoFileReader(VideostreamReader):
         - nb_frames: number of frames to process. -1 means all of them
     '''
     def __init__(self, video_file : str, nb_frames = -1):
-        super(VideofileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
+        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
 
 # Here for the sake of not breaking
 # old code

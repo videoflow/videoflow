@@ -211,7 +211,7 @@ class SequenceProcessorNode(ProcessorNode):
     def __init__(self, processor_nodes : [ProcessorNode], nb_tasks : int = 1):
         if any([not isinstance(p, ProcessorNode) for p in processor_nodes]):
             raise ValueError('There is at least one node that is not instance of ProcessorNode')
-        if any([isistance(p, OneTaskProcessorNode) for p in processor_nodes]) and nb_tasks > 1:
+        if any([isinstance(p, OneTaskProcessorNode) for p in processor_nodes]) and nb_tasks > 1:
             raise ValueError('Cannot have nb_tasks > 1 if one of the processor nodes is derived from OneTaskProcessorNode')
         if any([p.device_type == GPU for p in processor_nodes]):
             raise ValueError('Cannot have nodes with device type GPU as part of the sequence')
