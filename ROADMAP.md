@@ -9,7 +9,7 @@
     - Pose annotation of images.
     - Mask annotation of images.
     - Basic image manipulation operations.
-- Reimplement batch execution engine so that it uses microbages.
+- Reimplement batch execution engine so that it uses microbadges.
 
 ## v0.4
 - Logging of events, flow performance and errors.
