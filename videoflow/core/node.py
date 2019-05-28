@@ -191,6 +191,41 @@ class FunctionProcessorNode(ProcessorNode):
     def process(self, inp):
         return self._fn(inp)
 
+class SequenceProcessorNode(ProcessorNode):
+    '''
+    Processor node that wraps a sequence of processor nodes. This has the effect
+    that the natural effect that instead of allocating one task per processor node in
+    the sequence, only one task is allocated for the entire sequence.
+
+    - Arguments:
+        - processor_nodes: [ProcessorNode] The sequence of processor nodes
+        - nb_tasks (int) The number of parallel tasks to allocate
+    - Raises:
+        - ``ValueError`` if:
+            - There is at least one node in the sequence that is not instance of ``ProcessorNode``
+            - ``nb_tasks`` parameter is greater than one and there is at least one node in the sequence \
+                that derives from ``OneTaskProcessorNode``.
+            - There is at least one node in the sequence that has device_type GPU
+            - The sequence length is less than 1.
+    '''
+    def __init__(self, processor_nodes : [ProcessorNode], nb_tasks : int = 1)
+        if any([not isinstance(p, ProcessorNode) for p in processor_nodes]):
+            raise ValueError('There is at least one node that is not instance of ProcessorNode')
+        if any([isistance(p, OneTaskProcessorNode) for p in processor_nodes]) and nb_tasks > 1:
+            raise ValueError('Cannot have nb_tasks > 1 if one of the processor nodes is derived from OneTaskProcessorNode')
+        if any([p.device_type == GPU for p in processor_nodes]):
+            raise ValueError('Cannot have nodes with device type GPU as part of the sequence')
+        if len(processor_nodes) < 1:
+            raise ValueError('Must pass a list of at least one processor node')
+        self._processor_nodes = processor_nodes
+        super(SequenceProcessorNode, self).__init__(nb_tasks, device_type = CPU)
+    
+    def process(self, *inp):
+        to_return = self._processor_nodes[0].process(*inp)
+        for p in self._processor_nodes[1:]:
+            to_return = p.process(to_return)
+        return to_return
+
 class ProducerNode(Node):
     '''
     The `producer node` does not receive input, and produces input. \
