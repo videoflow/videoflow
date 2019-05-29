@@ -12,7 +12,7 @@ from ..core.constants import BATCH, REALTIME, GPU, CPU, LOGGING_LEVEL
 from ..core.node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from ..core.task import Task, ProducerTask, ProcessorTask, ConsumerTask, MultiprocessingReceiveTask, MultiprocessingProcessorTask, MultiprocessingOutputTask
 from ..core.engine import ExecutionEngine, Messenger
-from ..utils.system import get_number_of_gpus
+from ..utils.system import get_gpus_available_to_process
 from ..core.constants import STOP_SIGNAL
 
 class RealtimeQueueMessenger(Messenger):
@@ -121,8 +121,9 @@ class RealtimeExecutionEngine(ExecutionEngine):
         self._task_output_queues = {}
         self._task_termination_notification_queues = {}
         self._termination_event = None
-        self._nb_available_gpus = get_number_of_gpus()
-        self._next_gpu = -1
+        self._gpus_ids = get_gpus_available_to_process()
+        self._nb_available_gpus = len(self._gpus_ids)
+        self._next_gpu_index = -1
         super(RealtimeExecutionEngine, self).__init__()
 
     def _al_create_and_start_processes(self, tasks_data):
@@ -215,9 +216,9 @@ class RealtimeExecutionEngine(ExecutionEngine):
         for task in tasks:
             if isinstance(task, ProcessorTask) or isinstance(task, MultiprocessingProcessorTask):
                 if task.device_type == GPU:
-                    self._next_gpu += 1
-                    if self._next_gpu < self._nb_available_gpus:
-                        proc = create_process_task_gpu(task, self._next_gpu)
+                    self._next_gpu_index += 1
+                    if self._next_gpu_index < self._nb_available_gpus:
+                        proc = create_process_task_gpu(task, self._gpu_ids[self._next_gpu_index])
                     else:
                         try:
                             task.change_device(CPU)
