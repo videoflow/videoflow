@@ -1,4 +1,4 @@
-"""Setup script for realpython-reader"""
+"""Setup script for videoflow"""
 
 import os.path
 import setuptools
