@@ -37,7 +37,11 @@ docker run -u $(id -u):$(id -g) -v $(pwd):/usr/src/app repo/videoflow python /us
 ## Contributing:
 A tentative [roadmap](ROADMAP.md) of where we are headed.
 
-[Contribution rules](CONTRIBUTING.md)
+[Contribution rules](CONTRIBUTING.md).
+
+If you have new processors, producers or consumers that you can to create, check the [videoflow-contrib](https://github.com/videoflow/videoflow-contrib) project.  We want 
+to keep videoflow succinct, clean, and simple, with as minimal dependencies to third-party libraries as necessaries. [videoflow-contrib](https://github.com/videoflow/videoflow-contrib) is better suited for adding new components that require new library 
+dependencies.
 
 ## Sample Videoflow application:
 Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
