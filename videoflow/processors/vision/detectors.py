@@ -64,6 +64,7 @@ class TensorflowObjectDetector(ObjectDetector):
         "fasterrcnn-resnet101_kitti","79","87"
 
     .. csv-table:: Models supported Open Images V4 Dataset
+        
         "Model","Speed (ms)", "Open Images V4 mAP@0.5"
         "fasterrcnn-inception-resnetv2-atrous_oidv4","425","54"
         "ssd-mobilenetv2_oidv4","89","36"
