@@ -1,6 +1,9 @@
 from ..utils.graph import has_cycle, topological_sort
 from .node import ProducerNode
 
+import logging
+logger = logging.getLogger(__package__)
+
 class GraphEngine:
     def __init__(self, producers, consumers):
         if len(producers) != 1:
@@ -20,6 +23,7 @@ class GraphEngine:
 
         for consumer in consumers:
             if consumer not in self._tsort:
+                logger.error(f'Consumer {consumer} is not descendant of any producer. Exiting now...')
                 raise ValueError(f'{consumer} is not descendant of any producer')
         
         #3. TODO: Check that all producers' results are

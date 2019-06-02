@@ -191,7 +191,7 @@ class FunctionProcessorNode(ProcessorNode):
     def process(self, inp):
         return self._fn(inp)
 
-class SequenceProcessorNode(ProcessorNode):
+class ModuleNode(Node):
     '''
     Processor node that wraps a sequence of processor nodes. This has the effect
     that the natural effect that instead of allocating one task per processor node in
@@ -220,7 +220,7 @@ class SequenceProcessorNode(ProcessorNode):
         self._processor_nodes = processor_nodes
         # TODO: Check what to do with a call to __call__ that might have happened in processor 
         # nodes that are part of the sequence.
-        super(SequenceProcessorNode, self).__init__(nb_tasks, device_type = CPU)
+        super(MoNode, self).__init__(nb_tasks, device_type = CPU)
     
     def process(self, *inp):
         to_return = self._processor_nodes[0].process(*inp)
