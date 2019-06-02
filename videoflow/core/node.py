@@ -3,7 +3,9 @@ from __future__ import division
 from __future__ import absolute_import
 
 import logging
+logger = logging.getLogger(__package__)
 
+from ..utils.graph import has_cycle, topological_sort
 from .constants import LOGGING_LEVEL
 from .processor import Processor
 from .constants import GPU, CPU, DEVICE_TYPES
@@ -175,28 +177,11 @@ class OneTaskProcessorNode(ProcessorNode):
     def __init__(self):
         super(OneTaskProcessorNode, self).__init__(nb_tasks = 1)
 
-class ExternalProcessorNode(ProcessorNode):
-    def __init__(self, processor : Processor, nb_proc : int = 1, device = CPU):
-        self._processor = processor
-        super(ExternalProcessorNode, self).__init__(nb_proc, device)
-    
-    def process(self, inp):
-        return self._processor.process(inp)
-
-class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_proc : int = 1, device = CPU):
-        self._fn = processor_function
-        super(FunctionProcessorNode, self).__init__(nb_proc, device)
-    
-    def process(self, inp):
-        return self._fn(inp)
-
-class ModuleNode(Node):
+class SequenceProcessorNode(ProcessorNode):
     '''
     Processor node that wraps a sequence of processor nodes. This has the effect
     that the natural effect that instead of allocating one task per processor node in
     the sequence, only one task is allocated for the entire sequence.
-
     - Arguments:
         - processor_nodes: [ProcessorNode] The sequence of processor nodes
         - nb_tasks (int) The number of parallel tasks to allocate
@@ -220,13 +205,109 @@ class ModuleNode(Node):
         self._processor_nodes = processor_nodes
         # TODO: Check what to do with a call to __call__ that might have happened in processor 
         # nodes that are part of the sequence.
-        super(MoNode, self).__init__(nb_tasks, device_type = CPU)
+        super(SequenceProcessorNode, self).__init__(nb_tasks, device_type = CPU)
     
     def process(self, *inp):
         to_return = self._processor_nodes[0].process(*inp)
         for p in self._processor_nodes[1:]:
             to_return = p.process(to_return)
         return to_return
+
+class ModuleProcessorNode(SequenceProcessorNode):
+    def __init__(self, tsort_sequence : [ProcessorNode]):
+        super(ModuleProcessorNode, self).__init__(tsort_sequence, nb_tasks = 1)
+
+class ExternalProcessorNode(ProcessorNode):
+    def __init__(self, processor : Processor, nb_proc : int = 1, device = CPU):
+        self._processor = processor
+        super(ExternalProcessorNode, self).__init__(nb_proc, device)
+    
+    def process(self, inp):
+        return self._processor.process(inp)
+
+class FunctionProcessorNode(ProcessorNode):
+    def __init__(self, processor_function, nb_proc : int = 1, device = CPU):
+        self._fn = processor_function
+        super(FunctionProcessorNode, self).__init__(nb_proc, device)
+    
+    def process(self, inp):
+        return self._fn(inp)
+
+class ModuleNode(Node):
+    '''
+    Module node that wraps a subgraph of computation. Each node of the Module must be a ``ProcessorNode``
+    or a ``ModuleNode`` itself.  For simplicity, a module node has exaclty one node as entry point, 
+    and exactly one node as exit point. 
+    If for some reason a ModuleNode has flag ``one_process`` set to ``True``:
+        - Then any module within the subgraph must also be of that type, or an exception will be thrown. 
+        - No process inside the module can be allocated to a gpu, or an exception will be thrown
+
+    - Arguments:
+        - entry_node (Node): The node that sits at the top of the subgraph
+        - exit_node (Node): The node that sits at the top of the subgraph
+        - one_process (boolean) If ``True``, the entire module will execute in one process. \
+            Otherwise, each node of the module will execute on its own process
+
+    - Raises:
+        - ``ValueError`` if:
+            - There is at least one node in the sequence that is not instance of ``ProcessorNode`` or of ``ModuleNode``
+            - There is a cycle in the subgraph
+            - The ``exit_node`` is not reachable from the ``entry_node``
+            - The flag ``one_process`` is set to ``True``, and any of the following conditions is true:
+                - There is a ModuleNode within the subgraph that does not have that flag set to true too.
+                - There is at least one node in the sequence that has device_type GPU
+    '''
+    def __init__(self, entry_node : Node, exit_node : Node, one_process : boolean = False):
+        self._entry_node = entry_node
+        self._exit_node = exit_node
+        self._one_process = one_process
+
+        if has_cycle([entry_node]):
+            logger.error('Cycle detected in module graph. Exiting now...')
+            raise ValueError('Cycle found in module graph')
+        
+        temp_tsort = topological_sort([entry_node])
+        
+        if exit_node not in temp_sort:
+            logger.error(f'{exit_node} is not descendant of entry node. Exiting now...')
+            raise ValueError(f'{exit_node} is not descendant of entry node')
+        
+        if any([((not isinstance(p, ProcessorNode)) and (not isinstance(p, ModuleNode))) for p in self._tsort]):
+            raise ValueError('There is at least one node in the module graph that is not instance of ProcessorNode or of ModuleNode')
+        
+        if one_process:
+            for n in temp_sort:
+                if isinstance(n, ModuleNode):
+                    if not n.one_process:
+                        logger.error(f'Cannot have ModuleNode {n} without one_process flag inside'
+                                        ' a module node with one_process flag set')
+                        raise ValueError('Cannot have ModuleNode {n} without one_process flag inside' 
+                                        ' a module node with one_process flag set')
+                elif isinstance(n, ProcessorNode):
+                    if n.device_type == GPU:
+                        logger.error(f'Cannot have node {n} with device type GPU as part of a ModuleNode')
+                        raise ValueError(f'Cannot have node {n} with device type GPU as part of a ModuleNode')
+
+        # Create valid tsort here.
+        self._tsort = []
+        for n in temp_sort:
+            if isinstance(n, ProcessorNode):
+                self._tsort.append(n)
+            elif isinstance(n, ModuleNode):
+                self._tsort.extend(n.nodes)       
+
+        super(ModuleNode, self).__init__()
+    
+    @property
+    def one_process(self):
+        return self._one_process
+
+    @property
+    def nodes(self):
+        if self.one_process:
+            return [ModuleProcessorNode(list(self._tsort))]
+        else:
+            return list(self._tsort)
 
 class ProducerNode(Node):
     '''

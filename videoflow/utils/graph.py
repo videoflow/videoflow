@@ -1,3 +1,16 @@
+from collections import Iterable
+
+def flatten(items):
+    """Returns flattened iterable from any nested iterable"""
+    to_return = []
+    for x in items:
+        if isinstance(x, Iterable) and not isinstance(x, (str, bytes)):
+            for sub_x in flatten(x):
+                to_return.append(sub_x)
+        else:
+            to_return.append(x)
+    return to_return
+
 def _has_cycle_util(v, visited, rec):
     '''
     - Arguments:
