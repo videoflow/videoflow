@@ -18,10 +18,10 @@ class GraphEngine:
         
         self._tsort = topological_sort(self._producers)
 
-        # **** IMPORTANT****** This should be done in the
-        # constructor
-        #2. TODO: CHeck that all nodes in the graph are
-        # descendants of a producer
+        for consumer in consumers:
+            if consumer not in self._tsort:
+                raise ValueError(f'{consumer} is not descendant of any producer')
+        
         #3. TODO: Check that all producers' results are
         #being read by a consumer.
     
