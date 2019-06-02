@@ -1,6 +1,6 @@
 import pytest
 
-from videoflow.core.flow import has_cycle, topological_sort
+from videoflow.utils.graph import has_cycle, topological_sort
 from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
 
