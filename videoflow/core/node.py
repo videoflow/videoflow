@@ -262,9 +262,9 @@ class TaskModuleNode(ProcessorNode):
     
     def process(self, *inp):
         intermediate_results = {}
-        result = self._processor_nodes[0].process(*inp)
-        intermediate_results[self._processor_nodes[0]] = result
-        for p in self._processor_nodes[1:]:
+        result = self._tsort[0].process(*inp)
+        intermediate_results[self._tsort[0]] = result
+        for p in self._tsort[1:]:
             inp_values = [intermediate_results[a] for a in p.parents]
             result = p.process(*inp_values)
             intermediate_results[p] = result
