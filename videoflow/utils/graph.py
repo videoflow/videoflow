@@ -58,8 +58,6 @@ def _topological_sort_util(v, visited, stack):
         - visited : (dict: node -> boolean)
         - stack: (list)
     '''
-    if not v in visited:
-        visited[v] = False
     visited[v] = True
     for child in v.children:
         if not child in visited or visited[child] == False:
