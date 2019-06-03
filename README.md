@@ -46,6 +46,8 @@ dependencies.
 ## Sample Videoflow application:
 Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
 
+[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/TYGMllb7fHM/0.jpg)](https://www.youtube.com/watch?v=TYGMllb7fHM)
+
 ```python
 import videoflow
 import videoflow.core.flow as flow
