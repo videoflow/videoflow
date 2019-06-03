@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import logging
 
+from .graph import GraphEngine
 from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
@@ -12,71 +13,6 @@ from ..engines.batch import BatchExecutionEngine
 
 logger = logging.getLogger(__package__)
 
-def _has_cycle_util(v : Node, visited, rec):
-    visited[v] = True
-    rec[v] = True
-    
-    for child in v.children:
-        if not child in visited:
-            visited[child] = False
-        if visited[child] == False:
-            if _has_cycle_util(child, visited, rec):
-                return True
-        elif rec[child] == True:
-            return True
-    
-    rec[v] = False
-    return False
-
-def has_cycle(producers):
-    '''
-    Used to detect if the graph is not acyclical.  Returns true if it \
-    finds a cycle in the graph.  It begins exploring the graph from producers down \
-    all the way to consumers.
-    '''
-    visited = {}
-    rec = {}
-    for v in producers:
-        visited[v] = False
-        rec[v] = False
-    
-    for v in producers:
-        if visited[v] == False:
-            if _has_cycle_util(v, visited, rec):
-                return True
-    return False
-    
-def _topological_sort_util(v : Node, visited, stack):
-    if not v in visited:
-        visited[v] = False
-    visited[v] = True
-    for child in v.children:
-        if not child in visited or visited[child] == False:
-            _topological_sort_util(child, visited, stack)
-    stack.insert(0, v)
-
-def topological_sort(producers):
-    '''
-    Creates a topological sort of the computation graph.
-
-    - Arguments:
-        - producers: a list of producer nodes, that is, nodes with no parents.
-    
-    - Returns:
-        - stack: a list of nodes in topological order.  If \
-            a *node A* appears before a *node B* on the list, it means \
-            that *node A* does not depend on *node B* output
-    '''
-    visited = {}
-    for v in producers:
-        visited[v] = False
-    stack = []
-
-    for v in producers:
-        if visited[v] == False:
-            _topological_sort_util(v, visited, stack)
-    
-    return stack
 
 class Flow:
     '''
@@ -91,32 +27,13 @@ class Flow:
         - flow_type: one of 'realtime' or 'batch'
     '''
     def __init__(self, producers, consumers, flow_type = REALTIME):
-        if len(producers) != 1:
-            raise AttributeError('Only support flows with 1 producer for now.')
-        for producer in producers:
-            if not isinstance(producer, ProducerNode):
-                raise AttributeError('{} is not instance of ProducerNode'.format(producer))
-         
-        self._producers = producers
-        self._consumers = consumers
-        
-        if has_cycle(self._producers):
-            logger.error('Cycle detected in computation graph. Exiting now...')
-            raise ValueError('Cycle found in graph')
-        # **** IMPORTANT****** This should be done in the
-        # constructor
-        #2. TODO: CHeck that all nodes in the graph are
-        # descendants of a producer
-        #3. TODO: Check that all producers' results are
-        #being read by a consumer.
-        
+        self._graph_engine = GraphEngine(producers, consumers)
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         if flow_type == BATCH:
             self._execution_engine = BatchExecutionEngine()
         elif flow_type == REALTIME:
             self._execution_engine = RealtimeExecutionEngine()
-
 
     def run(self):
         '''
@@ -133,7 +50,8 @@ class Flow:
         '''
 
         #1. Build a topological sort of the graph.
-        tsort = topological_sort(self._producers)
+        tsort = self._graph_engine.topological_sort()
+        
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children
         # all of the outputs of parents.  Hence, at a given
