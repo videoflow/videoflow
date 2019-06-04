@@ -53,6 +53,8 @@ tags
 *.pyo
 .pytest_cache/
 scripts/travis/elasticsearch*
+firebase.json
+deploy.sh
 
 # Environments
 .env
