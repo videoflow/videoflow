@@ -49,7 +49,7 @@ Free and open source
     :caption: Api documentation
 
     apidocs/videoflow.core
-    apidocs/videoflow.environments
+    apidocs/videoflow.engines
     apidocs/videoflow.producers
     apidocs/videoflow.processors
     apidocs/videoflow.consumers

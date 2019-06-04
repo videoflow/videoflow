@@ -54,7 +54,9 @@ And ``printer`` is a **consumer node**.  ``producer`` does
 not have parents, and ``printer`` does not have children.  **processors** and
 **consumers** are **callable** objects.  They accept as arguments
 the parents that they depend on.  In this simple example the computation
-graph of nodes is very simple, a linear one: ``producer -> sum_agg -> printer``
+graph of nodes is very simple, a linear one:
+
+.. image:: ../assets/first-steps/getting-started-with-videoflow/linear_graph.png
 
 **The next lines of code create the flow, start it, and wait for it to finish**::
 
@@ -80,3 +82,26 @@ user of the library does not need to be aware of how this happens.
 
 When you run this example, you should see a sequence of monotonically
 increasing numbers being printed on your screen.
+
+.. note::
+    You can write more complex flows with **Videoflow** really easily:
+    
+    .. image:: ../assets/first-steps/getting-started-with-videoflow/videoflow_logo_annotated.png
+    
+    The graph shown above (;)) can be easily represented in code as::
+
+        from videoflow.producers import IntProducer
+        from videoflow.processors import IdentityProcessor
+        from videoflow.consumers import CommandlineConsumer
+
+        A = IntProducer()
+        B = IdentityProcessor()(A)
+        C = IdentityProcessor()(B)
+        D = IdentityProcessor()(C)
+        E = IdentityProcessor()(D)
+        F = CommandlineConsumer()(E)
+        G = CommandLineConsumer()(D)
+        H = CommandlineConsumer()(D)
+
+
+

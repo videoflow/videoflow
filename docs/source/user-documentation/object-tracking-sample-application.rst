@@ -85,7 +85,7 @@ it passes to the ``writer`` that creates a new video in the filesystem with such
 .. warning:: ``VideofileReader`` should not be used in a ``REALTIME`` setting.
     The reason is that is likely that subsequent processors (such as object detectors) 
     in the flow will not be able to keep up with the pace of the VideofileReader.
-    The default behaviour of the execution environment in ``REALTIME`` mode is to 
+    The default behaviour of the execution engine in ``REALTIME`` mode is to 
     drop the excess frames.  Use ``REALTIME`` for when you need to process 
     something in real time, such as when reading video from a realtime video stream.
     For a more complete explanation, see the **Batch versus realtime mode** section.
