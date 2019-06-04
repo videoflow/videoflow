@@ -43,10 +43,10 @@ for now.
         - Graphs with more than one **producer** will be supported.
         - A check will happen to guarantee that all **consumers** are descendants of at least a **producer**.
 
-flow.run() and the Execution Environment
-----------------------------------------
+flow.run() and the Execution Engine
+-----------------------------------
 Once the flow is built, when ``flow.run()`` is called, a topological sort of the nodes in the 
-graph is created, and the topological sort of nodes is passed to the execution environment, 
+graph is created, and the topological sort of nodes is passed to the execution engine, 
 whose function is to wrap each node with a task, to create queues for communication between tasks,
 and to allocate each task to run in an independent **process**.  If at node creation time it
 was specified that more than one process should be used for it, then more than one task is allocated

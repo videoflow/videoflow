@@ -54,7 +54,9 @@ And ``printer`` is a **consumer node**.  ``producer`` does
 not have parents, and ``printer`` does not have children.  **processors** and
 **consumers** are **callable** objects.  They accept as arguments
 the parents that they depend on.  In this simple example the computation
-graph of nodes is very simple, a linear one: ``producer -> sum_agg -> printer``
+graph of nodes is very simple, a linear one:
+
+.. image:: ../assets/first-steps/getting-started-with-videoflow/linear_graph.png
 
 **The next lines of code create the flow, start it, and wait for it to finish**::
 

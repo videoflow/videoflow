@@ -18,7 +18,7 @@ To write your own custom producer, you need to write a class that extends
 and you may write implementations for the ``open()`` and ``close()`` methods that ``videoflow.core.ProducerNode``
 inherits from ``videoflow.core.Node``.
 
-The ``open()`` method will be called by **Videoflow**'s execution environment before the producer task
+The ``open()`` method will be called by **Videoflow**'s execution engine before the producer task
 begins to run.  You should use it whenever you need to open access to resources such as file system
 resources, etc.
 
@@ -26,7 +26,7 @@ Once the task begins to run, the task runner will continuously call the ``next()
 Each time the ``next()`` method is called, it should return the next produced element.  To indicate that
 no more elements will be produced and returned, the method should raise the ``StopIteration()`` exception.
 
-After the task finishes running because the producer has raised a ``StopIteration()``, the **Videoflow** environment
+After the task finishes running because the producer has raised a ``StopIteration()``, the **Videoflow** execution engine
 calls the ``close()`` method.  The method should close any resources that were opened by the ``open()`` or ``next()`` methods.
 Examples of this resources are files and tensorflow sessions.
 
@@ -125,11 +125,11 @@ indicate its preference of whether the ``process`` method should be run in the `
 As the writer of a processor, you are responsible to write code that reads this parameter and acts 
 accordingly.  For an example, see ``videoflow.processors.vision.detectors.TensorflowObjectDetector``.
 
-The **Videoflow** execution environment keeps track of the number of gpus in the system, and of 
+The **Videoflow** execution engine keeps track of the number of gpus in the system, and of 
 the number of processors in the flow that were instantiated with ``device_type`` being ``gpu``
 (regardless of if the processor actually implements gpu allocation or not).  At task allocation time
 (tasks are allocated in topological-sort order of the computation graph (which is not unique)), 
-if there are no gpus left, the environment will call the ``change_device`` method of the **processor**
+if there are no gpus left, the execution engine will call the ``change_device`` method of the **processor**
 to change the device_type to ``cpu``.  
 
 If for some reason you want to force the process to run on a gpu or make the flow process fail, 

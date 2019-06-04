@@ -3,7 +3,7 @@ Batch versus realtime mode
 
 Flows in **Videoflow** can be of one of two types: ``realtime`` or ``batch``.
 The difference in the type of the flow determines the behaviour of the
-execution environment when passing frames from one flow node to another.
+execution engine when passing frames from one flow node to another.
 
 The default mode is ``realtime``.  The flow type is set at flow creation time::
 
