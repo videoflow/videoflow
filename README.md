@@ -7,7 +7,7 @@
 
 **Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of computer vision stream processing pipelines. It empowers developers to build applications and systems with self-contained Deep Learning and Computer Vision capabilities using simple and few lines of code.  It contains off-the-shelf reference components for object detection, object tracking, human pose estimation, etc, and it is easy to extend with your own.
 
-The complete documentation to the project is located in [**Read the docs.**](https://videoflow.readthedocs.io)
+The complete documentation to the project is located in [**docs.videoflow.dev**](https://docs.videoflow.dev)
 
 [1.2]: http://i.imgur.com/wWzX9uB.png
 [1]: http://www.twitter.com/videoflow_py
