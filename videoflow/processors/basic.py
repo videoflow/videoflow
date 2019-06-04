@@ -2,15 +2,32 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import time
+
 from ..core.node import ProcessorNode
 
 class IdentityProcessor(ProcessorNode):
     '''
     IdentityProcessor implements the identity
     function: it returns the same value that it received
-    as input.
+    as input. You can introduce some delay by setting fps 
+    to a value greater than 0.
+
+    - Arguments:
+        - fps (int): frames per second. If value is less \
+            than or equal to zero, it is ignored, and no delay \
+            is introduced.
     '''
+    def __init__(fps = -1):
+        super(IdentityProcessor, self).__init__()
+        if fps > 0:
+            self._wts = 1.0 / fps # wait time in seconds
+        else:
+            self._wts = 0
+
     def process(self, inp):
+        if self._wts > 0:
+            time.sleep(self._wts)
         return inp
 
 class JoinerProcessor(ProcessorNode):
