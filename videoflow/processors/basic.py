@@ -34,6 +34,20 @@ class JoinerProcessor(ProcessorNode):
     '''
     Takes all the parameters received in the ``process`` method
     and makes them a tuple of items.
+
+    - Arguments:
+        - fps (int): frames per second. If value is less \
+            than or equal to zero, it is ignored, and no delay \
+            is introduced.
     '''
+    def __init__(fps = -1):
+        super(JoinerProcessor, self).__init__()
+        if fps > 0:
+            self._wts = 1.0 / fps
+        else:
+            self._wts = 0
+    
     def process(self, *inp):
+        if self._wts > 0:
+            time.sleep(self._wts)
         return tuple(inp)
