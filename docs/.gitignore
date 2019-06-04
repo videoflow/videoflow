@@ -57,6 +57,8 @@ firebase.json
 deploy.sh
 
 # Environments
+.firebase
+.firebaserc
 .env
 .venv
 env/
