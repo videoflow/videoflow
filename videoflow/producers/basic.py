@@ -12,13 +12,18 @@ class IntProducer(ProducerNode):
     integer in the sequence between ``start_value`` and ``end_value``.
     
     If ``wait_time_in_seconds`` is greater than zero, it sleeps for 
-    the specified amount of seconds each time ``next()`` is called
+    the specified amount of seconds each time ``next()`` is called.
+
+    If ``fps`` is given a value greater than 0, ``fps`` overrides the 
+    value of ``wait_time_in_seconds``
     '''
     def __init__(self, start_value : int = 0, end_value : int = None, 
-                wait_time_in_seconds : float = 0):
+                wait_time_in_seconds : float = 0, fps = -1):
         self._start_value = start_value
         self._end_value = end_value
         self._wait_time_in_seconds = wait_time_in_seconds
+        if fps > 0:
+            self._wait_time_in_seconds = 1.0 / fps
         self._current_value = self._start_value
         super(IntProducer, self).__init__()
         
