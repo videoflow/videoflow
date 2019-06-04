@@ -18,7 +18,7 @@ class IdentityProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(fps = -1):
+    def __init__(self, fps = -1):
         super(IdentityProcessor, self).__init__()
         if fps > 0:
             self._wts = 1.0 / fps # wait time in seconds
@@ -40,7 +40,7 @@ class JoinerProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(fps = -1):
+    def __init__(self, fps = -1):
         super(JoinerProcessor, self).__init__()
         if fps > 0:
             self._wts = 1.0 / fps
