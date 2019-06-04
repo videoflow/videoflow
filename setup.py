@@ -17,7 +17,7 @@ exec(open('videoflow/version.py').read())
 setup(
     name = "videoflow",
     version = __version__,
-    description="Python video streams processing library",
+    description="Python video stream processing library",
     long_description = README,
     long_description_content_type = "text/markdown",
     url = "https://github.com/videoflow/videoflow",
