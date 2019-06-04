@@ -57,4 +57,12 @@ videoflow.processors.vision.trackers module
     :undoc-members:
     :show-inheritance:
 
+videoflow.processors.vision.transformers module
+-----------------------------------------------
+
+.. automodule:: videoflow.processors.vision.transformers
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 

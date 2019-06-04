@@ -25,6 +25,14 @@ videoflow.utils.generic\_utils module
     :undoc-members:
     :show-inheritance:
 
+videoflow.utils.graph module
+----------------------------
+
+.. automodule:: videoflow.utils.graph
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 videoflow.utils.keras module
 ----------------------------
 

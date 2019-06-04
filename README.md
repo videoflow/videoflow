@@ -1,6 +1,6 @@
 # Videoflow
 
-![Videoflow](assets/videoflow_logo.png)
+![Videoflow](assets/videoflow_logo_small.png)
 
 [![Build Status](https://travis-ci.org/videoflow/videoflow.svg?branch=master)](https://travis-ci.org/videoflow/videoflow)
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/videoflow/videoflow/blob/master/LICENSE)
@@ -44,7 +44,7 @@ to keep videoflow succinct, clean, and simple, with as minimal dependencies to t
 dependencies.
 
 ## Sample Videoflow application:
-Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder.
+Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder. It uses detection model published by [tensorflow/models](https://github.com/tensorflow/models/tree/master/research/object_detection)
 
 [![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/TYGMllb7fHM/0.jpg)](https://www.youtube.com/watch?v=TYGMllb7fHM)
 

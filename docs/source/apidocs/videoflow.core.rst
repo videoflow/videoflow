@@ -17,10 +17,10 @@ videoflow.core.constants module
     :undoc-members:
     :show-inheritance:
 
-videoflow.core.environment module
----------------------------------
+videoflow.core.engine module
+----------------------------
 
-.. automodule:: videoflow.core.environment
+.. automodule:: videoflow.core.engine
     :members:
     :undoc-members:
     :show-inheritance:
@@ -29,6 +29,14 @@ videoflow.core.flow module
 --------------------------
 
 .. automodule:: videoflow.core.flow
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
+videoflow.core.graph module
+---------------------------
+
+.. automodule:: videoflow.core.graph
     :members:
     :undoc-members:
     :show-inheritance:
