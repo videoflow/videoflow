@@ -106,8 +106,8 @@ class BatchExecutionEngine(ExecutionEngine):
         self._task_output_queues = {}
         self._task_termination_notification_queues = {}
         self._termination_event = None
-        self._gpus_ids = get_gpus_available_to_process()
-        self._nb_available_gpus = len(self._gpus_ids)
+        self._gpu_ids = get_gpus_available_to_process()
+        self._nb_available_gpus = len(self._gpu_ids)
         self._next_gpu_index = -1
         super(BatchExecutionEngine, self).__init__()
 
