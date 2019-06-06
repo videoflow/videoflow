@@ -35,7 +35,6 @@ Free and open source
     :caption: Tutorials
 
     user-documentation/writing-your-own-components
-    user-documentation/object-tracking-sample-application
     user-documentation/batch-versus-realtime-mode
     user-documentation/task-allocation
     user-documentation/advanced-flowing

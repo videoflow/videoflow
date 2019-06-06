@@ -4,31 +4,30 @@ Writing your own components
 One of the best features of **Videoflow** is that it can be easily extended.
 Videoflow has a good collection of components (producers, processors and consumers)
 that can help you quickly bootstrap a computer vision application.  Sometimes the components
-provided are not enough because you need to bring your own models, or you need to 
+provided are not enough because you need faster or more accurate models, or you need to 
 implement a complex algorithm, or you are dealing with a non-standard data source. 
 
-In this tutorial we will show you how to write your own components, and how to 
-integrate them to the **Videoflow** application.
+This tutorial shows how to write your own components, and how to integrate them 
+to the **Videoflow** application.
 
 Writing producers
 -----------------
 
-To write your own custom producer, you need to write a class that extends 
-``videoflow.core.ProducerNode``.  You must write your own implementation of the ``next()`` method,
-and you may write implementations for the ``open()`` and ``close()`` methods that ``videoflow.core.ProducerNode``
+To write a custom producer, simply extend the class 
+``videoflow.core.ProducerNode``.  You must implement the ``next()`` method,
+and you may implement ``open()`` and ``close()`` methods that ``videoflow.core.ProducerNode``
 inherits from ``videoflow.core.Node``.
 
 The ``open()`` method will be called by **Videoflow**'s execution engine before the producer task
-begins to run.  You should use it whenever you need to open access to resources such as file system
-resources, etc.
+begins to run.  Use it whenever to open access to resources such as file system
+resources, creating Tensorflow sessions, etc.
 
 Once the task begins to run, the task runner will continuously call the ``next()`` method of the producer.
-Each time the ``next()`` method is called, it should return the next produced element.  To indicate that
-no more elements will be produced and returned, the method should raise the ``StopIteration()`` exception.
+Each time the ``next()`` method is called, it should return the next produced output.  To indicate that
+no more outputs will be produced and returned, the method must raise the ``StopIteration`` exception.
 
-After the task finishes running because the producer has raised a ``StopIteration()``, the **Videoflow** execution engine
+When the task finishes to run because the producer has raised a ``StopIteration`` exception, the **Videoflow** execution engine
 calls the ``close()`` method.  The method should close any resources that were opened by the ``open()`` or ``next()`` methods.
-Examples of this resources are files and tensorflow sessions.
 
 See below a sample implementation of ``videoflow.producers.VideofileReader``::
 
@@ -91,9 +90,9 @@ Writing processors
 Processors are the nodes that perform computations, transformations or filtering of data. 
 In general, processors receive data as input and return data as output.
 
-To write your own custom processor, you need to write a class that extends 
-``videoflow.core.Processor``.  You must write your own implementation of the ``process()`` method,
-and you may write implementations for ``change_device()`` and for the ``open()`` and ``close()`` methods that ``videoflow.core.ProcessorNode``
+To write your own custom processor, create a class that extends 
+``videoflow.core.Processor``.  The class must implement the ``process()`` method,
+and may implement ``change_device()`` method and the ``open()`` and ``close()`` methods that ``videoflow.core.ProcessorNode``
 inherits from ``videoflow.core.Node``.
 
 Read **Writing producers** section above for a good explanation of how to implement the ``open()`` and
@@ -101,8 +100,8 @@ Read **Writing producers** section above for a good explanation of how to implem
 
 Implementing the ``process`` method
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-The process method receives as parameters as many items as the number of parents the processor
-node receives input from.  For example, consider implementing a processor that takes as input the
+The number of parameters of the ``process`` method is equal to the number of parents of the **processor**
+in the computation graph. For example, consider implementing a processor that takes as input the
 outputs of two parents, and returns as output `0` if the minimum came from the first parent, and `1`
 if it came from the second one.  To implement it, simply do::
 
@@ -116,7 +115,7 @@ if it came from the second one.  To implement it, simply do::
 
 Notice that the order in which the inputs are received is important.  At flow definition time,
 be sure to pass the parents to the ``__call__`` method in the same order that the ``process`` 
-method expects them.
+method expects its inputs.
 
 Using the GPU and the ``change_device`` method
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -127,25 +126,26 @@ accordingly.  For an example, see ``videoflow.processors.vision.detectors.Tensor
 
 The **Videoflow** execution engine keeps track of the number of gpus in the system, and of 
 the number of processors in the flow that were instantiated with ``device_type`` being ``gpu``
-(regardless of if the processor actually implements gpu allocation or not).  At task allocation time
-(tasks are allocated in topological-sort order of the computation graph (which is not unique)), 
+(regardless of if the processor actually makes use of that parameter to allocate to a gpu or not).  
+At task allocation time (tasks are allocated in topological-sort order of the computation graph (notice that an
+acyclic graph can have more than one valid topological sort ordering)), 
 if there are no gpus left, the execution engine will call the ``change_device`` method of the **processor**
 to change the device_type to ``cpu``.  
 
 If for some reason you want to force the process to run on a gpu or make the flow process fail, 
 you need to reimplement the ``change_device()`` method and raise a ``ValueError`` exception to make
-the allocation process fail.
+the allocation fail and as a consequence, to make the entire flow execution to fail.
 
 When to extend ``OneTaskProcessorNode``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-**Videoflow** supports the parallelization of a processor in multiple
-processes.  That functionality is very useful whenever to have whenever the processor is or
-may become a bottleneck in the flow.
+**Videoflow** supports the parallelization of a **processor** in multiple
+processes.  That functionality is very useful when the **processor** is or
+may become a bottleneck of the flow.
 
-But there are certain processor nodes for one reason or another should not be parallelized. 
-This usually happens if the processor node keeps an internal state.
-In this case this processors should subclass the ``videoflow.core.node.OneTaskProcessorNode`` class.
-A simple example is given below.  Another example are all the subclasses of ``videoflow.processors.vision.BoundingBoxTracker``::
+But there are certain **processor** nodes that for one reason or another should not be parallelized. 
+This usually happens if the **processor** node keeps an internal state.
+If that is the case, the **processor** should subclass ``videoflow.core.node.OneTaskProcessorNode``.
+A simple example is given below.  More examples are all the subclasses of ``videoflow.processors.vision.trackers.BoundingBoxTracker``::
 
     class MinAggregator(OneTaskProcessorNode):
         def __init__(self):
@@ -163,9 +163,8 @@ Consumers are the sinks of the flow.  They are leafs in the computation graph, s
 output, hence they are not parents to any node.  A common use of consumers is to publish results
 to sources external to the flow, such as the file system, the command line, or a remote endpoint, etc.
 
-To write your own custom consumer, you need to write a class that extends 
-``videoflow.core.Consumer``.  You must write your own implementation of the ``consume()`` method,
-and you may write implementations for the ``open()`` and ``close()`` methods that ``videoflow.core.ConsumerNode``
+To write your own custom consumer, sublcass ``videoflow.core.Consumer``.  The child class must implement the ``consume()`` method,
+and you may implement the ``open()`` and ``close()`` methods that ``videoflow.core.ConsumerNode``
 inherits from ``videoflow.core.Node``.
 
 The ``consume`` method receives as parameters as many items as the number of parents the consumer
