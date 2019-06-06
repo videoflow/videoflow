@@ -40,5 +40,13 @@
 - Flowboard: Something similar to tensorboard, but for flows.
 
 ## v1.0
+- Nothing new to add here.
+
+.
+.
+.
+
+# v2.0
+- Distributed version of **Videoflow**
 
 
