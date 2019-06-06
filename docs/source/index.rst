@@ -41,8 +41,14 @@ Free and open source
     user-documentation/advanced-flowing
     user-documentation/common-patterns
     user-documentation/debugging-flow-applications
-    
 
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+    :caption: Computer vision recipes
+
+    computer-vision-recipes/object-tracking-sample-application
+    
 .. toctree:: 
     :maxdepth: 2
     :hidden:
