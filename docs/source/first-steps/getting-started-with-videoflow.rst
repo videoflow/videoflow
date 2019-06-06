@@ -1,7 +1,7 @@
 Getting started with Videoflow
 ==============================
 
-The main datastructure of Videoflow is a **Flow**. A **Flow** is defined as 
+The main datastructure of **Videoflow** is a **Flow**. A **Flow** is defined as 
 a directed acyclic graph (DAG) of nodes that can be of three types: **producers**,
 **processors** and **consumers**. Directed edges in the graph represent dependency relationships:
 A **node B** as a child of **node A** in the computation graph means that
@@ -11,14 +11,13 @@ Producer Node
     Producer nodes generate data and "place it" on the flow. They have no parents.  
     Examples of producers are nodes that randomly generate sequences of numbers,
     or nodes that read data from a file, or nodes that consume a video stream. 
-    Notice producer nodes usually `consume` data from an external data source,
+    Notice that **producer nodes** usually `consume` data from an external data source,
     but they are called **producers** because they are the nodes that 
-    originate or `produce` the data of the flow.
+    originate or `produce` the data and place it in the flow.
 
 Processor Node
-    Processor nodes receive data as input, then they compute or `process` on it,
-    and return the result of their computation as output to be used by the nodes
-    that depend on it.
+    Processor nodes receive data as input. They compute or `process` on it,
+    and return the result of the computation as output to be used by its child nodes.
 
 Consumer Node
     Consumer nodes receive or `consume` data. They have no children.  They usually
@@ -35,8 +34,7 @@ It computes the aggregate sum of the produced integers and it prints
 the result to the command line.  You can find the complete example 
 `here <https://github.com/jadielam/videoflow/blob/master/examples/simple_example2.py>`_.
 
-**The first section of this example is the importing of the Flow class
-and of the nodes that are going to be used**::
+**The first section of the example imports the nodes to be used**::
 
     from videoflow.core import Flow
     from videoflow.producers import IntProducer
@@ -58,7 +56,7 @@ graph of nodes is very simple, a linear one:
 
 .. image:: ../assets/first-steps/getting-started-with-videoflow/linear_graph.png
 
-**The next lines of code create the flow, start it, and wait for it to finish**::
+**The next lines of code create, start and wait for the the flow to finish**::
 
     flow = Flow([producer], [printer])
     flow.run()
@@ -69,14 +67,14 @@ can also specify a list of consumers and the type of flow (if it is a
 **realtime** flow or a **batch processing** flow).  By default a flow is
 a **realtime** flow.
 
-.. warning:: In the current version of Videoflow, only flows with
-    one producer are supported.  If you pass a list of producers to the
-    constructor with more than one of them, an exception is raised.
+.. warning:: Videoflow currently supports flows with only
+    one producer.  If you pass to the flow a list of more than one producer, 
+    an exception is raised.
 
 ``flow.run()`` creates tasks for each node in the 
-computation graph. Each task runs in an independent processes.  These tasks
+computation graph. Each task runs in an independent CPU process.  These tasks
 communicate and coordinate between each other using queues, but the
-user of the library does not need to be aware of how this happens. 
+user of **Videoflow** does not need to be aware of how this happens. 
 
 ``flow.join()`` blocks until all the tasks of the flow finish running.
 
@@ -88,7 +86,7 @@ increasing numbers being printed on your screen.
     
     .. image:: ../assets/first-steps/getting-started-with-videoflow/videoflow_logo_annotated.png
     
-    The graph shown above (;)) can be easily represented in code as::
+    The graph shown above can be easily translated to code as::
 
         from videoflow.producers import IntProducer
         from videoflow.processors import IdentityProcessor
@@ -102,6 +100,4 @@ increasing numbers being printed on your screen.
         F = CommandlineConsumer()(E)
         G = CommandLineConsumer()(D)
         H = CommandlineConsumer()(D)
-
-
-
+        

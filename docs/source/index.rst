@@ -35,14 +35,19 @@ Free and open source
     :caption: Tutorials
 
     user-documentation/writing-your-own-components
-    user-documentation/object-tracking-sample-application
     user-documentation/batch-versus-realtime-mode
     user-documentation/task-allocation
     user-documentation/advanced-flowing
     user-documentation/common-patterns
     user-documentation/debugging-flow-applications
-    
 
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+    :caption: Computer vision recipes
+
+    computer-vision-recipes/object-tracking-sample-application
+    
 .. toctree:: 
     :maxdepth: 2
     :hidden:
