@@ -7,7 +7,8 @@ from __future__ import absolute_import
 
 import numpy as np
 
-from ...core.node import ProcessorNode, CPU, GPU
+from ...core.node import ProcessorNode
+from ...core.constants import CPU, GPU
 from ...utils.tensorflow import TensorflowModel
 from ...utils.downloader import get_file
 
@@ -77,8 +78,8 @@ class TensorflowObjectDetector(ObjectDetector):
             ``detection_classes:0``, and ``num_detections:0``.  If no path is provided, then \
             it will download the model from the internet using the values provided for ``architecture``\
             and ``dataset``.
-        - architecture (str): One of `fasterrcnn-resnet101` or `ssd-mobilenetv2`
-        - dataset (str): For now, only `coco` is accepted.
+        - architecture (str): One of the architectures mentioned in the tables above.
+        - dataset (str): `coco`, `kitti` and `oidv4` are accepted.
         - min_score_threshold (float): detection will filter out entries with score below threshold score
     '''
     supported_models = [
