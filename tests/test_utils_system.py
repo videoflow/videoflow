@@ -39,5 +39,10 @@ def test_gpus_available_3(monkeypatch):
     gpus = system.get_gpus_available_to_process()
     assert len(gpus) == 0
 
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'asdfa, 1, 0, asdf')
+    gpus = system.get_gpus_available_to_process()
+    assert len(gpus) == 2
+
+
 if __name__ == "__main__":
     pytest.main([__file__])
