@@ -2,6 +2,7 @@
 Tests multiple situations regarding allocation to gpu.
 '''
 import pytest
+import time
 
 from videoflow.core.flow import _task_data_from_node_tsort
 from videoflow.engines.realtime import RealtimeExecutionEngine
