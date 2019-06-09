@@ -31,3 +31,6 @@ def test_raise_error_2():
 
     with pytest.raises(ValueError):
         graph_engine = GraphEngine([a], [e])
+
+if __name__ == "__main__":
+    pytest.main([__file__])

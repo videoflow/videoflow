@@ -71,7 +71,7 @@ class ExecutionEngine:
     Defines the interface of the `execution environment`
     '''
     def __init__(self):
-        pass
+        self._allocation_called = False
         
     def _al_create_and_start_processes(self, tasks_data):
         '''
@@ -108,7 +108,10 @@ class ExecutionEngine:
                 [(node : Node, node_index : int, parent_index : int, has_children : bool)]
 
         '''
+        if self._allocation_called:
+            raise RuntimeError('This method has already been called. It can only be called once.')
         self._al_create_and_start_processes(tasks_data)
+        self._allocation_called = True
     
     
 

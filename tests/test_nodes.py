@@ -86,5 +86,7 @@ def test_taskmodule_node_4():
     '''
     Test the process algorithm of the taskmodule node
     '''
-    
+
+if __name__ == "__main__":
+    pytest.main([__file__])
 
