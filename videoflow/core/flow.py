@@ -13,6 +13,22 @@ from ..engines.batch import BatchExecutionEngine
 
 logger = logging.getLogger(__package__)
 
+def _task_data_from_node_tsort(tsort_l):
+    tasks_data = []
+
+    for i in range(len(tsort_l)):
+        node = tsort_l[i]
+        if isinstance(node, ProducerNode):
+            task_data = (node, i, None, i < (len(tsort_l) - 1))
+        elif isinstance(node, ProcessorNode):
+            task_data = (node, i, i - 1, i < (len(tsort_l) - 1))
+        elif isinstance(node, ConsumerNode):
+            task_data = (node, i, i - 1, i < (len(tsort_l) - 1))
+        else:
+            raise ValueError('node is not of one of the valid types')
+        tasks_data.append(task_data)
+        
+    return tasks_data
 
 class Flow:
     '''
@@ -67,19 +83,7 @@ class Flow:
         #3. Create the tasks and the input/outputs
         # for them
         # task_data is a list of tuples (node, task_id, parent_task_id, has_chilren)
-        tasks_data = []
-
-        for i in range(len(tsort)):
-            node = tsort[i]
-            if isinstance(node, ProducerNode):
-                task_data = (node, i, None, i < (len(tsort) - 1))
-            elif isinstance(node, ProcessorNode):
-                task_data = (node, i, i - 1, i < (len(tsort) - 1))
-            elif isinstance(node, ConsumerNode):
-                task_data = (node, i, i - 1, i < (len(tsort) - 1))
-            else:
-                raise ValueError('node is not of one of the valid types')
-            tasks_data.append(task_data)
+        tasks_data = _task_data_from_node_tsort(tsort)
         
         # 4. Put each task to run in the place where the processor it
         # contains inside runs.

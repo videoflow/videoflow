@@ -125,8 +125,8 @@ class RealtimeExecutionEngine(ExecutionEngine):
         self._nb_available_gpus = len(self._gpu_ids)
         self._next_gpu_index = -1
         super(RealtimeExecutionEngine, self).__init__()
-
-    def _al_create_and_start_processes(self, tasks_data):
+        
+    def _al_create_processes(self, tasks_data):
         #0. Create output queues
         for data in tasks_data:
             task_id = data[1]
@@ -230,11 +230,16 @@ class RealtimeExecutionEngine(ExecutionEngine):
             else:
                 proc = create_process_task(task)
             self._procs.append(proc)
-        
+
+    def _al_start_processes(self):
         #3. Start processes.
         for proc in self._procs:
             proc.start()
-    
+
+    def _al_create_and_start_processes(self, tasks_data):
+        self._al_create_processes(tasks_data)
+        self._al_start_processes()
+        
     def signal_flow_termination(self):
         self._termination_event.set()
     
