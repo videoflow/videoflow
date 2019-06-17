@@ -31,7 +31,7 @@ class VoidConsumer(ConsumerNode):
     Ignores the input received.
     Helpful in debugging flows.
     '''
-    def __init__():
+    def __init__(self):
         super(VoidConsumer, self).__init__()
     
     def consumer(self, item):
