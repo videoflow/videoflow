@@ -26,6 +26,20 @@ class CommandlineConsumer(ConsumerNode):
         '''
         print(item, sep = self._sep, end = self._end)
 
+class VoidConsumer(ConsumerNode):
+    '''
+    Ignores the input received.
+    Helpful in debugging flows.
+    '''
+    def __init__():
+        super(VoidConsumer, self).__init__()
+    
+    def consumer(self, item):
+        '''
+        Does nothing with the item passed
+        '''
+        pass
+
 class WebhookConsumer(ConsumerNode):
     def __init__(self):
         # TODO: Add other pertinent parameters to the init method.

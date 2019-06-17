@@ -111,7 +111,7 @@ class TensorflowSegmenter(Segmenter):
         
         self._tensorflow_model = TensorflowModel(
             self._path_to_pb_file,
-            ["iamge_tensor:0"],
+            ["image_tensor:0"],
             ["detection_boxes:0", "detection_scores:0", "detection_classes:0", 
                 "num_detections:0", "detection_masks:0"],
             device_id = device_id
@@ -129,7 +129,24 @@ class TensorflowSegmenter(Segmenter):
             - im (np.array): (h, w, 3)
         
         - Returns:
-            - mask: np.array of shape (h, w, num_classes)
+            - masks: np.array of shape (h, w, num_classes)
+            - classes:
+            - scores:
         '''
-        raise NotImplementedError('Will implement soon.')
+        h, w, _ = im.shape
+        im_expanded = np.expand_dims(im, axis = 0)
+        boxes, scores, classes, nb_detections, masks = self._tensorflow_model.run_on_input(im_expanded)
+        boxes, scores, classes, masks = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0), np.squeeze(masks, axis = 0)
+        
+        indexes = np.where(scores > self._min_score_threshold)[0]
+        boxes, scores, classes, masks = boxes[indexes], scores[indexes], classes[indexes], masks[indexes]
+        print(boxes)
+        print(scores)
+        print(classes)
+        print(masks)
+        scores, classes = np.expand_dims(scores, axis = 1), np.expand_dims(classes, axis = 1)
+        return np.array(masks), np.array(classes), np.array(scores)
+
+
+
         

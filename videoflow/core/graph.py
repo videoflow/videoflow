@@ -20,7 +20,7 @@ class GraphEngine:
             raise ValueError('Cycle found in graph')
         
         self._tsort = topological_sort(self._producers)
-        print(self._tsort)
+        logger.debug("Topological sort: {}".format(self._tsort))
 
         for consumer in consumers:
             if consumer not in self._tsort:
