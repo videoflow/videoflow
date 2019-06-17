@@ -34,7 +34,7 @@ class VoidConsumer(ConsumerNode):
     def __init__(self):
         super(VoidConsumer, self).__init__()
     
-    def consumer(self, item):
+    def consume(self, item):
         '''
         Does nothing with the item passed
         '''
