@@ -106,7 +106,8 @@ class ProducerTask(NodeTask):
             try:
                 with DelayedKeyboardInterrupt():
                     a = self._producer.next()
-                    self._messenger.publish_message(a)
+                    if not self.is_last:
+                        self._messenger.publish_message(a)
             except StopIteration:
                 break
             except KeyboardInterrupt:
@@ -147,8 +148,9 @@ class ProcessorTask(NodeTask):
                         break
 
                     #3. Pass inputs needed to processor
-                    output = self._processor.process(*inputs)
-                    self._messenger.publish_message(output)
+                    if not self.is_last:
+                        output = self._processor.process(*inputs)
+                        self._messenger.publish_message(output)
             except KeyboardInterrupt:
                 continue
         
@@ -295,13 +297,14 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                     raw_outputs = self._output_queues[next_idx].get(block = True)
                     if self._has_stop_signal(raw_outputs):
                         self._finish_count += 1
-                    if self._flow_type == BATCH:
-                        self._task_queue.put(raw_outputs, block = True)
-                    elif self._flow_type == REALTIME:
-                        try:
-                            self._task_queue.put(raw_outputs, block = False)
-                        except:
-                            pass
+                    if not self.is_last:
+                        if self._flow_type == BATCH:
+                            self._task_queue.put(raw_outputs, block = True)
+                        elif self._flow_type == REALTIME:
+                            try:
+                                self._task_queue.put(raw_outputs, block = False)
+                            except:
+                                pass
                     if self._finish_count == len(self._output_queues):
                         break
                     

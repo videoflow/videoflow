@@ -55,7 +55,6 @@ def test_taskmodulenode_example1():
     flow.run()
     flow.join()
 
-'''
 @pytest.mark.timeout(30)
 def test_graph_with_deadend_processor():
     # Graph with no consumer should run.
@@ -81,7 +80,7 @@ def test_graph_with_no_consumer():
     flow = Flow([producer], [])
     flow.run()
     flow.join()
-'''
+
 
 if __name__ == "__main__":
     pytest.main([__file__])
