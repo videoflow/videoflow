@@ -33,13 +33,24 @@ class NodeTask(Task):
         - messenger (Messenger): the messenger that will communicate between nodes.
         - tsort_id (int): the position of the node in the topological sort
         - parent_tsort_id: the position of the parent node in the topological sort.
+        - is_last: True if the task is the last one in the topological sort
     '''
-    def __init__(self, computation_node : Node, messenger, tsort_id : int, parent_tsort_id : int = None):
+    def __init__(self, computation_node : Node, messenger, tsort_id : int, 
+                is_last : bool, parent_tsort_id : int = None):
         self._messenger = messenger
         self._computation_node = computation_node
         self._tsort_id = tsort_id
         self._parent_tsort_id = parent_tsort_id
+        self._is_last = is_last
     
+    @property
+    def is_last(self):
+        '''
+        Returns True if the task is the last one in the topological
+        sort, otherwise returns false.
+        '''
+        return self._is_last
+
     @property
     def id(self):
         '''
@@ -85,9 +96,10 @@ class ProducerTask(NodeTask):
     At each iteration it checks for a termination signal, and if so it \
     sends a termination message to its child task and breaks the infinite loop.
     '''
-    def __init__(self, producer : ProducerNode, messenger, task_id : int):
+    def __init__(self, producer : ProducerNode, messenger, task_id : int,
+                is_last = False):
         self._producer = producer
-        super(ProducerTask, self).__init__(producer, messenger, task_id)
+        super(ProducerTask, self).__init__(producer, messenger, task_id, is_last)
     
     def _run(self):
         while True:
@@ -112,10 +124,10 @@ class ProcessorTask(NodeTask):
     a parent it receives a termination message, it passes termination message down the flow \
     and breaks from infinite loop.
     '''
-    def __init__(self, processor : ProcessorNode, messenger, task_id : int, parent_task_id : int):
+    def __init__(self, processor : ProcessorNode, messenger, task_id : int, 
+                is_last, parent_task_id : int):
         self._processor = processor
-        
-        super(ProcessorTask, self).__init__(processor, messenger, task_id, parent_task_id)    
+        super(ProcessorTask, self).__init__(processor, messenger, task_id, is_last, parent_task_id)    
     
     @property
     def device_type(self):
@@ -149,11 +161,9 @@ class ConsumerTask(NodeTask):
     those tasks expect any input from the consumer task. It simply means that the consumer
     task is a passthrough of messages. 
     '''
-    def __init__(self, consumer : ConsumerNode, messenger, task_id : int, parent_task_id : int,
-                has_children_task : bool):
+    def __init__(self, consumer : ConsumerNode, messenger, task_id : int, is_last : bool, parent_task_id : int):
         self._consumer = consumer
-        self._has_children_task = has_children_task
-        super(ConsumerTask, self).__init__(consumer, messenger, task_id, parent_task_id)
+        super(ConsumerTask, self).__init__(consumer, messenger, task_id, is_last, parent_task_id)
     
     def _run(self):
         while True:
@@ -162,15 +172,17 @@ class ConsumerTask(NodeTask):
                     inputs = self._messenger.receive_message()
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
-                        # No need to pass through stop signal to children.
-                        # If children need to stop, they will receive it from
+                        # No need to pass through stop signal to "children".
+                        # (Note that consumers do not have real children in the original graph,
+                        # they only have children once the graph is topologically sorted)
+                        # If "children" need to stop, they will receive it from
                         # someone else, so the message that I am passing through
                         # might be the one carrying it.
-                        if self._has_children_task:
+                        if not self.is_last:
                             self._messenger.passthrough_termination_message()
                         break
 
-                    if self._has_children_task:
+                    if not self.is_last:
                         self._messenger.passthrough_message()
                     self._consumer.consume(*inputs)
             except KeyboardInterrupt:
@@ -255,15 +267,25 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
 
 class MultiprocessingOutputTask(MultiprocessingTask):
     def __init__(self, processor : ProcessorNode, task_queue : Queue, accountingQueue : Queue,
-                output_queues : [Queue], flow_type : str):
+                output_queues : [Queue], flow_type : str, is_last : bool):
         self._aq = accountingQueue
         self._task_queue = task_queue
         self._output_queues = output_queues
         self._finish_count = 0
+        self._is_last = is_last
+
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         self._flow_type = flow_type
         super(MultiprocessingOutputTask, self).__init__(processor)
+    
+    @property
+    def is_last(self):
+        '''
+        Returns True if the task is the last one in the topological
+        sort, otherwise returns false.
+        '''
+        return self._is_last
     
     def run(self):
         while True:

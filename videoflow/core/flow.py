@@ -19,11 +19,11 @@ def _task_data_from_node_tsort(tsort_l):
     for i in range(len(tsort_l)):
         node = tsort_l[i]
         if isinstance(node, ProducerNode):
-            task_data = (node, i, None, i < (len(tsort_l) - 1))
+            task_data = (node, i, None, i >= (len(tsort_l) - 1))
         elif isinstance(node, ProcessorNode):
-            task_data = (node, i, i - 1, i < (len(tsort_l) - 1))
+            task_data = (node, i, i - 1, i >= (len(tsort_l) - 1))
         elif isinstance(node, ConsumerNode):
-            task_data = (node, i, i - 1, i < (len(tsort_l) - 1))
+            task_data = (node, i, i - 1, i >= (len(tsort_l) - 1))
         else:
             raise ValueError('node is not of one of the valid types')
         tasks_data.append(task_data)
