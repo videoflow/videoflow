@@ -276,7 +276,10 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                     if self._flow_type == BATCH:
                         self._task_queue.put(raw_outputs, block = True)
                     elif self._flow_type == REALTIME:
-                        self._task_queue.put(raw_outputs, block = False)
+                        try:
+                            self._task_queue.put(raw_outputs, block = False)
+                        except:
+                            pass
                     if self._finish_count == len(self._output_queues):
                         break
                     

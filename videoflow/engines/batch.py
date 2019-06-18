@@ -115,7 +115,7 @@ class BatchExecutionEngine(ExecutionEngine):
         #0. Create output queues
         for data in tasks_data:
             task_id = data[1]
-            queue = Queue(10)
+            queue = Queue(1)
             self._task_output_queues[task_id] = queue
         
         self._termination_event = Event()

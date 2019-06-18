@@ -1,4 +1,4 @@
-from collections import Iterable
+from collections.abc import Iterable
 
 def flatten(items):
     """Returns flattened iterable from any nested iterable"""
