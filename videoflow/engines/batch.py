@@ -126,7 +126,7 @@ class BatchExecutionEngine(ExecutionEngine):
             node = data[0]
             node_id = data[1]
             parent_node_id = data[2]
-            has_children = data[3]
+            is_last = data[3]
 
             #1.1 Creating messenger for task
             task_queue = self._task_output_queues.get(node_id)
@@ -138,7 +138,7 @@ class BatchExecutionEngine(ExecutionEngine):
             messenger = BatchprocessingQueueMessenger(node, task_queue, parent_task_queue, self._termination_event)
 
             if isinstance(node, ProducerNode):
-                task = ProducerTask(node, messenger, node_id)
+                task = ProducerTask(node, messenger, node_id, is_last)
                 tasks.append(task)
 
             elif isinstance(node, ProcessorNode):
@@ -175,7 +175,8 @@ class BatchExecutionEngine(ExecutionEngine):
                         task_queue,
                         accountingQueue,
                         output_queues,
-                        BATCH
+                        BATCH,
+                        is_last
                     )
                     tasks.append(output_task)
                 else:
@@ -183,6 +184,7 @@ class BatchExecutionEngine(ExecutionEngine):
                         node,
                         messenger,
                         node_id,
+                        is_last,
                         parent_node_id
                     )
                     tasks.append(task)
@@ -192,8 +194,8 @@ class BatchExecutionEngine(ExecutionEngine):
                     node,
                     messenger,
                     node_id,
-                    parent_node_id,
-                    has_children
+                    is_last,
+                    parent_node_id
                 )
                 tasks.append(task)
         
