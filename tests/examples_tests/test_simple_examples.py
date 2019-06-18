@@ -55,6 +55,21 @@ def test_taskmodulenode_example1():
     flow.run()
     flow.join()
 
+@pytest.mark.timeout(30)
+def test_graph_with_no_consumer():
+    '''
+    Graph with no consumer should run.
+    '''
+    producer = IntProducer(0, 40, 0.05)
+    identity = IdentityProcessor(nb_tasks = 1)(producer)
+    identity1 = IdentityProcessor(nb_tasks = 1)(identity)
+    joined = JoinerProcessor(nb_tasks = 1)(identity, identity1)
+    task_module = TaskModuleNode(identity, joined)
+    printer = CommandlineConsumer()(task_module)
+    flow = Flow([producer], [printer])
+    flow.run()
+    flow.join()
+
 if __name__ == "__main__":
     pytest.main([__file__])
 
