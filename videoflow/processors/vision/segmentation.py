@@ -161,24 +161,29 @@ class TensorflowSegmenter(Segmenter):
             remote_url = BASE_URL_SEGMENTATION + self._remote_model_file_name
             self._path_to_pb_file = get_file(self._remote_model_file_name, remote_url)
         
-        '''
-        self._tensorflow_model = TensorflowModel(
-            self._path_to_pb_file,
-            ["image_tensor:0"],
-            ["detection_boxes:0", "detection_scores:0", "detection_classes:0", 
-                "num_detections:0", "detection_masks:0"],
-            device_id = device_id
-        )
-        '''
-        # TODO: Will work on this later
+        with tf.device(device_id):
+            self._model_graph = tf.Graph()
+            with self._model_graph.as_default():
+                graph_def = tf.GraphDef()
+                with tf.gfile.GFile(self._path_to_pb_file, 'rb') as fid:
+                    serialized_graph = fid.read()
+                    graph_def.ParseFromString(serialized_graph)
+                    tf.import_graph_def(graph_def, name = '')
+        self._session = tf.Session(graph = self._model_graph)
+        self._detection_boxes = self._model_graph.get_tensor_by_name('detection_boxes:0')
+        self._detection_masks = self._model_graph.get_tensor_by_name('detection_masks:0')
+        self._num_detections = self._model_graph.get_tensor_by_name('num_detections:0')
+        self._detection_scores = self._model_graph.get_tensor_by_name('detection_scores:0')
+        self._detection_classes = self._model_graph.get_tensor_by_name('detection_classes:0')
+        self._image_tensor = self._model_graph.get_tensor_by_name('image_tensor:0')
     
     def close(self):
         '''
         Closes tensorflow model session.
         '''
-        # TODO: Write code to close model session
-        #self._tensorflow_model._close_session()
-    
+        if self._session:
+            self._session.close()
+
     def _segment(self, im : np.array) -> np.array:
         '''
         - Arguments:
@@ -189,24 +194,28 @@ class TensorflowSegmenter(Segmenter):
             - classes: np.array of shape (nb_masks,)
             - scores: np.array of shape (nb_masks,)
         '''
-        # TODO: Work on this code later on.
-        # Will be modified very much.
         h, w, _ = im.shape
         im_expanded = np.expand_dims(im, axis = 0)
-        boxes, scores, classes, nb_detections, masks = self._tensorflow_model.run_on_input(im_expanded)
-        boxes, scores, classes, masks = np.squeeze(boxes, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0), np.squeeze(masks, axis = 0)
-        
+        detection_boxes = tf.squeeze(self._detection_boxes, [0])
+        detection_masks = tf.squeeze(self._detection_masks, [0])
+        real_num_detection = tf.cast(self._num_detections[0], tf.int32)
+        detection_boxes = tf.slice(detection_boxes, [0, 0], [real_num_detection, -1])
+        detection_masks = tf.slice(detection_masks, [0, 0, 0], [real_num_detection, -1, -1])
+        detection_masks_reframed = reframe_box_masks_to_image_masks(
+            detection_masks,
+            detection_boxes,
+            h,
+            w
+        )
+        detection_masks_reframed = tf.cast(tf.greater(detection_masks_reframed, 0.5), tf.uint8)
+        detection_masks_reframed = tf.expand_dims(detection_masks_reframed, 0)
+        masks, scores, classes = self._session.run(
+            [detection_masks_reframed, self._detection_scores, self._detection_classes],
+            feed_dict = {
+                self._image_tensor: im_expanded
+            }
+        )
+        masks, scores, classes = np.squeeze(masks, axis = 0), np.squeeze(scores, axis = 0), np.squeeze(classes, axis = 0)
         indexes = np.where(scores > self._min_score_threshold)[0]
-        boxes, scores, classes, masks = boxes[indexes], scores[indexes], classes[indexes], masks[indexes]
-        
-        # 1. Create new masks' array to return
-        new_masks = np.zeros((h, w, boxes.shape[0]), dtype = masks.dtype)
-
-        # 2. Resize each mask to the value that it needs to have
-
-        # 3. Place the mask on its location on the array.
-
-        # 4. Convert masks into 0-1 arrays
-        
-        scores, classes = np.expand_dims(scores, axis = 1), np.expand_dims(classes, axis = 1)
-        return new_masks, np.array(classes), np.array(scores)
+        masks, scores, classes = masks[indexes], scores[indexes], classes[indexes]
+        return masks, classes, scores
