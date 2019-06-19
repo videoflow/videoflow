@@ -195,10 +195,12 @@ class TaskModuleNode(ProcessorNode):
     Processor node that wraps a graph of processor nodes. This has the effect
     that instead of allocating one task per processor node in
     the graph, only one task process is allocated for the entire subgraph.
+    
     - Arguments:
         - entry_node (Node): The node that sits at the top of the subgraph
         - exit_node (Node): The node that sits at the top of the subgraph
         - nb_tasks (int) The number of parallel tasks to allocate
+    
     - Raises:
         - ``ValueError`` if:
             - There is at least one node in the subgraph that is not instance of ``ProcessorNode``
