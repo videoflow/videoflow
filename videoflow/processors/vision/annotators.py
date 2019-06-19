@@ -34,6 +34,7 @@ class ImageAnnotator(ProcessorNode):
 class BoundingBoxAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images.
+
     - Arguments:
         - class_labels_path: path to pbtxt file that defines the labels indexes
         - class_labels_dataset: If class_labels_path is None, then we use this attribute to \
@@ -43,7 +44,6 @@ class BoundingBoxAnnotator(ImageAnnotator):
         - box_thickness: thickness of boxes to draw
         - text_color: color of text to draw
     '''
-
     supported_datasets = [
         'coco',
         'oidv4',

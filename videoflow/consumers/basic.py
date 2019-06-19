@@ -21,6 +21,7 @@ class CommandlineConsumer(ConsumerNode):
     def consume(self, item):
         '''
         Prints `item` to the command line, adding an end of line character after it.
+        
         - Arguments:
             - item: It can be anything that can be printed with the ``print()`` function
         '''
