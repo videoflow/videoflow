@@ -1,7 +1,7 @@
 Installing Videoflow
 ==============================
 
-Before installing **Videoflow**, please install **Tensorflow** 1.13 or later and **OpenCV**.
+Before installing **Videoflow**, please install **Tensorflow** and **OpenCV**.
 Also, **Python 2** is not supported. You need to be running on **Python 3.6+**.
 
 There are two ways to install **Videoflow**:
