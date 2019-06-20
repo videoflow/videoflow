@@ -13,6 +13,7 @@ models/
 # Folder with files to include in different
 # release versions
 releases/
+temp/
 
 # C extensions
 *.so
