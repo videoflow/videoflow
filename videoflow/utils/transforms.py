@@ -3,6 +3,7 @@ from __future__ import division
 from __future__ import absolute_import
 
 import cv2
+import numpy as np
 
 def resize_add_padding(im, t_h, t_w):
     '''
