@@ -4,17 +4,70 @@ from __future__ import absolute_import
 
 import tensorflow as tf
 
-class TensorflowModel:
-    def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu:0"):
+class TfliteModel:
+    '''
+    Helper class to run inference on .tflite models.
+    TfliteModel does not support allocation to GPU.
+
+    - Arguments:
+        - model_file_path (str): path to .tflite file
+        - input_tensors_names (list(str)): list of names of input tensors
+        - output_tensors_names (list(str)): list of names of output tensors
+    '''
+    def __init__(self, model_file_path, input_tensors_names, output_tensors_names):
+        self._model_file_path = model_file_path
+        self._input_tensor_names = input_tensors_names
+        self._output_tensor_names = output_tensors_names
+        self._load_model()
+    
+    def _load_model(self):
+        self._interpreter = tf.lite.Interpreter(model_path = self._model_file_path)
+        self._interpreter.allocate_tensors()
+        
+        #1. Inputs
+        input_details = self._interpreter.get_input_details()
+        name_to_index_d = {a['name'] : a['index'] for a in input_details}
+        self._input_indexes = [name_to_index_d[a] for a in self._input_tensor_names]
+
+        #2. Outputs
+        output_details = self._interpreter.get_output_details()
+        name_to_index_d.update({a['name'] : a['index'] for a in output_details})
+        self._output_indexes = [name_do_index_d[a] for a in self._output_tensor_names]
+    
+    def run_on_input(self, *inp_l):
         '''
         - Arguments:
-            - pb_file_path (str): path to pb file
-            - input_tensors_names (list(str)): list of names of input tensors
-            - output_tensors_names (list(str)): list of names of output tensors
-            - device_id (str): name of device where model should be allocated. Model allocation \
-                in that device is not guaranteed. If the device cannot be found, it will \
-                default to cpu.
+            - inp_l: a tuple of inputs to be passed to the model. \
+                Must be given in the same order that the list of `input_tensors_names` was given to the constructor.
+
+        - Returns:
+            - output_l: a list of outputs of the same length and in the same order as the `output_tensors_names` \
+                was provided to the constructor.
         '''
+        for idx, input_data in enumerate(inp_l):
+            self._interpreter.set_tensor(self._input_indexes[idx], input_data)
+        self._interpreter.invoke()
+        return [self._interpreter.get_tensor(index) for index in self._output_indexes]
+
+    def _close_session(self):
+        '''
+        Here for the sake of completeness. So far, there is no capability to do this.
+        '''
+        pass
+            
+
+class TensorflowModel:
+    '''
+    - Arguments:
+        - pb_file_path (str): path to pb file
+        - input_tensors_names (list(str)): list of names of input tensors
+        - output_tensors_names (list(str)): list of names of output tensors
+        - device_id (str): name of device where model should be allocated. Model allocation \
+            in that device is not guaranteed. If the device cannot be found, it will \
+            default to cpu.
+    '''
+    def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu:0"):
+
         self._pb_file_path = pb_file_path
         self._device_id = device_id
         self._output_tensors_names = output_tensors_names
@@ -52,7 +105,7 @@ class TensorflowModel:
     def run_on_input(self, *inp_l):
         '''
         - Arguments:
-            - inp_l: a list of inputs to be passed to the model. \
+            - inp_l: a tuple of inputs to be passed to the model. \
                 Must be given in the same order that the list of `input_tensors_names` was given to the constructor.
 
         - Returns:
