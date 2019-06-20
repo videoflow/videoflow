@@ -34,6 +34,20 @@ class TfliteModel:
         name_to_index_d.update({a['name'] : a['index'] for a in output_details})
         self._output_indexes = [name_to_index_d[a] for a in self._output_tensor_names]
     
+    def get_input_details(self):
+        '''
+        Returns metadata that describes the shape and type of the inputs that 
+        the model accepts
+        '''
+        return self._interpreter.get_input_details()
+    
+    def get_output_details(self):
+        '''
+        Returns metadata that describes the shape and type of the outputs 
+        that the model produces
+        '''
+        return self._interpreter.get_output_details()
+    
     def run_on_input(self, *inp_l):
         '''
         - Arguments:
