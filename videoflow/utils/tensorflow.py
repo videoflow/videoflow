@@ -16,8 +16,8 @@ class TfliteModel:
     '''
     def __init__(self, model_file_path, input_tensors_names, output_tensors_names):
         self._model_file_path = model_file_path
-        self._input_tensor_names = input_tensor_names
-        self._output_tensor_names = output_tensor_names
+        self._input_tensor_names = input_tensors_names
+        self._output_tensor_names = output_tensors_names
         self._load_model()
     
     def _load_model(self):
