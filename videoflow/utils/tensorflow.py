@@ -32,7 +32,7 @@ class TfliteModel:
         #2. Outputs
         output_details = self._interpreter.get_output_details()
         name_to_index_d.update({a['name'] : a['index'] for a in output_details})
-        self._output_indexes = [name_do_index_d[a] for a in self._output_tensor_names]
+        self._output_indexes = [name_to_index_d[a] for a in self._output_tensor_names]
     
     def run_on_input(self, *inp_l):
         '''
