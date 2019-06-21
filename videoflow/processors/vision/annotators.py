@@ -208,4 +208,4 @@ class SegmenterAnnotator(ImageAnnotator):
             background = cv2.multiply(1.0 - alpha, to_return)
             to_return = cv2.add(foreground, background)
         
-        return to_return.astype(int)
+        return to_return.astype(np.uint8)
