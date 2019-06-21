@@ -58,11 +58,30 @@ class MaskImageTransformer(ProcessorNode):
         super(MaskImageTransformer, self).__init__()
     
     def _mask(self, im : np.array, mask : np.array) -> np.array:
-        raise NotImplementedError()
+        if mask.shape[:2] != im.shape[:2]:
+            raise ValueError("`mask` does not have same dimensions as `im`")
+        im = im.astype(float)
+        alpha = cv2.merge((mask, mask, mask))
+        masked = cv2.multiply(im, alpha)
+        return masked.astype(int)
     
     def process(self, im : np.array, mask : np.array) -> np.array:
+        '''
+        Masks an image according to given masks
+
+        - Arguments:
+            - im (np.array): shape of (h, w, 3)
+            - mask (np.array): (h, w) of type np.float32, with \
+                values between zero and one
+        
+        - Raises:
+            - ValueError:
+                - If ``mask`` does not have same height and width as \
+                    ``im``
+
+        '''
         to_transform = np.array(im)
-        return self._crop(im, mask)
+        return self._mask(im, mask)
 
 
 class ResizeImageTransformer(ProcessorNode):
