@@ -51,7 +51,7 @@ class TfliteModel:
     def run_on_input(self, *inp_l):
         '''
         - Arguments:
-            - inp_l: a tuple of inputs to be passed to the model. \
+            - inp_l: a list of inputs to be passed to the model. \
                 Must be given in the same order that the list of `input_tensors_names` was given to the constructor.
 
         - Returns:
@@ -61,27 +61,20 @@ class TfliteModel:
         for idx, input_data in enumerate(inp_l):
             self._interpreter.set_tensor(self._input_indexes[idx], input_data)
         self._interpreter.invoke()
-        return [self._interpreter.get_tensor(index) for index in self._output_indexes]
-
-    def _close_session(self):
-        '''
-        Here for the sake of completeness. So far, there is no capability to do this.
-        '''
-        pass
-            
+        outputs_l = [self._interpreter.get_tensor(a) for a in self._output_indexes]
+        return outputs_l
 
 class TensorflowModel:
-    '''
-    - Arguments:
-        - pb_file_path (str): path to pb file
-        - input_tensors_names (list(str)): list of names of input tensors
-        - output_tensors_names (list(str)): list of names of output tensors
-        - device_id (str): name of device where model should be allocated. Model allocation \
-            in that device is not guaranteed. If the device cannot be found, it will \
-            default to cpu.
-    '''
     def __init__(self, pb_file_path, input_tensors_names, output_tensors_names, device_id = "cpu:0"):
-
+        '''
+        - Arguments:
+            - pb_file_path (str): path to pb file
+            - input_tensors_names (list(str)): list of names of input tensors
+            - output_tensors_names (list(str)): list of names of output tensors
+            - device_id (str): name of device where model should be allocated. Model allocation \
+                in that device is not guaranteed. If the device cannot be found, it will \
+                default to cpu.
+        '''
         self._pb_file_path = pb_file_path
         self._device_id = device_id
         self._output_tensors_names = output_tensors_names
@@ -119,7 +112,7 @@ class TensorflowModel:
     def run_on_input(self, *inp_l):
         '''
         - Arguments:
-            - inp_l: a tuple of inputs to be passed to the model. \
+            - inp_l: a list of inputs to be passed to the model. \
                 Must be given in the same order that the list of `input_tensors_names` was given to the constructor.
 
         - Returns:

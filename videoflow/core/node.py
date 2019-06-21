@@ -139,14 +139,6 @@ class ConsumerNode(Leaf):
         '''
         raise NotImplementedError('consume function needs to be implemented\
                             by subclass')
-    
-    def get_input_details(self):
-        '''
-        Returns metadata that describes the shape and type of the inputs that 
-        the consumer accepts.
-        '''
-        raise NotImplementedError('get_input_details function needs to be'
-                                    ' implemented by sublcass')
 
 class ProcessorNode(Node):
     def __init__(self, nb_tasks : int = 1, device_type = CPU):
@@ -188,22 +180,6 @@ class ProcessorNode(Node):
         '''
         raise NotImplementedError('process function needs to be implemented\
                             by subclass')
-    
-    def get_input_details(self):
-        '''
-        Returns metadata that describes the shape and type of the inputs that 
-        the processor accepts.
-        '''
-        raise NotImplementedError('get_input_details function needs to be'
-                                    ' implemented by sublcass')
-
-    def get_output_details(self):
-        '''
-        Returns metadata that describes the shape and type of the outputs 
-        of the processor.
-        '''
-        raise NotImplementedError('get_output_details function needs to be'
-                                    ' implemented by sublcass')
 
 class OneTaskProcessorNode(ProcessorNode):
     '''
@@ -381,11 +357,3 @@ class ProducerNode(Node):
         and a call to self.next happens.
         '''
         raise NotImplementedError('Method needs to be implemented by subclass')
-
-    def get_output_details(self):
-        '''
-        Returns metadata that describes the shape and type of the outputs 
-        of the producer.
-        '''
-        raise NotImplementedError('get_output_details function needs to be'
-                                    ' implemented by sublcass')
