@@ -6,7 +6,7 @@ import numpy as np
 import cv2
 
 from ...core.node import ProcessorNode
-
+from ...utils.transforms import resize_add_padding
 
 class CropImageTransformer(ProcessorNode):
     def __init__(self):
@@ -54,6 +54,9 @@ class CropImageTransformer(ProcessorNode):
 
 
 class MaskImageTransformer(ProcessorNode):
+    def __init__(self):
+        super(MaskImageTransformer, self).__init__()
+    
     def _mask(self, im : np.array, mask : np.array) -> np.array:
         raise NotImplementedError()
     
@@ -63,9 +66,31 @@ class MaskImageTransformer(ProcessorNode):
 
 
 class ResizeImageTransformer(ProcessorNode):
+    def __init__(self, maintain_ratio = False):
+        self._maintain_ratio = maintain_ratio
+        super(ResizeImageTransformer, self).__init__()
+
     def _resize(self, im : np.array, new_size) -> np.array:
-        raise NotImplementedError()
+        height, width = new_size
+        if height < 0 or width < 0:
+            raise ValueError("One of `width` or `height` is a negative value")
+        if self._maintain_ratio:
+            im = resize_add_padding(im, height, width)
+        else:
+            im = cv2.resize(im, (width, height))
+        return im
     
     def process(self, im : np.array, new_size) -> np.array:
+        '''
+        Resizes image according to coordinates in new_size
+
+        - Arguments:
+            - im (np.array): shape of (h, w, 3)
+            - new_size (tuple): (new_height, new_width)
+        
+        - Raises:
+            - ValueError:
+                - If ``new_height`` or ``new_width`` are negative
+        '''
         to_transform = np.array(im)
         return self._resize(im, new_size)
