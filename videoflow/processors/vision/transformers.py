@@ -63,7 +63,7 @@ class MaskImageTransformer(ProcessorNode):
         im = im.astype(float)
         alpha = cv2.merge((mask, mask, mask))
         masked = cv2.multiply(im, alpha)
-        return masked.astype(int)
+        return masked.astype(np.uint8)
     
     def process(self, im : np.array, mask : np.array) -> np.array:
         '''
