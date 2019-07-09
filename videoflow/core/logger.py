@@ -22,7 +22,7 @@ class Metric:
             - new_value: (float)
         '''
         self._count += 1
-        delta = new_value = self._mean
+        delta = new_value - self._mean
         self._mean += delta / self._count
         delta2 = new_value - self._mean
         self._m2 += (delta * delta2)
@@ -30,7 +30,7 @@ class Metric:
     @property
     def name(self):
         return self._name
-        
+
     @property
     def mean(self):
         return self._mean
