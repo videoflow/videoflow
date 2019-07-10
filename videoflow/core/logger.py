@@ -2,6 +2,7 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import logging
 import os
 from multiprocessing import Queue
 from collections import namedtuple
@@ -126,17 +127,45 @@ class MetricsLoggerTask:
         self._logging_queue = logging_queue
         self._accountant = Accountant(nb_nodes)
         self._log_folder = log_folder
+        self._logger = self._get_metric_logger()
+
+    def _get_metric_logger(self):
+        logger = logging.getLogger(self.__class__)
+        logger.setLevel(logging.DEBUG)
+
+        #1. Stream Handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        ch.setFormatter(formatter)
+
+        #2. File Handler
+        filename = 'nodes_proctime.log'
+        filename = os.path.join(self._log_folder, filename)
+        fl = logging.handlers.RotatingFileHandler(filename, maxBytes = 10000000, backupCount = 4)
+
+        logger.addHandler(ch)
+        logger.addHandler(fl)
+        return logger
 
     def run(self):
         if not os.path.exists(self._log_folder):
             os.makedirs(self._log_folder)
         
         while True:
+            #1. Get message
             m_log_message = self._logging_queue.get(block = True)
             if isinstance(m_log_message, str) and m_log_message == STOP_SIGNAL:
                 break
             node_id = m_log_message[0]
             log_type = m_log_message[1]
             value = m_log_message[2]
+            
+            #2. Update in-memory accounting
             self._accountant.update_stat(node_id, log_type, value)
+
+            #3. Write logs into filesytem
+            self._logger.debug(f'{node_id},{log_type},{value}')
+
+
 
