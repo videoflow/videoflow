@@ -6,6 +6,7 @@ import logging
 import os
 from multiprocessing import Queue
 from collections import namedtuple
+from .node import Node, ConsumerNode, ProcessorNode, ProducerNode
 
 from .constants import STOP_SIGNAL
 
@@ -64,6 +65,9 @@ class Accountant:
     '''
     Keeps track of the speed and actual speed of the nodes in the 
     topological sort.
+
+    - Arguments:
+        - nb_nodes (int): nb of nodes in flow
     '''
     # logtype_proctime: The processing time of the processor.
     # It does not take into account the time waiting because
@@ -122,11 +126,20 @@ class Accountant:
         return self._get_stat(self.logtype_proctime)
 
 class MetricsLoggerTask:
-    def __init__(self, logging_queue : Queue, nb_nodes : int, 
+    '''
+    - Arguments:
+        - logging_queue: Queue that receives data about processing time \
+            from the running tasks of the flow
+        - sorted_nodes: list of nodes of type ``node.Node`` in topological sort
+        - log_folder: (str) Folder where to save the logs.
+    '''
+    def __init__(self, logging_queue : Queue, sorted_nodes, 
                 log_folder = './'):
         self._logging_queue = logging_queue
-        self._accountant = Accountant(nb_nodes)
+        self._accountant = Accountant(len(sorted_nodes))
+        self._sorted_nodes = sorted_nodes
         self._log_folder = log_folder
+        self._bottlenecks_reported = False
         self._logger = self._get_metric_logger()
 
     def _get_metric_logger(self):
@@ -148,13 +161,48 @@ class MetricsLoggerTask:
         logger.addHandler(fl)
         return logger
 
+    def get_bottlenecks(self):
+        '''
+        A bottleneck is any node that process at a speed that is 
+        lower to the speed of any of the producers.
+
+        There is also what we call ``effective bottleneck``. An ``effective
+        bottleneck`` is a node that reduces the throughput of the 
+        flow.  
+
+        - Returns:
+            - is_bottleneck: list of booleans of the same size as \
+                self._sorted_nodes. Contains ``None`` entries if data
+                is not statistically significant to be able to judge if a
+                node is a bottleneck.
+            - is_effective_bottleneck: list of booleans of the same size as \
+                self._sorted_nodes. Contains ``None`` entries if data
+                is not statistically significant to be able to judge if a
+                node is a bottleneck.
+        '''
+        actual_proctime = self._accountant.get_actual_proctime()
+        proctime = self._accountant.get_proctime()
+        
+        #1. Find bottlenecks
+        is_producer_node = [isinstance(a, ProducerNode) for a in self._sorted_nodes]
+        # TODO: Keep working here.
+        is_bottleneck = []
+
+        #2. Find effective bottlenecks
+        is_effective_bottleneck = []
+        
+        return is_bottleneck, is_effective_bottleneck
+
     def run(self):
         if not os.path.exists(self._log_folder):
             os.makedirs(self._log_folder)
         
+        message_count = 0
+
         while True:
             #1. Get message
             m_log_message = self._logging_queue.get(block = True)
+            message_count += 1
             if isinstance(m_log_message, str) and m_log_message == STOP_SIGNAL:
                 break
             node_id = m_log_message[0]
@@ -167,5 +215,7 @@ class MetricsLoggerTask:
             #3. Write logs into filesytem
             self._logger.debug(f'{node_id},{log_type},{value}')
 
-
-
+            #4. Report bottlenecks
+            if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
+                is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
+                self._bottlenecks_reported = True
