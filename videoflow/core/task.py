@@ -4,7 +4,6 @@ from __future__ import absolute_import
 
 import logging
 from multiprocessing import Queue, Lock
-from threading import Thread
 
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 from .constants import STOP_SIGNAL, BATCH, REALTIME, FLOW_TYPES
