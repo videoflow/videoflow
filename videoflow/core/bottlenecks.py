@@ -10,6 +10,7 @@ from .node import Node, ConsumerNode, ProcessorNode, ProducerNode
 
 from .constants import STOP_SIGNAL
 
+package_logger = logging.getLogger(__package__)
 MetricMessage = namedtuple('MetricMessage', 'nodeid logtype value')
 
 def detect_bottleneck(stats):
@@ -185,11 +186,11 @@ class MetricsLoggerTask:
         
         #1. Find bottlenecks
         is_producer_node = [isinstance(a, ProducerNode) for a in self._sorted_nodes]
-        # TODO: Keep working here.
-        is_bottleneck = []
+        min_producer_time = min([proctime[i] for i in range(len(is_producer_node)) if is_producer_node[i]])
+        is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._sorted_nodes))]
 
         #2. Find effective bottlenecks
-        is_effective_bottleneck = []
+        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._sorted_nodes))]
         
         return is_bottleneck, is_effective_bottleneck
 
@@ -218,4 +219,8 @@ class MetricsLoggerTask:
             #4. Report bottlenecks
             if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
                 is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
+                bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_bottleneck[i]]
+                effective_bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_effective_bottleneck[i]]
+                package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
+                package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_nodes)))
                 self._bottlenecks_reported = True
