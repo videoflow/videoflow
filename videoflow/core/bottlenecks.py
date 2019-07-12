@@ -2,6 +2,7 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import time
 import logging
 import os
 from multiprocessing import Queue
@@ -130,8 +131,8 @@ class MetricsLogger:
     def __init__(self, log_folder = './'):
         self._log_folder = log_folder
         self._logger = self._get_metric_logger()
-        self._log_steps = 20
-        self._logs_count = {}
+        self._time_in_seconds = 1
+        self._last_log_time = {}
 
     def _get_metric_logger(self):
         logger = logging.getLogger(self.__class__)
@@ -152,12 +153,19 @@ class MetricsLogger:
         logger.addHandler(fl)
         return logger
     
-    def log(node_id, log_type, value):
-        if not (node_id, log_type) in self._logs_count:
-            self._logs_count[(node_id, log_type)] = 0
-        self._logs_count[(node_id, log_type)] += 1
-        if self._logs_count[(node_id, log_type)] % self._log_steps == 0:
+    def log(self, node_id, log_type, value):
+        now = time.time()
+        
+        if not (node_id, log_type) in self._last_log_time:
             self._logger.debug(f'{node_id},{log_type},{value}')
+            self._last_log_time[(node_id, log_type)] = now
+        
+        diff_in_seconds = self._last_log_time[(node_id, log_type)] - now
+        
+        if diff_in_seconds > self._time_in_seconds:
+            self._logger.debug(f'{node_id},{log_type},{value}')
+            self._last_log_time[(node_id, log_type)] = now
+            
 
 class MetricsTask:
     '''
@@ -227,7 +235,6 @@ class MetricsTask:
             self._accountant.update_stat(node_id, log_type, value)
 
             #3. Write logs into filesytem
-            # Not writing this to filesystem because it is too much.
             self._logger.log(node_id, log_type, value)
 
             #4. Report bottlenecks
