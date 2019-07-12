@@ -214,7 +214,8 @@ class MetricsLoggerTask:
             self._accountant.update_stat(node_id, log_type, value)
 
             #3. Write logs into filesytem
-            self._logger.debug(f'{node_id},{log_type},{value}')
+            # Not writing this to filesystem because it is too much.
+            #self._logger.debug(f'{node_id},{log_type},{value}')
 
             #4. Report bottlenecks
             if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
