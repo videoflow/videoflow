@@ -126,7 +126,40 @@ class Accountant:
         '''
         return self._get_stat(self.logtype_proctime)
 
-class MetricsLoggerTask:
+class MetricsLogger:
+    def __init__(self, log_folder = './'):
+        self._log_folder = log_folder
+        self._logger = self._get_metric_logger()
+        self._log_steps = 20
+        self._logs_count = {}
+
+    def _get_metric_logger(self):
+        logger = logging.getLogger(self.__class__)
+        logger.setLevel(logging.DEBUG)
+
+        #1. Stream Handler
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
+        ch.setFormatter(formatter)
+
+        #2. File Handler
+        filename = 'nodes_proctime.log'
+        filename = os.path.join(self._log_folder, filename)
+        fl = logging.handlers.RotatingFileHandler(filename, maxBytes = 10000000, backupCount = 4)
+
+        logger.addHandler(ch)
+        logger.addHandler(fl)
+        return logger
+    
+    def log(node_id, log_type, value):
+        if not (node_id, log_type) in self._logs_count:
+            self._logs_count[(node_id, log_type)] = 0
+        self._logs_count[(node_id, log_type)] += 1
+        if self._logs_count[(node_id, log_type)] % self._log_steps == 0:
+            self._logger.debug(f'{node_id},{log_type},{value}')
+
+class MetricsTask:
     '''
     - Arguments:
         - logging_queue: Queue that receives data about processing time \
@@ -139,29 +172,9 @@ class MetricsLoggerTask:
         self._logging_queue = logging_queue
         self._accountant = Accountant(len(sorted_nodes))
         self._sorted_nodes = sorted_nodes
-        self._log_folder = log_folder
+        self._logger = MetricsLogger(log_folder)
         self._bottlenecks_reported = False
-        self._logger = self._get_metric_logger()
-
-    def _get_metric_logger(self):
-        logger = logging.getLogger(self.__class__)
-        logger.setLevel(logging.DEBUG)
-
-        #1. Stream Handler
-        ch = logging.StreamHandler()
-        ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-        ch.setFormatter(formatter)
-
-        #2. File Handler
-        filename = 'nodes_proctime.log'
-        filename = os.path.join(self._log_folder, filename)
-        fl = logging.handlers.RotatingFileHandler(filename, maxBytes = 10000000, backupCount = 4)
-
-        logger.addHandler(ch)
-        logger.addHandler(fl)
-        return logger
-
+        
     def get_bottlenecks(self):
         '''
         A bottleneck is any node that process at a speed that is 
@@ -215,7 +228,7 @@ class MetricsLoggerTask:
 
             #3. Write logs into filesytem
             # Not writing this to filesystem because it is too much.
-            #self._logger.debug(f'{node_id},{log_type},{value}')
+            self._logger.log(node_id, log_type, value)
 
             #4. Report bottlenecks
             if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
