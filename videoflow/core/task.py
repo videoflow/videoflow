@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import logging
 from multiprocessing import Queue, Lock
+import time
 
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 from .constants import STOP_SIGNAL, BATCH, REALTIME, FLOW_TYPES
@@ -104,9 +105,14 @@ class ProducerTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
+                    start_t = time.time()
                     a = self._producer.next()
+                    end_t = time.time()
+                    proc_time = end_t - start_t
+                    actual_proc_time = proc_time
                     if not self.is_last:
                         self._messenger.publish_message(a)
+                    
             except StopIteration:
                 break
             except KeyboardInterrupt:
@@ -140,6 +146,7 @@ class ProcessorTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
+                    start_1_t = time.time()
                     inputs = self._messenger.receive_message()
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
@@ -148,7 +155,11 @@ class ProcessorTask(NodeTask):
 
                     #3. Pass inputs needed to processor
                     if not self.is_last:
+                        start_2_t = time.time()
                         output = self._processor.process(*inputs)
+                        end_t = time.time()
+                        proc_time = end_t - start_2_t
+                        actual_proc_time = end_t - start_1_t
                         self._messenger.publish_message(output)
             except KeyboardInterrupt:
                 continue
@@ -170,6 +181,7 @@ class ConsumerTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
+                    start_1_t = time.time()
                     inputs = self._messenger.receive_message()
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
@@ -183,9 +195,13 @@ class ConsumerTask(NodeTask):
                             self._messenger.passthrough_termination_message()
                         break
 
+                    start_2_t = time.time()
+                    self._consumer.consume(*inputs)
+                    end_t = time.time()
                     if not self.is_last:
                         self._messenger.passthrough_message()
-                    self._consumer.consume(*inputs)
+                    proc_time = end_t - start_2_t
+                    actual_proc_time = end_t - start_1_t
             except KeyboardInterrupt:
                 continue
 
@@ -292,10 +308,16 @@ class MultiprocessingOutputTask(MultiprocessingTask):
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
+                    start_1_t = time.time()
                     next_idx = self._aq.get(block = True)
+                    start_2_t = time.time()
                     raw_outputs = self._output_queues[next_idx].get(block = True)
+                    end_t = time.time()
+                    proc_time = end_t - start_2_t
+                    actual_proc_time = end_t - start_1_t
                     if self._has_stop_signal(raw_outputs):
                         self._finish_count += 1
+                    
                     if not self.is_last:
                         if self._flow_type == BATCH:
                             self._task_queue.put(raw_outputs, block = True)

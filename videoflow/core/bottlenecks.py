@@ -243,5 +243,5 @@ class MetricsTask:
                 bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_bottleneck[i]]
                 effective_bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_effective_bottleneck[i]]
                 package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
-                package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_nodes)))
+                package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
                 self._bottlenecks_reported = True
