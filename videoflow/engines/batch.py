@@ -43,19 +43,25 @@ class BatchprocessingQueueMessenger(Messenger):
         logger.addHandler(ch)
         return logger
 
-    def publish_message(self, message):
+    def publish_message(self, message, metadata = None):
         '''
         Publishes output message to a place where the child task will receive it. \
         Will drop the message is the receiving queue is full.
         '''
         if self._last_message_received is None:
             msg = {
-                self._computation_node.id : message
+                self._computation_node.id : {
+                    'message': message,
+                    'metadata': metadata
+                }
             }
             self._task_queue.put(msg, block = True)
             self._logger.debug(f'Published message {msg}')
         else:
-            self._last_message_received[self._computation_node.id] = message
+            self._last_message_received[self._computation_node.id] = {
+                'message': message,
+                'metadata': metadata
+            }
             self._task_queue.put(self._last_message_received, block = True)
             self._logger.debug(f'Published message {self._last_message_received}')
     
@@ -65,11 +71,11 @@ class BatchprocessingQueueMessenger(Messenger):
         '''
         return self._termination_event.is_set()
 
-    def publish_termination_message(self, message):
+    def publish_termination_message(self, message, metadata = None):
         '''
         This method is identical to publish message
         '''
-        return self.publish_message(message)
+        return self.publish_message(message, metadata)
 
     def passthrough_message(self):
         self._task_queue.put(self._last_message_received, block = True)

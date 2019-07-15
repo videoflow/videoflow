@@ -44,8 +44,8 @@ class RealtimeQueueMessenger(Messenger):
         ch.setFormatter(formatter)
         logger.addHandler(ch)
         return logger
-
-    def publish_message(self, message):
+        
+    def publish_message(self, message, metadata = None):
         '''
         Publishes output message to a place where the child task will receive it. \
         Will drop the message is the receiving queue is full.
@@ -53,7 +53,10 @@ class RealtimeQueueMessenger(Messenger):
         if self._last_message_received is None:
             try:
                 msg = {
-                    self._computation_node.id : message
+                    self._computation_node.id : {
+                        'message': message,
+                        'metadata': metadata
+                    }
                 }
                 self._task_queue.put(msg, block = False)
                 self._logger.debug(f'Published message {msg}')
@@ -61,7 +64,10 @@ class RealtimeQueueMessenger(Messenger):
                 self._logger.debug(f'Queue is full.')
                 pass
         else:
-            self._last_message_received[self._computation_node.id] = message
+            self._last_message_received[self._computation_node.id] = {
+                'message': message,
+                'metadata': metadata
+            }
             try:
                 self._task_queue.put(self._last_message_received, block = False)
                 self._logger.debug(f'Published message {self._last_message_received}')
@@ -75,7 +81,7 @@ class RealtimeQueueMessenger(Messenger):
         '''
         return self._termination_event.is_set()
 
-    def publish_termination_message(self, message):
+    def publish_termination_message(self, message, metadata = None):
         '''
         This method is identical to publish message, but is blocking
         Because, the termination message cannot be dropped.
@@ -83,13 +89,19 @@ class RealtimeQueueMessenger(Messenger):
         if self._last_message_received is None:
             try:
                 msg = {
-                    self._computation_node.id : message
+                    self._computation_node.id : {
+                        'message': message,
+                        'metadata': metadata
+                    }
                 }
                 self._task_queue.put(msg, block = True)
             except:
                 pass
         else:
-            self._last_message_received[self._computation_node.id] = message
+            self._last_message_received[self._computation_node.id] = {
+                'message': message,
+                'metadata': metadata
+            }
             try:
                 self._task_queue.put(self._last_message_received, block = True)
             except:

@@ -15,7 +15,7 @@ class Messenger:
     The messenger, which is tightly coupled with the `execution environment` being used, \
     knows how to do this for the task.
     '''
-    def publish_message(self, message):
+    def publish_message(self, message, metadata = None):
         '''
         Publishes output message to a place where the child task will receive it.
         Depending on the kind of environment, this method might drop the message
@@ -42,7 +42,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def publish_termination_message(self, message):
+    def publish_termination_message(self, message, metadata = None):
         '''
         Similar to ``publish_message``, but this method will never drop the message regardless \
         of environment, which means that sometimes this method might block until it can deliver \ 
@@ -64,6 +64,25 @@ class Messenger:
             - message: the message received from parent task in topological sort.
         '''
         raise NotImplementedError('Messenger subclass must implement method.')
+    
+    def receive_metadata(self):
+        '''
+        This method blocks. It waits until a message (with its corresponding metadata) has been received.
+
+        - Returns:
+            - metadata: the metadata received from parent task in topological sort.
+        '''
+        raise NotImplementedError('Messenger subclass must implement method.')
+    
+    def receive_message_and_metadata(self):
+        '''
+        This method blocks. It waits until a message has been received.
+
+        - Returns:
+            - metadata: the metadata received from parent task in topological sort.
+        '''
+        raise NotImplementedError('Messenger subclass must implement method.')
+
 
 
 class ExecutionEngine:
@@ -112,9 +131,3 @@ class ExecutionEngine:
             raise RuntimeError('This method has already been called. It can only be called once.')
         self._al_create_and_start_processes(tasks_data)
         self._allocation_called = True
-    
-    
-
-    
-
-    
