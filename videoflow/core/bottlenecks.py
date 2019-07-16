@@ -165,9 +165,6 @@ class MetricsLogger:
 class MetadataConsumer(ConsumerNode):
     '''
     - Arguments:
-        - logging_queue: Queue that receives data about processing time \
-            from the running tasks of the flow
-        - sorted_nodes: list of nodes of type ``node.Node`` in topological sort
         - log_folder: (str) Folder where to save the logs.
     '''
     def __init__(self, log_folder = './'):
