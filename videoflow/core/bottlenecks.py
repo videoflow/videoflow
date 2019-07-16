@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import time
 import logging
+import logging.handlers
 import os
 from multiprocessing import Queue
 from collections import namedtuple
@@ -130,7 +131,7 @@ class MetricsLogger:
         self._last_log_time = {}
 
     def _get_metric_logger(self):
-        logger = logging.getLogger(self.__class__)
+        logger = logging.getLogger(str(self.__class__))
         logger.setLevel(logging.DEBUG)
 
         #1. Stream Handler
