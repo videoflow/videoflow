@@ -170,8 +170,7 @@ class MetadataConsumer(ConsumerNode):
         - sorted_nodes: list of nodes of type ``node.Node`` in topological sort
         - log_folder: (str) Folder where to save the logs.
     '''
-    def __init__(self, logging_queue : Queue,
-                log_folder = './'):
+    def __init__(self, log_folder = './'):
         self._accountant = None
         self._logger = MetricsLogger(log_folder)
         self._bottlenecks_reported = False
