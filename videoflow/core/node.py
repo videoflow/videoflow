@@ -88,7 +88,8 @@ class Node:
                                 ' if possible.')
         self._parents = list()
         for parent in parents:
-            assert isinstance(parent, Node) and not isinstance(parent, Leaf), '%s is not a non-leaf node' % str(parent)
+            #assert isinstance(parent, Node) and not isinstance(parent, Leaf), '%s is not a non-leaf node' % str(parent)
+            assert isinstance(parent, Node), '%s is not a node' % str(parent)
             self._parents.append(parent)
             parent.add_child(self)
         return self

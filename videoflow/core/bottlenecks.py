@@ -7,15 +7,10 @@ import logging
 import os
 from multiprocessing import Queue
 from collections import namedtuple
-from .node import Node, ConsumerNode, ProcessorNode, ProducerNode
-
-from .constants import STOP_SIGNAL
+from .node import Node, ConsumerNode, ProducerNode
 
 package_logger = logging.getLogger(__package__)
 MetricMessage = namedtuple('MetricMessage', 'nodeid logtype value')
-
-def detect_bottleneck(stats):
-    pass
 
 class Metric:
     '''
@@ -167,7 +162,7 @@ class MetricsLogger:
             self._last_log_time[(node_id, log_type)] = now
             
 
-class MetricsTask:
+class MetadataConsumer(ConsumerNode):
     '''
     - Arguments:
         - logging_queue: Queue that receives data about processing time \
@@ -175,14 +170,21 @@ class MetricsTask:
         - sorted_nodes: list of nodes of type ``node.Node`` in topological sort
         - log_folder: (str) Folder where to save the logs.
     '''
-    def __init__(self, logging_queue : Queue, sorted_nodes, 
+    def __init__(self, logging_queue : Queue,
                 log_folder = './'):
-        self._logging_queue = logging_queue
-        self._accountant = Accountant(len(sorted_nodes))
-        self._sorted_nodes = sorted_nodes
+        self._accountant = None
         self._logger = MetricsLogger(log_folder)
         self._bottlenecks_reported = False
-        
+        self._message_count = 0
+        super(MetadataConsumer, self).__init__()
+    
+    def open(self):
+        self._accountant = Accountant(len(self._parents))
+    
+    def close(self):
+        if not self._bottlenecks_reported:
+            self.report_bottlenecks()
+    
     def get_bottlenecks(self):
         '''
         A bottleneck is any node that process at a speed that is 
@@ -194,11 +196,11 @@ class MetricsTask:
 
         - Returns:
             - is_bottleneck: list of booleans of the same size as \
-                self._sorted_nodes. Contains ``None`` entries if data
+                self._parents. Contains ``None`` entries if data
                 is not statistically significant to be able to judge if a
                 node is a bottleneck.
             - is_effective_bottleneck: list of booleans of the same size as \
-                self._sorted_nodes. Contains ``None`` entries if data
+                self._parents. Contains ``None`` entries if data
                 is not statistically significant to be able to judge if a
                 node is a bottleneck.
         '''
@@ -206,42 +208,45 @@ class MetricsTask:
         proctime = self._accountant.get_proctime()
         
         #1. Find bottlenecks
-        is_producer_node = [isinstance(a, ProducerNode) for a in self._sorted_nodes]
+        is_producer_node = [isinstance(a, ProducerNode) for a in self._parents]
         min_producer_time = min([proctime[i] for i in range(len(is_producer_node)) if is_producer_node[i]])
-        is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._sorted_nodes))]
+        is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._parents))]
 
         #2. Find effective bottlenecks
-        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._sorted_nodes))]
+        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._parents))]
         
         return is_bottleneck, is_effective_bottleneck
 
-    def run(self):
+    def report_bottlenecks(self):
+        is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
+        bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_bottleneck[i]]
+        effective_bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_effective_bottleneck[i]]
+        package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
+        package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
+        self._bottlenecks_reported = True
+
+    def consume(self, *metadata):
+        '''
+        - Arguments:
+            - metadata: list of metadata for all the parent \
+                nodes for which we gather the data 
+        '''
         if not os.path.exists(self._log_folder):
             os.makedirs(self._log_folder)
         
-        message_count = 0
+        self._message_count += 1
 
-        while True:
-            #1. Get message
-            m_log_message = self._logging_queue.get(block = True)
-            message_count += 1
-            if isinstance(m_log_message, str) and m_log_message == STOP_SIGNAL:
-                break
-            node_id = m_log_message[0]
-            log_type = m_log_message[1]
-            value = m_log_message[2]
+        for idx, entry in enumerate(metadata):
+            for log_type in ['proctime', 'actual_proctime']:
+                node_id = str(self._parents[idx])
+                value = entry.get(log_type, None)
             
-            #2. Update in-memory accounting
-            self._accountant.update_stat(node_id, log_type, value)
+                #2. Update in-memory accounting
+                self._accountant.update_stat(node_id, log_type, value)
 
-            #3. Write logs into filesytem
-            self._logger.log(node_id, log_type, value)
+                #3. Write logs into filesytem
+                self._logger.log(node_id, log_type, value)
 
-            #4. Report bottlenecks
-            if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
-                is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
-                bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_bottleneck[i]]
-                effective_bottleneck_node_names = [str(self._sorted_nodes[i]) for i in range(len(self._sorted_nodes)) if is_effective_bottleneck[i]]
-                package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
-                package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
-                self._bottlenecks_reported = True
+        #4. Report bottlenecks
+        if not self._bottlenecks_reported and self._message_count > (len(self._parents) * 10):
+            self.report_bottlenecks()
