@@ -128,8 +128,18 @@ class Leaf(Node):
         super(Leaf, self).__init__()
 
 class ConsumerNode(Leaf):
-    def __init__(self):
+    '''
+    - Arguments:
+        - metadata (boolean): By default is False. If True, instead of receiving \
+            output of parent nodes, receives metadata produced by parent nodes.
+    '''
+    def __init__(self, metadata = False):
+        self._metadata = metadata
         super(ConsumerNode, self).__init__()
+    
+    @property
+    def metadata(self):
+        return self._metadata
     
     def consume(self, item):
         '''

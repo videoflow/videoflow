@@ -74,7 +74,7 @@ class Accountant:
     # logtype_actualproctime: The actual processing time of the processor.
     # It takes into account the waiting time because of a bottleneck
     # upstream in the flow.
-    logtype_actualproctime = 'actualproctime'   # The actual 
+    logtype_actualproctime = 'actual_proctime'   # The actual 
 
     stat_mean = 'mean'
     stat_variance = 'variance'
@@ -85,24 +85,24 @@ class Accountant:
     def update_actualproctime(self, node_id : int, value : float):
         self._update_stat(node_id, self.logtype_actualproctime, value)
 
-    def update_proctime(self, node_id : int, value : float):
-        self.update_stat(node_id, self.logtype_proctime, value)
+    def update_proctime(self, node_index : int, value : float):
+        self.update_stat(node_index, self.logtype_proctime, value)
     
-    def update_stat(self, node_id : int, log_type : str, value : float):
-        if not log_type in self._nodes_metrics[node_id]:
-            self._nodes_metrics[node_id][log_type] = Metric(log_type)
-        self._nodes_metrics[node_id][log_type].update_stats(value)
+    def update_stat(self, node_index : int, log_type : str, value : float):
+        if not log_type in self._nodes_metrics[node_index]:
+            self._nodes_metrics[node_index][log_type] = Metric(log_type)
+        self._nodes_metrics[node_index][log_type].update_stats(value)
 
-    def _get_stat(self, stat_name):
+    def _get_stat(self, stat_name : str):
         to_return = []
 
         for node_acc in self._nodes_metrics:
             if stat_name in node_acc:
                 metric = node_acc[stat_name]
-                value = metric.mean()
+                value = metric.mean
                 to_return.append(value)
             else:
-                raise ValueError('stat_name is not in node accountant')
+                raise ValueError(f'stat_name {stat_name} is not in node accountant')
         return to_return
 
     def get_actual_proctime(self):
@@ -149,7 +149,7 @@ class MetricsLogger:
         logger.addHandler(fl)
         return logger
     
-    def log(self, node_id, log_type, value):
+    def log(self, node_id : str, log_type : str, value : float):
         now = time.time()
         
         if not (node_id, log_type) in self._last_log_time:
@@ -170,10 +170,11 @@ class MetadataConsumer(ConsumerNode):
     '''
     def __init__(self, log_folder = './'):
         self._accountant = None
-        self._logger = MetricsLogger(log_folder)
+        self._log_folder = log_folder
+        self._mlogger = MetricsLogger(log_folder)
         self._bottlenecks_reported = False
         self._message_count = 0
-        super(MetadataConsumer, self).__init__()
+        super(MetadataConsumer, self).__init__(metadata = True)
     
     def open(self):
         self._accountant = Accountant(len(self._parents))
@@ -234,16 +235,16 @@ class MetadataConsumer(ConsumerNode):
         self._message_count += 1
 
         for idx, entry in enumerate(metadata):
-            for log_type in ['proctime', 'actual_proctime']:
+            for log_type in [Accountant.logtype_proctime, Accountant.logtype_actualproctime]:
                 node_id = str(self._parents[idx])
                 value = entry.get(log_type, None)
             
                 #2. Update in-memory accounting
-                self._accountant.update_stat(node_id, log_type, value)
+                self._accountant.update_stat(idx, log_type, value)
 
                 #3. Write logs into filesytem
-                self._logger.log(node_id, log_type, value)
+                #self._mlogger.log(node_id, log_type, value)
 
         #4. Report bottlenecks
-        if not self._bottlenecks_reported and self._message_count > (len(self._parents) * 10):
+        if not self._bottlenecks_reported and self._message_count > (len(self._parents)):
             self.report_bottlenecks()

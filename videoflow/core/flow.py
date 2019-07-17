@@ -68,8 +68,8 @@ class Flow:
 
         #1. Build a topological sort of the graph.
         tsort = self._graph_engine.topological_sort()
-        #metadata_consumer = MetadataConsumer()(*tsort)
-        #tsort.append(metadata_consumer)
+        metadata_consumer = MetadataConsumer()(*tsort)
+        tsort.append(metadata_consumer)
         
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children

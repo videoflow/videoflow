@@ -200,6 +200,7 @@ class ConsumerTask(NodeTask):
                     start_1_t = time.time()
                     inputs_d_l = self._messenger.receive_message()
                     inputs = [a['message'] for a in inputs_d_l]
+                    metadata = [a['metadata'] for a in inputs_d_l]    
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
                         # No need to pass through stop signal to "children".
@@ -209,16 +210,27 @@ class ConsumerTask(NodeTask):
                         # someone else, so the message that I am passing through
                         # might be the one carrying it.
                         if not self.is_last:
-                            self._messenger.passthrough_termination_message()
+                            #self._messenger.passthrough_termination_message()
+                            self._messenger.publish_termination_message(None, None)
                         break
 
                     start_2_t = time.time()
-                    self._consumer.consume(*inputs)
+                    if not self._consumer.metadata:
+                        self._consumer.consume(*inputs)
+                    else:
+                        self._consumer.consume(*metadata)
                     end_t = time.time()
                     proc_time = end_t - start_2_t
                     actual_proc_time = end_t - start_1_t
                     if not self.is_last:
-                        self._messenger.passthrough_message()
+                        #self._messenger.passthrough_message()
+                        self._messenger.publish_message(
+                            None, 
+                            {
+                                'proctime': proc_time,
+                                'actual_proctime': actual_proc_time
+                            }
+                        )
                     
             except KeyboardInterrupt:
                 continue
