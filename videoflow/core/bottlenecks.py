@@ -219,8 +219,10 @@ class MetadataConsumer(ConsumerNode):
         is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
         bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_bottleneck[i]]
         effective_bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_effective_bottleneck[i]]
-        package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
-        package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
+        if any(is_bottleneck):
+            package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
+        if any(is_effective_bottleneck):
+            package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
         self._bottlenecks_reported = True
 
     def consume(self, *metadata):
@@ -243,6 +245,8 @@ class MetadataConsumer(ConsumerNode):
                 self._accountant.update_stat(idx, log_type, value)
 
                 #3. Write logs into filesytem
+                # TODO: Figure out how to not write this in command line,
+                # but only write it on file system.
                 #self._mlogger.log(node_id, log_type, value)
 
         #4. Report bottlenecks
