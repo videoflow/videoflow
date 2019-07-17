@@ -4,6 +4,7 @@ from __future__ import absolute_import
 
 import logging
 from multiprocessing import Queue, Lock
+import time
 
 from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 from .constants import STOP_SIGNAL, BATCH, REALTIME, FLOW_TYPES
@@ -104,13 +105,24 @@ class ProducerTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
+                    start_t = time.time()
                     a = self._producer.next()
+                    end_t = time.time()
+                    proc_time = end_t - start_t
+                    actual_proc_time = proc_time
                     if not self.is_last:
-                        self._messenger.publish_message(a)
+                        self._messenger.publish_message(
+                            a,
+                            {
+                                'proctime': proc_time,
+                                'actual_proctime': actual_proc_time
+                            }
+                        )
+                    
             except StopIteration:
                 break
             except KeyboardInterrupt:
-                logger.info("Interrupt signal received. Sending signal to stop flow.")
+                logger.info('Interrupt signal received. Sending signal to stop flow.')
                 break
             if self._messenger.check_for_termination():
                 break
@@ -140,16 +152,31 @@ class ProcessorTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
-                    inputs = self._messenger.receive_message()
+                    start_1_t = time.time()
+                    inputs_d_l = self._messenger.receive_message()
+                    inputs = [a['message'] for a in inputs_d_l]
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
-                        self._messenger.publish_termination_message(STOP_SIGNAL)
+                        self._messenger.publish_termination_message(
+                            STOP_SIGNAL,
+                            None
+                        )
                         break
 
                     #3. Pass inputs needed to processor
                     if not self.is_last:
+                        start_2_t = time.time()
                         output = self._processor.process(*inputs)
-                        self._messenger.publish_message(output)
+                        end_t = time.time()
+                        proc_time = end_t - start_2_t
+                        actual_proc_time = end_t - start_1_t
+                        self._messenger.publish_message(
+                            output,
+                            {
+                                'proctime': proc_time,
+                                'actual_proctime': actual_proc_time
+                            }
+                        )
             except KeyboardInterrupt:
                 continue
         
@@ -170,7 +197,10 @@ class ConsumerTask(NodeTask):
         while True:
             try:
                 with DelayedKeyboardInterrupt():
-                    inputs = self._messenger.receive_message()
+                    start_1_t = time.time()
+                    inputs_d_l = self._messenger.receive_message()
+                    inputs = [a['message'] for a in inputs_d_l]
+                    metadata = [a['metadata'] for a in inputs_d_l]    
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
                     if stop_signal_received:
                         # No need to pass through stop signal to "children".
@@ -180,12 +210,28 @@ class ConsumerTask(NodeTask):
                         # someone else, so the message that I am passing through
                         # might be the one carrying it.
                         if not self.is_last:
-                            self._messenger.passthrough_termination_message()
+                            #self._messenger.passthrough_termination_message()
+                            self._messenger.publish_termination_message(None, None)
                         break
 
+                    start_2_t = time.time()
+                    if not self._consumer.metadata:
+                        self._consumer.consume(*inputs)
+                    else:
+                        self._consumer.consume(*metadata)
+                    end_t = time.time()
+                    proc_time = end_t - start_2_t
+                    actual_proc_time = end_t - start_1_t
                     if not self.is_last:
-                        self._messenger.passthrough_message()
-                    self._consumer.consume(*inputs)
+                        #self._messenger.passthrough_message()
+                        self._messenger.publish_message(
+                            None, 
+                            {
+                                'proctime': proc_time,
+                                'actual_proctime': actual_proc_time
+                            }
+                        )
+                    
             except KeyboardInterrupt:
                 continue
 
@@ -195,8 +241,12 @@ class MultiprocessingTask(Task):
         self._parent_nodes_ids = [a.id for a in self._processor.parents]
     
     def _inputs_from_raw_inputs(self, raw_inputs):
-        inputs = [raw_inputs[a] for a in self._parent_nodes_ids]
+        inputs = [raw_inputs[a]['message'] for a in self._parent_nodes_ids]
         return inputs
+    
+    def _metadatas_from_raw_inputs(self, raw_inputs):
+        metadatas = [raw_inputs[a]['metadata'] for a in self._parent_nodes_ids]
+        return metadatas
 
     def _has_stop_signal(self, raw_inputs):
         inputs = self._inputs_from_raw_inputs(raw_inputs)
@@ -254,14 +304,20 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                     if self._has_stop_signal(raw_inputs):
                         self._rq.put(raw_inputs, block = True)
                         raw_outputs = dict(raw_inputs)
-                        raw_outputs[self._processor.id] = STOP_SIGNAL
+                        raw_outputs[self._processor.id] = {
+                            'message': STOP_SIGNAL,
+                            'metadata': None
+                        }
                         self._oq.put(raw_outputs)
                         break
                     
                     #3. Else: process it, and place result in oq
                     inputs = self._inputs_from_raw_inputs(raw_inputs)
                     output = self._processor.process(*inputs)
-                    raw_inputs[self._processor.id] = output
+                    raw_inputs[self._processor.id] = {
+                        'message': output,
+                        'metadata': None
+                    }
                     self._oq.put(raw_inputs)
             except KeyboardInterrupt:
                 continue
@@ -292,10 +348,22 @@ class MultiprocessingOutputTask(MultiprocessingTask):
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
+                    start_1_t = time.time()
                     next_idx = self._aq.get(block = True)
+                    start_2_t = time.time()
                     raw_outputs = self._output_queues[next_idx].get(block = True)
+                    end_t = time.time()
+                    proc_time = end_t - start_2_t
+                    actual_proc_time = end_t - start_1_t
+
+                    raw_outputs[self._processor.id]['metadata'] = {
+                        'proctime': proc_time,
+                        'actual_proctime': actual_proc_time
+                    }
+
                     if self._has_stop_signal(raw_outputs):
                         self._finish_count += 1
+                    
                     if not self.is_last:
                         if self._flow_type == BATCH:
                             self._task_queue.put(raw_outputs, block = True)

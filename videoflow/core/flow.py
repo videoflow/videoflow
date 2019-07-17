@@ -8,6 +8,7 @@ from .graph import GraphEngine
 from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
+from .bottlenecks import MetadataConsumer
 from ..engines.realtime import RealtimeExecutionEngine
 from ..engines.batch import BatchExecutionEngine
 
@@ -67,6 +68,8 @@ class Flow:
 
         #1. Build a topological sort of the graph.
         tsort = self._graph_engine.topological_sort()
+        metadata_consumer = MetadataConsumer()(*tsort)
+        tsort.append(metadata_consumer)
         
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children

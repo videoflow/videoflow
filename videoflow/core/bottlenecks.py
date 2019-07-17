@@ -2,18 +2,16 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import time
 import logging
+import logging.handlers
 import os
 from multiprocessing import Queue
 from collections import namedtuple
-from .node import Node, ConsumerNode, ProcessorNode, ProducerNode
+from .node import Node, ConsumerNode, ProducerNode
 
-from .constants import STOP_SIGNAL
-
+package_logger = logging.getLogger(__package__)
 MetricMessage = namedtuple('MetricMessage', 'nodeid logtype value')
-
-def detect_bottleneck(stats):
-    pass
 
 class Metric:
     '''
@@ -76,7 +74,7 @@ class Accountant:
     # logtype_actualproctime: The actual processing time of the processor.
     # It takes into account the waiting time because of a bottleneck
     # upstream in the flow.
-    logtype_actualproctime = 'actualproctime'   # The actual 
+    logtype_actualproctime = 'actual_proctime'   # The actual 
 
     stat_mean = 'mean'
     stat_variance = 'variance'
@@ -87,24 +85,24 @@ class Accountant:
     def update_actualproctime(self, node_id : int, value : float):
         self._update_stat(node_id, self.logtype_actualproctime, value)
 
-    def update_proctime(self, node_id : int, value : float):
-        self.update_stat(node_id, self.logtype_proctime, value)
+    def update_proctime(self, node_index : int, value : float):
+        self.update_stat(node_index, self.logtype_proctime, value)
     
-    def update_stat(self, node_id : int, log_type : str, value : float):
-        if not log_type in self._nodes_metrics[node_id]:
-            self._nodes_metrics[node_id][log_type] = Metric(log_type)
-        self._nodes_metrics[node_id][log_type].update_stats(value)
+    def update_stat(self, node_index : int, log_type : str, value : float):
+        if not log_type in self._nodes_metrics[node_index]:
+            self._nodes_metrics[node_index][log_type] = Metric(log_type)
+        self._nodes_metrics[node_index][log_type].update_stats(value)
 
-    def _get_stat(self, stat_name):
+    def _get_stat(self, stat_name : str):
         to_return = []
 
         for node_acc in self._nodes_metrics:
             if stat_name in node_acc:
                 metric = node_acc[stat_name]
-                value = metric.mean()
+                value = metric.mean
                 to_return.append(value)
             else:
-                raise ValueError('stat_name is not in node accountant')
+                raise ValueError(f'stat_name {stat_name} is not in node accountant')
         return to_return
 
     def get_actual_proctime(self):
@@ -125,31 +123,21 @@ class Accountant:
         '''
         return self._get_stat(self.logtype_proctime)
 
-class MetricsLoggerTask:
-    '''
-    - Arguments:
-        - logging_queue: Queue that receives data about processing time \
-            from the running tasks of the flow
-        - sorted_nodes: list of nodes of type ``node.Node`` in topological sort
-        - log_folder: (str) Folder where to save the logs.
-    '''
-    def __init__(self, logging_queue : Queue, sorted_nodes, 
-                log_folder = './'):
-        self._logging_queue = logging_queue
-        self._accountant = Accountant(len(sorted_nodes))
-        self._sorted_nodes = sorted_nodes
+class MetricsLogger:
+    def __init__(self, log_folder = './'):
         self._log_folder = log_folder
-        self._bottlenecks_reported = False
         self._logger = self._get_metric_logger()
+        self._time_in_seconds = 1
+        self._last_log_time = {}
 
     def _get_metric_logger(self):
-        logger = logging.getLogger(self.__class__)
+        logger = logging.getLogger(str(self.__class__))
         logger.setLevel(logging.DEBUG)
 
         #1. Stream Handler
         ch = logging.StreamHandler()
         ch.setLevel(logging.DEBUG)
-        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        formatter = logging.Formatter('%(asctime)s - %(message)s')
         ch.setFormatter(formatter)
 
         #2. File Handler
@@ -160,7 +148,41 @@ class MetricsLoggerTask:
         logger.addHandler(ch)
         logger.addHandler(fl)
         return logger
+    
+    def log(self, node_id : str, log_type : str, value : float):
+        now = time.time()
+        
+        if not (node_id, log_type) in self._last_log_time:
+            self._logger.debug(f'{node_id},{log_type},{value}')
+            self._last_log_time[(node_id, log_type)] = now
+        
+        diff_in_seconds = self._last_log_time[(node_id, log_type)] - now
+        
+        if diff_in_seconds > self._time_in_seconds:
+            self._logger.debug(f'{node_id},{log_type},{value}')
+            self._last_log_time[(node_id, log_type)] = now
+            
 
+class MetadataConsumer(ConsumerNode):
+    '''
+    - Arguments:
+        - log_folder: (str) Folder where to save the logs.
+    '''
+    def __init__(self, log_folder = './'):
+        self._accountant = None
+        self._log_folder = log_folder
+        self._mlogger = MetricsLogger(log_folder)
+        self._bottlenecks_reported = False
+        self._message_count = 0
+        super(MetadataConsumer, self).__init__(metadata = True)
+    
+    def open(self):
+        self._accountant = Accountant(len(self._parents))
+    
+    def close(self):
+        if not self._bottlenecks_reported:
+            self.report_bottlenecks()
+    
     def get_bottlenecks(self):
         '''
         A bottleneck is any node that process at a speed that is 
@@ -172,11 +194,11 @@ class MetricsLoggerTask:
 
         - Returns:
             - is_bottleneck: list of booleans of the same size as \
-                self._sorted_nodes. Contains ``None`` entries if data
+                self._parents. Contains ``None`` entries if data
                 is not statistically significant to be able to judge if a
                 node is a bottleneck.
             - is_effective_bottleneck: list of booleans of the same size as \
-                self._sorted_nodes. Contains ``None`` entries if data
+                self._parents. Contains ``None`` entries if data
                 is not statistically significant to be able to judge if a
                 node is a bottleneck.
         '''
@@ -184,38 +206,49 @@ class MetricsLoggerTask:
         proctime = self._accountant.get_proctime()
         
         #1. Find bottlenecks
-        is_producer_node = [isinstance(a, ProducerNode) for a in self._sorted_nodes]
-        # TODO: Keep working here.
-        is_bottleneck = []
+        is_producer_node = [isinstance(a, ProducerNode) for a in self._parents]
+        min_producer_time = min([proctime[i] for i in range(len(is_producer_node)) if is_producer_node[i]])
+        is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._parents))]
 
         #2. Find effective bottlenecks
-        is_effective_bottleneck = []
+        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._parents))]
         
         return is_bottleneck, is_effective_bottleneck
 
-    def run(self):
+    def report_bottlenecks(self):
+        is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
+        bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_bottleneck[i]]
+        effective_bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_effective_bottleneck[i]]
+        if any(is_bottleneck):
+            package_logger.info('Bottleneck nodes: \n{}'.format('\n'.join(bottleneck_node_names)))
+        if any(is_effective_bottleneck):
+            package_logger.info('Effective bottleneck nodes: \n{}'.format('\n'.join(effective_bottleneck_node_names)))
+        self._bottlenecks_reported = True
+
+    def consume(self, *metadata):
+        '''
+        - Arguments:
+            - metadata: list of metadata for all the parent \
+                nodes for which we gather the data 
+        '''
         if not os.path.exists(self._log_folder):
             os.makedirs(self._log_folder)
         
-        message_count = 0
+        self._message_count += 1
 
-        while True:
-            #1. Get message
-            m_log_message = self._logging_queue.get(block = True)
-            message_count += 1
-            if isinstance(m_log_message, str) and m_log_message == STOP_SIGNAL:
-                break
-            node_id = m_log_message[0]
-            log_type = m_log_message[1]
-            value = m_log_message[2]
+        for idx, entry in enumerate(metadata):
+            for log_type in [Accountant.logtype_proctime, Accountant.logtype_actualproctime]:
+                node_id = str(self._parents[idx])
+                value = entry.get(log_type, None)
             
-            #2. Update in-memory accounting
-            self._accountant.update_stat(node_id, log_type, value)
+                #2. Update in-memory accounting
+                self._accountant.update_stat(idx, log_type, value)
 
-            #3. Write logs into filesytem
-            self._logger.debug(f'{node_id},{log_type},{value}')
+                #3. Write logs into filesytem
+                # TODO: Figure out how to not write this in command line,
+                # but only write it on file system.
+                #self._mlogger.log(node_id, log_type, value)
 
-            #4. Report bottlenecks
-            if not self._bottlenecks_reported and message_count > (len(self._sorted_nodes) * 10):
-                is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
-                self._bottlenecks_reported = True
+        #4. Report bottlenecks
+        if not self._bottlenecks_reported and self._message_count > (len(self._parents)):
+            self.report_bottlenecks()
