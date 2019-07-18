@@ -216,22 +216,15 @@ class MetadataConsumer(ConsumerNode):
         return is_bottleneck, is_effective_bottleneck
 
     def report_bottlenecks(self):
-        is_bottleneck, is_effective_bottleneck = self.get_bottlenecks()
+        b, eb = self.get_bottlenecks()
         proctime = self._accountant.get_proctime()
         actual_proctime = self._accountant.get_actual_proctime()
-        fps = [int(1.0 / a) if a != 0 else float('nan') for a in proctime]
-        actual_fps = [int(1.0 / a) if a !=0 else float('nan') for a in actual_proctime]
+        fps = [1.0 / a if a != 0 else float('nan') for a in proctime]
+        actual_fps = [1.0 / a if a !=0 else float('nan') for a in actual_proctime]
 
-        bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_bottleneck[i]]
-        effective_bottleneck_node_names = [str(self._parents[i]) for i in range(len(self._parents)) if is_effective_bottleneck[i]]
-        fps_lines = ["\n\t%-28s%-14i%-14i" % (str(self._parents[i]), fps[i], actual_fps[i]) for i in range(len(self._parents))]
-        fps_lines = ['\n\t%-28s%-14s%-14s' % ("Node name", "Possible fps", "Actual fps")] + fps_lines
+        fps_lines = ["\n%-28s%-14.1f%-14.1f%-14s%-14s" % (str(self._parents[i]), fps[i], actual_fps[i], str(b[i]), str(eb[i])) for i in range(len(self._parents))]
+        fps_lines = ['\n%-28s%-14s%-14s%-14s%-14s' % ("Node name", "Possible fps", "Actual fps", "Bottleneck", "Eff. bottleneck")] + fps_lines
         package_logger.info('Flow fps per nodes: {}'.format(''.join(fps_lines)))
-        
-        if any(is_bottleneck):
-            package_logger.info('Bottleneck nodes: \n{}'.format('\n\t'.join(bottleneck_node_names)))
-        if any(is_effective_bottleneck):
-            package_logger.info('Effective bottleneck nodes: \n{}'.format('\n\t'.join(effective_bottleneck_node_names)))
         self._bottlenecks_reported = True
 
     def consume(self, *metadata):
