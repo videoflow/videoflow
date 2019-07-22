@@ -15,7 +15,8 @@ class Node:
     Represents a computational node in the graph. It is also a callable object. \
         It can be call with the list of parents on which it depends.
     '''
-    def __init__(self):
+    def __init__(self, name = None):
+        self._name = name
         self._parents = None
         self._id = id(self)
         self._children = set()
@@ -34,7 +35,10 @@ class Node:
         return logger
 
     def __repr__(self):
-        return self.__class__.__name__
+        if not self._name:
+            return self.__class__.__name__
+        else:
+            return self._name
     
     def __eq__(self, other):
         return self is other
@@ -123,9 +127,9 @@ class Leaf(Node):
     '''
     Node with no children.
     '''
-    def __init__(self):
+    def __init__(self, *args, **kwargs):
         self._children = None
-        super(Leaf, self).__init__()
+        super(Leaf, self).__init__(*args, **kwargs)
 
 class ConsumerNode(Leaf):
     '''
@@ -133,9 +137,9 @@ class ConsumerNode(Leaf):
         - metadata (boolean): By default is False. If True, instead of receiving \
             output of parent nodes, receives metadata produced by parent nodes.
     '''
-    def __init__(self, metadata = False):
+    def __init__(self, metadata = False, **kwargs):
         self._metadata = metadata
-        super(ConsumerNode, self).__init__()
+        super(ConsumerNode, self).__init__(**kwargs)
     
     @property
     def metadata(self):
@@ -152,12 +156,12 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, nb_tasks : int = 1, device_type = CPU):
+    def __init__(self, nb_tasks : int = 1, device_type = CPU, **kwargs):
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
-        super(ProcessorNode, self).__init__()
+        super(ProcessorNode, self).__init__(**kwargs)
 
     @property
     def nb_tasks(self):
@@ -198,8 +202,8 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__(self):
-        super(OneTaskProcessorNode, self).__init__(nb_tasks = 1)
+    def __init__(self, *args, **kwargs):
+        super(OneTaskProcessorNode, self).__init__(*args, nb_tasks = 1, **kwargs)
 
 class TaskModuleNode(ProcessorNode):
     '''
@@ -222,8 +226,8 @@ class TaskModuleNode(ProcessorNode):
             - There is a node of type ``TaskModuleNode`` among the nodes of the \
                 subgraph.
     '''
-    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1):
-        super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU)
+    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, **kwargs):
+        super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, **kwargs)
         self._entry_node = entry_node
         self._exit_node = exit_node
 
@@ -284,9 +288,9 @@ class TaskModuleNode(ProcessorNode):
         return result
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_proc : int = 1, device = CPU):
+    def __init__(self, processor_function, nb_proc : int = 1, device = CPU, **kwargs):
         self._fn = processor_function
-        super(FunctionProcessorNode, self).__init__(nb_proc, device)
+        super(FunctionProcessorNode, self).__init__(nb_proc, device, **kwargs)
     
     def process(self, inp):
         return self._fn(inp)
@@ -313,7 +317,7 @@ class ModuleNode(Node):
                 - There is a ModuleNode within the subgraph that does not have that flag set to true too.
                 - There is at least one node in the sequence that has device_type GPU
     '''
-    def __init__(self, entry_node : Node, exit_node : Node):
+    def __init__(self, entry_node : Node, exit_node : Node, *args, **kwargs):
         self._entry_node = entry_node
         self._exit_node = exit_node
 
@@ -338,7 +342,7 @@ class ModuleNode(Node):
             elif isinstance(n, ModuleNode):
                 self._tsort.extend(n.nodes)       
 
-        super(ModuleNode, self).__init__()
+        super(ModuleNode, self).__init__(*args, **kwargs)
 
     def __call__(self, *parents):
         #TODO
@@ -357,8 +361,8 @@ class ProducerNode(Node):
         but generators cannot be pickled, and hence you cannot easily work with generators \
         in a multiprocessing setting.
     '''
-    def __init__(self):
-        super(ProducerNode, self).__init__()
+    def __init__(self, *args, **kwargs):
+        super(ProducerNode, self).__init__(*args, **kwargs)
 
     def next(self) -> any:
         '''

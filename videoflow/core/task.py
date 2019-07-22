@@ -273,7 +273,10 @@ class MultiprocessingReceiveTask(MultiprocessingTask):
                     if self._flow_type == BATCH:
                         self._rq.put(raw_inputs, block = True)
                     elif self._flow_type == REALTIME:
-                        self._rq.put(raw_inputs, block = False)
+                        try:
+                            self._rq.put(raw_inputs, block = False)
+                        except:
+                            pass
             except KeyboardInterrupt:
                 continue
 
@@ -345,6 +348,7 @@ class MultiprocessingOutputTask(MultiprocessingTask):
         return self._is_last
     
     def run(self):
+        count = 0
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
@@ -365,7 +369,9 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                         self._finish_count += 1
                     
                     if not self.is_last:
-                        if self._flow_type == BATCH:
+                        if self._has_stop_signal(raw_outputs) and self._finish_count == 1:
+                            self._task_queue.put(raw_outputs, block = True)
+                        elif self._flow_type == BATCH:
                             self._task_queue.put(raw_outputs, block = True)
                         elif self._flow_type == REALTIME:
                             try:
