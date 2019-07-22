@@ -149,7 +149,7 @@ class BatchExecutionEngine(ExecutionEngine):
 
             elif isinstance(node, ProcessorNode):
                 if node.nb_tasks > 1:
-                    receiveQueue = Queue(10)
+                    receiveQueue = Queue(1)
                     accountingQueue = Queue()
                     output_queues = [Queue() for _ in range(node.nb_tasks)]
 
