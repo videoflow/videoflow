@@ -301,7 +301,7 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                     #1. Read from rq and update aq
                     with self._lock:
                         raw_inputs = self._rq.get(block = True)
-                        self._aq.put(self._idx)
+                        self._aq.put(self._idx, block = True)
 
                     #2. If STOP_SIGNAL, place it in output, place it back in receiver, and break loop
                     if self._has_stop_signal(raw_inputs):
@@ -311,7 +311,8 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                             'message': STOP_SIGNAL,
                             'metadata': None
                         }
-                        self._oq.put(raw_outputs)
+                        self._oq.put(raw_outputs, block = True)
+                        print('publish out {} {}'.format(self._idx, self._processor))
                         break
                     
                     #3. Else: process it, and place result in oq
@@ -366,9 +367,14 @@ class MultiprocessingOutputTask(MultiprocessingTask):
 
                     if self._has_stop_signal(raw_outputs):
                         self._finish_count += 1
+                        print('got here {}'.format(next_idx))
+                        print("********** finish count {}".format(self._finish_count))
                     
                     if not self.is_last:
-                        if self._flow_type == BATCH:
+                        if self._has_stop_signal(raw_outputs):
+                            print('received {}'.format(next_idx))
+                            self._task_queue.put(raw_outputs, block = True)
+                        elif self._flow_type == BATCH:
                             self._task_queue.put(raw_outputs, block = True)
                         elif self._flow_type == REALTIME:
                             try:
@@ -376,6 +382,7 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                             except:
                                 pass
                     if self._finish_count == len(self._output_queues):
+                        print('finsih count received')
                         break
                     
             except KeyboardInterrupt:
