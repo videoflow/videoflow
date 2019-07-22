@@ -300,6 +300,7 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                 with DelayedKeyboardInterrupt():
                     #1. Read from rq and update aq
                     with self._lock:
+                        # something smells
                         raw_inputs = self._rq.get(block = True)
                         self._aq.put(self._idx, block = True)
 
