@@ -273,7 +273,10 @@ class MultiprocessingReceiveTask(MultiprocessingTask):
                     if self._flow_type == BATCH:
                         self._rq.put(raw_inputs, block = True)
                     elif self._flow_type == REALTIME:
-                        self._rq.put(raw_inputs, block = False)
+                        try:
+                            self._rq.put(raw_inputs, block = False)
+                        except:
+                            pass
             except KeyboardInterrupt:
                 continue
 
