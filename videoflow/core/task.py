@@ -290,6 +290,9 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
         self._oq = outputQueue
         super(MultiprocessingProcessorTask, self).__init__(processor)
     
+    def change_device(self, device_type : str):
+        self._processor.change_device(device_type)
+    
     @property
     def device_type(self):
         return self._processor.device_type

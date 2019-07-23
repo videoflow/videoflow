@@ -252,5 +252,5 @@ class MetadataConsumer(ConsumerNode):
                 #self._mlogger.log(node_id, log_type, value)
 
         #4. Report bottlenecks
-        if not self._bottlenecks_reported and self._message_count > (len(self._parents) * 40):
+        if (not self._bottlenecks_reported) and (self._message_count > (len(self._parents) * 40)):
             self.report_bottlenecks()

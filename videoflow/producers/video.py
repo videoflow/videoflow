@@ -12,9 +12,10 @@ class ImageProducer(ProducerNode):
     Reads a single image and produces it
     '''
 
-    def __init__(image_path : str):
+    def __init__(self, image_path : str):
         self._image_path = image_path
         self._image_returned = False
+        super(ImageProducer, self).__init__()
     
     def open(self):
         pass

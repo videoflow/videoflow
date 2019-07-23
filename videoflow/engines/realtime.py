@@ -238,7 +238,7 @@ class RealtimeExecutionEngine(ExecutionEngine):
                             task.change_device(CPU)
                             proc = create_process_task(task)
                         except:
-                            raise RuntimeError('No GPU available to allocate {}'.format(str(task._computation_node)))
+                            raise RuntimeError('No GPU available to allocate {}'.format(str(task._processor)))
                 else:
                     proc = create_process_task(task)
             else:
