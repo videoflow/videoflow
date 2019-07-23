@@ -107,7 +107,8 @@ class TensorflowModel:
         '''
         Closes the tensorflow session that was opened when the model was loaded.
         '''
-        self._session.close()
+        if self._session:
+            self._session.close()
     
     def run_on_input(self, *inp_l):
         '''
