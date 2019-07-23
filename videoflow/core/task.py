@@ -298,6 +298,7 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
         return self._processor.device_type
     
     def run(self):
+        self._processor.open()
         while True:
             try:
                 with DelayedKeyboardInterrupt():
@@ -327,6 +328,7 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                     self._oq.put(raw_inputs)
             except KeyboardInterrupt:
                 continue
+        self._processor.close()
 
 class MultiprocessingOutputTask(MultiprocessingTask):
     def __init__(self, processor : ProcessorNode, task_queue : Queue, accountingQueue : Queue,
@@ -352,6 +354,7 @@ class MultiprocessingOutputTask(MultiprocessingTask):
     
     def run(self):
         count = 0
+        
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
@@ -386,3 +389,4 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                     
             except KeyboardInterrupt:
                 continue
+        
