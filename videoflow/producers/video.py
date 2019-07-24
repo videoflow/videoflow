@@ -7,6 +7,30 @@ import numpy as np
 
 from ..core.node import ProducerNode
 
+class ImageProducer(ProducerNode):
+    '''
+    Reads a single image and produces it
+    '''
+
+    def __init__(self, image_path : str):
+        self._image_path = image_path
+        self._image_returned = False
+        super(ImageProducer, self).__init__()
+    
+    def open(self):
+        pass
+    
+    def close(self):
+        pass
+    
+    def next(self) -> np.array:
+        if not self._image_returned:
+            im = cv2.imread(self._image_path)
+            self._image_returned = True
+            return im
+        else:
+            raise StopIteration()
+
 class ImageFolderReader(ProducerNode):
     '''
     Reads from a folder of images and returns them one by one.
