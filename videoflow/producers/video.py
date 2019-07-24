@@ -24,8 +24,12 @@ class ImageProducer(ProducerNode):
         pass
     
     def next(self) -> np.array:
+        '''
+        Returns image in RGB format.
+        '''
         if not self._image_returned:
             im = cv2.imread(self._image_path)
+            im = im[...,::-1]
             self._image_returned = True
             return im
         else:
@@ -118,6 +122,7 @@ class VideostreamReader(ProducerNode):
         while self._retries_count <= self._nb_retries:
             if self._video.isOpened():
                 success, frame = self._video.read()
+                frame = frame[...,::-1]
                 self._frame_count += 1
                 if not success:
                     if self._video.isOpened():
