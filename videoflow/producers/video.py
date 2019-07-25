@@ -24,8 +24,12 @@ class ImageProducer(ProducerNode):
         pass
     
     def next(self) -> np.array:
+        '''
+        Returns image in RGB format.
+        '''
         if not self._image_returned:
             im = cv2.imread(self._image_path)
+            im = im[...,::-1]
             self._image_returned = True
             return im
         else:
@@ -73,13 +77,15 @@ class VideostreamReader(ProducerNode):
     - Arguments:
         - url_or_deviceid: (int or str) The url, filesystem path or id of the \
             video stream.
+        - swap_channels: if True, it will change channels from BGR to RGB
         - nb_frames: (int) The number of frames when to stop. -1 never stops
         - nb_retries: (int) If there are errors reading the stream, how \
             many times to retry.
     '''
-    def __init__(self, url_or_deviceid, nb_frames = -1, nb_retries = 0):
+    def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1, nb_retries = 0):
         self._url_or_deviceid = url_or_deviceid
         self._video = None
+        self._swap_channels = swap_channels
         self._nb_frames = nb_frames
         self._frame_count = 0
         self._nb_retries = nb_retries
@@ -124,6 +130,8 @@ class VideostreamReader(ProducerNode):
                         self._video.release()
                     self._video = cv2.VideoCapture(self._url_or_deviceid)
                 else:
+                    if self._swap_channels:
+                        frame = frame[...,::-1]
                     return (self._frame_count, frame)
             else:
                 self._video = cv2.VideoCapture(self._url_or_deviceid)

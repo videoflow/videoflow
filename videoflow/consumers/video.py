@@ -19,10 +19,11 @@ class VideofileWriter(ConsumerNode):
         - video_file: path to video.  Folder where video lives must exist. Extension must be .avi
         - fps: frames per second
     '''
-    def __init__(self, video_file : str, fps : int = 30):
+    def __init__(self, video_file : str, swap_channels : bool = True, fps : int = 30):
         if video_file[-4:] != '.avi':
             raise ValueError("Video extension must be .avi")
         self._video_file = video_file
+        self._swap_channels = swap_channels
         self._fps = fps
         self._out = None
         super(VideofileWriter, self).__init__()
@@ -60,4 +61,6 @@ class VideofileWriter(ConsumerNode):
             self._out = cv2.VideoWriter(self._video_file, cv2.VideoWriter_fourcc('M', 'J', 'P', 'G'), self._fps, (self._width, self._height))
         
         resized = cv2.resize(item, (self._width, self._height), interpolation = cv2.INTER_AREA)
+        if self._swap_channels:
+            resized = resized[...,::-1]
         self._out.write(resized)
