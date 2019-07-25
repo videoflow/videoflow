@@ -77,13 +77,15 @@ class VideostreamReader(ProducerNode):
     - Arguments:
         - url_or_deviceid: (int or str) The url, filesystem path or id of the \
             video stream.
+        - swap_channels: if True, it will change channels from BGR to RGB
         - nb_frames: (int) The number of frames when to stop. -1 never stops
         - nb_retries: (int) If there are errors reading the stream, how \
             many times to retry.
     '''
-    def __init__(self, url_or_deviceid, nb_frames = -1, nb_retries = 0):
+    def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1, nb_retries = 0):
         self._url_or_deviceid = url_or_deviceid
         self._video = None
+        self._swap_channels = swap_channels
         self._nb_frames = nb_frames
         self._frame_count = 0
         self._nb_retries = nb_retries
@@ -122,13 +124,14 @@ class VideostreamReader(ProducerNode):
         while self._retries_count <= self._nb_retries:
             if self._video.isOpened():
                 success, frame = self._video.read()
-                frame = frame[...,::-1]
                 self._frame_count += 1
                 if not success:
                     if self._video.isOpened():
                         self._video.release()
                     self._video = cv2.VideoCapture(self._url_or_deviceid)
                 else:
+                    if self._swap_channels:
+                        frame = frame[...,::-1]
                     return (self._frame_count, frame)
             else:
                 self._video = cv2.VideoCapture(self._url_or_deviceid)
