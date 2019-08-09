@@ -54,8 +54,7 @@ def main():
     
     reader = VideofileReader(input_file)
     frame = FrameIndexSplitter()(reader)
-    masked = CropImageTransformer()(frame)
-    detector = TensorflowObjectDetector(num_classes = 2, architecture = 'fasterrcnn-resnet101', dataset = 'kitti', nb_tasks = 1)(masked)
+    detector = TensorflowObjectDetector(num_classes = 2, architecture = 'fasterrcnn-resnet101', dataset = 'kitti', nb_tasks = 1)(frame)
     # keeps only automobile classes: autos, buses, cycles, etc.
     tracker = KalmanFilterBoundingBoxTracker()(detector)
     annotator = TrackerAnnotator()(frame, tracker)
