@@ -9,14 +9,23 @@ from ...core.node import ProcessorNode
 from ...utils.transforms import resize_add_padding
 
 class CropImageTransformer(ProcessorNode):
-    def __init__(self):
+    '''
+    - Arguments:
+        - crop_dimensions (tuple): (ymin, xmin, ymax, xmax)
+    '''
+    def __init__(self, crop_dimensions):
+        self.crop_dimensions = crop_dimensions
+        if any([a < 0 for a in crop_dimensions]):
+            raise ValueError('One of the crop values is less than 0')
+        ymin, xmin, ymax, xmax = self.crop_dimensions
+        if ymin > ymax or xmin > xmax:
+            raise ValueError('ymin > ymax or xmin > xmax')
         super(CropImageTransformer, self).__init__()
 
-    def _crop(self, im : np.array, c) -> np.array:
+    def _crop(self, im : np.array) -> np.array:
         '''
         - Arguments:
             - im (np.array): shape of (h, w, 3)
-            - c (list): Crop dimensions: [ymin, xmin, ymax, xmax]
         
         - Raises:
             - ValueError:
@@ -24,24 +33,19 @@ class CropImageTransformer(ProcessorNode):
                 - If any of crop_dimensions out of bounds
                 - If ymin > ymax or xmin > xmax
         '''
-        if any([a < 0 for a in c]):
-            raise ValueError('One of the crop values is less than 0')
-        ymin, xmin, ymax, xmax = c
-        if ymin > ymax or xmin > xmax:
-            raise ValueError('ymin > ymax or xmin > xmax')
+        ymin, xmin, ymax, xmax = self.crop_dimensions
         if ymax > im.shape[0] or xmax > im.shape[1]:
             raise ValueError('One of the crop indexes is out of bounds')
         im = im[ymin : ymax, xmin : xmax, :]
         return im
     
-    def process(self, im : np.array, crop_dimensions) -> np.array:
+    def process(self, im : np.array) -> np.array:
         '''
         Crops image according to the coordinates in crop_dimensions.
         If those coordinates are out of bounds, it will raise errors
 
         - Arguments:
             - im (np.array): shape of (h, w, 3)
-            - crop_dimensions (tuple): (ymin, xmin, ymax, xmax)
         
         - Raises:
             - ValueError:
@@ -50,7 +54,7 @@ class CropImageTransformer(ProcessorNode):
                 - If ymin > ymax or xmin > xmax
         '''
         to_transform = np.array(im)
-        return self._crop(im, crop_dimensions)
+        return self._crop(im)
 
 
 class MaskImageTransformer(ProcessorNode):
