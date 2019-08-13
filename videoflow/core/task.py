@@ -102,6 +102,7 @@ class ProducerTask(NodeTask):
         super(ProducerTask, self).__init__(producer, messenger, task_id, is_last)
     
     def _run(self):
+        previous_end_t = time.time()
         while True:
             try:
                 with DelayedKeyboardInterrupt():
@@ -109,7 +110,8 @@ class ProducerTask(NodeTask):
                     a = self._producer.next()
                     end_t = time.time()
                     proc_time = end_t - start_t
-                    actual_proc_time = proc_time
+                    actual_proc_time = end_t - previous_end_t
+                    previous_end_t = end_t
                     if not self.is_last:
                         self._messenger.publish_message(
                             a,
