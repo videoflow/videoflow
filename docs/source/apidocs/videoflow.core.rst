@@ -9,6 +9,14 @@ videoflow.core package
 Submodules
 ----------
 
+videoflow.core.bottlenecks module
+---------------------------------
+
+.. automodule:: videoflow.core.bottlenecks
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 videoflow.core.constants module
 -------------------------------
 

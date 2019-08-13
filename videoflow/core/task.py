@@ -102,6 +102,7 @@ class ProducerTask(NodeTask):
         super(ProducerTask, self).__init__(producer, messenger, task_id, is_last)
     
     def _run(self):
+        previous_end_t = time.time()
         while True:
             try:
                 with DelayedKeyboardInterrupt():
@@ -109,7 +110,8 @@ class ProducerTask(NodeTask):
                     a = self._producer.next()
                     end_t = time.time()
                     proc_time = end_t - start_t
-                    actual_proc_time = proc_time
+                    actual_proc_time = end_t - previous_end_t
+                    previous_end_t = end_t
                     if not self.is_last:
                         self._messenger.publish_message(
                             a,
@@ -149,10 +151,10 @@ class ProcessorTask(NodeTask):
         self._processor.change_device(device_type)
     
     def _run(self):
+        previous_end_t = time.time()
         while True:
             try:
                 with DelayedKeyboardInterrupt():
-                    start_1_t = time.time()
                     inputs_d_l = self._messenger.receive_message()
                     inputs = [a['message'] for a in inputs_d_l]
                     stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
@@ -169,7 +171,8 @@ class ProcessorTask(NodeTask):
                         output = self._processor.process(*inputs)
                         end_t = time.time()
                         proc_time = end_t - start_2_t
-                        actual_proc_time = end_t - start_1_t
+                        actual_proc_time = end_t - previous_end_t
+                        previous_end_t = end_t
                         self._messenger.publish_message(
                             output,
                             {
@@ -194,10 +197,10 @@ class ConsumerTask(NodeTask):
         super(ConsumerTask, self).__init__(consumer, messenger, task_id, is_last, parent_task_id)
     
     def _run(self):
+        previous_end_t = time.time()
         while True:
             try:
                 with DelayedKeyboardInterrupt():
-                    start_1_t = time.time()
                     inputs_d_l = self._messenger.receive_message()
                     inputs = [a['message'] for a in inputs_d_l]
                     metadata = [a['metadata'] for a in inputs_d_l]    
@@ -221,7 +224,8 @@ class ConsumerTask(NodeTask):
                         self._consumer.consume(*metadata)
                     end_t = time.time()
                     proc_time = end_t - start_2_t
-                    actual_proc_time = end_t - start_1_t
+                    actual_proc_time = end_t - previous_end_t
+                    previous_end_t = end_t
                     if not self.is_last:
                         #self._messenger.passthrough_message()
                         self._messenger.publish_message(
@@ -354,17 +358,17 @@ class MultiprocessingOutputTask(MultiprocessingTask):
     
     def run(self):
         count = 0
-        
+        previous_end_t = time.time()
         while True:
             try:   
                 with DelayedKeyboardInterrupt():
-                    start_1_t = time.time()
                     next_idx = self._aq.get(block = True)
                     start_2_t = time.time()
                     raw_outputs = self._output_queues[next_idx].get(block = True)
                     end_t = time.time()
                     proc_time = end_t - start_2_t
-                    actual_proc_time = end_t - start_1_t
+                    actual_proc_time = end_t - previous_end_t
+                    previous_end_t = end_t
 
                     raw_outputs[self._processor.id]['metadata'] = {
                         'proctime': proc_time,
