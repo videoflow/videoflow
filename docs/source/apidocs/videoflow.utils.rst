@@ -65,4 +65,12 @@ videoflow.utils.tensorflow module
     :undoc-members:
     :show-inheritance:
 
+videoflow.utils.transforms module
+---------------------------------
+
+.. automodule:: videoflow.utils.transforms
+    :members:
+    :undoc-members:
+    :show-inheritance:
+
 
