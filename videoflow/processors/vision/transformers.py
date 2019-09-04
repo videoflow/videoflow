@@ -43,7 +43,8 @@ class CropImageTransformer(ProcessorNode):
         '''
         if (crop_dimensions < 0).any():
             raise ValueError('One of the crop values is less than 0')
-        if (crop_dimensions[:, 0] > crop_dimensions[:, 2]) or (crop_dimensions[:, 1] > crop_dimensions[:, 3]):
+        if ((crop_dimensions[:, 0] > crop_dimensions[:, 2]).any()
+                or (crop_dimensions[:, 1] > crop_dimensions[:, 3]).any()):
             raise ValueError('ymin > ymax or xmin > xmax')
 
     def _crop(self, im: np.array, crop_dimensions: Optional[np.array] = None) -> List[np.array]:
@@ -66,7 +67,8 @@ class CropImageTransformer(ProcessorNode):
             crop_dimensions = self.crop_dimensions
         self._check_crop_dimensions(crop_dimensions)
 
-        if (crop_dimensions[:, 0] > im.shape[0]) or (crop_dimensions[:, 2] > im.shape[1]):
+        if ((crop_dimensions[:, 0] > im.shape[0]).any()
+                or (crop_dimensions[:, 2] > im.shape[1]).any()):
             raise ValueError('One of the crop indexes is out of bounds')
         result = []
         for crop_dimensions_x in crop_dimensions:
