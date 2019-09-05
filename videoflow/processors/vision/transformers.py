@@ -60,6 +60,9 @@ class CropImageTransformer(ProcessorNode):
                 - If any of crop_dimensions less than 0
                 - If any of crop_dimensions out of bounds
                 - If ymin > ymax or xmin > xmax
+        
+        - Returns:
+            - list of np.arrays: Returns a list of cropped images of the same size as crop_dimensions
         '''
         if crop_dimensions is None:
             if self.crop_dimensions is None:
@@ -94,9 +97,12 @@ class CropImageTransformer(ProcessorNode):
                 - If any of crop_dimensions less than 0
                 - If any of crop_dimensions out of bounds
                 - If ymin > ymax or xmin > xmax
+        
+        - Returns:
+            - list of np.arrays: Returns a list of cropped images of the same size as crop_dimensions
         '''
         to_transform = np.array(im)
-        return self._crop(im, crop_dimensions)
+        return self._crop(to_transform, crop_dimensions)
 
 
 class MaskImageTransformer(ProcessorNode):
