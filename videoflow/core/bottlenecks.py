@@ -25,6 +25,7 @@ class Metric:
         self._m2 = 0
         self._mean = 0
         self._last_n_entries = []
+        self._first_call = True
 
     def update_stats(self, new_value : float):
         '''
@@ -35,6 +36,10 @@ class Metric:
         - Arguments:
             - new_value: (float)
         '''
+        if self._first_call:
+            self._first_call = False
+            return
+        
         self._count += 1
         delta = new_value - self._mean
         self._mean += delta / self._count
@@ -211,7 +216,7 @@ class MetadataConsumer(ConsumerNode):
         is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._parents))]
 
         #2. Find effective bottlenecks
-        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._parents))]
+        is_effective_bottleneck = [proctime[i] > (proctime[i - 1] * 1.05) and is_bottleneck[i] for i in range(len(self._parents))]
         
         return is_bottleneck, is_effective_bottleneck
 
