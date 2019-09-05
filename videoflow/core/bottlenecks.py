@@ -211,7 +211,7 @@ class MetadataConsumer(ConsumerNode):
         is_bottleneck = [proctime[i] > min_producer_time and not is_producer_node[i] for i in range(len(self._parents))]
 
         #2. Find effective bottlenecks
-        is_effective_bottleneck = [proctime[i] > proctime[i - 1] and is_bottleneck[i] for i in range(len(self._parents))]
+        is_effective_bottleneck = [proctime[i] > (proctime[i - 1] * 1.05) and is_bottleneck[i] for i in range(len(self._parents))]
         
         return is_bottleneck, is_effective_bottleneck
 
