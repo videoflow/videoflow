@@ -213,7 +213,6 @@ class ConsumerTask(NodeTask):
                         # someone else, so the message that I am passing through
                         # might be the one carrying it.
                         if not self.is_last:
-                            #self._messenger.passthrough_termination_message()
                             self._messenger.publish_termination_message(None, None)
                         break
 
@@ -227,7 +226,6 @@ class ConsumerTask(NodeTask):
                     actual_proc_time = end_t - previous_end_t
                     previous_end_t = end_t
                     if not self.is_last:
-                        #self._messenger.passthrough_message()
                         self._messenger.publish_message(
                             None, 
                             {
