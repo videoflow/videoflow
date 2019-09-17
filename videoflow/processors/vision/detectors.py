@@ -9,6 +9,8 @@ import numpy as np
 
 from ...core.node import ProcessorNode
 
+BASE_URL_DETECTION = 'https://github.com/videoflow/videoflow-contrib/releases/download/detector_tf/'
+
 class ObjectDetector(ProcessorNode):
     '''
     Abstract class that defines the interface of object detectors

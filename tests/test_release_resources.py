@@ -7,6 +7,7 @@ import pytest
 
 from videoflow.utils.downloader import get_file
 from videoflow.processors.vision.annotators import BoundingBoxAnnotator
+from videoflow.processors.vision.detectors import BASE_URL_DETECTION
 
 def test_bboxannotator_resources():
     for datasetid in BoundingBoxAnnotator.supported_datasets:
