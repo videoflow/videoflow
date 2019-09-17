@@ -38,5 +38,3 @@ class ObjectDetector(ProcessorNode):
                 but using the original dimension of the image)
         '''
         return self._detect(im)
-
-=
