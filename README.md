@@ -15,7 +15,7 @@ The complete documentation to the project is located in [**docs.videoflow.dev**]
 
 ## Installing the framework
 ### Requirements
-Before installing, be sure that you have `cv2` and `tensorflow >= 1.12` already installed. Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+.  There are some [known issues](https://github.com/videoflow/videoflow/issues/56) to run it on Windows too
+Before installing, be sure that you have `cv2` already installed. Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+.  There are some [known issues](https://github.com/videoflow/videoflow/issues/56) to run it on Windows too
 
 ### Installation
 You can install directly using **pip** by doing `pip3 install videoflow`
@@ -54,7 +54,7 @@ import videoflow.core.flow as flow
 from videoflow.core.constants import BATCH
 from videoflow.consumers import VideofileWriter
 from videoflow.producers import VideofileReader
-from videoflow.processors.vision.detectors import TensorflowObjectDetector
+from videoflow_contrib.processors.detector_tf import TensorflowObjectDetector
 from videoflow.processors.vision.annotators import BoundingBoxAnnotator
 from videoflow.utils.downloader import get_file
 

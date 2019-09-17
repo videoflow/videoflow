@@ -9,8 +9,8 @@ See below an example of an object tracking sample application::
     from videoflow.core.constants import BATCH
     from videoflow.consumers import VideofileWriter
     from videoflow.producers import VideofileReader
-    from videoflow.processors.vision.detectors import TensorflowObjectDetector
-    from videoflow.processors.vision.trackers import KalmanFilterBoundingBoxTracker
+    from videoflow_contrib.processors.detector_tf import TensorflowObjectDetector
+    from videoflow_contrib.processors.tracker_sort import KalmanFilterBoundingBoxTracker
     from videoflow.processors.vision.annotators import TrackerAnnotator
     from videoflow.utils.downloader import get_file
 
