@@ -1,5 +1,5 @@
 sphinxcontrib-apidoc==0.3.0
-tensorflow==1.13.1
+tensorflow==1.15.0
 opencv-python
 filterpy
 six>=1.9.0
