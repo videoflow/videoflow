@@ -96,9 +96,11 @@ A flow application usually consists of three parts:
 ## Citing Videoflow
 If you use Videoflow in your research please use the following BibTeX entry.
 
+```
 @misc{deArmas2019videoflow,
   author =       {Jadiel de Armas},
   title =        {Videoflow},
   howpublished = {\url{https://github.com/videoflow/videoflow}},
   year =         {2019}
 }
+```
