@@ -92,3 +92,13 @@ A flow application usually consists of three parts:
 2. To create a flow object, you need to pass to it your list of producers and your list of consumers. Once a flow is defined you can start it.  Starting the flow means that the producers start putting data into the flow and processors and consumers start receiving data.  Starting the flow also means allocating resources for producers, processors and consumers.  For simplicity for now we can say that each producer, processor and consumer will run on its own process space.
 
 3. Once the flow starts, you can also stop it.  When you stop the flow, it will happen organically.  Producers will stop producing data.  The rest of the nodes in the flow will continue running until the pipes run dry.  The resources used in the flow are deallocated progressively, as each node stops producing/processing/consuming data.
+
+## Citing Videoflow
+If you use Videoflow in your research please use the following BibTeX entry.
+
+@misc{deArmas2019videoflow,
+  author =       {Jadiel de Armas},
+  title =        {Videoflow},
+  howpublished = {\url{https://github.com/videoflow/videoflow}},
+  year =         {2019}
+}
