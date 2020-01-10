@@ -29,7 +29,6 @@ setup(
     install_requires = [
         'numpy>=1.9.1',
         'opencv-python',
-        'filterpy',
         'six>=1.9.0',
         'scikit-learn'
     ],
