@@ -28,7 +28,7 @@ setup(
     include_package_data = True,
     install_requires = [
         'numpy>=1.9.1',
-        'opencv-python',
+        'opencv-python=4.1.2',
         'six>=1.9.0',
         'scikit-learn'
     ],
