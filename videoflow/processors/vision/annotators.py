@@ -48,7 +48,8 @@ class BoundingBoxAnnotator(ImageAnnotator):
         'coco',
         'oidv4',
         'pascal',
-        'kitti'
+        'kitti',
+        'faces'
     ]
 
     def __init__(self, class_labels_path = None, class_labels_dataset = 'coco', 
