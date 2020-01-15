@@ -379,9 +379,9 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                     if not self.is_last:
                         if self._has_stop_signal(raw_outputs) and self._finish_count == 1:
                             self._task_queue.put(raw_outputs, block = True)
-                        elif self._flow_type == BATCH:
+                        elif not self._has_stop_signal(raw_outputs) and self._flow_type == BATCH:
                             self._task_queue.put(raw_outputs, block = True)
-                        elif self._flow_type == REALTIME:
+                        elif not self._has_stop_signal(raw_outputs) and self._flow_type == REALTIME:
                             try:
                                 self._task_queue.put(raw_outputs, block = False)
                             except:

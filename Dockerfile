@@ -16,13 +16,7 @@ RUN apt-get update && apt-get install -y gnupg2 \
     rm -rf /var/lib/apt/lists/*
 
 # Installing ffmpeg
-# Be aware that ffmpeg license is not safe for commercial
-# uses
-#RUN echo "deb http://security.ubuntu.com/ubuntu xenial-security main" \ 
-# | tee -a /etc/apt/sources.list
-#RUN echo "deb http://ppa.launchpad.net/jonathonf/ffmpeg-3/ubuntu xenial main " \ 
-# | tee -a /etc/apt/sources.list \
-# && apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 4AB0F789CBA31744CC7DA76A8CF63AD3F06FC659
+# Be aware that ffmpeg license might not be safe for commercial use.
 RUN echo "deb http://old-releases.ubuntu.com/ubuntu/ yakkety universe" | tee -a /etc/apt/sources.list
 RUN  apt-get update && apt-get install -y \
     libav-tools  \ 
