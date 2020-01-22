@@ -185,8 +185,7 @@ class MetadataConsumer(ConsumerNode):
         self._accountant = Accountant(len(self._parents))
     
     def close(self):
-        if not self._bottlenecks_reported:
-            self.report_bottlenecks()
+        self.report_bottlenecks()
     
     def get_bottlenecks(self):
         '''
