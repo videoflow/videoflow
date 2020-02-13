@@ -167,25 +167,25 @@ class VideoDeviceReader(VideostreamReader):
     def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0):
         super(VideoDeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries)    
 
+
 class VideoFileReader(ProducerNode):
     '''
     Reader of video streams, using ``cv2``
     
     - Arguments:
-        - url: (str) The filesystem path of the \
+        - url_or_deviceid: (int or str) The url, filesystem path or id of the \
             video stream.
         - swap_channels: if True, it will change channels from BGR to RGB
         - nb_frames: (int) The number of frames when to stop. -1 never stops
         - nb_retries: (int) If there are errors reading the stream, how \
             many times to retry.
     '''
-    def __init__(self, url, swap_channels = True, nb_frames = -1, nb_retries = 0):
-        self._url_or_deviceid = url
+    def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1):
+        self._url_or_deviceid = url_or_deviceid
         self._video = None
         self._swap_channels = swap_channels
         self._nb_frames = nb_frames
         self._frame_count = 0
-        self._nb_retries = nb_retries
         self._retries_count = 0
         super(VideoFileReader, self).__init__()
 
@@ -218,27 +218,18 @@ class VideoFileReader(ProducerNode):
         if self._frame_count == self._nb_frames:
             raise StopIteration()
 
-        while self._retries_count <= self._nb_retries:
-            if self._video.isOpened():
-                success, frame = self._video.read()
-                self._frame_count += 1
-                if not success:
-                    if self._video.isOpened():
-                        self._video.release()
-                    self._video = cv2.VideoCapture(self._url_or_deviceid)
-                    self._video.set(cv2.CAP_PROP_POS_FRAMES, value = self._frame_count)
-                    logger.error(f'Reopened video at frame {self._frame_count}')
-                else:
-                    if self._swap_channels:
-                        frame = frame[...,::-1]
-                    return (self._frame_count, frame)
+        if self._video.isOpened():
+            success, frame = self._video.read()
+            self._frame_count += 1
+            if not success:
+                if self._video.isOpened():
+                    self._video.release()
             else:
-                self._video = cv2.VideoCapture(self._url_or_deviceid)
-                self._video.set(cv2.CAP_PROP_POS_FRAMES, value = self._frame_count)
-                logger.error(f'Reopened video at frame {self._frame_count}')
-            self._retries_count += 1
-            logger.error(f'Error reading video, increasing retries count to {self._retries_count}')
-        raise StopIteration()
+                if self._swap_channels:
+                    frame = frame[...,::-1]
+                return (self._frame_count, frame)
+        else:
+            raise StopIteration()
 
 # Here for the sake of not breaking
 # old code
