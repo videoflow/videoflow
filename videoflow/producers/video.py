@@ -7,6 +7,8 @@ import numpy as np
 
 from ..core.node import ProducerNode
 
+logger = logging.getLogger(__name__)
+
 class ImageProducer(ProducerNode):
     '''
     Reads a single image and produces it
@@ -136,6 +138,7 @@ class VideostreamReader(ProducerNode):
             else:
                 self._video = cv2.VideoCapture(self._url_or_deviceid)
             self._retries_count += 1
+            logger.error(f'Error reading video, increasing retries count to {self._retries_count}')
         raise StopIteration()
     
 class VideoUrlReader(VideostreamReader):
@@ -171,8 +174,8 @@ class VideoFileReader(VideostreamReader):
         - video_file: path to video file
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, video_file : str, nb_frames = -1):
-        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
+    def __init__(self, video_file : str, nb_frames = -1, nb_retries = 0):
+        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = nb_retries)
 
 # Here for the sake of not breaking
 # old code
