@@ -165,18 +165,6 @@ class VideoDeviceReader(VideostreamReader):
     def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0):
         super(VideoDeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries)    
 
-class VideoFileReader(VideostreamReader):
-    '''
-    Opens a video capture object and returns subsequent frames
-    from the video file each time ``next`` is called.
-
-    - Arguments:
-        - video_file: path to video file
-        - nb_frames: number of frames to process. -1 means all of them
-    '''
-    def __init__(self, video_file : str, nb_frames = -1):
-        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
-
 class VideoFileReader(ProducerNode):
     '''
     Reader of video streams, using ``cv2``
