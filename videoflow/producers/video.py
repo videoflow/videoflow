@@ -174,8 +174,8 @@ class VideoFileReader(VideostreamReader):
         - video_file: path to video file
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, video_file : str, nb_frames = -1, nb_retries = 0):
-        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = nb_retries)
+    def __init__(self, video_file : str, nb_frames = -1):
+        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
 
 # Here for the sake of not breaking
 # old code
