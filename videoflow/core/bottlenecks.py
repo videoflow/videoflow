@@ -88,7 +88,7 @@ class Accountant:
         self._nodes_metrics = [dict() for _ in range(nb_nodes)]
     
     def update_actualproctime(self, node_id : int, value : float):
-        self._update_stat(node_id, self.logtype_actualproctime, value)
+        self.update_stat(node_id, self.logtype_actualproctime, value)
 
     def update_proctime(self, node_index : int, value : float):
         self.update_stat(node_index, self.logtype_proctime, value)
@@ -107,7 +107,8 @@ class Accountant:
                 value = metric.mean
                 to_return.append(value)
             else:
-                raise ValueError(f'stat_name {stat_name} is not in node accountant')
+                pass
+                #raise ValueError(f'stat_name {stat_name} is not in node accountant')
         return to_return
 
     def get_actual_proctime(self):
