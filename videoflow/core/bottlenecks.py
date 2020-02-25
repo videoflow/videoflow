@@ -107,8 +107,7 @@ class Accountant:
                 value = metric.mean
                 to_return.append(value)
             else:
-                pass
-                #raise ValueError(f'stat_name {stat_name} is not in node accountant')
+                raise ValueError(f'stat_name {stat_name} is not in node accountant')
         return to_return
 
     def get_actual_proctime(self):

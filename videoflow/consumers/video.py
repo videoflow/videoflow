@@ -51,7 +51,6 @@ class VideofileWriter(ConsumerNode):
             Every subsequent frame is expected to have the same height and width. If it \
             does not has it, it gets resized to it.
         
-        
         - Arguments:
             - item: np.array of dimension (height, width, 3)
         '''

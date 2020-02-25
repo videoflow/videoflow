@@ -10,6 +10,8 @@ from multiprocessing import Process, Queue, Event, Lock
 from ..core.task import Task
 
 def task_executor_fn(task : Task):
+    os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+    os.environ["CUDA_VISIBLE_DEVICES"] = ""
     task.run()
 
 def task_executor_gpu_fn(task : Task, gpu_id : int):
