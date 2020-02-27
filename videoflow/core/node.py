@@ -202,8 +202,8 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__(self, *args, **kwargs):
-        super(OneTaskProcessorNode, self).__init__(*args, nb_tasks = 1, **kwargs)
+    def __init__(self, device_type = CPU, **kwargs):
+        super(OneTaskProcessorNode, self).__init__(1, device_type = device_type, **kwargs)
 
 class TaskModuleNode(ProcessorNode):
     '''
