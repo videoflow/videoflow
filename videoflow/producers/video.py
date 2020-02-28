@@ -174,10 +174,11 @@ class VideoFileReader(VideostreamReader):
     from the video file each time ``next`` is called.
     - Arguments:
         - video_file: path to video file
+        - swap_channels: If true, swaps from BGR to RGB
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, video_file : str, nb_frames = -1):
-        super(VideoFileReader, self).__init__(video_file, nb_frames = nb_frames, nb_retries = 0)
+    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1):
+        super(VideoFileReader, self).__init__(video_file, swap_channels = swap_channels, nb_frames = nb_frames, nb_retries = 0)
 
 # Here for the sake of not breaking
 # old code
