@@ -29,7 +29,8 @@ setup(
     install_requires = [
         'numpy>=1.9.1',
         'opencv-python>=4.0.0',
-        'six>=1.9.0'
+        'six>=1.9.0',
+        'requests>=2.22.0'
     ],
     classifiers = [
         'Intended Audience :: Developers',
