@@ -1,8 +1,10 @@
 from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
-
+import json
+import requests
 from ..core.node import ConsumerNode
+
 
 class CommandlineConsumer(ConsumerNode):
     '''
@@ -41,13 +43,23 @@ class VoidConsumer(ConsumerNode):
         '''
         pass
 
+
 class WebhookConsumer(ConsumerNode):
-    def __init__(self):
+    def __init__(self,host,method="post"):
         # TODO: Add other pertinent parameters to the init method.
-        pass
+        self.host = host
+        self.method = method
+        super(WebhookConsumer, self).__init__()
 
     def consume(self, item):
-        raise NotImplementedError()
+        # convert item to json
+        try:
+            item = json.loads(item)
+        except TypeError:
+            print("Not consuming item is not json serializable")
+
+        requests.post(self.host,item)
+
 
 class FileAppenderConsumer(ConsumerNode):
     def __init__(self):
