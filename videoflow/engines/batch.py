@@ -46,7 +46,6 @@ class BatchprocessingQueueMessenger(Messenger):
     def publish_message(self, message, metadata = None):
         '''
         Publishes output message to a place where the child task will receive it. \
-        Will drop the message is the receiving queue is full.
         '''
         if self._last_message_received is None:
             msg = {
