@@ -89,7 +89,8 @@ class BatchprocessingQueueMessenger(Messenger):
         
         #1. Check for STOP_SIGNAL before returning
         inputs = [input_message_dict[a] for a in self._parent_nodes_ids]
-        stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in inputs])
+        messages = [a['message'] for a in inputs]
+        stop_signal_received = any([isinstance(a, str) and a == STOP_SIGNAL for a in messages])
         
         #2. Returns one or the other.
         if stop_signal_received:
