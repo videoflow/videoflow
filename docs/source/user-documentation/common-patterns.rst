@@ -9,7 +9,7 @@ Assume that we want to run the following flow in a machine that has
 
     from videoflow.producers import IntProducer
     from videoflow.processors import IdentityProcessor
-    from videoflow.consumers.import CommandlineConsumer
+    from videoflow.consumers import CommandlineConsumer
 
     A = IntProducer(0, 40, fps = 30)
     B = IdentityProcessor(fps = 300)(A)
