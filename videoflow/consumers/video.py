@@ -2,8 +2,6 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-import os
-import errno
 import cv2
 import numpy as np
 
@@ -22,8 +20,6 @@ class VideofileWriter(ConsumerNode):
     '''
 
     def __init__(self, video_file : str, swap_channels : bool = True, fps : int = 30):
-        if not os.path.isfile(video_file):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), video_file)
         if video_file[-4:] != '.avi':
             raise ValueError('Only .avi format is supported')
         self._video_file = video_file
