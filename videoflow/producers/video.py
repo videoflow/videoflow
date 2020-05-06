@@ -2,8 +2,6 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-import os
-import errno
 import logging 
 
 import cv2
@@ -19,8 +17,6 @@ class ImageProducer(ProducerNode):
     '''
 
     def __init__(self, image_path : str):
-        if not os.path.isfile(image_path):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), image_path)
         self._image_path = image_path
         self._image_returned = False
         super(ImageProducer, self).__init__()
@@ -153,7 +149,7 @@ class VideoUrlReader(VideostreamReader):
     from the video url each time ``next`` is called.
 
     - Arguments:
-        - url: url of the video stream
+        - device_id: id of the video device connected to the computer
         - nb_frames: number of frames to process. -1 means all of them
     '''
     def __init__(self, url : str, nb_frames : int = -1, nb_retries = 0):
@@ -182,8 +178,6 @@ class VideoFileReader(VideostreamReader):
         - nb_frames: number of frames to process. -1 means all of them
     '''
     def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1):
-        if not os.path.isfile(video_file):
-            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), video_file)
         super(VideoFileReader, self).__init__(video_file, swap_channels = swap_channels, nb_frames = nb_frames, nb_retries = 0)
 
 # Here for the sake of not breaking
