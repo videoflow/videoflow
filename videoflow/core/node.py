@@ -31,8 +31,7 @@ class Node:
 
     def _register_state_attributes(self, *attributes):
         """
-        This method registers the variables in states that are responsible to restore the
-        producer state in case of failure
+        This method registers the variables in `_state_attributes` and serialize it
         - Arguments : name of the variables (string)
         """
         for attribute in attributes:

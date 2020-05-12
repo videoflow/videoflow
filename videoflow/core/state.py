@@ -36,7 +36,6 @@ class StatesConsumer(ConsumerNode):
         self.states.append(state)
 
     def consume(self, *metadata):
-
         if self._count % self.save_interval == 0:
             state = {}
             for idx, entry in enumerate(metadata):
@@ -50,7 +49,7 @@ class StatesConsumer(ConsumerNode):
 
             self.add_state(state)
             if self.states:
-                # TODO: store the states on any kind of consumer (webhook/redis/.. etc)
+                # TODO: store the states at different destination (webhook/redis/.. etc)
                 with open(self.file, "w") as f:
                     f.flush()
                     json.dump(self.states, f)
@@ -78,6 +77,14 @@ class StatesConsumer(ConsumerNode):
         sorted(self.states, key=lambda x: datetime.datetime.strptime(x["timestamp"], "%Y-%m-%d %H:%M:%S.%f"))[-1]
         return latest_state
 
+    def _check_graph(self,states):
+        graph_match = True
+        for idx, node in enumerate(self._parents):
+            restore_node_name = states[str(idx)]["name"]
+            if str(node) != restore_node_name:
+                graph_match = False
+        return graph_match
+
     def _set_state_to_node(self, state_dict, node):
         '''
         This method tries updates the node object with values present in the state_dict.
@@ -87,20 +94,11 @@ class StatesConsumer(ConsumerNode):
             - node: `videoflow.core.Node` object
         '''
         name = state_dict["name"]
-        if name == str(node):
-            node_match = True
-            state = state_dict["state"]
-            if state is not None:
-                state_node = pickle.loads(state.encode("latin-1"))
-                node.__dict__.update(vars(state_node))
 
-        else:
-            node_match = False
-            self._logger.warning(f"Cannot restore states for node {str(name)} with {name}\n"
-                                 f"Make sure the nodes order is consitent and the name of the flow is correct\n"
-                                 f"..Aborting restore states")
-
-        return node_match
+        state = state_dict["state"]
+        if state is not None:
+            state_node = pickle.loads(state.encode("latin-1"))
+            node.__dict__.update(vars(state_node))
 
     def restore_states(self):
         '''
@@ -109,17 +107,16 @@ class StatesConsumer(ConsumerNode):
         '''
         if self.read_states():
             latest_state = self.get_latest_state()
-            restore_status = True
-
-            for idx, node in enumerate(self._parents):
-                state = latest_state[str(idx)]
-                if not self._set_state_to_node(state, node):
-                    restore_status = False
-                    break
-
-            if restore_status:
+            graph_check = self._check_graph(latest_state)
+            if graph_check:
+                for idx, node in enumerate(self._parents):
+                    state = latest_state[str(idx)]
+                    self._set_state_to_node(state, node)
                 self._logger.info("Restored state successfully.... states written time : {}"
-                                  .format(latest_state["timestamp"]))
+                                      .format(latest_state["timestamp"]))
+            else:
+                self._logger.warning(f"Failed restoring the states\n"
+                                     f"Make sure the nodes order is consistent and name of the flow is correct")
 
         else:
             self._logger.info(f"No states available for flow {self.name}")

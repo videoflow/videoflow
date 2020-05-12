@@ -1,11 +1,7 @@
-import logging
-
 from videoflow.core import Flow
 from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.consumers import CommandlineConsumer
-from videoflow.core import constants
-constants.LOGGING_LEVEL = logging.DEBUG
 
 producer = IntProducer(0, 40, 0.1)
 identity = IdentityProcessor()(producer)

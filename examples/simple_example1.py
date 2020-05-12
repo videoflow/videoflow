@@ -1,5 +1,3 @@
-import logging
-
 from videoflow.core import Flow
 from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
