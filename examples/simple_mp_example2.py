@@ -33,7 +33,8 @@ consumer_before = JoinerProcessor()(
     resurrect_processor
 )
 consumer = CommandlineConsumer()(consumer_before)
-flow = Flow([reader], [consumer], flow_type = BATCH)
+flow = Flow([reader], [consumer], flow_type = BATCH,
+            maintain_states=True,state_config={"flow_name":"simple_mp_example2","save_interval":60})
 flow.run()
 flow.join()
 

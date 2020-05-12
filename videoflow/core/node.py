@@ -2,6 +2,8 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import pickle
+
 import logging
 logger = logging.getLogger(__package__)
 
@@ -21,9 +23,41 @@ class Node:
         self._id = id(self)
         self._children = set()
         self._is_part_of_taskmodule_node = False
+        self.progress = 0
+        self._state_attributes = []
+        self._register_state_attributes("progress", "_name")
         self._logger = self._configure_logger()
         self._logger.debug(f'Created Node with id {self._id}')
-    
+
+    def _register_state_attributes(self, *attributes):
+        """
+        This method registers the variables in states that are responsible to restore the
+        producer state in case of failure
+        - Arguments : name of the variables (string)
+        """
+        for attribute in attributes:
+            if attribute not in self._state_attributes:
+                self._state_attributes.append(attribute)
+
+    def restore(self):
+        """
+        Override this method to write custom function for restoring the state if necessary
+        """
+        pass
+
+    def __getstate__(self):
+        state_dict = {}
+        for k in self._state_attributes:
+            state_dict[k] = getattr(self,k)
+        return state_dict
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+    def get_current_state(self):
+        state = pickle.dumps(self,0)
+        return state
+
     def _configure_logger(self):
         logger = logging.getLogger(f'{self.__repr__()}_{self._id}')
         logger.setLevel(LOGGING_LEVEL)
@@ -196,6 +230,7 @@ class ProcessorNode(Node):
         raise NotImplementedError('process function needs to be implemented\
                             by subclass')
 
+
 class OneTaskProcessorNode(ProcessorNode):
     '''
     Used for processes that keep internal state so they are easily parallelizable.
@@ -363,6 +398,23 @@ class ProducerNode(Node):
     '''
     def __init__(self, *args, **kwargs):
         super(ProducerNode, self).__init__(*args, **kwargs)
+
+    def restore(self):
+        '''
+        produce and throw away from the producers till it reach the previous state
+
+        Returns boolean restore status
+        '''
+        restore_progress = 0
+        status = True
+        try:
+            while restore_progress != self.progress:
+                self.next()
+                restore_progress+=1
+        except :
+            status = False
+        return status
+
 
     def next(self) -> any:
         '''

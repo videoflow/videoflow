@@ -95,6 +95,7 @@ class VideostreamReader(ProducerNode):
         self._nb_retries = nb_retries
         self._retries_count = 0
         super(VideostreamReader, self).__init__()
+        self._register_state_attributes("_frame_count")
 
     def open(self):
         '''
@@ -109,6 +110,14 @@ class VideostreamReader(ProducerNode):
         '''
         if self._video and self._video.isOpened():
             self._video.release()
+
+    def restore(self):
+        '''
+        Seeks the video till the last progress frame
+        - Returns restore status
+        '''
+        self._video.set(cv2.CAP_PROP_POS_FRAMES, self._frame_count)
+        return True
 
     def next(self):
         '''
