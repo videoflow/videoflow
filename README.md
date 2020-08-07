@@ -13,6 +13,7 @@ The complete documentation to the project is located in [**docs.videoflow.dev**]
 [1]: http://www.twitter.com/videoflow_py
 <!--Follow us on [![alt text][1.2]][1]-->
 
+
 ## Installing the framework
 ### Requirements
 Before installing, be sure that you have `cv2` already installed. Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+.  There are some [known issues](https://github.com/videoflow/videoflow/issues/56) to run it on Windows too
