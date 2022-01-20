@@ -128,12 +128,11 @@ class BatchExecutionEngine(ExecutionEngine):
 
         #1. Initialize tasks
         tasks = []
-        for data in tasks_data:
-            node = data[0]
-            node_id = data[1]
-            parent_node_id = data[2]
-            is_last = data[3]
-
+        for (data_0, data_1, data_2, data_3, *data_len) in tasks_data:
+            node = data_0
+            node_id = data_1
+            parent_node_id = data_2
+            is_last = data_3
             #1.1 Creating messenger for task
             task_queue = self._task_output_queues.get(node_id)
             if parent_node_id is not None:
