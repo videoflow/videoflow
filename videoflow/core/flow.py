@@ -7,6 +7,7 @@ import logging
 from .graph import GraphEngine
 from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
+from .state import StatesConsumer
 from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
 from .bottlenecks import MetadataConsumer
 from ..engines.realtime import RealtimeExecutionEngine
@@ -42,8 +43,10 @@ class Flow:
         - producers: a list of producer nodes of type ``videoflow.core.node.ProducerNode``.
         - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``.
         - flow_type: one of 'realtime' or 'batch'
+        - maintain_state: boolean if to maintain and try to restore states or not
+        - state_config: dictionary to specify config for ``videoflow.core.state.StatesConsumer``
     '''
-    def __init__(self, producers, consumers, flow_type = REALTIME):
+    def __init__(self, producers, consumers, flow_type = REALTIME, maintain_states=False, state_config=None):
         self._graph_engine = GraphEngine(producers, consumers)
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
@@ -51,6 +54,8 @@ class Flow:
             self._execution_engine = BatchExecutionEngine()
         elif flow_type == REALTIME:
             self._execution_engine = RealtimeExecutionEngine()
+        self._maintain_states = maintain_states
+        self._state_config = state_config
 
     def run(self):
         '''
@@ -70,6 +75,17 @@ class Flow:
         tsort = self._graph_engine.topological_sort()
         metadata_consumer = MetadataConsumer()(*tsort)
         tsort.append(metadata_consumer)
+
+        if self._maintain_states:
+            if not self._state_config:
+                logger.info(f"State config not provided check videoflow.core.state.StatesConsumer for "
+                            f"list of possible arguments")
+            else:
+                state_consumer = StatesConsumer(**self._state_config)(*tsort)
+                state_consumer.restore_states()
+                tsort.append(state_consumer)
+
+
         
         #2. TODO: OPtimize graph in the following ways:   
         # a) Tasks do not need to pass down to children

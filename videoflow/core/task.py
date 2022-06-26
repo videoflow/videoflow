@@ -86,6 +86,7 @@ class NodeTask(Task):
         '''
         self._assert_messenger()
         self._computation_node.open()
+        self._computation_node.restore()
         self._run()
         self._computation_node.close()
 
@@ -112,12 +113,15 @@ class ProducerTask(NodeTask):
                     proc_time = end_t - start_t
                     actual_proc_time = end_t - previous_end_t
                     previous_end_t = end_t
+                    self._producer.progress += 1
+                    states = self._producer.get_current_state()
                     if not self.is_last:
                         self._messenger.publish_message(
                             a,
                             {
                                 'proctime': proc_time,
-                                'actual_proctime': actual_proc_time
+                                'actual_proctime': actual_proc_time,
+                                'states': states
                             }
                         )
                     
@@ -173,11 +177,14 @@ class ProcessorTask(NodeTask):
                         proc_time = end_t - start_2_t
                         actual_proc_time = end_t - previous_end_t
                         previous_end_t = end_t
+                        self._processor.progress += 1
+                        states = self._processor.get_current_state()
                         self._messenger.publish_message(
                             output,
                             {
                                 'proctime': proc_time,
-                                'actual_proctime': actual_proc_time
+                                'actual_proctime': actual_proc_time,
+                                'states': states
                             }
                         )
             except KeyboardInterrupt:
@@ -225,12 +232,15 @@ class ConsumerTask(NodeTask):
                     proc_time = end_t - start_2_t
                     actual_proc_time = end_t - previous_end_t
                     previous_end_t = end_t
+                    self._consumer.progress += 1
+                    states = self._consumer.get_current_state()
                     if not self.is_last:
                         self._messenger.publish_message(
                             None, 
                             {
                                 'proctime': proc_time,
-                                'actual_proctime': actual_proc_time
+                                'actual_proctime': actual_proc_time,
+                                'states': states
                             }
                         )
                     
@@ -323,9 +333,12 @@ class MultiprocessingProcessorTask(MultiprocessingTask):
                     #3. Else: process it, and place result in oq
                     inputs = self._inputs_from_raw_inputs(raw_inputs)
                     output = self._processor.process(*inputs)
+                    self._processor.progress += 1
+                    states = self._processor.get_current_state()
                     raw_inputs[self._processor.id] = {
                         'message': output,
-                        'metadata': None
+                        'metadata': None,
+                        'states': states
                     }
                     self._oq.put(raw_inputs)
             except KeyboardInterrupt:
@@ -392,4 +405,3 @@ class MultiprocessingOutputTask(MultiprocessingTask):
                     
             except KeyboardInterrupt:
                 continue
-        
