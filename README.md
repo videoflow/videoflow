@@ -84,6 +84,34 @@ fl.join()
 The output of the application is an annotated video:
 
 
+## Analyzing videos with TwelveLabs Pegasus
+
+The `videoflow.processors.vision.twelvelabs.PegasusAnalyzer` processor sends a
+whole video (referenced by a public URL or a TwelveLabs asset id) to the
+[TwelveLabs](https://twelvelabs.io) Pegasus model and returns the generated
+text analysis. It is an opt-in processor that depends on the `twelvelabs` SDK,
+installed via an extra so the core install stays dependency-light:
+
+```bash
+pip install videoflow[twelvelabs]
+export TWELVELABS_API_KEY=<your key>   # free key at https://twelvelabs.io
+```
+
+```python
+from videoflow.core import Flow
+from videoflow.processors.vision.twelvelabs import PegasusAnalyzer
+from videoflow.consumers import CommandlineConsumer
+# `producer` emits video URLs (one per next() call); see examples/twelvelabs_pegasus.py
+analyzer = PegasusAnalyzer('Summarize this video in one sentence.')(producer)
+printer = CommandlineConsumer()(analyzer)
+flow = Flow([producer], [printer])
+flow.run(); flow.join()
+```
+
+See [examples/twelvelabs_pegasus.py](examples/twelvelabs_pegasus.py) for a
+complete, runnable flow.
+
+
 ## The Structure of a flow application
 
 A flow application usually consists of three parts:

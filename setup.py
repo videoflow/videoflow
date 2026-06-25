@@ -32,6 +32,9 @@ setup(
         'six>=1.9.0',
         'requests>=2.22.0'
     ],
+    extras_require = {
+        'twelvelabs': ['twelvelabs>=1.2.8'],
+    },
     classifiers = [
         'Intended Audience :: Developers',
         'Intended Audience :: Education',
