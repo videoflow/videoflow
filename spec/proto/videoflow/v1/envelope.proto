@@ -1,0 +1,47 @@
+// videoflow.v1.Envelope — the wire message that crosses the broker between nodes.
+// This is envelope version 4 (PROTOCOL.md §4). One Envelope is published per
+// broker message: routing/trace metadata plus one typed payload.
+//
+// Field numbers are a public contract: they are append-only and never reused
+// (enforced by `buf breaking` in CI). Changing observable semantics requires a
+// protocol RFC (spec/rfcs/).
+syntax = "proto3";
+
+package videoflow.v1;
+
+import "videoflow/v1/value.proto";
+
+enum MsgType {
+  MSG_TYPE_UNSPECIFIED = 0;  // never emitted; guards against an unset field
+  MSG_TYPE_DATA = 1;         // a normal payload on the data subject
+  MSG_TYPE_EOS = 2;          // end-of-stream marker on the _eos subject, empty payload
+}
+
+message Envelope {
+  uint32 v = 1;                         // envelope version; 4 for this schema
+  MsgType type = 2;
+
+  string producer_name = 3;             // emitting node's VF_NODE_NAME
+  string flow_id = 4;
+  string run_id = 5;
+  string trace_id = 6;                  // lineage identity (PROTOCOL.md §5, §8)
+  uint64 seq = 7;                       // representative seq, stable across redelivery
+
+  // Event time (epoch seconds) of the underlying real-world event, minted by the
+  // producer and carried forward unchanged. `optional` so an absent value (v2
+  // upstream, or a producer that never stamped one) round-trips as null rather
+  // than 0.0 — time-aligned joins depend on the distinction (PROTOCOL.md §8.3).
+  optional double event_ts = 8;
+
+  string span_id = 9;                   // trace-correlation ids; may be empty
+  string parent_span_id = 10;
+  uint32 replica_id = 11;               // emitting replica index
+
+  map<string, Value> metadata = 12;     // arbitrary per-message metadata
+
+  // Identifies how `payload` is encoded: a proto FQN (e.g. "videoflow.v1.Tensor"),
+  // "videoflow.v1.BlobRef" for an offloaded large payload, or "x-python-pickle"
+  // (legacy, Python-only, gated). Empty payload for MSG_TYPE_EOS. (PROTOCOL.md §4.4)
+  string payload_type = 13;
+  bytes payload = 14;
+}

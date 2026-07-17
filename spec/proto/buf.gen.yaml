@@ -1,0 +1,14 @@
+version: v2
+# Buf config for CI lint (`buf lint`) and breaking-change detection
+# (`buf breaking --against '.git#branch=master'`). Local code generation does NOT
+# require buf — scripts/gen-proto.sh uses grpc_tools.protoc so contributors need
+# only the Python toolchain. This file drives the same protoc-gen-python output
+# when buf IS available, generating into the repo root so modules land at
+# videoflow/v1/*_pb2.py (matching the proto import path, so cross-imports resolve).
+managed:
+  enabled: false
+plugins:
+  - remote: buf.build/protocolbuffers/python
+    out: ../..
+  - remote: buf.build/protocolbuffers/pyi
+    out: ../..

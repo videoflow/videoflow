@@ -3,6 +3,7 @@ import logging
 from .constants import LOGGING_LEVEL
 from .flow import Flow
 from .node import ConsumerNode, FunctionProcessorNode, Node, ProcessorNode, ProducerNode
+from .remote import RemoteConsumer, RemoteProcessor, RemoteProducer, component
 from .task import ConsumerTask, ProcessorTask, ProducerTask, Task
 
 logger = logging.getLogger(__package__)

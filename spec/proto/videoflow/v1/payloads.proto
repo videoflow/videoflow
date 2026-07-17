@@ -1,0 +1,49 @@
+// videoflow.v1 well-known payload types (PROTOCOL.md §4.4). These are the
+// language-neutral vocabulary for the payloads that cross between components.
+// Tensor is the foundation: video frames, detection boxes, and track arrays are
+// all tensors, so a component in any language reads/writes them without a
+// Python-specific codec. Vendors may also send any other proto message; its FQN
+// goes in Envelope.payload_type and unknown types pass through opaquely.
+syntax = "proto3";
+
+package videoflow.v1;
+
+// An N-dimensional dense array. `data` is the raw C-contiguous buffer as a single
+// bytes field — never repeated scalars (that would balloon size and lose the
+// zero-copy decode). `dtype` is a numpy dtype string ("uint8", "float32",
+// "int64", ...), the existing raw-ndarray vocabulary.
+message Tensor {
+  repeated int64 shape = 1;
+  string dtype = 2;
+  bytes data = 3;
+}
+
+// A video frame: pixels plus how to interpret them.
+message Frame {
+  Tensor pixels = 1;
+  string pixel_format = 2;         // e.g. "bgr8" (OpenCV convention), "rgb8", "gray8"
+  optional double capture_ts = 3;  // capture time in epoch seconds, if known
+}
+
+// Object detections. `boxes` keeps the historical (nb_boxes, 6) layout
+// [x1, y1, x2, y2, score, class_id] so it is loss-free vs the current ndarray
+// contract; `class_names` optionally labels the class_id column.
+message Detections {
+  Tensor boxes = 1;
+  repeated string class_names = 2;
+}
+
+// Object tracks. `tracks` keeps the historical (nb_boxes, 5) layout
+// [x1, y1, x2, y2, track_id].
+message Tracks {
+  Tensor tracks = 1;
+}
+
+// A reference to a payload offloaded to the blob store because it exceeded the
+// inline size threshold (PROTOCOL.md §13). Carried inline in place of the real
+// payload; `inner_payload_type` is the payload_type the resolved bytes decode as.
+message BlobRef {
+  string ref = 1;
+  string inner_payload_type = 2;
+  uint64 size = 3;
+}

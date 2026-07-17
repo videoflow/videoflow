@@ -33,9 +33,8 @@ def k8s_name(*parts) -> str:
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
-def _env_pairs(spec, flow_id, flow_type, run_id) -> dict:
+def _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
     env = {
-        'VF_NODE_CLASS': spec.node_class,
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
         'VF_NODE_KIND': spec.kind,
         'VF_NODE_NAME': spec.name,
@@ -48,11 +47,25 @@ def _env_pairs(spec, flow_id, flow_type, run_id) -> dict:
         # In-cluster each pod has its own IP, so a fixed health port is safe and
         # matches the probe/containerPort below.
         'VF_HEALTH_PORT': '8080',
+        # Whole-run wire version (homogeneous: a mixed flow forces v4 so a native
+        # producer and a remote consumer agree on the protobuf wire).
+        'VF_ENVELOPE_VERSION': str(envelope_version),
     }
+    # A Python node/component names the class the worker imports; a native component
+    # has none and runs its own image entrypoint. A component (either kind) also
+    # carries its ref + protocol version.
+    if spec.node_class:
+        env['VF_NODE_CLASS'] = spec.node_class
+    if spec.component_ref:
+        env['VF_COMPONENT_REF'] = spec.component_ref
+        if spec.protocol_version is not None:
+            env['VF_PROTOCOL_VERSION'] = str(spec.protocol_version)
     if spec.partition_by:
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    if allow_pickle:
+        env['VF_ALLOW_PICKLE'] = '1'
     return env
 
 def _is_partitioned(spec) -> bool:
@@ -73,6 +86,10 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
             {'configMapRef': {'name': nats_configmap}},
         ],
     }
+    # A remote component may override the container command; native nodes and
+    # vendor images with a videoflow entrypoint leave it to the image.
+    if getattr(spec, 'command', None):
+        container['command'] = list(spec.command)
     if _is_partitioned(spec):
         # Partitioned pods run as a StatefulSet; the ordinal in the pod name is the
         # replica id (the worker parses it off POD_NAME).
@@ -118,7 +135,7 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
         pod_spec['tolerations'] = tolerations
     return pod_spec
 
-def node_configmap(spec, flow_id, flow_type, run_id) -> dict:
+def node_configmap(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -126,7 +143,7 @@ def node_configmap(spec, flow_id, flow_type, run_id) -> dict:
             'name': k8s_name('vf', flow_id, spec.name, 'env'),
             'labels': _labels(flow_id, spec.name),
         },
-        'data': _env_pairs(spec, flow_id, flow_type, run_id),
+        'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle),
     }
 
 def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
@@ -338,7 +355,8 @@ def network_policy(flow_id) -> dict:
 def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'default',
                     default_image = None, image_overrides = None, blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
-                    nats_monitoring_endpoint = None) -> list:
+                    nats_monitoring_endpoint = None, envelope_version = None,
+                    allow_pickle = False, provision_image = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -350,11 +368,30 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     - max_replicas: upper bound for autoscaled processors.
     - nats_monitoring_endpoint: NATS monitoring host:port for KEDA (defaults to \
         ``nats.<namespace>.svc:8222``).
+    - envelope_version: wire version for the whole run; a flow with any remote \
+        component is forced to v4 (the protobuf wire non-Python SDKs speak). \
+        Defaults to the ambient ``DEFAULT_ENVELOPE_VERSION`` for pure-Python flows.
+    - allow_pickle: permit the legacy Python-only pickle codec (rejected for flows \
+        with remote components).
+    - provision_image: image the one-shot provision Job runs on — must have \
+        videoflow + the broker client (i.e. a Python image), which a vendor \
+        ``default_image`` may not be. Defaults to ``default_image``; set it \
+        explicitly (``--provision-image``) for flows whose default image is a \
+        non-Python vendor image.
 
     - Raises:
-        - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``).
+        - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``), \
+            or if the wire settings are incompatible with the flow's components.
     '''
+    from .compiler import has_native_components, validate_wire_compatibility
     from .images import resolve_image
+    from .serialization import DEFAULT_ENVELOPE_VERSION
+
+    # Resolve the whole-run wire version: a flow with any native component must use
+    # the protobuf wire (v4+) so every node — native or not — speaks it.
+    base_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
+    resolved_version = 4 if (has_native_components(specs) and base_version < 4) else base_version
+    validate_wire_compatibility(specs, resolved_version, allow_pickle)
 
     # Resolve every node's image up front (raises with an actionable message if any
     # node has none), so a misconfiguration fails before partial manifests are built.
@@ -362,9 +399,10 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         spec.name: resolve_image(spec.name, spec.image, default_image, image_overrides)
         for spec in specs
     }
-    # The provision init Job just needs a videoflow-capable image; reuse the default
-    # or, failing that, any node's resolved image.
-    init_image = default_image or images_by_name[specs[0].name]
+    # The provision init Job needs a videoflow-capable (Python) image. Prefer an
+    # explicit --provision-image; else the default image; else any node's image
+    # (correct only when that node is a Python worker — hence the override exists).
+    init_image = provision_image or default_image or images_by_name[specs[0].name]
 
     nats_cm = nats_configmap(flow_id, nats_url, blob_redis_url)
     nats_cm_name = nats_cm['metadata']['name']
@@ -375,7 +413,7 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     manifests.append(flow_spec_configmap(specs, flow_id, run_id))
     manifests.append(provision_init_job(flow_id, run_id, flow_type, init_image, nats_cm_name))
     for spec in specs:
-        manifests.append(node_configmap(spec, flow_id, flow_type, run_id))
+        manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, allow_pickle))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name))

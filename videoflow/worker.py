@@ -22,6 +22,8 @@ the original graph-building script.
     VF_PARTITION_BY     optional; partition key ('trace_id' or a metadata field)
     VF_JOIN_POLICY_JSON optional; JSON JoinPolicy for a multi-parent node
     VF_BLOB_REDIS_URL   optional; enables the external blob store for large payloads
+    VF_ENVELOPE_VERSION optional; wire envelope version to emit (3 msgpack | 4 protobuf)
+    VF_ALLOW_PICKLE     optional; '1' permits the legacy Python-only pickle payload codec
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -59,7 +61,17 @@ def _resolve_replica_id() -> int:
     return 0
 
 def build_node_from_env() -> Any:
-    node_class = _import_class(os.environ['VF_NODE_CLASS'])
+    fq_class = os.environ.get('VF_NODE_CLASS')
+    if not fq_class:
+        # A remote (language-agnostic) component must run its own image's entrypoint,
+        # not the Python worker. Reaching here means a remote node was scheduled onto
+        # a Python worker image — a deploy/image mismatch.
+        ref = os.environ.get('VF_COMPONENT_REF', '<unknown>')
+        raise RuntimeError(
+            f'VF_NODE_CLASS is not set (component_ref={ref!r}). The Python worker only '
+            'runs native videoflow nodes; a remote component must run its own image. '
+            'Check that the node\'s image and descriptor command are set correctly.')
+    node_class = _import_class(fq_class)
     params = json.loads(os.environ.get('VF_NODE_PARAMS_JSON', '{}'))
     return node_class(**params)
 
@@ -85,6 +97,13 @@ def run_from_env() -> None:
     join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
     join_policy = json.loads(join_policy_json) if join_policy_json else None
 
+    from .serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
+    envelope_version = int(os.environ.get('VF_ENVELOPE_VERSION', str(DEFAULT_ENVELOPE_VERSION)))
+    if envelope_version not in EMITTABLE_ENVELOPE_VERSIONS:
+        raise ValueError(f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this '
+                        f'build (supported: {EMITTABLE_ENVELOPE_VERSIONS})')
+    allow_pickle = os.environ.get('VF_ALLOW_PICKLE', '0') == '1'
+
     blob_store = None
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
@@ -103,6 +122,7 @@ def run_from_env() -> None:
         ack_wait = ack_wait, max_retries = max_retries,
         eos_quiescence_ms = eos_quiescence_ms, nb_tasks = nb_tasks,
         partition_by = partition_by, join_policy = join_policy,
+        envelope_version = envelope_version, allow_pickle = allow_pickle,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local

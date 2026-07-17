@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://videoflow.io/schemas/component-v1.json",
+  "title": "Videoflow Component Descriptor",
+  "description": "Describes one language-agnostic component so videoflow can wire it into a graph, deploy it, and validate its use — without importing any of its code. One component.yaml per component (PROTOCOL.md §, migration plan Phase 2).",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "spec"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {"const": "videoflow.io/v1"},
+    "kind": {"const": "Component"},
+    "metadata": {
+      "type": "object",
+      "required": ["name", "version"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {"type": "string", "description": "Component id, e.g. 'acme/sort-tracker'."},
+        "version": {"type": "string", "description": "Semantic version, e.g. '1.0.0'."},
+        "license": {"type": "string"},
+        "description": {"type": "string"}
+      }
+    },
+    "spec": {
+      "type": "object",
+      "required": ["role", "protocol", "runtime", "device"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {"enum": ["producer", "processor", "consumer"]},
+        "protocol": {"type": "integer", "minimum": 1, "description": "Protocol major version the component implements (spec/PROTOCOL.md)."},
+        "finite": {"type": "boolean", "description": "Producers only: whether next() self-terminates (Job vs Deployment). Default true."},
+        "runtime": {
+          "type": "object",
+          "required": ["images"],
+          "additionalProperties": false,
+          "properties": {
+            "images": {
+              "type": "object",
+              "additionalProperties": false,
+              "minProperties": 1,
+              "properties": {
+                "cpu": {"type": "string", "description": "OCI image ref for CPU deployment."},
+                "gpu": {"type": "string", "description": "OCI image ref for GPU deployment."}
+              }
+            },
+            "pythonClass": {"type": "string", "description": "Fully-qualified Python class the component provides, e.g. 'videoflow_contrib.detector_tf.TensorflowObjectDetector'. Present ⇒ this is a Python component run by 'python -m videoflow.worker' (the image must be videoflow-base-derived). Absent ⇒ a native component that runs its own image entrypoint/command and must speak the protobuf wire."},
+            "command": {"type": "array", "items": {"type": "string"}, "description": "Container command override for a native component; default is the image entrypoint."},
+            "localCommand": {"type": "array", "items": {"type": "string"}, "description": "Command to run a native component directly (no docker) under the local engine."}
+          }
+        },
+        "device": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"enum": ["cpu", "gpu"]},
+          "description": "Device types the component supports."
+        },
+        "params": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "schema": {"type": "object", "description": "JSON Schema for the component's constructor params (delivered via VF_NODE_PARAMS_JSON)."}
+          }
+        },
+        "io": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "inputs": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["name", "type"],
+                "additionalProperties": false,
+                "properties": {
+                  "name": {"type": "string"},
+                  "type": {"type": "string", "description": "Payload FQN, e.g. 'videoflow.v1.Tensor', or 'any'."},
+                  "accepts": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                      "missing": {"type": "boolean", "description": "Tolerates a None input (quorum join). Default false."},
+                      "collected": {"type": "boolean", "description": "Tolerates a list input (collect join). Default false."}
+                    }
+                  }
+                }
+              }
+            },
+            "output": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "type": {"type": "string", "description": "Payload FQN produced, or 'any'."}
+              }
+            }
+          }
+        },
+        "constraints": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "partitionable": {"type": "boolean", "description": "May be replicated with partition_by. Default false."},
+            "singleton": {"type": "boolean", "description": "Must run as a single task (nb_tasks forced to 1). Default false."}
+          }
+        }
+      }
+    }
+  }
+}

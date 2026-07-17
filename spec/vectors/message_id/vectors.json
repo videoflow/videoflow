@@ -1,0 +1,38 @@
+[
+  {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "cam",
+    "trace_id": "cam:1",
+    "seq": 1,
+    "msg_type": "data",
+    "expected_id": "745708c2eeaf98a60fdbebafe1d04eff"
+  },
+  {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "cam",
+    "trace_id": "eos-r0",
+    "seq": 9,
+    "msg_type": "eos",
+    "expected_id": "8964c2a84d154cd86b5f42b060899f77"
+  },
+  {
+    "flow_id": "f",
+    "run_id": "r",
+    "producer_name": "proc",
+    "trace_id": "tw-1700000000500000",
+    "seq": 1700000000500000,
+    "msg_type": "data",
+    "expected_id": "e812c39caa73494ff7f6322cfeb9bd7b"
+  },
+  {
+    "flow_id": "flujo",
+    "run_id": "ejecución",
+    "producer_name": "caméra-Ω",
+    "trace_id": "caméra-Ω:1",
+    "seq": 9000000000,
+    "msg_type": "data",
+    "expected_id": "34f9c145b6760b51bf894450dcfd64eb"
+  }
+]

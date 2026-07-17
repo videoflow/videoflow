@@ -65,13 +65,15 @@ def _cmd_deploy(args) -> None:
         flow._flow_id = args.flow_id
     run_id = args.run_id or uuid.uuid4().hex[:12]
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
-    specs = compile_flow(flow)
     try:
+        specs = compile_flow(flow, envelope_version = args.envelope_version, allow_pickle = args.allow_pickle)
         manifests = render_manifests(
             specs, flow.flow_id, flow.flow_type, args.nats, run_id,
             namespace = args.namespace, default_image = args.image,
             image_overrides = overrides, blob_redis_url = args.blob_redis_url,
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
+            envelope_version = args.envelope_version, allow_pickle = args.allow_pickle,
+            provision_image = args.provision_image,
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
@@ -103,11 +105,66 @@ def _cmd_deploy(args) -> None:
     print(f'Apply with:  kubectl apply -k {args.output}')
     print(f'Flow id: {flow.flow_id}   Run id: {run_id}')
 
+def _cmd_component_validate(args) -> None:
+    from .component import load_descriptor
+
+    ok = True
+    for path in args.path:
+        try:
+            desc = load_descriptor(path)
+        except Exception as e:
+            print(f'INVALID  {path}: {e}')
+            ok = False
+            continue
+        images = ', '.join(f'{k}={v}' for k, v in sorted(desc.images.items()))
+        print(f'OK       {desc.name} v{desc.version}  role={desc.role}  protocol={desc.protocol}  '
+            f'device={desc.device}  images[{images}]')
+    if not ok:
+        raise SystemExit(1)
+
+def _cmd_component_push(args) -> None:
+    from .oci import push_component
+
+    try:
+        target = push_component(args.path, args.ref)
+    except Exception as e:
+        raise SystemExit(f'push failed: {e}') from e
+    print(f'Pushed component descriptor {args.path} -> oci://{target}')
+
+def _cmd_component_pull(args) -> None:
+    from .oci import pull_component
+
+    try:
+        path = pull_component(args.ref, force = args.force, verify = args.verify,
+                            cosign_args = args.cosign_arg or None)
+    except Exception as e:
+        raise SystemExit(f'pull failed: {e}') from e
+    print(f'Resolved {args.ref} -> {path}')
+
+def _cmd_component_inspect(args) -> None:
+    from .oci import inspect_component
+
+    try:
+        d = inspect_component(args.ref, verify = args.verify)
+    except Exception as e:
+        raise SystemExit(f'inspect failed: {e}') from e
+    images = ', '.join(f'{k}={v}' for k, v in sorted(d.images.items()))
+    kind = 'python' if not d.is_native else 'native'
+    print(f'{d.name} v{d.version}  ({kind}, role={d.role}, protocol={d.protocol})')
+    print(f'  device: {d.device}')
+    print(f'  images: {images}')
+    if d.python_class:
+        print(f'  pythonClass: {d.python_class}')
+    if d.params_schema.get('properties'):
+        print(f'  params: {", ".join(sorted(d.params_schema["properties"]))}')
+
 def _cmd_run_local(args) -> None:
     from .engines.local import LocalProcessEngine
 
     flow = _load_flow(args.graph)
-    engine = LocalProcessEngine(nats_url = args.nats, blob_redis_url = args.blob_redis_url)
+    engine = LocalProcessEngine(nats_url = args.nats, blob_redis_url = args.blob_redis_url,
+                                allow_pickle = args.allow_pickle,
+                                local_docker_nats_url = args.local_docker_nats_url)
     flow.run(engine)
     print(f'Flow {flow.flow_id} running locally against {args.nats}. Ctrl-C to stop.')
     try:
@@ -116,12 +173,14 @@ def _cmd_run_local(args) -> None:
         flow.stop()
 
 def _cmd_explain(args) -> None:
-    from .compiler import compile_flow
+    from .compiler import specs_from_tasks_data
     from .messaging.topology import dlq_stream_name, subject_for
 
     flow = _load_flow(args.graph)
     run_id = args.run_id or '<run-id>'
-    specs = compile_flow(flow)
+    # Describe the graph without enforcing wire compatibility (that is a deploy-time
+    # concern; explain must work for any flow, including remote-on-default-wire).
+    specs = specs_from_tasks_data(flow.tasks_data())
     lines = [f'Flow: {flow.flow_id}   type={flow.flow_type}   run={run_id}',
             f'Nodes ({len(specs)}):']
     for s in specs:
@@ -133,7 +192,10 @@ def _cmd_explain(args) -> None:
         if s.join_policy:
             bits.append(f"join={s.join_policy.get('missing')}")
         image = s.image or '«--image default»'
-        lines.append(f'  {s.name}  [{s.kind}]  image={image}  ' + '  '.join(bits))
+        kind = f'{s.kind}, remote' if s.is_remote else s.kind
+        lines.append(f'  {s.name}  [{kind}]  image={image}  ' + '  '.join(bits))
+        if s.is_remote:
+            lines.append(f'      component: {s.component_ref}  (protocol v{s.protocol_version})')
         lines.append(f'      subject: {subject_for(flow.flow_id, run_id, s.name)}')
         if s.parents:
             lines.append(f'      from: {", ".join(s.parents)}')
@@ -143,12 +205,13 @@ def _cmd_explain(args) -> None:
 def _cmd_provision(args) -> None:
     import uuid
 
-    from .compiler import compile_flow
+    from .compiler import specs_from_tasks_data
     from .messaging.topology import provision_flow_sync
 
     flow = _load_flow(args.graph)
     run_id = args.run_id or uuid.uuid4().hex[:12]
-    specs = compile_flow(flow)
+    # Provisioning only needs stream/durable names (language-neutral); no wire check.
+    specs = specs_from_tasks_data(flow.tasks_data())
     provision_flow_sync(args.nats, specs, flow.flow_id, run_id, flow.flow_type)
     print(f'Provisioned {len(specs)} node streams for flow {flow.flow_id} run {run_id}')
 
@@ -180,6 +243,78 @@ def _cmd_teardown(args) -> None:
                         '-l', selector], check = False)
         print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id}')
 
+def _format_payload(message : Any) -> str:
+    '''One-line human summary of a decoded payload for the debug inspector.'''
+    if message is None:
+        return 'None (EOS or empty)'
+    import numpy as np
+    if isinstance(message, np.ndarray):
+        return f'ndarray shape={tuple(message.shape)} dtype={message.dtype}'
+    from .serialization import RawPayload
+    if isinstance(message, RawPayload):
+        return f'RawPayload type={message.payload_type} ({len(message.data)} bytes, opaque)'
+    if hasattr(message, 'DESCRIPTOR'):
+        return f'{message.DESCRIPTOR.full_name}: ' + str(message).replace('\n', ' ').strip()[:200]
+    return repr(message)[:200]
+
+def _print_decoded(buf : bytes, headers : dict = None) -> None:
+    from .serialization import decode_envelope
+    d = decode_envelope(buf)
+    if headers:
+        interesting = {k: v for k, v in headers.items() if k.startswith('VF-') or k == 'Nats-Msg-Id'}
+        if interesting:
+            print('  headers: ' + '  '.join(f'{k}={v}' for k, v in interesting.items()))
+    print(f"  {d['type']}  producer={d['producer_name']}  trace={d['trace_id']}  seq={d['seq']}  "
+        f"replica={d['replica_id']}  event_ts={d['event_ts']}")
+    if d['metadata']:
+        print(f"  metadata: {d['metadata']}")
+    print(f"  payload: {_format_payload(d['message'])}")
+
+def _cmd_debug_decode(args) -> None:
+    if args.file:
+        with open(args.file, 'rb') as f:
+            buf = f.read()
+        print(f'Envelope from {args.file} ({len(buf)} bytes):')
+        _print_decoded(buf)
+        return
+    if not args.dlq:
+        raise SystemExit('Provide a FILE of raw envelope bytes, or --dlq with --flow-id/--run-id.')
+    if not (args.flow_id and args.run_id):
+        raise SystemExit('--dlq requires --flow-id and --run-id.')
+
+    import asyncio
+
+    import nats
+
+    from .messaging.topology import dlq_stream_name
+
+    async def _go() -> None:
+        nc = await nats.connect(args.nats)
+        js = nc.jetstream()
+        stream = dlq_stream_name(args.flow_id, args.run_id)
+        subject = f'vf.{args.flow_id}.{args.run_id}._dlq.>'
+        try:
+            # Ephemeral, no-ack inspection: the messages stay in the DLQ.
+            sub = await js.pull_subscribe(subject, stream = stream)
+            printed = 0
+            while printed < args.limit:
+                try:
+                    msgs = await sub.fetch(batch = min(10, args.limit - printed), timeout = 2.0)
+                except (nats.errors.TimeoutError, TimeoutError):
+                    break
+                for msg in msgs:
+                    print(f'--- DLQ message {printed + 1} (subject {msg.subject}) ---')
+                    _print_decoded(msg.data, headers = dict(msg.headers or {}))
+                    printed += 1
+            if printed == 0:
+                print(f'No messages in DLQ stream {stream}.')
+            else:
+                print(f'Decoded {printed} DLQ message(s) from {stream} (left in place).')
+        finally:
+            await nc.drain()
+
+    asyncio.run(_go())
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
     sub = parser.add_subparsers(dest = 'command', required = True)
@@ -206,6 +341,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help = 'Emit a KEDA ScaledObject per processor node (requires KEDA in-cluster).')
     deploy.add_argument('--max-replicas', type = int, default = 10,
                         help = 'Upper bound for autoscaled processors (default 10).')
+    deploy.add_argument('--envelope-version', type = int, default = None,
+                        help = 'Wire envelope version (3 msgpack | 4 protobuf). A flow with any '
+                               'remote component is forced to 4. Defaults to the build default.')
+    deploy.add_argument('--allow-pickle', action = 'store_true',
+                        help = 'Permit the legacy Python-only pickle payload codec (rejected for '
+                               'flows containing remote components).')
+    deploy.add_argument('--provision-image', default = None,
+                        help = 'Image the provision init Job runs on (needs videoflow + broker client). '
+                               'Set this when --image is a non-Python vendor image.')
     deploy.add_argument('--dry-run', action = 'store_true', help = 'Print manifests to stdout, write nothing.')
     deploy.set_defaults(func = _cmd_deploy)
 
@@ -213,7 +357,36 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
     run.add_argument('--nats', default = 'nats://localhost:4222')
     run.add_argument('--blob-redis-url', default = None)
+    run.add_argument('--allow-pickle', action = 'store_true',
+                    help = 'Permit the legacy Python-only pickle payload codec.')
+    run.add_argument('--local-docker-nats-url', default = None,
+                    help = 'NATS URL a docker-run remote component connects to '
+                           '(default rewrites localhost -> host.docker.internal).')
     run.set_defaults(func = _cmd_run_local)
+
+    comp = sub.add_parser('component', help = 'Work with component descriptors.')
+    comp_sub = comp.add_subparsers(dest = 'component_command', required = True)
+    validate = comp_sub.add_parser('validate', help = 'Validate one or more component.yaml descriptors.')
+    validate.add_argument('path', nargs = '+', help = 'Path(s) to a component.yaml or its directory.')
+    validate.set_defaults(func = _cmd_component_validate)
+
+    push = comp_sub.add_parser('push', help = 'Push a component descriptor to an OCI registry as an artifact.')
+    push.add_argument('path', help = 'Path to a component.yaml or its directory.')
+    push.add_argument('ref', help = 'Target ref, e.g. oci://ghcr.io/vendor/name:1.2.0')
+    push.set_defaults(func = _cmd_component_push)
+
+    pull = comp_sub.add_parser('pull', help = 'Pull + cache a component descriptor from an OCI registry.')
+    pull.add_argument('ref', help = 'Component ref, e.g. oci://ghcr.io/vendor/name:1.2.0')
+    pull.add_argument('--force', action = 'store_true', help = 'Re-pull even if cached.')
+    pull.add_argument('--verify', action = 'store_true', help = 'Verify the artifact signature with cosign before trusting it.')
+    pull.add_argument('--cosign-arg', action = 'append', metavar = 'ARG',
+                    help = 'Extra arg passed to `cosign verify` (e.g. --key=cosign.pub). Repeatable.')
+    pull.set_defaults(func = _cmd_component_pull)
+
+    inspect = comp_sub.add_parser('inspect', help = 'Show a remote component descriptor (pulls + caches it).')
+    inspect.add_argument('ref', help = 'Component ref, e.g. oci://ghcr.io/vendor/name:1.2.0')
+    inspect.add_argument('--verify', action = 'store_true', help = 'Verify the signature with cosign first.')
+    inspect.set_defaults(func = _cmd_component_inspect)
 
     explain = sub.add_parser('explain', help = 'Print a human-readable summary of a compiled graph.')
     explain.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
@@ -232,6 +405,17 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--nats', required = True)
     teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the flow\'s workloads.')
     teardown.set_defaults(func = _cmd_teardown)
+
+    debug = sub.add_parser('debug', help = 'Inspect wire messages (envelopes, DLQ).')
+    debug_sub = debug.add_subparsers(dest = 'debug_command', required = True)
+    decode = debug_sub.add_parser('decode', help = 'Decode and print videoflow envelope(s) from a file or a run\'s DLQ.')
+    decode.add_argument('file', nargs = '?', help = 'Path to a file of raw envelope bytes.')
+    decode.add_argument('--dlq', action = 'store_true', help = 'Read from a run\'s DLQ stream instead of a file.')
+    decode.add_argument('--nats', default = 'nats://localhost:4222')
+    decode.add_argument('--flow-id', default = None)
+    decode.add_argument('--run-id', default = None)
+    decode.add_argument('--limit', type = int, default = 20, help = 'Max DLQ messages to decode (default 20).')
+    decode.set_defaults(func = _cmd_debug_decode)
 
     return parser
 

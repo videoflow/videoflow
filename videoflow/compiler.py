@@ -7,6 +7,8 @@ Kubernetes pod as environment variables / a ConfigMap.
 '''
 from __future__ import absolute_import, division, print_function
 
+from typing import List, Optional
+
 from .core.node import ConsumerNode, ProcessorNode, ProducerNode
 
 NODE_KIND_PRODUCER = 'producer'
@@ -41,8 +43,14 @@ class NodeSpec:
     '''
     def __init__(self, name, node_class, params, parents, kind, has_children,
                 nb_tasks, device_type, is_finite, image = None,
-                partition_by = None, join_policy = None) -> None:
+                partition_by = None, join_policy = None,
+                component_ref = None, descriptor = None, command = None,
+                protocol_version = None) -> None:
         self.name = name
+        # ``node_class`` is the Python import path for a native node, or None for a
+        # remote (language-agnostic) component — those are identified by
+        # ``component_ref`` and run their own image's entrypoint instead of the
+        # Python worker. Exactly one of node_class / component_ref is set.
         self.node_class = node_class
         self.params = params
         self.parents = parents
@@ -56,6 +64,21 @@ class NodeSpec:
         # them without parsing constructor kwargs.
         self.partition_by = partition_by
         self.join_policy = join_policy  # dict or None
+        # Remote-component fields (None for native Python nodes).
+        self.component_ref = component_ref
+        self.descriptor = descriptor        # the component descriptor as a dict
+        self.command = command              # container command override, or None
+        self.protocol_version = protocol_version
+
+    @property
+    def is_remote(self) -> bool:
+        '''Loaded from a component descriptor (Python or native), vs a native Python graph node.'''
+        return self.component_ref is not None
+
+    @property
+    def is_native(self) -> bool:
+        '''A non-Python component: runs its own image entrypoint (no node_class) and must speak the protobuf wire.'''
+        return self.component_ref is not None and self.node_class is None
 
     def to_dict(self) -> dict:
         return {
@@ -71,6 +94,10 @@ class NodeSpec:
             'image': self.image,
             'partition_by': self.partition_by,
             'join_policy': self.join_policy,
+            'component_ref': self.component_ref,
+            'descriptor': self.descriptor,
+            'command': self.command,
+            'protocol_version': self.protocol_version,
         }
 
     @classmethod
@@ -81,6 +108,8 @@ class NodeSpec:
             nb_tasks = d['nb_tasks'], device_type = d['device_type'],
             is_finite = d['is_finite'], image = d.get('image'),
             partition_by = d.get('partition_by'), join_policy = d.get('join_policy'),
+            component_ref = d.get('component_ref'), descriptor = d.get('descriptor'),
+            command = d.get('command'), protocol_version = d.get('protocol_version'),
         )
 
 def specs_from_tasks_data(tasks_data) -> list:
@@ -88,15 +117,34 @@ def specs_from_tasks_data(tasks_data) -> list:
     Converts ``build_tasks_data`` output — tuples of
     ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
     '''
+    from .core.remote import RemoteNodeMixin
+
     specs = []
     for node, parent_names, is_last in tasks_data:
         kind = _node_kind(node)
-        node_class = f'{type(node).__module__}.{type(node).__name__}'
         nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
         device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
         partition_by = getattr(node, 'partition_by', None)
         join_policy = node._join_policy if hasattr(node, '_join_policy') else None
+        node_class: Optional[str]
+        component_ref: Optional[str]
+        descriptor: Optional[dict]
+        command: Optional[List[str]]
+        protocol_version: Optional[int]
+        if isinstance(node, RemoteNodeMixin):
+            # A component loaded from a descriptor. A *Python* component still names a
+            # class the worker imports (node_class = its pythonClass); a *native*
+            # component has no class and runs its own image entrypoint/command.
+            _validate_remote_node(node, parent_names)
+            node_class = node.descriptor.python_class
+            component_ref = node.component_ref
+            descriptor = node.descriptor._raw
+            command = node.component_command
+            protocol_version = node.descriptor.protocol
+        else:
+            node_class = f'{type(node).__module__}.{type(node).__name__}'
+            component_ref = descriptor = command = protocol_version = None
         specs.append(NodeSpec(
             name = node.name,
             node_class = node_class,
@@ -110,15 +158,81 @@ def specs_from_tasks_data(tasks_data) -> list:
             image = getattr(node, 'image', None),
             partition_by = partition_by,
             join_policy = join_policy,
+            component_ref = component_ref,
+            descriptor = descriptor,
+            command = command,
+            protocol_version = protocol_version,
         ))
     return specs
 
-def compile_flow(flow) -> list:
+def _validate_remote_node(node, parent_names) -> None:
+    '''
+    Parent-aware validation of a remote component now that its wired parents are
+    known: a collect-join delivers a *list* on the collected parent's position, so
+    that position's descriptor input must declare it accepts collected inputs
+    (complements the parent-independent quorum check in ``core.remote.component``).
+    '''
+    desc = node.descriptor
+    policy = node._join_policy
+    if not policy or not desc.inputs:
+        return
+    collect = policy.get('collect') if isinstance(policy, dict) else None
+    if not collect:
+        return
+    for parent_name in collect:
+        if parent_name in parent_names:
+            idx = parent_names.index(parent_name)
+            if not desc.input_accepts(idx, 'collected'):
+                raise ValueError(
+                    f"component '{desc.name}': join policy collects parent '{parent_name}' "
+                    f"(input #{idx}) as a list, but that input does not declare "
+                    "accepts.collected. Mark it on the component, or drop it from collect.")
+
+def has_remote_components(specs) -> bool:
+    '''Whether any node came from a component descriptor (Python or native).'''
+    return any(s.is_remote for s in specs)
+
+def has_native_components(specs) -> bool:
+    '''Whether any node is a native (non-Python) component — the ones that force the protobuf wire.'''
+    return any(s.is_native for s in specs)
+
+def validate_wire_compatibility(specs, envelope_version : int, allow_pickle : bool) -> None:
+    '''
+    A flow containing any native (non-Python) component cannot use the Python-only
+    pickle codec and must use the language-neutral protobuf wire (envelope v4+).
+    Enforced at compile/deploy time so the failure is actionable, not a decode crash
+    inside a vendor container. (PROTOCOL.md §4.4 WIRE-11.) Python components loaded
+    from a descriptor are unaffected — they speak whatever wire the run uses.
+    '''
+    if not has_native_components(specs):
+        return
+    native = [s.name for s in specs if s.is_native]
+    if allow_pickle:
+        raise ValueError(
+            f'Flow contains native components {native} but allow_pickle is set. Pickle is '
+            'Python-only and cannot cross to a non-Python component. Disable pickle.')
+    if envelope_version is None or envelope_version < 4:
+        raise ValueError(
+            f'Flow contains native components {native} which require the protobuf wire '
+            f'(envelope v4+), but the resolved envelope version is {envelope_version}. '
+            'Set VF_ENVELOPE_VERSION=4 for this flow.')
+
+def compile_flow(flow, envelope_version : int = None, allow_pickle : bool = False) -> list:
     '''
     - Arguments:
         - flow: a built ``videoflow.core.flow.Flow`` (do NOT call ``.run()`` on it first).
+        - envelope_version / allow_pickle: the wire settings this flow will deploy \
+            with, used to reject an incompatible mix (remote components on the \
+            pickle/msgpack wire). Defaults read the ambient ``DEFAULT_ENVELOPE_VERSION``.
 
     - Returns:
         - list of ``NodeSpec``, one per node in the flow's topological sort.
     '''
-    return specs_from_tasks_data(flow.tasks_data())
+    specs = specs_from_tasks_data(flow.tasks_data())
+    if has_native_components(specs):
+        # A flow with a native component automatically uses the protobuf wire (v4):
+        # default to it when the caller didn't pin a version. An *explicit*
+        # incompatible pin (v3, or allow_pickle) still fails the check below.
+        ev = 4 if envelope_version is None else envelope_version
+        validate_wire_compatibility(specs, ev, allow_pickle)
+    return specs

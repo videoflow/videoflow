@@ -34,10 +34,15 @@ class LocalProcessEngine(ExecutionEngine):
         - specs: optional precompiled list of ``NodeSpec``. If not given, they are \
             compiled from the flow's ``tasks_data`` at ``allocate_and_run_tasks`` time.
     '''
-    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None) -> None:
+    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None,
+                allow_pickle : bool = False, local_docker_nats_url : str = None) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
+        self._allow_pickle = allow_pickle
+        # NATS URL a docker-run remote component connects to (containers can't reach a
+        # host 'localhost'); on macOS/Windows this is typically host.docker.internal.
+        self._local_docker_nats_url = local_docker_nats_url
         self._procs: list = []
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
@@ -48,6 +53,14 @@ class LocalProcessEngine(ExecutionEngine):
         self._run_id = run_id
         specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
 
+        # Resolve the whole-run wire version: a flow with any remote component must
+        # use the protobuf wire (v4+) so native and non-Python workers agree.
+        from ..compiler import has_native_components, validate_wire_compatibility
+        from ..serialization import DEFAULT_ENVELOPE_VERSION
+        base = DEFAULT_ENVELOPE_VERSION
+        envelope_version = 4 if (has_native_components(specs) and base < 4) else base
+        validate_wire_compatibility(specs, envelope_version, self._allow_pickle)
+
         # Provision streams + durable consumers up front. Required for BATCH: under
         # interest retention, a message published before its consumer exists is lost.
         from ..messaging.topology import provision_flow_sync
@@ -56,12 +69,45 @@ class LocalProcessEngine(ExecutionEngine):
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
-                                self._blob_redis_url, replica_idx)
-                proc = subprocess.Popen([sys.executable, '-m', 'videoflow.worker'], env = env)
+                                self._blob_redis_url, replica_idx, envelope_version,
+                                self._allow_pickle)
+                cmd, run_env = self._launch_command(spec, env)
+                proc = subprocess.Popen(cmd, env = run_env)
                 self._procs.append(proc)
                 logger.info(
-                    f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx}'
+                    f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx} '
+                    f'({"remote" if spec.is_remote else "python"})'
                 )
+
+    def _launch_command(self, spec, env : dict):
+        '''
+        The command + environment to start one worker for ``spec``:
+
+        - native Python node: ``python -m videoflow.worker`` in the current env;
+        - remote component with a ``localCommand``: run that binary directly (env carries VF_*);
+        - remote component otherwise: ``docker run`` its image with VF_* passed via -e.
+        '''
+        # A Python node/component (node_class set) runs the Python worker, whether it
+        # came from a graph class or a descriptor's pythonClass. Only a native
+        # component (no node_class) uses localCommand / docker.
+        if spec.node_class:
+            return [sys.executable, '-m', 'videoflow.worker'], env
+        runtime = (spec.descriptor or {}).get('spec', {}).get('runtime', {})
+        local_command = runtime.get('localCommand')
+        if local_command:
+            return list(local_command), env
+        # docker run: pass only the VF_* vars, and rewrite a localhost NATS URL to one
+        # the container can reach (host.docker.internal on macOS/Windows).
+        vf_env = {k: v for k, v in env.items() if k.startswith('VF_') or k == 'VIDEOFLOW_BLOB_REDIS_URL'}
+        docker_nats = self._local_docker_nats_url or self._nats_url.replace('localhost', 'host.docker.internal')
+        vf_env['VF_NATS_URL'] = docker_nats
+        docker = ['docker', 'run', '--rm', '--network', 'host']
+        for k, v in vf_env.items():
+            docker += ['-e', f'{k}={v}']
+        docker.append(spec.image)
+        if spec.command:
+            docker += list(spec.command)
+        return docker, dict(os.environ)
 
     def signal_flow_termination(self) -> None:
         _publish_stop(self._nats_url, self._flow_id, self._run_id)
@@ -96,10 +142,10 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
-def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url, replica_id) -> dict:
+def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url,
+                replica_id, envelope_version, allow_pickle = False) -> dict:
     env = dict(os.environ)
     env.update({
-        'VF_NODE_CLASS': spec.node_class,
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
         'VF_NODE_KIND': spec.kind,
         'VF_NODE_NAME': spec.name,
@@ -111,13 +157,22 @@ def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redi
         'VF_RUN_ID': run_id,
         'VF_REPLICA_ID': str(replica_id),
         'VF_NB_TASKS': str(spec.nb_tasks),
+        'VF_ENVELOPE_VERSION': str(envelope_version),
     })
+    if spec.node_class:
+        env['VF_NODE_CLASS'] = spec.node_class
+    if spec.component_ref:
+        env['VF_COMPONENT_REF'] = spec.component_ref
+        if spec.protocol_version is not None:
+            env['VF_PROTOCOL_VERSION'] = str(spec.protocol_version)
     if spec.partition_by:
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
     if blob_redis_url:
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
+    if allow_pickle:
+        env['VF_ALLOW_PICKLE'] = '1'
     return env
 
 def _publish_stop(nats_url, flow_id, run_id) -> None:

@@ -1,0 +1,12 @@
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  # payload_type strings in PROTOCOL.md are "videoflow.v1.X"; the package is
+  # videoflow.v1 and files live under videoflow/v1/, so the package-directory and
+  # package-version lint rules are satisfied without a suffix exception.
+breaking:
+  use:
+    - FILE

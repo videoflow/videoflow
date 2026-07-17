@@ -1,0 +1,188 @@
+[
+  {
+    "name": "data_tensor_frame",
+    "file": "data_tensor_frame.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "cam",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "cam:1",
+    "seq": 1,
+    "event_ts": 1700000000.5,
+    "replica_id": 0,
+    "metadata": {
+      "map": {
+        "proctime": {
+          "d": 0.25
+        }
+      }
+    },
+    "payload": {
+      "tensor": {
+        "shape": [
+          2,
+          3,
+          3
+        ],
+        "dtype": "uint8",
+        "data_b64": "AAECAwQFBgcICQoLDA0ODxAR"
+      }
+    }
+  },
+  {
+    "name": "data_tensor_detections",
+    "file": "data_tensor_detections.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "detector",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "cam:1",
+    "seq": 1,
+    "event_ts": 1700000000.5,
+    "replica_id": 2,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "tensor": {
+        "shape": [
+          1,
+          6
+        ],
+        "dtype": "float32",
+        "data_b64": "AAAgQQAAoEEAAPBBAAAgQmZmZj8AAIA/"
+      }
+    }
+  },
+  {
+    "name": "data_value_map",
+    "file": "data_value_map.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "meta",
+    "flow_id": "f",
+    "run_id": "r",
+    "trace_id": "t",
+    "seq": 42,
+    "event_ts": null,
+    "replica_id": 0,
+    "metadata": {
+      "map": {
+        "proctime": {
+          "d": 0.1
+        },
+        "actual_proctime": {
+          "d": 0.2
+        }
+      }
+    },
+    "payload": {
+      "value": {
+        "map": {
+          "count": {
+            "i": 7
+          },
+          "ratio": {
+            "d": 1.5
+          },
+          "flag": {
+            "bool": true
+          },
+          "label": {
+            "s": "car"
+          },
+          "nothing": {
+            "null": true
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "data_value_list",
+    "file": "data_value_list.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "meta",
+    "flow_id": "f",
+    "run_id": "r",
+    "trace_id": "t",
+    "seq": 43,
+    "event_ts": null,
+    "replica_id": 0,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "value": {
+        "list": [
+          {
+            "i": 1
+          },
+          {
+            "d": 2.0
+          },
+          {
+            "s": "three"
+          },
+          {
+            "bool": false
+          },
+          {
+            "null": true
+          }
+        ]
+      }
+    }
+  },
+  {
+    "name": "eos",
+    "file": "eos.bin",
+    "version": 4,
+    "type": "eos",
+    "producer_name": "cam",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "eos-r0",
+    "seq": 9,
+    "event_ts": null,
+    "replica_id": 0,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "none": true
+    }
+  },
+  {
+    "name": "unicode_names_big_seq",
+    "file": "unicode_names_big_seq.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "caméra-Ω",
+    "flow_id": "flujo",
+    "run_id": "ejecución",
+    "trace_id": "caméra-Ω:1",
+    "seq": 9000000000,
+    "event_ts": 1.5,
+    "replica_id": 7,
+    "metadata": {
+      "map": {
+        "note": {
+          "s": "ünïcödé"
+        }
+      }
+    },
+    "payload": {
+      "tensor": {
+        "shape": [
+          3
+        ],
+        "dtype": "int64",
+        "data_b64": "AQAAAAAAAAACAAAAAAAAAAMAAAAAAAAA"
+      }
+    }
+  }
+]

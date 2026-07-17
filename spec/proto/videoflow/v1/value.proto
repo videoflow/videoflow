@@ -1,0 +1,36 @@
+// videoflow.v1.Value — a self-describing dynamic value used for message metadata
+// and for structured (non-tensor, non-vendor-proto) payloads on the wire.
+//
+// Why not google.protobuf.Value / Struct: those are JSON-shaped and coerce every
+// number to a double, which silently corrupts the int64 identifiers vendors put in
+// metadata. Value keeps integers and doubles distinct (PROTOCOL.md WIRE-12) and can
+// carry raw bytes.
+syntax = "proto3";
+
+package videoflow.v1;
+
+// A null marker distinguishable from an unset oneof (proto3 oneof tracks presence).
+enum NullValue {
+  NULL_VALUE = 0;
+}
+
+message Value {
+  oneof kind {
+    NullValue null_value = 1;
+    double double_value = 2;
+    sint64 int_value = 3;   // zig-zag: metadata ints are small and may be negative
+    string string_value = 4;
+    bytes bytes_value = 5;
+    bool bool_value = 6;
+    ListValue list_value = 7;
+    MapValue map_value = 8;
+  }
+}
+
+message ListValue {
+  repeated Value values = 1;
+}
+
+message MapValue {
+  map<string, Value> fields = 1;
+}

@@ -37,22 +37,29 @@ Repository = "https://github.com/videoflow/videoflow"
 distributed = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
 ]
 vision = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
     "opencv-python-headless>=4.0.0",
 ]
 video = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
     "opencv-python-headless>=4.0.0",
 ]
-# Used by the deploy CLI to render Kubernetes manifests.
+# Used by the deploy CLI to render Kubernetes manifests, validate component
+# descriptors, and push/pull them as OCI artifacts.
 deploy = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
     "PyYAML>=5.1",
+    "oras>=0.1",
+    "jsonschema>=4.0",
 ]
 # Optional external blob store for payloads over the inline size threshold.
 blob = [
@@ -61,10 +68,13 @@ blob = [
 all = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
     "opencv-python-headless>=4.0.0",
     "PyYAML>=5.1",
     "redis>=4.0.0",
     "requests>=2.22.0",
+    "oras>=0.1",
+    "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -78,6 +88,7 @@ dev = [
     "pytest-timeout>=2.0",
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
+    "protobuf>=4",
     "PyYAML>=5.1",
     "redis>=4.0.0",
     "opencv-python-headless>=4.0.0",
@@ -117,6 +128,8 @@ filterwarnings = [
 
 [tool.mypy]
 files = ["videoflow"]
+# Generated protobuf modules — not ours to type-check or fix.
+exclude = ["videoflow/v1/"]
 # Third-party clients (nats, msgpack, redis, cv2) ship no type stubs; treat them as
 # Any rather than failing on the missing imports.
 ignore_missing_imports = true
@@ -138,7 +151,12 @@ disable_error_code = ["override"]
 [tool.ruff]
 target-version = "py38"
 line-length = 120
-extend-exclude = ["docs", "examples"]
+# videoflow/v1 is generated protobuf code (see spec/proto + scripts/gen-proto.sh):
+# never lint or auto-fix it — ruff's F401 would strip the cross-proto imports that
+# register dependencies in the descriptor pool, breaking a cold import of the wire.
+extend-exclude = ["docs", "examples", "videoflow/v1"]
+# force-exclude makes the excludes apply even to files pre-commit passes explicitly.
+force-exclude = true
 
 [tool.ruff.lint]
 # Real-bug rules (pyflakes, bugbear, comprehensions), import sorting, and syntax
