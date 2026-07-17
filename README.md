@@ -2,158 +2,220 @@
 
 ![Videoflow](assets/videoflow_logo_small.png)
 
-[![Build Status](https://travis-ci.org/videoflow/videoflow.svg?branch=master)](https://travis-ci.org/videoflow/videoflow)
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/videoflow/videoflow/blob/master/LICENSE)
 
-**Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of computer vision stream processing pipelines. It empowers developers to build applications and systems with self-contained Deep Learning and Computer Vision capabilities using simple and few lines of code.  It contains off-the-shelf reference components for object detection, object tracking, human pose estimation, etc, and it is easy to extend with your own.
+**Videoflow** is a Python framework for building **distributed** video and stream
+processing pipelines. You describe your pipeline once as a directed acyclic graph
+of producers, processors and consumers, and Videoflow runs it as a set of
+independent workers that communicate over a [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream)
+message broker.
 
-The complete documentation to the project is located in [**docs.videoflow.dev**](https://docs.videoflow.dev)
+The same graph runs two ways with no code changes:
 
-[1.2]: http://i.imgur.com/wWzX9uB.png
-[1]: http://www.twitter.com/videoflow_py
-<!--Follow us on [![alt text][1.2]][1]-->
+- **Locally**, as one OS subprocess per node — for fast development and testing.
+- **On Kubernetes**, as one container per node — with per-node scaling, GPU
+  scheduling, health probes and autoscaling for production.
 
+It ships with off-the-shelf components for object detection, tracking, pose
+estimation, segmentation and video I/O, and is easy to extend with your own.
 
-> **Videoflow is now a distributed framework.** A flow is a directed acyclic
-> graph of nodes that communicate over a [NATS JetStream](https://docs.nats.io/nats-concepts/jetstream)
-> message broker instead of in-process queues. You can run the exact same graph
-> two ways: as local subprocesses for development, or as one container per node on
-> Kubernetes for production. See [Distributed execution](#distributed-execution) below.
+---
 
-## Installing the framework
-### Requirements
-Python 2 is **NOT SUPPORTED**.  Requires Python 3.6+. A running NATS JetStream
-server is required at runtime (`nats-server -js`, or `docker compose up -d` using
-the provided `docker-compose.yml`).
+## How it works
 
-### Installation
-Install the core plus the distributed runtime:
-
-```bash
-pip3 install "videoflow[distributed]"      # broker client + wire format
-pip3 install "videoflow[vision]"           # + OpenCV for vision processors
-pip3 install "videoflow[video]"            # + ffmpeg/OpenCV for video I/O
-pip3 install "videoflow[deploy]"           # + Kubernetes manifest generation
-pip3 install "videoflow[all]"              # everything
+```
+   ┌──────────┐      ┌───────────┐      ┌───────────┐      ┌──────────┐
+   │ producer │─────▶│ processor │─────▶│ processor │─────▶│ consumer │
+   └──────────┘      └───────────┘      └───────────┘      └──────────┘
+        │                  │                  │                  │
+        └──────────────────┴───── NATS JetStream ───────────────┘
+                        (one stream per node)
 ```
 
-Or from a clone: `pip3 install ".[all]" --user`
+- Each **node** is identified by a stable, unique `name` and runs in its own
+  worker (subprocess locally, pod on Kubernetes).
+- Every node publishes its output to its own broker subject; each node subscribes
+  to the subjects of its real parents and reassembles its inputs. This makes
+  arbitrary DAGs — multi-parent joins, multiple independent producers, fan-out —
+  work naturally.
+- A node's constructor arguments must be **JSON-serializable** so a worker can
+  reconstruct just its one node from configuration. Expensive or stateful setup
+  (opening a camera, loading a model) belongs in the node's `open()` method, not
+  its `__init__`.
 
-### Building the per-component Docker images
-Each node family has its own image (base, basic, vision, video-io) so a pod only
-carries the dependencies its node needs:
+---
+
+## Installation
+
+Requires **Python 3.6+** and a running NATS JetStream server at runtime.
 
 ```bash
-./docker/build-images.sh                    # local images
-./docker/build-images.sh ghcr.io/acme v1    # tagged for a registry
+pip install "videoflow[distributed]"   # core + broker client + wire format
+pip install "videoflow[vision]"        # + OpenCV for vision processors
+pip install "videoflow[video]"         # + ffmpeg/OpenCV for video I/O
+pip install "videoflow[deploy]"        # + Kubernetes manifest generation
+pip install "videoflow[all]"           # everything
 ```
-## Contributing:
-A tentative [roadmap](ROADMAP.md) of where we are headed.
 
-[Contribution rules](CONTRIBUTING.md).
+From a clone: `pip install ".[all]"`
 
-If you have new processors, producers or consumers that you can to create, check the [videoflow-contrib](https://github.com/videoflow/videoflow-contrib) project.  We want 
-to keep videoflow succinct, clean, and simple, with as minimal dependencies to third-party libraries as necessaries. [videoflow-contrib](https://github.com/videoflow/videoflow-contrib) is better suited for adding new components that require new library 
-dependencies.
+Start a local broker for development (a `docker-compose.yml` with NATS + Redis is
+included):
 
-## Sample Videoflow application:
-Below a sample videoflow application that detects automobiles in an intersection. For more examples see the [examples](examples/) folder. It uses detection model published by [tensorflow/models](https://github.com/tensorflow/models/tree/master/research/object_detection)
+```bash
+docker compose up -d          # NATS JetStream on :4222, Redis on :6379
+# or, without Docker:
+nats-server -js
+```
 
-[![IMAGE ALT TEXT HERE](https://img.youtube.com/vi/TYGMllb7fHM/0.jpg)](https://www.youtube.com/watch?v=TYGMllb7fHM)
+---
 
-A graph is defined inside a `build_flow()` factory that returns a `Flow`. The same
-factory is used both to run locally and to deploy to Kubernetes.
+## Quickstart
+
+A pipeline is defined inside a `build_flow()` factory that returns a `Flow`. The
+same factory is used to run locally and to deploy to Kubernetes.
 
 ```python
-import videoflow
 from videoflow.core import Flow
 from videoflow.core.constants import BATCH
-from videoflow.consumers import VideofileWriter
-from videoflow.producers import VideofileReader
-from videoflow_contrib.detector_tf import TensorflowObjectDetector
-from videoflow.processors.vision.annotators import BoundingBoxAnnotator
-from videoflow.utils.downloader import get_file
-
-URL_VIDEO = "https://github.com/videoflow/videoflow/releases/download/examples/intersection.mp4"
-
-class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
-    def __init__(self, **kwargs):
-        super(FrameIndexSplitter, self).__init__(**kwargs)
-
-    def process(self, data):
-        index, frame = data
-        return frame
+from videoflow.producers import IntProducer
+from videoflow.processors import IdentityProcessor, JoinerProcessor
+from videoflow.consumers import CommandlineConsumer
 
 def build_flow():
-    input_file = get_file("intersection.mp4", URL_VIDEO)
-    reader = VideofileReader(input_file, name='reader')
-    frame = FrameIndexSplitter(name='frame')(reader)
-    detector = TensorflowObjectDetector(name='detector')(frame)
-    annotator = BoundingBoxAnnotator(name='annotator')(frame, detector)
-    writer = VideofileWriter("output.avi", fps=30, name='writer')(annotator)
-    # Producers are discovered automatically from the consumers; you only list leaves.
-    return Flow([writer], flow_type=BATCH)
+    producer  = IntProducer(0, 40, 0.1, name='producer')
+    identity  = IdentityProcessor(name='identity')(producer)
+    identity1 = IdentityProcessor(name='identity1')(identity)
+    joined    = JoinerProcessor(name='joined')(identity, identity1)
+    printer   = CommandlineConsumer(name='printer')(joined)
+    # Producers are discovered automatically from the consumers — list only the leaves.
+    return Flow([printer], flow_type=BATCH)
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     from videoflow.engines.local import LocalProcessEngine
     flow = build_flow()
     flow.run(LocalProcessEngine())   # one subprocess per node, talking to NATS
     flow.join()
 ```
 
-## Distributed execution
-
-Every node is identified by a **stable `name`** (unique within a flow) rather than
-its in-process object id, and each node's constructor arguments must be
-JSON-serializable so a worker can reconstruct just its one node from
-environment variables. Two things follow: expensive/stateful setup belongs in
-`open()` (not `__init__`), and any node runs identically as a local subprocess or
-a Kubernetes pod.
-
-**Run locally** (needs a NATS server — `docker compose up -d`):
+Run it (with the broker up):
 
 ```bash
-python examples/simple_example1.py
+python my_flow.py
 # or via the CLI:
-videoflow run-local examples/simple_example1.py:build_flow --nats nats://localhost:4222
+videoflow run-local my_flow.py:build_flow --nats nats://localhost:4222
 ```
 
-**Deploy to Kubernetes** — the CLI imports your `build_flow()`, compiles the graph,
-and renders one Deployment (or Job, for finite producers) + ConfigMap per node,
-picking the right per-family image for each:
+---
+
+## Deploying to Kubernetes
+
+The CLI imports your `build_flow()`, compiles the graph, and renders one
+Deployment (or a Job, for finite producers) plus a ConfigMap per node, choosing
+the correct per-family image for each node.
 
 ```bash
-kubectl apply -n videoflow -f k8s/nats.yaml            # in-cluster broker
-videoflow deploy examples/simple_example1.py:build_flow \
+# 1. Broker in the cluster (for dev clusters; use the NATS Helm chart in prod)
+kubectl create namespace videoflow
+kubectl apply -n videoflow -f k8s/nats.yaml
+
+# 2. Build & push the per-component images
+./docker/build-images.sh ghcr.io/acme v1
+docker push ghcr.io/acme/videoflow-base:v1   # ...and each family image
+
+# 3. Render and apply the manifests for your graph
+videoflow deploy my_flow.py:build_flow \
     --nats nats://nats.videoflow.svc:4222 \
-    --namespace videoflow --registry ghcr.io/acme --image-tag v1 \
-    --autoscaling                                       # optional KEDA scalers
+    --namespace videoflow \
+    --registry ghcr.io/acme --image-tag v1 \
+    --autoscaling                             # optional KEDA scalers
 kubectl apply -k ./manifests
 ```
 
-How graph concepts map onto the broker and Kubernetes:
+Use `--dry-run` to print the manifests to stdout without writing files.
+
+### How graph concepts map onto the broker and Kubernetes
 
 | Concept | Behavior |
 | --- | --- |
 | `flow_type=REALTIME` | broker keeps only the freshest message per edge — stale frames are dropped, producers never block |
 | `flow_type=BATCH` | at-least-once delivery with a deep buffer and explicit acks |
-| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas); a **multi-parent join must keep `nb_tasks=1`** |
-| `device_type=GPU` | pod requests `nvidia.com/gpu` + GPU-pool nodeSelector/toleration |
+| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas). A **multi-parent join must keep `nb_tasks=1`** |
+| `device_type=GPU` | pod requests `nvidia.com/gpu` plus a GPU-pool nodeSelector/toleration |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
-| metrics | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` probes |
+| observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` probes |
 
-## The Structure of a flow application
+---
 
-A flow application usually consists of three parts:
+## The three node types
 
-1. Define a directed acyclic graph of computation nodes: producers (create data), processors (transform data), and consumers (terminal sinks — write to a file, push to a REST API/S3, etc.). Give each node a unique `name`.
+| Type | Base class | Implements | Role |
+| --- | --- | --- | --- |
+| Producer | `ProducerNode` | `next()` | Creates data from an external source (camera, file, stream). Set `is_finite=False` for unbounded sources. |
+| Processor | `ProcessorNode` | `process(*inputs)` | Transforms inputs into an output. Supports `nb_tasks` (parallel replicas) and `device_type` (`cpu`/`gpu`). |
+| Consumer | `ConsumerNode` | `consume(item)` | Terminal sink — writes to a file, pushes to a REST API/S3, etc. Produces no output. |
 
-2. Wrap the graph in a `build_flow()` factory that returns `Flow(consumers, flow_type=...)`. Producers are discovered by walking parents back from the consumers, so you only pass the leaves. Multiple independent producers (e.g. several cameras) are fully supported.
+Every node also has `open()`/`close()` lifecycle hooks for acquiring and releasing
+resources.
 
-3. Run the flow through an execution engine — `LocalProcessEngine` for development or `KubernetesExecutionEngine` / the `videoflow deploy` CLI for production. `flow.stop()` signals termination on the broker control channel; producers stop first and the rest drain and exit in turn.
+### Writing a custom node
+
+```python
+from videoflow.core.node import ProcessorNode
+
+class Threshold(ProcessorNode):
+    def __init__(self, cutoff, **kwargs):   # args must be JSON-serializable
+        self._cutoff = cutoff               # store them so get_params() can find them
+        super().__init__(**kwargs)
+
+    def open(self):
+        ...                                 # heavy/stateful setup goes here
+
+    def process(self, value):
+        return value if value >= self._cutoff else 0
+```
+
+Always accept and forward `**kwargs` to `super().__init__()` (that's how `name`,
+`nb_tasks`, `device_type`, etc. are passed through), and store each constructor
+argument on `self` under the same name so it can be captured for reconstruction in
+a worker.
+
+---
+
+## Per-component Docker images
+
+Each node family has its own image so a pod carries only the dependencies its node
+needs:
+
+| Image | For |
+| --- | --- |
+| `videoflow-base` | framework + broker client + wire format (foundation for the others) |
+| `videoflow-basic` | producers/processors/consumers with no extra deps |
+| `videoflow-vision` | `videoflow.processors.vision.*` (OpenCV, DL frameworks) |
+| `videoflow-video-io` | `videoflow.producers.video` / `videoflow.consumers.video` (ffmpeg) |
+
+```bash
+./docker/build-images.sh                    # local images
+./docker/build-images.sh ghcr.io/acme v1    # tagged for a registry
+```
+
+The compiler maps each node to an image family automatically from its module path;
+override per node with `videoflow deploy --image-override <node-name>=<family>`.
+
+---
+
+## Contributing
+
+A tentative [roadmap](ROADMAP.md) of where we are headed, and the
+[contribution rules](CONTRIBUTING.md).
+
+New processors, producers or consumers that pull in additional third-party
+dependencies belong in the [videoflow-contrib](https://github.com/videoflow/videoflow-contrib)
+project — we keep the core framework lean.
 
 ## Citing Videoflow
+
 If you use Videoflow in your research please use the following BibTeX entry.
 
 ```
