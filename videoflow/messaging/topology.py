@@ -62,6 +62,10 @@ def eos_durable_name_for(consumer_node_name : str, parent_node_name : str, insta
     # unique per replica (a stable replica ordinal, or a per-process uuid).
     return f'{sanitize(consumer_node_name)}--eos--{sanitize(parent_node_name)}--{sanitize(instance_id)}'
 
+def eos_anchor_durable_name_for(node_name : str) -> str:
+    '''The provision-time interest anchor on a node's EOS subject (see eos_anchor_config).'''
+    return f'{sanitize(node_name)}--eos--anchor'
+
 def dlq_stream_name(flow_id : str, run_id : str) -> str:
     return f'vf-{sanitize(flow_id)}-{sanitize(run_id)}-dlq'
 
@@ -166,6 +170,28 @@ def eos_consumer_config(flow_id : str, run_id : str, consumer_node_name : str,
         inactive_threshold = inactive_threshold,
     )
 
+def eos_anchor_config(flow_id : str, run_id : str, node_name : str) -> ConsumerConfig:
+    '''
+    Provision-time durable on a node's EOS subject that exists purely to create
+    *interest*, so an EOS marker is retained by the BATCH (INTEREST-retention)
+    stream no matter when it is published.
+
+    The real EOS consumers are per-process (uuid-suffixed) durables created in each
+    worker's setup — they cannot be pre-provisioned, so without this anchor an EOS
+    published by a fast-finishing parent *before* a slow-starting child registers
+    its EOS consumer is silently discarded (no interest at publish time), and the
+    child then waits for EOS forever: the flow never terminates. The anchor is
+    never fetched from and never acks, so the marker stays retained for any number
+    of late-created consumers (their default DeliverPolicy.ALL replays it); the
+    run's stream teardown deletes the anchor with everything else. No
+    ``inactive_threshold``: it must not be reaped while the run is alive.
+    '''
+    return ConsumerConfig(
+        durable_name = eos_anchor_durable_name_for(node_name),
+        filter_subject = eos_subject_for(flow_id, run_id, node_name),
+        ack_wait = 30,
+    )
+
 # -- provisioning ----------------------------------------------------------
 
 async def _ensure_stream(js, config : StreamConfig) -> None:
@@ -206,9 +232,16 @@ async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str
     by_name = {spec.name: spec for spec in specs}
     max_deliver = max_deliver_for(flow_type, max_retries)
 
-    # 1. One stream per node.
+    # 1. One stream per node — plus, for any node something consumes from, an
+    #    interest *anchor* on its EOS subject. The per-process EOS durables are
+    #    created only in worker setup, so without the anchor an EOS published
+    #    before a slow-starting child registers loses the interest race and is
+    #    discarded — leaving the child waiting for EOS forever (see eos_anchor_config).
     for spec in specs:
         await _ensure_stream(js, stream_config_for(flow_id, run_id, spec.name, flow_type))
+        if getattr(spec, 'has_children', True):
+            await _ensure_consumer(js, stream_name_for(flow_id, run_id, spec.name),
+                                   eos_anchor_config(flow_id, run_id, spec.name))
 
     # 2. DLQ stream — where messages that exhaust their retries land.
     await _ensure_stream(js, dlq_stream_config(flow_id, run_id))

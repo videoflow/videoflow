@@ -201,6 +201,8 @@ class NATSMessenger(Messenger):
         self._eos_seen: set = set()
         self._eos_handles: dict = {}
         self._quiescent_since: dict = {}
+        # Consecutive empty receive polls — drives the periodic EOS-drain stall log.
+        self._idle_polls = 0
         # Ack handles: _inflight_handles are the handles of the group last returned
         # by receive_message, resolved by the task via ack_inputs()/fail_inputs()
         # (handles of still-pending groups live inside the assembler).
@@ -409,12 +411,27 @@ class NATSMessenger(Messenger):
                     pass
                 except Exception:
                     logger.debug('pull task raised during shutdown', exc_info = True)
-            await self._nc.drain()
+            # We've stopped consuming (pull tasks cancelled) and all data is already
+            # acked by the time a node closes (EOS-drain, see _is_parent_stopped), so a
+            # graceful ``drain()`` — which also drains the still-registered JetStream
+            # pull *subscriptions* — would just block until timeout on cancelled pull
+            # consumers. Flush pending publishes, then close: ``close()`` cancels the
+            # client's internal read/ping/flush tasks cleanly (no "task destroyed" noise).
+            if self._nc is not None:
+                if self._nc.is_connected:
+                    try:
+                        await asyncio.wait_for(self._nc.flush(), timeout = 5)
+                    except Exception:
+                        logger.debug('NATS flush incomplete during shutdown', exc_info = True)
+                try:
+                    await self._nc.close()
+                except Exception:
+                    logger.debug('NATS close raised during shutdown', exc_info = True)
         try:
             fut = asyncio.run_coroutine_threadsafe(_close(), self._loop)
             fut.result(timeout = 10)
         except Exception:
-            logger.exception('Error draining NATS connection')
+            logger.debug('NATS connection teardown incomplete at shutdown', exc_info = True)
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout = 10)
 
@@ -647,7 +664,17 @@ class NATSMessenger(Messenger):
             # all of them must be folded into the assembler here. Discarding
             # all-but-one (an earlier version of this method did) silently lost
             # messages whenever two parents produced close together in time.
-            for parent_name, entry, handle in self._recv_ready():
+            ready_items = self._recv_ready()
+            if ready_items:
+                self._idle_polls = 0
+            else:
+                # Nothing arriving. If we're in the EOS-drain phase (some parent
+                # already ended) and still not stopped after ~15s of idle polls,
+                # say why — a stall here otherwise looks like a silent hang.
+                self._idle_polls += 1
+                if self._eos_seen and self._idle_polls % 15 == 0:
+                    self._log_drain_stall()
+            for parent_name, entry, handle in ready_items:
                 if entry['is_stop_signal']:
                     # Data consumers filter to the data subject, so EOS is handled by
                     # the EOS loop, not here. Ack defensively if one slips through.
@@ -701,6 +728,28 @@ class NATSMessenger(Messenger):
 
     def _has_pending_from(self, parent : str) -> bool:
         return self._assembler.has_pending_from(parent)
+
+    def _log_drain_stall(self) -> None:
+        '''
+        Periodic (once per ~15 idle seconds) explanation of why the EOS drain has
+        not completed, per unstopped parent — turns a would-be silent termination
+        hang into a directly diagnosable log line (e.g. a parent whose EOS was
+        never observed, a join group still holding a half, or unacked deliveries).
+        '''
+        parts = []
+        for parent in self._parent_names:
+            if parent in self._stopped_parents:
+                continue
+            q = self._parent_queues.get(parent)
+            num_pending, num_ack_pending = self._consumer_pending(parent)
+            parts.append(
+                f'{parent}(eos_seen={parent in self._eos_seen}, '
+                f'queued={q.qsize() if q is not None else 0}, '
+                f'in_groups={self._assembler.has_pending_from(parent)}, '
+                f'broker_pending={num_pending}, unacked={num_ack_pending})'
+            )
+        if parts:
+            logger.info(f'{self._node.name}: EOS drain waiting on ' + '; '.join(parts))
 
     def _consumer_pending(self, parent : str) -> tuple:
         durable = self._data_durable_name(parent)
