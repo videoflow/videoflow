@@ -2,9 +2,9 @@ Deploying to Kubernetes
 =======================
 
 The ``videoflow deploy`` CLI imports your ``build_flow()`` factory, compiles the
-graph, and renders one Kubernetes workload plus a ConfigMap per node — choosing the
-correct per-family container image for each node. The same graph you run locally
-deploys unchanged.
+graph, and renders one Kubernetes workload plus a ConfigMap per node — each running
+the container image you provide with ``--image`` (or a node's own ``image=``). The
+same graph you run locally deploys unchanged.
 
 Prerequisites
 -------------
@@ -17,35 +17,30 @@ Prerequisites
       kubectl apply -n videoflow -f k8s/nats.yaml
 
   For production, use the official NATS Helm chart.
-- The per-component images built and pushed to a registry your cluster can pull
-  from (see below).
+- Your container image built and pushed to a registry your cluster can pull from
+  (see below).
 
-Building the images
--------------------
+Building the image
+------------------
 
-Each node family has its own image so a pod carries only the dependencies its node
-needs:
+Videoflow ships a single ``videoflow-base`` image (framework + broker client + the
+built-in nodes' dependencies: OpenCV, ffmpeg, Redis). You build **your** image on top
+of it, adding your dependencies and your node package so the worker can import your
+node classes by their module path::
 
-+-----------------------+----------------------------------------------------------+
-| Image                 | For                                                      |
-+=======================+==========================================================+
-| ``videoflow-base``    | framework + broker client + wire format (the foundation) |
-+-----------------------+----------------------------------------------------------+
-| ``videoflow-basic``   | producers/processors/consumers with no extra deps        |
-+-----------------------+----------------------------------------------------------+
-| ``videoflow-vision``  | ``videoflow.processors.vision.*`` (OpenCV, DL frameworks)|
-+-----------------------+----------------------------------------------------------+
-| ``videoflow-video-io``| ``videoflow.producers/consumers.video`` (ffmpeg)         |
-+-----------------------+----------------------------------------------------------+
+    # Dockerfile (see docker/user-image.example.Dockerfile)
+    FROM videoflow-base:latest
+    RUN pip install torch my-libs        # your dependencies
+    COPY . . && RUN pip install .        # your package
 
 ::
 
-    ./docker/build-images.sh ghcr.io/acme v1
+    ./docker/build-images.sh ghcr.io/acme v1     # build+tag videoflow-base
     docker push ghcr.io/acme/videoflow-base:v1
-    # ...and each family image
+    docker build -t ghcr.io/acme/app:v1 .        # your image, FROM videoflow-base
+    docker push ghcr.io/acme/app:v1
 
-The compiler maps each node to a family from its module path automatically; override
-per node with ``--image-override <node-name>=<family>``.
+A pure built-in flow can just deploy with ``--image videoflow-base:latest``.
 
 Deploying
 ---------
@@ -55,12 +50,17 @@ Deploying
     videoflow deploy my_flow.py:build_flow \
         --nats nats://nats.videoflow.svc:4222 \
         --namespace videoflow \
-        --registry ghcr.io/acme --image-tag v1 \
+        --image ghcr.io/acme/app:v1 \
         --flow-id my-flow \
         --autoscaling
     kubectl apply -k ./manifests
 
 Useful options:
+
+``--image`` / ``--image-override NAME=REF``
+    ``--image`` is the default container image for every node that didn't declare its
+    own ``image=``. ``--image-override`` sets the image for one node and wins over both
+    the default and the node's own image (repeatable).
 
 ``--dry-run``
     Print the manifests to stdout instead of writing files — handy for review or

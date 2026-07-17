@@ -81,12 +81,12 @@ Two things to note for a real deployment:
   ``OneTaskProcessorNode`` and always runs as a single worker. The ``detector``,
   being stateless, can be scaled with ``nb_tasks`` to keep up with the reader.
 
-To run this on Kubernetes instead, build the images and deploy the same factory —
-the detector lands in the ``vision`` image and the reader/writer in the
-``video-io`` image automatically::
+To run this on Kubernetes instead, build an image with your detector/tracker
+dependencies (``FROM videoflow-base``) and deploy the same factory, pointing every
+node at it::
 
     videoflow deploy examples/object_tracking.py:build_flow \
         --nats nats://nats.videoflow.svc:4222 --namespace videoflow \
-        --registry ghcr.io/acme --image-tag v1
+        --image ghcr.io/acme/tracking:v1
 
 See :doc:`../distributed/deploying-to-kubernetes`.

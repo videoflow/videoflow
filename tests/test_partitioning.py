@@ -52,7 +52,8 @@ def test_compiler_carries_partition_and_join_policy():
 
 def test_partitioned_node_renders_statefulset_and_headless_service():
     specs = compile_flow(_partitioned_flow())
-    manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1', autoscaling = True)
+    manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = 'ghcr.io/acme/app:v1', autoscaling = True)
     by = {(m['kind'], m['metadata']['name']): m for m in manifests}
     assert ('StatefulSet', 'vf-part-joined') in by
     assert ('Service', 'vf-part-joined-hl') in by

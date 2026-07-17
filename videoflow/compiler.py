@@ -10,7 +10,6 @@ from __future__ import division
 from __future__ import absolute_import
 
 from .core.node import ProducerNode, ProcessorNode, ConsumerNode
-from .image_registry import image_family_for
 
 NODE_KIND_PRODUCER = 'producer'
 NODE_KIND_PROCESSOR = 'processor'
@@ -39,10 +38,11 @@ class NodeSpec:
         - nb_tasks: desired replica count (processors only; 1 otherwise).
         - device_type: 'cpu' or 'gpu' (processors only).
         - is_finite: for producers, whether ``next()`` self-terminates.
-        - image_family: resolved Docker image family key (see image_registry).
+        - image: the container image ref declared on the node, or None (the \
+            deploy-time default/override supplies it — see ``videoflow.images``).
     '''
     def __init__(self, name, node_class, params, parents, kind, has_children,
-                nb_tasks, device_type, is_finite, image_family,
+                nb_tasks, device_type, is_finite, image = None,
                 partition_by = None, join_policy = None):
         self.name = name
         self.node_class = node_class
@@ -53,7 +53,7 @@ class NodeSpec:
         self.nb_tasks = nb_tasks
         self.device_type = device_type
         self.is_finite = is_finite
-        self.image_family = image_family
+        self.image = image
         # Routing-relevant fields lifted out of params so engines/manifests see
         # them without parsing constructor kwargs.
         self.partition_by = partition_by
@@ -70,7 +70,7 @@ class NodeSpec:
             'nb_tasks': self.nb_tasks,
             'device_type': self.device_type,
             'is_finite': self.is_finite,
-            'image_family': self.image_family,
+            'image': self.image,
             'partition_by': self.partition_by,
             'join_policy': self.join_policy,
         }
@@ -81,7 +81,7 @@ class NodeSpec:
             name = d['name'], node_class = d['node_class'], params = d['params'],
             parents = d['parents'], kind = d['kind'], has_children = d['has_children'],
             nb_tasks = d['nb_tasks'], device_type = d['device_type'],
-            is_finite = d['is_finite'], image_family = d['image_family'],
+            is_finite = d['is_finite'], image = d.get('image'),
             partition_by = d.get('partition_by'), join_policy = d.get('join_policy'),
         )
 
@@ -109,7 +109,7 @@ def specs_from_tasks_data(tasks_data):
             nb_tasks = nb_tasks,
             device_type = device_type,
             is_finite = is_finite,
-            image_family = image_family_for(node_class, node.name),
+            image = getattr(node, 'image', None),
             partition_by = partition_by,
             join_policy = join_policy,
         ))

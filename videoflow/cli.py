@@ -44,17 +44,18 @@ def _load_flow(target : str):
     return factory()
 
 def _cmd_deploy(args):
+    import uuid
     from .compiler import compile_flow
-    from .image_registry import set_override
+    from .images import parse_override
     from .manifests import render_manifests, dump_manifests
 
+    overrides = {}
     for override in args.image_override or []:
-        if '=' not in override:
-            raise SystemExit(f'--image-override must be name=family, got: {override}')
-        node_name, family = override.split('=', 1)
-        set_override(node_name, family)
-
-    import uuid
+        try:
+            name, ref = parse_override(override)
+        except ValueError as e:
+            raise SystemExit(str(e))
+        overrides[name] = ref
 
     flow = _load_flow(args.graph)
     if args.flow_id:
@@ -62,12 +63,15 @@ def _cmd_deploy(args):
     run_id = args.run_id or uuid.uuid4().hex[:12]
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     specs = compile_flow(flow)
-    manifests = render_manifests(
-        specs, flow.flow_id, flow.flow_type, args.nats, run_id,
-        namespace = args.namespace, registry = args.registry,
-        image_tag = args.image_tag, blob_redis_url = args.blob_redis_url,
-        autoscaling = args.autoscaling, max_replicas = args.max_replicas,
-    )
+    try:
+        manifests = render_manifests(
+            specs, flow.flow_id, flow.flow_type, args.nats, run_id,
+            namespace = args.namespace, default_image = args.image,
+            image_overrides = overrides, blob_redis_url = args.blob_redis_url,
+            autoscaling = args.autoscaling, max_replicas = args.max_replicas,
+        )
+    except ValueError as e:
+        raise SystemExit(str(e))
     yaml_str = dump_manifests(manifests)
 
     if args.dry_run:
@@ -125,7 +129,8 @@ def _cmd_explain(args):
             bits.append(f'partition_by={s.partition_by}')
         if s.join_policy:
             bits.append(f"join={s.join_policy.get('missing')}")
-        lines.append(f'  {s.name}  [{s.kind}]  image={s.image_family}  ' + '  '.join(bits))
+        image = s.image or '«--image default»'
+        lines.append(f'  {s.name}  [{s.kind}]  image={image}  ' + '  '.join(bits))
         lines.append(f'      subject: {subject_for(flow.flow_id, run_id, s.name)}')
         if s.parents:
             lines.append(f'      from: {", ".join(s.parents)}')
@@ -183,11 +188,13 @@ def build_parser():
                         help = 'Per-run id that scopes this run\'s broker streams (auto-generated if omitted). '
                                'A new run id gives fresh streams; reuse it to target the same run.')
     deploy.add_argument('--output', default = './manifests')
-    deploy.add_argument('--registry', default = '', help = 'Image registry prefix, e.g. ghcr.io/acme.')
-    deploy.add_argument('--image-tag', default = 'latest')
+    deploy.add_argument('--image', default = None,
+                        help = 'Default container image ref for nodes that do not declare their own '
+                               '(e.g. ghcr.io/acme/app:v1). Build it FROM videoflow-base with your code + deps.')
     deploy.add_argument('--blob-redis-url', default = None, help = 'Redis URL for the large-payload blob store.')
-    deploy.add_argument('--image-override', action = 'append', metavar = 'NAME=FAMILY',
-                        help = 'Override the Docker image family for a node. Repeatable.')
+    deploy.add_argument('--image-override', action = 'append', metavar = 'NAME=IMAGE',
+                        help = 'Override the container image for one node (wins over --image and the node\'s '
+                               'own image=). Repeatable.')
     deploy.add_argument('--autoscaling', action = 'store_true',
                         help = 'Emit a KEDA ScaledObject per processor node (requires KEDA in-cluster).')
     deploy.add_argument('--max-replicas', type = int, default = 10,

@@ -32,8 +32,8 @@ extensions = [
 templates_path = ['_templates']
 exclude_patterns = []
 
-# Some modules import optional third-party libraries only present in specific
-# per-component images; mock them so autodoc never fails to import a module.
+# Some modules import optional third-party libraries (broker client, OpenCV, etc.);
+# mock them so autodoc never fails to import a module during the docs build.
 autodoc_mock_imports = ['cv2', 'nats', 'msgpack', 'redis', 'yaml', 'requests', 'six']
 
 # -- Options for HTML output -------------------------------------------------

@@ -112,23 +112,23 @@ videoflow run-local my_flow.py:build_flow --nats nats://localhost:4222
 ## Deploying to Kubernetes
 
 The CLI imports your `build_flow()`, compiles the graph, and renders one
-Deployment (or a Job, for finite producers) plus a ConfigMap per node, choosing
-the correct per-family image for each node.
+Deployment (or a Job, for finite producers) plus a ConfigMap per node, each running
+your container image.
 
 ```bash
 # 1. Broker in the cluster (for dev clusters; use the NATS Helm chart in prod)
 kubectl create namespace videoflow
 kubectl apply -n videoflow -f k8s/nats.yaml
 
-# 2. Build & push the per-component images
-./docker/build-images.sh ghcr.io/acme v1
-docker push ghcr.io/acme/videoflow-base:v1   # ...and each family image
+# 2. Build & push your image (your code + deps, FROM videoflow-base)
+./docker/build-images.sh ghcr.io/acme v1     # build videoflow-base
+docker build -t ghcr.io/acme/app:v1 . && docker push ghcr.io/acme/app:v1
 
 # 3. Render and apply the manifests for your graph
 videoflow deploy my_flow.py:build_flow \
     --nats nats://nats.videoflow.svc:4222 \
     --namespace videoflow \
-    --registry ghcr.io/acme --image-tag v1 \
+    --image ghcr.io/acme/app:v1 \
     --autoscaling                             # optional KEDA scalers
 kubectl apply -k ./manifests
 ```
@@ -215,28 +215,38 @@ Nodes can also:
   output of a downstream partitioned node by a business key.
 - **Deduplicate sink effects** — `ConsumerNode(idempotent=True)` plus a Redis URL
   (`--blob-redis-url`) makes a sink skip re-applying an effect on redelivery.
+- **Pin their own container image** — pass `image='ghcr.io/me/gpu:v1'` when a node
+  intrinsically needs a specific environment; otherwise it uses the deploy's
+  `--image` default. See [Container images](#container-images).
 
 ---
 
-## Per-component Docker images
+## Container images
 
-Each node family has its own image so a pod carries only the dependencies its node
-needs:
+You bring the image. Videoflow ships one **base** image (framework + broker client +
+the built-in nodes' dependencies — OpenCV, ffmpeg, Redis); you build **your** image on
+top of it with your dependencies and your node package, then point the deploy at it:
 
-| Image | For |
-| --- | --- |
-| `videoflow-base` | framework + broker client + wire format (foundation for the others) |
-| `videoflow-basic` | producers/processors/consumers with no extra deps |
-| `videoflow-vision` | `videoflow.processors.vision.*` (OpenCV, DL frameworks) |
-| `videoflow-video-io` | `videoflow.producers.video` / `videoflow.consumers.video` (ffmpeg) |
-
-```bash
-./docker/build-images.sh                    # local images
-./docker/build-images.sh ghcr.io/acme v1    # tagged for a registry
+```dockerfile
+# Dockerfile (see docker/user-image.example.Dockerfile)
+FROM videoflow-base:latest
+RUN pip install torch my-libs        # your deps
+COPY . . && RUN pip install .        # your package, importable by its module path
 ```
 
-The compiler maps each node to an image family automatically from its module path;
-override per node with `videoflow deploy --image-override <node-name>=<family>`.
+```bash
+./docker/build-images.sh                 # build videoflow-base (local)
+./docker/build-images.sh ghcr.io/acme v1 # tagged for a registry
+docker build -t ghcr.io/me/app:v1 .      # your image, FROM videoflow-base
+
+videoflow deploy my_flow.py:build_flow --nats nats://... --image ghcr.io/me/app:v1
+```
+
+`--image` is the default for every node. A node that needs a different environment
+declares its own image in the graph — `MyDetector(name='det', image='ghcr.io/me/gpu:v1')`
+— or is overridden at deploy time with `--image-override det=ghcr.io/me/gpu:v1`
+(override wins over the node's own image, which wins over `--image`). A pure built-in
+flow can just use `--image videoflow-base:latest`.
 
 ---
 

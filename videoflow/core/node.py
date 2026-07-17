@@ -31,15 +31,22 @@ class Node:
             the flow is built (see ``videoflow.core.graph.GraphEngine``), not at \
             construction time, since a collision can only be detected once the whole \
             graph is known.
+        - image (str): the container image ref that this node's worker runs in on \
+            Kubernetes, e.g. ``ghcr.io/me/app:v1``. Declare it here when a node \
+            intrinsically needs a specific environment (a GPU model image, say). If \
+            omitted, the image is taken from the deploy-time default (``--image``); \
+            a deploy-time ``--image-override`` beats both. Ignored by the local \
+            engine, which runs workers in the current Python environment.
     '''
     _name_counters = {}
 
-    def __init__(self, name = None):
+    def __init__(self, name = None, image = None):
         if name is None:
             cls_name = type(self).__name__
             Node._name_counters[cls_name] = Node._name_counters.get(cls_name, 0) + 1
             name = f'{_slugify(cls_name)}-{Node._name_counters[cls_name]}'
         self._name = name
+        self._image = image
         self._parents = None
         self._children = set()
         self._is_part_of_taskmodule_node = False
@@ -86,6 +93,11 @@ class Node:
             reconstruction in worker processes.
         '''
         return self._name
+
+    @property
+    def image(self):
+        '''The container image ref declared for this node (or None to use the deploy-time default).'''
+        return self._image
 
     def get_params(self) -> dict:
         '''

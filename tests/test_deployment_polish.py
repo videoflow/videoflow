@@ -31,18 +31,23 @@ def _demo_flow():
 
 # -- manifests -------------------------------------------------------------
 
+IMG = 'ghcr.io/acme/app:v1'
+
 def test_provision_init_job_and_spec_configmap_present():
-    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1')
+    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG)
     by = {(m['kind'], m['metadata']['name']): m for m in manifests}
     assert ('Job', 'vf-demo-provision') in by
     assert ('ConfigMap', 'vf-demo-specs') in by
-    # The init Job mounts the specs and runs the provision entrypoint.
+    # The init Job mounts the specs, runs the provision entrypoint, on the default image.
     job = by[('Job', 'vf-demo-provision')]
     container = job['spec']['template']['spec']['containers'][0]
     assert container['command'] == ['python', '-m', 'videoflow.provision']
+    assert container['image'] == IMG
 
 def test_pdb_for_multi_replica_and_startup_probe():
-    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1')
+    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG)
     by = {(m['kind'], m['metadata']['name']): m for m in manifests}
     # identity has nb_tasks=2 → gets a PodDisruptionBudget; producer/consumer don't.
     assert ('PodDisruptionBudget', 'vf-demo-identity-pdb') in by

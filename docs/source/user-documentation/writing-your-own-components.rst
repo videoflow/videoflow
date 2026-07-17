@@ -176,16 +176,31 @@ then records each processed message id and skips re-applying it::
 
     writer = MyApiWriter(name='writer', idempotent=True)(result)
 
-Choosing an image family
--------------------------
+Choosing a container image
+--------------------------
 
-When you deploy, each node runs in a Docker image chosen by its module path (base,
-basic, vision, video-io). A custom node in your own package falls back to the
-``basic`` image. If your node needs extra dependencies, either place it in a module
-under ``videoflow.processors.vision`` / ``videoflow.*.video``, or override its image
-at deploy time::
+On Kubernetes each node runs in a container image **you** provide — there is no
+inference from the node's module path. The normal pattern is to build one image with
+your dependencies and your node package on top of the shipped ``videoflow-base``
+image, and point the whole deploy at it::
 
-    videoflow deploy my_flow.py:build_flow --nats ... \
-        --image-override my-node=vision
+    # Dockerfile (see docker/user-image.example.Dockerfile)
+    FROM videoflow-base:latest
+    RUN pip install torch my-libs        # your dependencies
+    COPY . . && RUN pip install .        # your package (importable by module path)
 
-See :doc:`../distributed/deploying-to-kubernetes`.
+::
+
+    docker build -t ghcr.io/me/app:v1 .
+    videoflow deploy my_flow.py:build_flow --nats ... --image ghcr.io/me/app:v1
+
+Image resolution per node, first match wins:
+
+1. a deploy-time override — ``--image-override <node-name>=<ref>``;
+2. the node's own ``image=`` kwarg, declared in graph code when a node intrinsically
+   needs a specific environment (``MyDetector(name='det', image='ghcr.io/me/gpu:v1')``);
+3. the deploy default — ``--image <ref>``.
+
+If a node matches none of these, the deploy fails with a message naming the node —
+nothing is guessed. (The local engine ignores images entirely; it runs workers in
+your current Python environment.) See :doc:`../distributed/deploying-to-kubernetes`.

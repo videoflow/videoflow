@@ -50,8 +50,8 @@ When you call ``flow.run(engine)`` (or ``videoflow deploy``), a fresh **run id**
 minted and the graph is compiled into one **node specification** per node — a flat,
 JSON-serializable record holding the node's class, its captured parameters, its
 parents' names, its kind (producer/processor/consumer), replica count, device type,
-partitioning and join policy, and resolved image family. The engine provisions the
-run's broker streams/consumers, then turns those specs into workers.
+partitioning and join policy, and its declared container image (if any). The engine
+provisions the run's broker streams/consumers, then turns those specs into workers.
 
 Routing and message assembly
 ----------------------------

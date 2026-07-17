@@ -34,10 +34,6 @@ def k8s_name(*parts) -> str:
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
-def _image_ref(image_family : str, registry : str, tag : str) -> str:
-    prefix = registry.rstrip('/') + '/' if registry else ''
-    return f'{prefix}videoflow-{image_family}:{tag}'
-
 def _env_pairs(spec, flow_id, flow_type, run_id):
     env = {
         'VF_NODE_CLASS': spec.node_class,
@@ -69,10 +65,10 @@ def _labels(flow_id, node_name = None):
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def _pod_spec(spec, flow_id, flow_type, registry, tag, nats_configmap):
+def _pod_spec(spec, flow_id, flow_type, image, nats_configmap):
     container = {
         'name': 'worker',
-        'image': _image_ref(spec.image_family, registry, tag),
+        'image': image,
         'envFrom': [
             {'configMapRef': {'name': k8s_name('vf', flow_id, spec.name, 'env')}},
             {'configMapRef': {'name': nats_configmap}},
@@ -148,11 +144,11 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None):
         'data': data,
     }
 
-def workload(spec, flow_id, flow_type, registry, tag, nats_cm_name):
+def workload(spec, flow_id, flow_type, image, nats_cm_name):
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
-        'spec': _pod_spec(spec, flow_id, flow_type, registry, tag, nats_cm_name),
+        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name),
     }
 
     is_job = spec.kind == NODE_KIND_PRODUCER and spec.is_finite
@@ -239,17 +235,18 @@ def flow_spec_configmap(specs, flow_id, run_id):
         'data': {'specs.json': json.dumps([s.to_dict() for s in specs])},
     }
 
-def provision_init_job(flow_id, run_id, flow_type, registry, tag, nats_cm_name):
+def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name):
     '''
     A one-shot Job that runs ``videoflow.provision`` to create all streams/durables
     before workers start (required so BATCH interest-retention streams don't drop
-    early messages). Uses the base image, which has the framework + broker client.
+    early messages). Runs on ``image`` — any worker image has the framework + broker
+    client installed.
     '''
     labels = _labels(flow_id)
     spec_cm = k8s_name('vf', flow_id, 'specs')
     container = {
         'name': 'provision',
-        'image': _image_ref('base', registry, tag),
+        'image': image,
         'command': ['python', '-m', 'videoflow.provision'],
         'envFrom': [{'configMapRef': {'name': nats_cm_name}}],
         'env': [
@@ -340,7 +337,7 @@ def network_policy(flow_id):
     }
 
 def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'default',
-                    registry = '', image_tag = 'latest', blob_redis_url = None,
+                    default_image = None, image_overrides = None, blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
                     nats_monitoring_endpoint = None):
     '''
@@ -348,11 +345,28 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
 
     - run_id: per-run identifier stamped into each node's env (scopes broker streams).
+    - default_image: image ref used for any node that didn't declare its own (``--image``).
+    - image_overrides: mapping of node name to image ref (``--image-override``).
     - autoscaling: if True, emit a KEDA ScaledObject per processor node.
     - max_replicas: upper bound for autoscaled processors.
     - nats_monitoring_endpoint: NATS monitoring host:port for KEDA (defaults to \
         ``nats.<namespace>.svc:8222``).
+
+    - Raises:
+        - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``).
     '''
+    from .images import resolve_image
+
+    # Resolve every node's image up front (raises with an actionable message if any
+    # node has none), so a misconfiguration fails before partial manifests are built.
+    images_by_name = {
+        spec.name: resolve_image(spec.name, spec.image, default_image, image_overrides)
+        for spec in specs
+    }
+    # The provision init Job just needs a videoflow-capable image; reuse the default
+    # or, failing that, any node's resolved image.
+    init_image = default_image or images_by_name[specs[0].name]
+
     nats_cm = nats_configmap(flow_id, nats_url, blob_redis_url)
     nats_cm_name = nats_cm['metadata']['name']
 
@@ -360,12 +374,12 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     # Provision streams/durables up front via a one-shot init Job (BATCH interest
     # retention drops messages published before their consumers exist).
     manifests.append(flow_spec_configmap(specs, flow_id, run_id))
-    manifests.append(provision_init_job(flow_id, run_id, flow_type, registry, image_tag, nats_cm_name))
+    manifests.append(provision_init_job(flow_id, run_id, flow_type, init_image, nats_cm_name))
     for spec in specs:
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
-        manifests.append(workload(spec, flow_id, flow_type, registry, image_tag, nats_cm_name))
+        manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 

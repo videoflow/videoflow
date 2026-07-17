@@ -28,20 +28,20 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - nats_url: URL workers use to reach NATS from inside the cluster, \
             e.g. ``nats://nats.videoflow.svc:4222``.
         - namespace: target namespace (must already exist).
-        - registry: image registry prefix, e.g. ``ghcr.io/acme``. Empty for local \
-            images (kind/minikube).
-        - image_tag: tag applied to every ``videoflow-<family>`` image.
+        - default_image: image ref for nodes that don't declare their own ``image=`` \
+            (e.g. ``ghcr.io/acme/app:v1``, built FROM ``videoflow-base`` with your code).
+        - image_overrides: optional mapping of node name to image ref (wins over both).
         - blob_redis_url: optional Redis URL for the large-payload blob store.
         - specs: optional precompiled ``NodeSpec`` list; compiled from tasks_data if omitted.
         - kubectl: kubectl binary name/path.
     '''
-    def __init__(self, nats_url : str, namespace : str = 'default', registry : str = '',
-                image_tag : str = 'latest', blob_redis_url : str = None, specs = None,
+    def __init__(self, nats_url : str, namespace : str = 'default', default_image : str = None,
+                image_overrides : dict = None, blob_redis_url : str = None, specs = None,
                 kubectl : str = 'kubectl'):
         self._nats_url = nats_url
         self._namespace = namespace
-        self._registry = registry
-        self._image_tag = image_tag
+        self._default_image = default_image
+        self._image_overrides = image_overrides
         self._blob_redis_url = blob_redis_url
         self._specs = specs
         self._kubectl = kubectl
@@ -55,7 +55,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
         manifests = render_manifests(
             specs, flow_id, flow_type, self._nats_url, run_id, namespace = self._namespace,
-            registry = self._registry, image_tag = self._image_tag,
+            default_image = self._default_image, image_overrides = self._image_overrides,
             blob_redis_url = self._blob_redis_url,
         )
         yaml_str = dump_manifests(manifests)
