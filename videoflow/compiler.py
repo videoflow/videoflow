@@ -1,0 +1,114 @@
+'''
+Turns a ``videoflow.core.flow.Flow`` (a built, validated graph) into a list of
+per-node ``NodeSpec``s: everything an execution engine needs to launch one worker
+per node, without any of the live ``Node`` objects. A ``NodeSpec`` is fully
+JSON-serializable, which is what lets it cross into a separate process or a
+Kubernetes pod as environment variables / a ConfigMap.
+'''
+from __future__ import print_function
+from __future__ import division
+from __future__ import absolute_import
+
+from .core.node import ProducerNode, ProcessorNode, ConsumerNode
+from .image_registry import image_family_for
+
+NODE_KIND_PRODUCER = 'producer'
+NODE_KIND_PROCESSOR = 'processor'
+NODE_KIND_CONSUMER = 'consumer'
+
+def _node_kind(node):
+    if isinstance(node, ProducerNode):
+        return NODE_KIND_PRODUCER
+    if isinstance(node, ProcessorNode):
+        return NODE_KIND_PROCESSOR
+    if isinstance(node, ConsumerNode):
+        return NODE_KIND_CONSUMER
+    raise ValueError(f'{node} is not a Producer/Processor/Consumer node')
+
+class NodeSpec:
+    '''
+    A flat, serializable description of one node's deployment.
+
+    - Attributes:
+        - name: node's stable name (unique in the flow).
+        - node_class: fully-qualified import path, e.g. ``videoflow.processors.basic.IdentityProcessor``.
+        - params: dict from ``node.get_params()`` — the kwargs to reconstruct it.
+        - parents: list of parent node names, in ``process()`` positional order.
+        - kind: one of producer/processor/consumer.
+        - has_children: whether anything downstream consumes this node's output.
+        - nb_tasks: desired replica count (processors only; 1 otherwise).
+        - device_type: 'cpu' or 'gpu' (processors only).
+        - is_finite: for producers, whether ``next()`` self-terminates.
+        - image_family: resolved Docker image family key (see image_registry).
+    '''
+    def __init__(self, name, node_class, params, parents, kind, has_children,
+                nb_tasks, device_type, is_finite, image_family):
+        self.name = name
+        self.node_class = node_class
+        self.params = params
+        self.parents = parents
+        self.kind = kind
+        self.has_children = has_children
+        self.nb_tasks = nb_tasks
+        self.device_type = device_type
+        self.is_finite = is_finite
+        self.image_family = image_family
+
+    def to_dict(self):
+        return {
+            'name': self.name,
+            'node_class': self.node_class,
+            'params': self.params,
+            'parents': self.parents,
+            'kind': self.kind,
+            'has_children': self.has_children,
+            'nb_tasks': self.nb_tasks,
+            'device_type': self.device_type,
+            'is_finite': self.is_finite,
+            'image_family': self.image_family,
+        }
+
+    @classmethod
+    def from_dict(cls, d):
+        return cls(
+            name = d['name'], node_class = d['node_class'], params = d['params'],
+            parents = d['parents'], kind = d['kind'], has_children = d['has_children'],
+            nb_tasks = d['nb_tasks'], device_type = d['device_type'],
+            is_finite = d['is_finite'], image_family = d['image_family'],
+        )
+
+def specs_from_tasks_data(tasks_data):
+    '''
+    Converts ``videoflow.core.flow.build_tasks_data`` output (tuples of \
+        ``(node, parent_names, is_last)``) into serializable ``NodeSpec``s.
+    '''
+    specs = []
+    for node, parent_names, is_last in tasks_data:
+        kind = _node_kind(node)
+        node_class = f'{type(node).__module__}.{type(node).__name__}'
+        nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
+        device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
+        is_finite = node.is_finite if isinstance(node, ProducerNode) else True
+        specs.append(NodeSpec(
+            name = node.name,
+            node_class = node_class,
+            params = node.get_params(),
+            parents = parent_names,
+            kind = kind,
+            has_children = not is_last,
+            nb_tasks = nb_tasks,
+            device_type = device_type,
+            is_finite = is_finite,
+            image_family = image_family_for(node_class, node.name),
+        ))
+    return specs
+
+def compile_flow(flow):
+    '''
+    - Arguments:
+        - flow: a built ``videoflow.core.flow.Flow`` (do NOT call ``.run()`` on it first).
+
+    - Returns:
+        - list of ``NodeSpec``, one per node in the flow's topological sort.
+    '''
+    return specs_from_tasks_data(flow.tasks_data())

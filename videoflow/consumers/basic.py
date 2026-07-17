@@ -14,11 +14,11 @@ class CommandlineConsumer(ConsumerNode):
         - sep: separator to use between tokens.
         - end: end of line character
     '''
-    def __init__(self, sep = ' ', end = '\n'):
+    def __init__(self, sep = ' ', end = '\n', **kwargs):
 
         self._end = end
         self._sep = sep
-        super(CommandlineConsumer, self).__init__()
+        super(CommandlineConsumer, self).__init__(**kwargs)
     
     def consume(self, item):
         '''
@@ -34,8 +34,8 @@ class VoidConsumer(ConsumerNode):
     Ignores the input received.
     Helpful in debugging flows.
     '''
-    def __init__(self):
-        super(VoidConsumer, self).__init__()
+    def __init__(self, **kwargs):
+        super(VoidConsumer, self).__init__(**kwargs)
     
     def consume(self, item):
         '''
@@ -45,11 +45,11 @@ class VoidConsumer(ConsumerNode):
 
 
 class WebhookConsumer(ConsumerNode):
-    def __init__(self,host,method="post"):
+    def __init__(self, host, method = "post", **kwargs):
         # TODO: Add other pertinent parameters to the init method.
         self.host = host
         self.method = method
-        super(WebhookConsumer, self).__init__()
+        super(WebhookConsumer, self).__init__(**kwargs)
 
     def consume(self, item):
         # convert item to json
@@ -62,9 +62,9 @@ class WebhookConsumer(ConsumerNode):
 
 
 class FileAppenderConsumer(ConsumerNode):
-    def __init__(self):
+    def __init__(self, **kwargs):
         # TODO: Add other pertinent parameters to init method.
-        pass
+        super(FileAppenderConsumer, self).__init__(**kwargs)
 
     def consume(self, item):
         # item should be serializable, otherwise error.

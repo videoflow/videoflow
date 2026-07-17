@@ -2,132 +2,97 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
-from .task import Task
-from .node import Node
-from multiprocessing import Process
-
 class Messenger:
-    '''Not
-    Utility class that tasks use to receive input and write output. \
-    The ``videoflow.core.task.Task`` class knows what are the graph nodes from \
-    where it receives computation outputs, and knows what are the graph nodes \
-    that depend on its computation, but is oblivious of how to communicate with them. \
-    The messenger, which is tightly coupled with the `execution environment` being used, \
-    knows how to do this for the task.
+    '''
+    Utility class that tasks use to receive input and write output, over a message \
+        broker (see ``videoflow.messaging.nats_messenger.NATSMessenger`` for the \
+        concrete implementation). A ``Messenger`` is bound to exactly one node in the \
+        graph. It knows that node's own broker subject (for publishing) and its real \
+        parents' subjects (for receiving) — routing is by node ``name``, not by \
+        position in a topological sort, so it works correctly for arbitrary DAGs \
+        (multi-parent joins, multi-producer graphs).
     '''
     def publish_message(self, message, metadata = None):
         '''
-        Publishes output message to a place where the child task will receive it.
-        Depending on the kind of environment, this method might drop the message
-        if the receiving container (usually a queue) is full.
-        '''
-        raise NotImplementedError('Messenger subclass must implement method')
-    
-    def passthrough_message(self):
-        '''
-        Used when the task has received a message that might be needed by another \
-        task below it, but when the task itself does not produces output needed by \
-        tasks below it. (i.e.: ``videoflow.core.task.ConsumerTask``)
-
-        Depending on the kind of environment, this method might drop the message \
-        if the receiving container (usually a queue) is full.
-        '''
-        raise NotImplementedError('Messenger subclass must implement method')
-    
-    def passthrough_termination_message(self):
-        '''
-        Same as ``passthrough_message``, but this method will never drop the message regardless \
-        of environment, which means that sometimes this method might block until it can deliver \ 
-        the message.
+        Publishes this node's own output message. Depending on the flow's \
+            configured retention policy (REALTIME vs BATCH), this may drop the \
+            message if downstream consumers are behind.
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def publish_termination_message(self, message, metadata = None):
+    def publish_stop_signal(self):
         '''
-        Similar to ``publish_message``, but this method will never drop the message regardless \
-        of environment, which means that sometimes this method might block until it can deliver \ 
-        the message.
+        Publishes a termination marker on this node's own subject. Unlike \
+            ``publish_message``, this is never dropped regardless of retention \
+            policy — every downstream consumer must observe it exactly once.
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
     def check_for_termination(self) -> bool:
         '''
-        Returns true if a flow termination signal has been received.  Used by ``videoflow.core.task.ProducerTask``.
+        Returns true if a flow-wide termination signal has been received on the \
+            control channel. Used by ``videoflow.core.task.ProducerTask`` to stop \
+            pulling new input even before it naturally reaches ``StopIteration``.
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def receive_message(self):
+    def receive_message(self) -> dict:
         '''
-        This method blocks. It waits until a message has been received.
+        Blocks until this node has received a complete input: one message from \
+            every real parent, all derived from the same upstream originating event \
+            (see the ``trace_id`` propagation scheme in the concrete implementation) \
+            — or until every parent has signaled termination.
 
         - Returns:
-            - message: the message received from parent task in topological sort.
+            - a dict ``{parent_name: {"message": ..., "metadata": ..., "is_stop_signal": bool}}`` \
+                with exactly one entry per real parent of this node.
         '''
         raise NotImplementedError('Messenger subclass must implement method.')
-    
-    def receive_metadata(self):
-        '''
-        This method blocks. It waits until a message (with its corresponding metadata) has been received.
-
-        - Returns:
-            - metadata: the metadata received from parent task in topological sort.
-        '''
-        raise NotImplementedError('Messenger subclass must implement method.')
-    
-    def receive_message_and_metadata(self):
-        '''
-        This method blocks. It waits until a message has been received.
-
-        - Returns:
-            - metadata: the metadata received from parent task in topological sort.
-        '''
-        raise NotImplementedError('Messenger subclass must implement method.')
-
-
 
 class ExecutionEngine:
     '''
-    Defines the interface of the `execution environment`
+    Defines the interface of the `execution environment` — how tasks are physically \
+        started (as local OS processes for development, or as Kubernetes pods in \
+        production) and how flow-wide termination and completion are observed.
     '''
     def __init__(self):
         self._allocation_called = False
-        
-    def _al_create_and_start_processes(self, tasks_data):
+
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str):
         '''
         - Arguments:
-            - tasks_data: list of tuples. The list is of the form \
-                [(node : Node, node_index : int, parent_index : int, has_children : bool)]
+            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \
+                as produced by ``videoflow.core.flow.build_tasks_data``.
+            - flow_id: stable identifier for this flow run.
+            - flow_type: 'realtime' or 'batch' — the broker retention policy to use \
+                for every edge.
         '''
-        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
-    
+        raise NotImplementedError('Subclass of ExecutionEngine must implement')
+
     def signal_flow_termination(self):
         '''
-        Signals the execution environment that the flow needs to stop. \
-        When this signal is received, all consumer tasks will pick it on \
-        and pass it together with the flow until they reach every task in \
-        the graph and everyone stops working.
+        Signals the execution environment that the flow needs to stop.
         '''
-        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
-    
+        raise NotImplementedError('Subclass of ExecutionEngine must implement')
+
     def join_task_processes(self):
         '''
         Blocking method.  It is supposed to make the calling process sleep until all task \
         processes have finished processing.
         '''
-        raise NotImplementedError('Subclass of ExecutionEnvironment must implement')
+        raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def allocate_and_run_tasks(self, tasks_data):
+    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str):
         '''
         Defines a template with the order of methods that need to run in order to \
-        allocate and run tasks.  How those methods are implemented corresponds to \
-        subclasses of this class that implement different `execution environments`.
+            allocate and run tasks.
 
         - Arguments:
-            - tasks_data: list of tuples. The list is of the form \
-                [(node : Node, node_index : int, parent_index : int, has_children : bool)]
-
+            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``.
+            - flow_id: stable identifier for this flow run.
+            - flow_type: 'realtime' or 'batch'.
         '''
         if self._allocation_called:
             raise RuntimeError('This method has already been called. It can only be called once.')
-        self._al_create_and_start_processes(tasks_data)
+        self._al_create_and_start_processes(tasks_data, flow_id, flow_type)
         self._allocation_called = True

@@ -8,9 +8,9 @@ class SumAggregator(OneTaskProcessorNode):
     '''
     Keeps a running sum of all the inputs processed
     '''
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._sum = 0
-        super(SumAggregator, self).__init__()
+        super(SumAggregator, self).__init__(**kwargs)
     
     def process(self, inp):
         '''
@@ -27,9 +27,9 @@ class MultiplicationAggregator(OneTaskProcessorNode):
     '''
     Keeps a running multiplication of all the inputs processed
     '''
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._mult = 1
-        super(MultiplicationAggregator, self).__init__()
+        super(MultiplicationAggregator, self).__init__(**kwargs)
 
     def process(self, inp):
         '''
@@ -46,9 +46,9 @@ class CountAggregator(OneTaskProcessorNode):
     '''
     Keeps count of all the items processed
     '''
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._count = 0
-        super(CountAggregator, self).__init__()
+        super(CountAggregator, self).__init__(**kwargs)
     
     def process(self, inp):
         '''
@@ -62,9 +62,9 @@ class CountAggregator(OneTaskProcessorNode):
         return self._count
 
 class MaxAggregator(OneTaskProcessorNode):
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._max = float("-inf")
-        super(MaxAggregator, self).__init__()
+        super(MaxAggregator, self).__init__(**kwargs)
     
     def process(self, inp):
         '''
@@ -79,9 +79,9 @@ class MaxAggregator(OneTaskProcessorNode):
         return self._max
 
 class MinAggregator(OneTaskProcessorNode):
-    def __init__(self):
+    def __init__(self, **kwargs):
         self._min = float("inf")
-        super(MinAggregator, self).__init__()
+        super(MinAggregator, self).__init__(**kwargs)
     
     def process(self, inp):
         '''

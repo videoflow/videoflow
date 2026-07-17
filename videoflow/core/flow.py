@@ -3,97 +3,116 @@ from __future__ import division
 from __future__ import absolute_import
 
 import logging
+import uuid
 
 from .graph import GraphEngine
-from .constants import BATCH, REALTIME, FLOW_TYPES, STOP_SIGNAL
+from .constants import BATCH, REALTIME, FLOW_TYPES
 from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
-from .task import Task, ProducerTask, ProcessorTask, ConsumerTask
-from .bottlenecks import MetadataConsumer
-from ..engines.realtime import RealtimeExecutionEngine
-from ..engines.batch import BatchExecutionEngine
 
 logger = logging.getLogger(__package__)
 
-def _task_data_from_node_tsort(tsort_l):
-    tasks_data = []
-
-    for i in range(len(tsort_l)):
-        node = tsort_l[i]
-        if isinstance(node, ProducerNode):
-            task_data = (node, i, None, i >= (len(tsort_l) - 1))
-        elif isinstance(node, ProcessorNode):
-            task_data = (node, i, i - 1, i >= (len(tsort_l) - 1))
-        elif isinstance(node, ConsumerNode):
-            task_data = (node, i, i - 1, i >= (len(tsort_l) - 1))
+def _discover_producers(consumers):
+    '''
+    Walks the ``.parents`` chain backwards from each consumer to find the set of \
+        root ``ProducerNode``s that feed it. A flow no longer needs producers to be \
+        passed explicitly: they're always exactly the parentless ancestors of the \
+        consumers.
+    '''
+    producers = []
+    seen = set()
+    stack = list(consumers)
+    while stack:
+        node = stack.pop()
+        if node in seen:
+            continue
+        seen.add(node)
+        parents = node.parents
+        if not parents:
+            if isinstance(node, ProducerNode):
+                producers.append(node)
+            else:
+                raise ValueError(
+                    f'{node} has no parents but is not a ProducerNode. '
+                    'Every root of the graph must be a ProducerNode.'
+                )
         else:
-            raise ValueError('node is not of one of the valid types')
-        tasks_data.append(task_data)
-        
+            stack.extend(parents)
+    return producers
+
+def build_tasks_data(graph_engine : GraphEngine):
+    '''
+    Turns a validated ``GraphEngine`` into the list of ``(node, parent_names, is_last)`` \
+        tuples that both the local execution engine and the Kubernetes compiler \
+        (``videoflow.compiler``) use to allocate one task per node.
+
+    - Returns:
+        - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``
+    '''
+    tsort = graph_engine.topological_sort()
+    tasks_data = []
+    for node in tsort:
+        parents = node.parents or []
+        parent_names = [p.name for p in parents]
+        is_last = len(node.children) == 0
+        tasks_data.append((node, parent_names, is_last))
     return tasks_data
 
 class Flow:
     '''
-    Represents a linear flow of data from one task to another.\
-    Note that a flow is created from a **directed acyclic graph** of producer, processor \
-    and consumer nodes, but the flow itself is **linear**, because it is an optimized \
-    `topological sort` of the directed acyclic graph.
+    Represents a flow of data from producer nodes to consumer nodes, over the \
+        directed acyclic graph formed by however you've wired up ``Node`` instances \
+        via ``child(*parents)``.
 
     - Arguments:
-        - producers: a list of producer nodes of type ``videoflow.core.node.ProducerNode``.
-        - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``.
-        - flow_type: one of 'realtime' or 'batch'
+        - consumers: a list of consumer nodes of type ``videoflow.core.node.ConsumerNode``. \
+            Producers are discovered automatically by walking parents back from these.
+        - flow_type: one of 'realtime' or 'batch'. Controls the message broker's \
+            retention/discard policy for every edge in the flow (drop-when-full vs. \
+            block/at-least-once).
+        - flow_id: a stable identifier for this flow, used to namespace broker \
+            subjects and Kubernetes resources. Auto-generated if not given.
     '''
-    def __init__(self, producers, consumers, flow_type = REALTIME):
+    def __init__(self, consumers, flow_type = REALTIME, flow_id = None):
+        producers = _discover_producers(consumers)
         self._graph_engine = GraphEngine(producers, consumers)
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
-        if flow_type == BATCH:
-            self._execution_engine = BatchExecutionEngine()
-        elif flow_type == REALTIME:
-            self._execution_engine = RealtimeExecutionEngine()
+        self._flow_type = flow_type
+        self._flow_id = flow_id or uuid.uuid4().hex[:12]
+        self._execution_engine = None
 
-    def run(self):
+    @property
+    def flow_id(self) -> str:
+        return self._flow_id
+
+    @property
+    def flow_type(self) -> str:
+        return self._flow_type
+
+    def topological_sort(self):
         '''
-        Simple documentation: It starts the flow. 
-
-        More complex documentation: 
-        
-        1. It creates a topological sort of the nodes in the \
-            computation graph, and wraps each node around a ``videoflow.core.task.Task``
-        2. It passes the tasks to the environment, which allocates them and creates the \
-            channels that will be used for communication between tasks. Tasks themselves \
-            do not know where this channels are, but the environment assigns a messenger \
-            to each task that knows how to communicate in those channels.
+        Returns the topologically-sorted list of nodes in this flow. Exposed so the \
+            Kubernetes manifest-generation CLI (``videoflow.cli``) can inspect the \
+            graph without needing to call ``.run()``.
         '''
+        return self._graph_engine.topological_sort()
 
-        #1. Build a topological sort of the graph.
-        tsort = self._graph_engine.topological_sort()
-        metadata_consumer = MetadataConsumer()(*tsort)
-        tsort.append(metadata_consumer)
-        
-        #2. TODO: OPtimize graph in the following ways:   
-        # a) Tasks do not need to pass down to children
-        # all of the outputs of parents.  Hence, at a given
-        # level of the topological sort, have the list of 
-        # inputs from parents that are not needed below that 
-        # level
+    def tasks_data(self):
+        return build_tasks_data(self._graph_engine)
 
-        # b) Not all the processors have to write to a pub/sub channel
-        # If their output is only needed by the next preprocessor and non one
-        # else below in the graph, then I can string subsequent preprocessors together
-        # a big preprocessor
-        
-        #3. Create the tasks and the input/outputs
-        # for them
-        # task_data is a list of tuples (node, task_id, parent_task_id, has_chilren)
-        tasks_data = _task_data_from_node_tsort(tsort)
-        
-        # 4. Put each task to run in the place where the processor it
-        # contains inside runs.
-        self._execution_engine.allocate_and_run_tasks(tasks_data)
-        logger.info('Allocated processes for {} tasks'.format(len(tasks_data)))
+    def run(self, execution_engine):
+        '''
+        Starts the flow using the given ``ExecutionEngine`` (e.g. \
+            ``videoflow.engines.local.LocalProcessEngine`` or \
+            ``videoflow.engines.kubernetes.KubernetesExecutionEngine``). \
+            Non-blocking: returns once tasks have been allocated/started.
+        '''
+        self._execution_engine = execution_engine
+        tasks_data = self.tasks_data()
+        self._execution_engine.allocate_and_run_tasks(tasks_data, self._flow_id, self._flow_type)
+        logger.info('Allocated {} tasks for flow {}'.format(len(tasks_data), self._flow_id))
         logger.info('Started running flow.')
-    
+
     def join(self):
         '''
         Blocking method. Will make the process that calls this method block until the flow finishes

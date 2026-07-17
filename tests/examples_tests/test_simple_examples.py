@@ -1,87 +1,75 @@
 '''
-Does not test for correctness. 
-It simply tests that this examples run well
-without an exception being thrown.
+Integration tests that run small flows end-to-end through the distributed
+NATS-backed path (LocalProcessEngine spawns one worker subprocess per node).
+They do not assert on data correctness — only that a representative graph runs
+to completion without raising.
+
+Skipped automatically if a NATS server is not reachable at VF_TEST_NATS_URL
+(default nats://localhost:4222); start one with `nats-server -js` or
+`docker compose up -d nats`.
 '''
+import os
+
 import pytest
 
 from videoflow.core import Flow
-from videoflow.core.node import TaskModuleNode
+from videoflow.core.constants import BATCH
 from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.processors.aggregators import SumAggregator
-from videoflow.consumers import CommandlineConsumer
+from videoflow.consumers import VoidConsumer
 
-@pytest.mark.timeout(30)
-def test_simple_example1():
-    producer = IntProducer(0, 40, 0.1)
-    identity = IdentityProcessor()(producer)
-    identity1 = IdentityProcessor()(identity)
-    joined = JoinerProcessor()(identity, identity1)
-    printer = CommandlineConsumer()(joined)
-    flow = Flow([producer], [printer])
-    flow.run()
+NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
+
+def _nats_available():
+    import asyncio
+    try:
+        import nats
+    except ImportError:
+        return False
+
+    async def _try():
+        nc = await nats.connect(NATS_URL, connect_timeout = 2)
+        await nc.drain()
+
+    try:
+        asyncio.run(_try())
+        return True
+    except Exception:
+        return False
+
+pytestmark = pytest.mark.skipif(not _nats_available(), reason = f'NATS not reachable at {NATS_URL}')
+
+def _run(flow):
+    from videoflow.engines.local import LocalProcessEngine
+    flow.run(LocalProcessEngine(nats_url = NATS_URL))
     flow.join()
 
-@pytest.mark.timeout(30)
-def test_simple_example2():
-    producer = IntProducer(0, 40, 0.01)
-    sum_agg = SumAggregator()(producer)
-    printer = CommandlineConsumer()(sum_agg)
-    flow = Flow([producer], [printer])
-    flow.run()
-    flow.join()
+def test_linear_flow():
+    producer = IntProducer(0, 10, 0.02, name = 'producer')
+    identity = IdentityProcessor(name = 'identity')(producer)
+    printer = VoidConsumer(name = 'printer')(identity)
+    _run(Flow([printer], flow_type = BATCH))
 
-@pytest.mark.timeout(30)
-def test_mp_example1():
-    producer = IntProducer(0, 40, 0.1)
-    identity = IdentityProcessor(nb_tasks = 5)(producer)
-    identity1 = IdentityProcessor(nb_tasks = 5)(identity)
-    joined = JoinerProcessor(nb_tasks = 5)(identity, identity1)
-    printer = CommandlineConsumer()(joined)
-    flow = Flow([producer], [printer])
-    flow.run()
-    flow.join()
+def test_diamond_join_flow():
+    producer = IntProducer(0, 10, 0.02, name = 'producer')
+    identity = IdentityProcessor(name = 'identity')(producer)
+    identity1 = IdentityProcessor(name = 'identity1')(identity)
+    joined = JoinerProcessor(name = 'joined')(identity, identity1)
+    printer = VoidConsumer(name = 'printer')(joined)
+    _run(Flow([printer], flow_type = BATCH))
 
-@pytest.mark.timeout(30)
-def test_taskmodulenode_example1():
-    producer = IntProducer(0, 40, 0.05)
-    identity = IdentityProcessor(nb_tasks = 1)(producer)
-    identity1 = IdentityProcessor(nb_tasks = 1)(identity)
-    joined = JoinerProcessor(nb_tasks = 1)(identity, identity1)
-    task_module = TaskModuleNode(identity, joined)
-    printer = CommandlineConsumer()(task_module)
-    flow = Flow([producer], [printer])
-    flow.run()
-    flow.join()
+def test_aggregator_flow():
+    producer = IntProducer(0, 10, 0.02, name = 'producer')
+    sum_agg = SumAggregator(name = 'sum')(producer)
+    printer = VoidConsumer(name = 'printer')(sum_agg)
+    _run(Flow([printer], flow_type = BATCH))
 
-@pytest.mark.timeout(30)
-def test_graph_with_deadend_processor():
-    # Graph with no consumer should run.
-    producer = IntProducer(0, 40, 0.05)
-    identity = IdentityProcessor(nb_tasks = 1)(producer)
-    identity1 = IdentityProcessor(nb_tasks = 1)(identity)
-    joined = JoinerProcessor(nb_tasks = 1)(identity, identity1)
-    task_module = TaskModuleNode(identity, joined)
-    dead_end = IdentityProcessor()(task_module)
-    printer = CommandlineConsumer()(task_module)
-    flow = Flow([producer], [printer])
-    flow.run()
-    flow.join()
-
-@pytest.mark.timeout(30)
-def test_graph_with_no_consumer():
-    # Graph with no consumer should run.
-    producer = IntProducer(0, 40, 0.05)
-    identity = IdentityProcessor(nb_tasks = 1)(producer)
-    identity1 = IdentityProcessor(nb_tasks = 1)(identity)
-    joined = JoinerProcessor(nb_tasks = 1)(identity, identity1)
-    task_module = TaskModuleNode(identity, joined)
-    flow = Flow([producer], [])
-    flow.run()
-    flow.join()
-
+def test_fanout_flow():
+    producer = IntProducer(0, 10, 0.02, name = 'producer')
+    identity = IdentityProcessor(name = 'identity', nb_tasks = 3)(producer)
+    printer = VoidConsumer(name = 'printer')(identity)
+    _run(Flow([printer], flow_type = BATCH))
 
 if __name__ == "__main__":
     pytest.main([__file__])
-

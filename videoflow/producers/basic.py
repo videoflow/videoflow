@@ -17,15 +17,16 @@ class IntProducer(ProducerNode):
     If ``fps`` is given a value greater than 0, ``fps`` overrides the 
     value of ``wait_time_in_seconds``
     '''
-    def __init__(self, start_value : int = 0, end_value : int = None, 
-                wait_time_in_seconds : float = 0, fps = -1):
+    def __init__(self, start_value : int = 0, end_value : int = None,
+                wait_time_in_seconds : float = 0, fps = -1, **kwargs):
         self._start_value = start_value
         self._end_value = end_value
         self._wait_time_in_seconds = wait_time_in_seconds
+        self._fps = fps
         if fps > 0:
             self._wait_time_in_seconds = 1.0 / fps
         self._current_value = self._start_value
-        super(IntProducer, self).__init__()
+        super(IntProducer, self).__init__(**kwargs)
         
     def next(self):
         '''

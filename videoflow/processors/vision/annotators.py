@@ -18,8 +18,8 @@ class ImageAnnotator(ProcessorNode):
     metadata, and return as output a copy of the image with
     the drawings representing the metadata.
     '''
-    def __init__(self, nb_tasks = 1):
-        super(ImageAnnotator, self).__init__(nb_tasks = nb_tasks)
+    def __init__(self, nb_tasks = 1, **kwargs):
+        super(ImageAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
     
     def _annotate(self, im : np.array, annotations : any) -> np.array:
         raise NotImplementedError('Subclass must implement this method')
@@ -52,11 +52,13 @@ class BoundingBoxAnnotator(ImageAnnotator):
         'faces'
     ]
 
-    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco', 
-                box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1):
+    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
+                box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1,
+                **kwargs):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
+        self._class_labels_dataset = class_labels_dataset
 
         if class_labels_path is None and class_labels_dataset is None:
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
@@ -68,8 +70,9 @@ class BoundingBoxAnnotator(ImageAnnotator):
             remote_url = BASE_URL_DETECTION + labels_file_name
             class_labels_path = get_file(labels_file_name, remote_url)
 
+        self._class_labels_path = class_labels_path
         self._index_label_d = parse_label_map(class_labels_path)
-        super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks)
+        super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
     def _annotate(self, im : np.array, boxes : np.array) -> np.array:
         '''
@@ -98,11 +101,12 @@ class TrackerAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images with track id.
     '''
-    def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1):
+    def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1,
+                **kwargs):
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
-        super(TrackerAnnotator, self).__init__(nb_tasks = nb_tasks)
+        super(TrackerAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
     def _annotate(self, im : np.array, boxes : np.array) -> np.array:
         '''
@@ -157,9 +161,9 @@ class SegmenterAnnotator(ImageAnnotator):
         (0, 127.5, 255)
     ]
 
-    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco', 
-                transparency = 0.5, nb_tasks = 1):
-        
+    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
+                transparency = 0.5, nb_tasks = 1, **kwargs):
+
         if class_labels_path is None and class_labels_dataset is None:
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
 
@@ -170,9 +174,10 @@ class SegmenterAnnotator(ImageAnnotator):
             remote_url = BASE_URL_DETECTION + labels_file_name
             class_labels_path = get_file(labels_file_name, remote_url)
 
+        self._class_labels_path = class_labels_path
         self._index_label_d = parse_label_map(class_labels_path)
         self._transparency = transparency
-        super(SegmenterAnnotator, self).__init__(nb_tasks = nb_tasks)
+        super(SegmenterAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
     def _annotate(self, im : np.array, annotations : list) -> np.array:
         '''

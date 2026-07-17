@@ -23,11 +23,11 @@ class CropImageTransformer(ProcessorNode):
             - If any of crop_dimensions less than 0
             - If ymin > ymax or xmin > xmax
     '''
-    def __init__(self, crop_dimensions: Optional[np.array] = None):
+    def __init__(self, crop_dimensions: Optional[np.array] = None, **kwargs):
+        self.crop_dimensions = crop_dimensions
         if crop_dimensions:
             self._check_crop_dimensions(crop_dimensions)
-            self.crop_dimensions = crop_dimensions
-        super(CropImageTransformer, self).__init__()
+        super(CropImageTransformer, self).__init__(**kwargs)
 
     @staticmethod
     def _check_crop_dimensions(crop_dimensions: np.array):
@@ -106,8 +106,8 @@ class CropImageTransformer(ProcessorNode):
 
 
 class MaskImageTransformer(ProcessorNode):
-    def __init__(self):
-        super(MaskImageTransformer, self).__init__()
+    def __init__(self, **kwargs):
+        super(MaskImageTransformer, self).__init__(**kwargs)
     
     def _mask(self, im : np.array, mask : np.array) -> np.array:
         if mask.shape[:2] != im.shape[:2]:
@@ -137,9 +137,9 @@ class MaskImageTransformer(ProcessorNode):
 
 
 class ResizeImageTransformer(ProcessorNode):
-    def __init__(self, maintain_ratio = False):
+    def __init__(self, maintain_ratio = False, **kwargs):
         self._maintain_ratio = maintain_ratio
-        super(ResizeImageTransformer, self).__init__()
+        super(ResizeImageTransformer, self).__init__(**kwargs)
 
     def _resize(self, im : np.array, new_size) -> np.array:
         height, width = new_size

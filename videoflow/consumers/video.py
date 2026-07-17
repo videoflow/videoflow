@@ -19,14 +19,14 @@ class VideofileWriter(ConsumerNode):
         - fps: frames per second
     '''
 
-    def __init__(self, video_file : str, swap_channels : bool = True, fps : int = 30):
+    def __init__(self, video_file : str, swap_channels : bool = True, fps : int = 30, **kwargs):
         if video_file[-4:] != '.avi':
             raise ValueError('Only .avi format is supported')
         self._video_file = video_file
         self._swap_channels = swap_channels
         self._fps = fps
         self._out = None
-        super(VideofileWriter, self).__init__()
+        super(VideofileWriter, self).__init__(**kwargs)
 
     def open(self):
         '''

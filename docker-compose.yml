@@ -1,0 +1,20 @@
+# Local development stack for distributed videoflow: a NATS JetStream server and
+# a Redis instance for the large-payload blob store. This provides the broker that
+# `LocalProcessEngine` (and `videoflow run-local`) connect to — the workers
+# themselves run as local subprocesses, not containers, so you get fast iteration
+# without building images.
+#
+#   docker compose up -d
+#   python examples/simple_example1.py
+services:
+  nats:
+    image: nats:2.10
+    command: ["-js", "-m", "8222"]
+    ports:
+      - "4222:4222"   # client connections
+      - "8222:8222"   # monitoring
+
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"

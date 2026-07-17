@@ -2,30 +2,52 @@ from __future__ import print_function
 from __future__ import division
 from __future__ import absolute_import
 
+import inspect
 import logging
+import re
+
 logger = logging.getLogger(__package__)
 
 from ..utils.graph import has_cycle, topological_sort
 from .constants import LOGGING_LEVEL
-from .processor import Processor
 from .constants import GPU, CPU, DEVICE_TYPES
+
+_SLUG_RE = re.compile(r'[^a-z0-9]+')
+
+def _slugify(value : str) -> str:
+    return _SLUG_RE.sub('-', value.lower()).strip('-')
 
 class Node:
     '''
     Represents a computational node in the graph. It is also a callable object. \
         It can be call with the list of parents on which it depends.
+
+    - Arguments:
+        - name (str): a unique, stable identifier for this node within a flow. \
+            Used as the node's identity everywhere outside the process that built \
+            the graph: message broker subject names, Kubernetes resource names, and \
+            logging. If not given, one is auto-generated from the class name and a \
+            per-class construction counter; uniqueness within a flow is validated when \
+            the flow is built (see ``videoflow.core.graph.GraphEngine``), not at \
+            construction time, since a collision can only be detected once the whole \
+            graph is known.
     '''
+    _name_counters = {}
+
     def __init__(self, name = None):
+        if name is None:
+            cls_name = type(self).__name__
+            Node._name_counters[cls_name] = Node._name_counters.get(cls_name, 0) + 1
+            name = f'{_slugify(cls_name)}-{Node._name_counters[cls_name]}'
         self._name = name
         self._parents = None
-        self._id = id(self)
         self._children = set()
         self._is_part_of_taskmodule_node = False
         self._logger = self._configure_logger()
-        self._logger.debug(f'Created Node with id {self._id}')
-    
+        self._logger.debug(f'Created Node with name {self._name}')
+
     def _configure_logger(self):
-        logger = logging.getLogger(f'{self.__repr__()}_{self._id}')
+        logger = logging.getLogger(f'{self.__repr__()}')
         logger.setLevel(LOGGING_LEVEL)
         ch = logging.StreamHandler()
         ch.setLevel(LOGGING_LEVEL)
@@ -35,17 +57,8 @@ class Node:
         return logger
 
     def __repr__(self):
-        if not self._name:
-            return self.__class__.__name__
-        else:
-            return self._name
-    
-    def __eq__(self, other):
-        return self is other
-    
-    def __hash__(self):
-        return self._id
-    
+        return self._name
+
     def open(self):
         '''
         This method is called by the task runner before doing any consuming,
@@ -54,7 +67,7 @@ class Node:
         tensorflow sessions, etc.
         '''
         pass
-    
+
     def close(self):
         '''
         This method is called by the task running after finishing doing all
@@ -64,20 +77,57 @@ class Node:
         tensorflow sessions, etc.
         '''
         pass
-    
+
     @property
-    def id(self):
+    def name(self) -> str:
         '''
-        The id of the node.  In this case the id of the node is produced by calling
-        ``id(self)``.
+        The stable, unique-within-a-flow string identity of the node. This is the \
+            identifier used for broker subjects, Kubernetes resource names, and node \
+            reconstruction in worker processes.
         '''
-        # ****IMPORTANT********
-        # Must not be changed. Computing the id at call time will likely introduce errors
-        # because the Python built-in `id` function might return different ids for the same
-        # graph node if called from different processes.  So is better to compute it once
-        # from the process where all constructors are called, and then save it for later.
-        return self._id
-    
+        return self._name
+
+    def get_params(self) -> dict:
+        '''
+        Returns a JSON-serializable dict of keyword arguments sufficient to \
+            reconstruct an equivalent node via ``type(node)(**node.get_params())``. \
+            This is what lets a worker process (running in its own container, with no \
+            access to the object that built the graph) recreate the exact node it is \
+            responsible for running.
+
+        Default implementation: walks every class in this node's MRO that declares \
+            its own ``__init__``, inspects that ``__init__``'s named parameters \
+            (skipping ``*args``/``**kwargs``), and for each parameter name looks up \
+            ``self._<name>`` and then ``self.<name>``. This matches the prevailing \
+            convention in this codebase of storing constructor arguments verbatim as \
+            an underscore-prefixed attribute of the same name.
+
+        Subclasses whose constructor arguments aren't stored under a matching \
+            attribute name, or that accept non-serializable arguments (e.g. \
+            references to other nodes, as ``TaskModuleNode`` does), must override \
+            this method.
+        '''
+        params = {}
+        for klass in reversed(type(self).__mro__):
+            if '__init__' not in klass.__dict__:
+                continue
+            sig = inspect.signature(klass.__dict__['__init__'])
+            for pname, p in sig.parameters.items():
+                if pname == 'self' or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):
+                    continue
+                if hasattr(self, '_' + pname):
+                    params[pname] = getattr(self, '_' + pname)
+                elif hasattr(self, pname):
+                    params[pname] = getattr(self, pname)
+                else:
+                    raise AttributeError(
+                        f"Cannot auto-capture constructor parameter '{pname}' for "
+                        f"{type(self).__name__}: no attribute 'self._{pname}' or "
+                        f"'self.{pname}' found. Store the parameter under one of "
+                        f"those names, or override get_params() on this class."
+                    )
+        return params
+
     def __call__(self, *parents):
         if self._parents is not None:
             raise RuntimeError('This method has already been called. It can only be called once.')
@@ -92,21 +142,20 @@ class Node:
                                 ' if possible.')
         self._parents = list()
         for parent in parents:
-            #assert isinstance(parent, Node) and not isinstance(parent, Leaf), '%s is not a non-leaf node' % str(parent)
             assert isinstance(parent, Node), '%s is not a node' % str(parent)
             self._parents.append(parent)
             parent.add_child(self)
         return self
-        
+
     def add_child(self, child):
         '''
         Adds child to the set of childs that depend on it.
         '''
         self._children.add(child)
-    
+
     def remove_child(self, child):
         self._children.remove(child)
-    
+
     @property
     def parents(self):
         '''
@@ -115,7 +164,7 @@ class Node:
         if self._parents is None:
             return None
         return list(self._parents)
-    
+
     @property
     def children(self):
         '''
@@ -136,18 +185,19 @@ class ConsumerNode(Leaf):
     - Arguments:
         - metadata (boolean): By default is False. If True, instead of receiving \
             output of parent nodes, receives metadata produced by parent nodes.
+        - name (str): see ``Node``.
     '''
-    def __init__(self, metadata = False, **kwargs):
+    def __init__(self, metadata = False, name = None, **kwargs):
         self._metadata = metadata
-        super(ConsumerNode, self).__init__(**kwargs)
-    
+        super(ConsumerNode, self).__init__(name = name, **kwargs)
+
     @property
     def metadata(self):
         return self._metadata
-    
+
     def consume(self, item):
         '''
-        Method definition that needs to be implemented by subclasses. 
+        Method definition that needs to be implemented by subclasses.
 
         - Arguments:
             - item: the item being received as input (or consumed).
@@ -156,12 +206,18 @@ class ConsumerNode(Leaf):
                             by subclass')
 
 class ProcessorNode(Node):
-    def __init__(self, nb_tasks : int = 1, device_type = CPU, **kwargs):
+    '''
+    - Arguments:
+        - nb_tasks (int): number of parallel replicas to allocate for this processor.
+        - device_type (str): ``videoflow.core.constants.CPU`` or ``GPU``.
+        - name (str): see ``Node``.
+    '''
+    def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs):
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
-        super(ProcessorNode, self).__init__(**kwargs)
+        super(ProcessorNode, self).__init__(name = name, **kwargs)
 
     @property
     def nb_tasks(self):
@@ -169,19 +225,19 @@ class ProcessorNode(Node):
         Returns the number of tasks to allocate to this processor
         '''
         return self._nb_tasks
-    
+
     @property
     def device_type(self):
         '''
         Returns the preferred device type to use to run the processor's code
         '''
         return self._device_type
-    
+
     def change_device(self, device_type):
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
-    
+
     def process(self, inp : any) -> any:
         '''
         Method definition that needs to be implemented by subclasses.
@@ -189,7 +245,7 @@ class ProcessorNode(Node):
         - Arguments:
             - inp: object or list of objects being received for processing \
                 from parent nodes.
-        
+
         - Returns:
             - the output being consumed by child nodes.
         '''
@@ -202,20 +258,24 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__(self, device_type = CPU, **kwargs):
-        super(OneTaskProcessorNode, self).__init__(1, device_type = device_type, **kwargs)
+    def __init__(self, device_type = CPU, name = None, **kwargs):
+        # nb_tasks is always 1 for this class; discard it if present (e.g. when
+        # reconstructing from get_params(), which captures it from the ProcessorNode
+        # level of the MRO) so it doesn't collide with the positional 1 below.
+        kwargs.pop('nb_tasks', None)
+        super(OneTaskProcessorNode, self).__init__(1, device_type = device_type, name = name, **kwargs)
 
 class TaskModuleNode(ProcessorNode):
     '''
     Processor node that wraps a graph of processor nodes. This has the effect
     that instead of allocating one task per processor node in
     the graph, only one task process is allocated for the entire subgraph.
-    
+
     - Arguments:
         - entry_node (Node): The node that sits at the top of the subgraph
         - exit_node (Node): The node that sits at the top of the subgraph
         - nb_tasks (int) The number of parallel tasks to allocate
-    
+
     - Raises:
         - ``ValueError`` if:
             - There is at least one node in the subgraph that is not instance of ``ProcessorNode``
@@ -225,9 +285,13 @@ class TaskModuleNode(ProcessorNode):
             - The subgraph has less than one node.
             - There is a node of type ``TaskModuleNode`` among the nodes of the \
                 subgraph.
+
+    Note: because it wraps live references to other nodes, ``TaskModuleNode`` does \
+        not support ``get_params()``-based reconstruction and is not yet supported \
+        by the distributed Kubernetes execution path (see ``videoflow.compiler``).
     '''
-    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, **kwargs):
-        super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, **kwargs)
+    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, name = None, **kwargs):
+        super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, name = name, **kwargs)
         self._entry_node = entry_node
         self._exit_node = exit_node
 
@@ -239,7 +303,7 @@ class TaskModuleNode(ProcessorNode):
             for parent in self._parents:
                 parent.remove_child(entry_node)
                 parent.add_child(self)
-        
+
         #3.2 Relink things with exit_node
         for child in exit_node.children:
             self.add_child(child)
@@ -255,7 +319,7 @@ class TaskModuleNode(ProcessorNode):
         self._tsort = topological_sort([entry_node])
         for node in self._tsort:
             node._is_part_of_taskmodule_node = True
-        
+
         #2. Checking for correctness
         if exit_node not in self._tsort:
             logger.error(f'{exit_node} is not descendant of entry node. Exiting now...')
@@ -275,8 +339,8 @@ class TaskModuleNode(ProcessorNode):
                 if p not in self._tsort:
                     raise ValueError('There is a node whose parents are not part'
                                         ' of the list of processor nodes')
-        
-    
+
+
     def process(self, *inp):
         intermediate_results = {}
         result = self._tsort[0].process(*inp)
@@ -287,21 +351,35 @@ class TaskModuleNode(ProcessorNode):
             intermediate_results[p] = result
         return result
 
+    def get_params(self):
+        raise NotImplementedError(
+            'TaskModuleNode wraps live node references and is not supported by the '
+            'distributed execution path yet. Deploy the fused nodes as separate, '
+            'unfused nodes instead of wrapping them in a TaskModuleNode.'
+        )
+
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_proc : int = 1, device = CPU, **kwargs):
-        self._fn = processor_function
-        super(FunctionProcessorNode, self).__init__(nb_proc, device, **kwargs)
-    
+    def __init__(self, processor_function, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs):
+        self._processor_function = processor_function
+        super(FunctionProcessorNode, self).__init__(nb_tasks, device_type, name = name, **kwargs)
+
     def process(self, inp):
-        return self._fn(inp)
+        return self._processor_function(inp)
+
+    def get_params(self):
+        raise NotImplementedError(
+            'FunctionProcessorNode wraps an arbitrary Python callable, which is not '
+            'JSON-serializable. Define a ProcessorNode subclass instead if this node '
+            'needs to run in a distributed/Kubernetes flow.'
+        )
 
 class ModuleNode(Node):
     '''
     Module node that wraps a subgraph of computation. Each node of the Module must be a ``ProcessorNode``
-    or a ``ModuleNode`` itself.  For simplicity, a module node has exaclty one node as entry point, 
-    and exactly one node as exit point. 
+    or a ``ModuleNode`` itself.  For simplicity, a module node has exaclty one node as entry point,
+    and exactly one node as exit point.
     If for some reason a ModuleNode has flag ``one_process`` set to ``True``:
-        - Then any module within the subgraph must also be of that type, or an exception will be thrown. 
+        - Then any module within the subgraph must also be of that type, or an exception will be thrown.
         - No process inside the module can be allocated to a gpu, or an exception will be thrown
 
     - Arguments:
@@ -324,45 +402,65 @@ class ModuleNode(Node):
         if has_cycle([entry_node]):
             logger.error('Cycle detected in module graph. Exiting now...')
             raise ValueError('Cycle found in module graph')
-        
+
         temp_tsort = topological_sort([entry_node])
-        
+
         if exit_node not in temp_tsort:
             logger.error(f'{exit_node} is not descendant of entry node. Exiting now...')
             raise ValueError(f'{exit_node} is not descendant of entry node')
-        
+
         if any([((not isinstance(p, ProcessorNode)) and (not isinstance(p, ModuleNode))) for p in temp_tsort]):
             raise ValueError('There is at least one node in the module graph that is not instance of ProcessorNode or of ModuleNode')
-        
+
         # Create valid tsort here.
         self._tsort = []
         for n in temp_tsort:
             if isinstance(n, ProcessorNode):
                 self._tsort.append(n)
             elif isinstance(n, ModuleNode):
-                self._tsort.extend(n.nodes)       
+                self._tsort.extend(n.nodes)
 
         super(ModuleNode, self).__init__(*args, **kwargs)
 
     def __call__(self, *parents):
         #TODO
         pass
-    
+
     @property
     def nodes(self):
         return list(self._tsort)
+
+    def get_params(self):
+        raise NotImplementedError(
+            'ModuleNode wraps live node references and is not supported by the '
+            'distributed execution path.'
+        )
 
 class ProducerNode(Node):
     '''
     The `producer node` does not receive input, and produces input. \
         Each time the ``next()`` method is called, it produces a new input.
-    
+
     It would have been more natural to implement the ``ProducerNode`` as a generator, \
         but generators cannot be pickled, and hence you cannot easily work with generators \
         in a multiprocessing setting.
+
+    - Arguments:
+        - is_finite (bool): True (the default) if a call to ``next()`` will eventually \
+            raise ``StopIteration`` on its own (e.g. reading a fixed video file). Set to \
+            ``False`` for producers that read from an unbounded/live source (e.g. an \
+            RTSP stream) and only stop when told to. The Kubernetes execution engine \
+            uses this to decide whether to deploy the producer as a ``Job`` (finite) or \
+            a ``Deployment`` (infinite).
+        - name (str): see ``Node``.
     '''
-    def __init__(self, *args, **kwargs):
-        super(ProducerNode, self).__init__(*args, **kwargs)
+    def __init__(self, is_finite : bool = True, name = None, **kwargs):
+        self._is_finite = is_finite
+        super(ProducerNode, self).__init__(name = name, **kwargs)
+
+    @property
+    def is_finite(self) -> bool:
+        return self._is_finite
 
     def next(self) -> any:
         '''
