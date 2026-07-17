@@ -164,8 +164,14 @@ class InstrumentedMessenger(Messenger):
     def set_output_partition_key(self, value) -> None:
         return self._inner.set_output_partition_key(value)
 
+    def set_output_event_timestamp(self, value : float) -> None:
+        return self._inner.set_output_event_timestamp(value)
+
     def last_input_key(self) -> Optional[str]:
         return self._inner.last_input_key()
+
+    def last_input_info(self) -> Optional[dict]:
+        return self._inner.last_input_info()
 
     def close(self) -> None:
         return self._inner.close()

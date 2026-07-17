@@ -32,3 +32,28 @@ class RuntimeContext:
         '''
         if self._messenger is not None:
             self._messenger.set_output_partition_key(value)
+
+    def set_event_timestamp(self, value : float) -> None:
+        '''
+        Set the event time (epoch seconds) stamped on this node's *next* published
+        output — when the underlying real-world event was captured (a frame's
+        capture time, a sensor sample's timestamp). Producers of time-sensitive
+        data should call this from ``next()``; downstream nodes inherit their
+        input group's event time automatically, so they rarely need to. Time-
+        aligned joins (``JoinPolicy(mode='time')``) group on this value.
+        '''
+        if self._messenger is not None:
+            self._messenger.set_output_event_timestamp(value)
+
+    @property
+    def input_info(self):
+        '''
+        Per-parent envelope info for the input group currently being processed:
+        ``{parent_name: {'event_ts': ..., 'metadata': ..., 'trace_id': ..., 'seq': ...}}``
+        (``None`` values for parents missing from a quorum emission; lists for
+        collect parents). ``None`` for producers. Lets fusion code read each
+        input's exact event time without changing ``process()`` signatures.
+        '''
+        if self._messenger is None:
+            return None
+        return self._messenger.last_input_info()

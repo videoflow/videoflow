@@ -20,7 +20,11 @@ CODEC_EXTERNAL_REF = 'external-ref'
 
 #: Wire-format version carried in every envelope, so a receiver can reject or
 #: adapt messages produced by an incompatible build.
-ENVELOPE_VERSION = 2
+ENVELOPE_VERSION = 3
+
+#: Older envelope versions this build can still decode (adapting missing fields).
+#: v2 lacks ``event_ts``; it decodes with ``event_ts = None``.
+COMPATIBLE_ENVELOPE_VERSIONS = (2, ENVELOPE_VERSION)
 
 #: Message kinds carried in the envelope ``type`` field. ``data`` is a normal
 #: payload; ``eos`` is an end-of-stream marker with no payload (it replaces the
@@ -132,7 +136,7 @@ def decode_payload(codec : str, buf : bytes, blob_store : BlobStore = None) -> A
 def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id : str,
                     seq : int, msg_type : str, metadata : dict, payload,
                     span_id : str = '', parent_span_id : str = '', replica_id : int = 0,
-                    blob_store : BlobStore = None) -> bytes:
+                    event_ts : float = None, blob_store : BlobStore = None) -> bytes:
     '''
     Encodes a full wire message: a small msgpack header plus the (possibly \
         blob-referenced) payload, as a single msgpack-encoded byte string suitable \
@@ -144,6 +148,11 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
         - span_id / parent_span_id: hex ids for log/trace correlation (optional).
         - replica_id: index of the emitting replica (0 for single-task nodes); \
             distinguishes EOS markers from different replicas of one node.
+        - event_ts: event time of the message in epoch seconds — when the \
+            underlying real-world event was captured (a frame's capture time, a \
+            sensor sample's timestamp), as opposed to when any node processed it. \
+            Minted by the producer and carried forward unchanged through the flow; \
+            time-aligned joins group on it (see ``videoflow.core.policies``).
     '''
     if msg_type == MSG_TYPE_EOS:
         payload_codec, payload_buf = CODEC_PICKLE, b''
@@ -158,6 +167,7 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
         'run_id': run_id,
         'trace_id': trace_id,
         'seq': seq,
+        'event_ts': event_ts,
         'span_id': span_id,
         'parent_span_id': parent_span_id,
         'replica_id': replica_id,
@@ -170,15 +180,16 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
 def decode_envelope(buf : bytes, blob_store : BlobStore = None) -> dict:
     '''
     Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \
-        ``run_id``, ``trace_id``, ``seq``, ``type``, ``is_stop_signal`` (derived: \
-        True iff ``type == MSG_TYPE_EOS``), ``span_id``, ``parent_span_id``, \
+        ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` on pre-v3 \
+        envelopes), ``type``, ``is_stop_signal`` (derived: True iff \
+        ``type == MSG_TYPE_EOS``), ``span_id``, ``parent_span_id``, \
         ``replica_id``, ``metadata``, and ``message`` (the fully decoded payload — \
         ``None`` for EOS envelopes).
     '''
     envelope = msgpack.unpackb(buf, raw = False)
     version = envelope.get('v')
-    if version != ENVELOPE_VERSION:
-        raise ValueError(f'Unsupported envelope version {version!r}; expected {ENVELOPE_VERSION}')
+    if version not in COMPATIBLE_ENVELOPE_VERSIONS:
+        raise ValueError(f'Unsupported envelope version {version!r}; expected one of {COMPATIBLE_ENVELOPE_VERSIONS}')
     msg_type = envelope['type']
     is_stop_signal = msg_type == MSG_TYPE_EOS
     if is_stop_signal:
@@ -191,6 +202,7 @@ def decode_envelope(buf : bytes, blob_store : BlobStore = None) -> dict:
         'run_id': envelope['run_id'],
         'trace_id': envelope['trace_id'],
         'seq': envelope['seq'],
+        'event_ts': envelope.get('event_ts'),
         'type': msg_type,
         'is_stop_signal': is_stop_signal,
         'span_id': envelope['span_id'],

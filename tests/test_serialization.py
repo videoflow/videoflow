@@ -60,6 +60,29 @@ def test_wrong_version_rejected():
     with pytest.raises(ValueError):
         decode_envelope(bad)
 
+def test_event_ts_round_trip():
+    ts = 1721234567.123456
+    buf = encode_envelope('cam1', 'flow1', 'run1', 'cam1:1', 1, MSG_TYPE_DATA,
+                        None, 'frame', event_ts = ts)
+    out = decode_envelope(buf)
+    assert out['event_ts'] == ts
+    # Unstamped messages carry None, not a fabricated time.
+    buf = encode_envelope('n', 'flow1', 'run1', 't', 1, MSG_TYPE_DATA, None, 1)
+    assert decode_envelope(buf)['event_ts'] is None
+
+def test_v2_envelope_decodes_without_event_ts():
+    # A v2 (pre-event_ts) envelope from an older build still decodes.
+    import msgpack
+    v2 = msgpack.packb({
+        'v': 2, 'type': MSG_TYPE_DATA, 'producer_name': 'n', 'flow_id': 'f',
+        'run_id': 'r', 'trace_id': 't', 'seq': 1, 'span_id': '',
+        'parent_span_id': '', 'replica_id': 0, 'metadata': None,
+        'payload_codec': CODEC_PICKLE, 'payload': __import__('pickle').dumps(7),
+    }, use_bin_type = True)
+    out = decode_envelope(v2)
+    assert out['message'] == 7
+    assert out['event_ts'] is None
+
 def test_codec_selection():
     codec, _ = encode_payload(np.zeros((3, 3)))
     assert codec == CODEC_RAW_NDARRAY

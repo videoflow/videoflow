@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import logging
+import time
 from typing import Any
 
 import cv2
@@ -9,6 +10,14 @@ import numpy as np
 from ..core.node import ProducerNode
 
 logger = logging.getLogger(__name__)
+
+#: Timestamp sources for ``VideostreamReader``: ``clock`` stamps each frame with
+#: the wall-clock time it was read (live cameras/streams on NTP/PTP-disciplined
+#: hosts); ``position`` stamps it with the frame's position on the video's own
+#: timeline (``CAP_PROP_POS_MSEC`` — synchronized recordings played back together).
+TIMESTAMP_CLOCK = 'clock'
+TIMESTAMP_POSITION = 'position'
+TIMESTAMP_SOURCES = (TIMESTAMP_CLOCK, TIMESTAMP_POSITION)
 
 class ImageProducer(ProducerNode):
     '''
@@ -86,9 +95,17 @@ class VideostreamReader(ProducerNode):
         - nb_frames: (int) The number of frames when to stop. -1 never stops
         - nb_retries: (int) If there are errors reading the stream, how \
             many times to retry.
+        - timestamp_source: (str) how each frame's event time is stamped (see \
+            ``TIMESTAMP_SOURCES``): ``clock`` (default — wall clock at read) or \
+            ``position`` (the video's own timeline). The stamp is attached to the \
+            published message via ``ctx.set_event_timestamp`` so time-aligned \
+            joins downstream can synchronize this stream with others.
     '''
     def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1, nb_retries = 0,
-                is_finite : bool = True, **kwargs) -> None:
+                is_finite : bool = True, timestamp_source : str = TIMESTAMP_CLOCK, **kwargs) -> None:
+        if timestamp_source not in TIMESTAMP_SOURCES:
+            raise ValueError(f'timestamp_source must be one of {TIMESTAMP_SOURCES}, '
+                            f'got {timestamp_source!r}')
         self._url_or_deviceid = url_or_deviceid
         self._video: Any = None  # cv2.VideoCapture, opened lazily in open()
         self._swap_channels = swap_channels
@@ -96,6 +113,7 @@ class VideostreamReader(ProducerNode):
         self._frame_count = 0
         self._nb_retries = nb_retries
         self._retries_count = 0
+        self._timestamp_source = timestamp_source
         super(VideostreamReader, self).__init__(is_finite = is_finite, **kwargs)
 
     def open(self) -> None:
@@ -112,11 +130,14 @@ class VideostreamReader(ProducerNode):
         if self._video and self._video.isOpened():
             self._video.release()
 
-    def next(self) -> tuple:
+    def next(self, ctx = None) -> tuple:
         '''
         - Returns:
             - frame no / index  : integer value of the frame read
             - frame: np.ndarray of shape (h, w, 3)
+
+        When run by a task (which passes the runtime ``ctx``), each frame's event
+        time is stamped on the published message per ``timestamp_source``.
 
         - Raises:
             - StopIteration: after it finishes reading the videofile \
@@ -136,6 +157,11 @@ class VideostreamReader(ProducerNode):
                         self._video.release()
                     self._video = cv2.VideoCapture(self._url_or_deviceid)
                 else:
+                    if ctx is not None:
+                        if self._timestamp_source == TIMESTAMP_POSITION:
+                            ctx.set_event_timestamp(self._video.get(cv2.CAP_PROP_POS_MSEC) / 1000.0)
+                        else:
+                            ctx.set_event_timestamp(time.time())
                     if self._swap_channels:
                         frame = frame[...,::-1]
                     return (self._frame_count, frame)
@@ -168,6 +194,7 @@ class VideoUrlReader(VideostreamReader):
             'nb_retries': self._nb_retries,
             'is_finite': self._is_finite,
             'swap_channels': self._swap_channels,
+            'timestamp_source': self._timestamp_source,
             'name': self._name,
         }
 
@@ -191,6 +218,7 @@ class VideoDeviceReader(VideostreamReader):
             'nb_retries': self._nb_retries,
             'is_finite': self._is_finite,
             'swap_channels': self._swap_channels,
+            'timestamp_source': self._timestamp_source,
             'name': self._name,
         }
 
@@ -203,16 +231,21 @@ class VideoFileReader(VideostreamReader):
         - video_file: path to video file
         - swap_channels: If true, swaps from BGR to RGB
         - nb_frames: number of frames to process. -1 means all of them
+        - timestamp_source: defaults to ``position`` (the file's own timeline), \
+            which is what synchronized recordings replayed together should align on.
     '''
-    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1, **kwargs) -> None:
+    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1,
+                timestamp_source : str = TIMESTAMP_POSITION, **kwargs) -> None:
         super(VideoFileReader, self).__init__(video_file, swap_channels = swap_channels, nb_frames = nb_frames,
-                                            nb_retries = 0, is_finite = True, **kwargs)
+                                            nb_retries = 0, is_finite = True,
+                                            timestamp_source = timestamp_source, **kwargs)
 
     def get_params(self) -> dict:
         return {
             'video_file': self._url_or_deviceid,
             'swap_channels': self._swap_channels,
             'nb_frames': self._nb_frames,
+            'timestamp_source': self._timestamp_source,
             'name': self._name,
         }
 

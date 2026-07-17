@@ -170,6 +170,45 @@ error) so a stalled or dropped branch can't hang the join forever. End-of-stream
 **replica-safe**: every replica of a node observes it and drains its inputs before
 terminating.
 
+### Time-synchronized joins (fusing independent streams)
+
+By default a join groups inputs by **lineage** — halves that descend from the same
+originating message of one producer (a diamond that fans out and reconverges). To
+fuse streams from *independent* producers — several cameras plus sensors, none
+sharing an upstream — group by **event time** instead:
+
+```python
+from videoflow.core.policies import JoinPolicy
+
+fused = FusionProcessor(name='fuse', join_policy=JoinPolicy(
+    mode='time',            # group by event_ts, not trace lineage
+    tolerance_ms=8,         # messages within 8ms are the same moment (< one 60fps frame)
+    timeout_seconds=0.05,   # lateness bound: how long to wait for stragglers
+    quorum=6,               # emit once ≥6 of N cameras are present (missing ones → None)
+    collect={'imu': 25},    # high-rate parent: deliver every sample within 25ms as a list
+))(cam1, cam2, cam3, cam4, cam5, cam6, cam7, cam8, imu)
+```
+
+Each input carries an **event timestamp** (epoch seconds) that a producer stamps and
+that travels with the message through the whole flow (downstream nodes inherit it
+automatically). Producers stamp it via `ctx.set_event_timestamp(ts)`; the built-in
+`VideostreamReader` does this per frame (`timestamp_source='clock'` for live streams,
+`'position'` for synchronized recordings). A fusion node reads each input's exact
+time from `ctx.input_info` (per-parent `event_ts`/`metadata`) to interpolate between
+samples. Cross-device time accuracy itself is an ops concern — genlocked cameras and
+PTP/NTP-disciplined hosts — the framework aligns on whatever timestamps it's given.
+
+A time-aligned join runs with `nb_tasks=1` (every parent's half must reach the same
+worker to be grouped); scale the per-stream work in the nodes *upstream* of the
+fusion node instead.
+
+**Backward compatibility.** `mode='trace'` is the default and never reads
+`event_ts`, so existing flows — including ones whose producers stamp no time at
+all — behave exactly as before. A producer that never calls
+`ctx.set_event_timestamp` still gets an event time on the wire: its publish
+wall-clock, which is ignored by trace-mode joins and serves as a sensible fallback
+if such a stream is later fed into a `mode='time'` join.
+
 ---
 
 ## The three node types

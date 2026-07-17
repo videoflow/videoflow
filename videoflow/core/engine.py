@@ -63,10 +63,28 @@ class Messenger:
         '''
         pass
 
+    def set_output_event_timestamp(self, value : float) -> None:
+        '''
+        Set the event time (epoch seconds) stamped on this node's next published \
+            output (via ``RuntimeContext.set_event_timestamp``) — when the \
+            underlying real-world event was captured. Producers of time-sensitive \
+            data (cameras, sensors) should set this; downstream nodes inherit their \
+            input group's event time automatically. Default: no-op.
+        '''
+        pass
+
     def last_input_key(self) -> Optional[str]:
         '''
         A stable identity for the input group last returned by ``receive_message``, \
             used as a sink idempotency key. Default: None (no idempotency).
+        '''
+        return None
+
+    def last_input_info(self) -> Optional[dict]:
+        '''
+        Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, \
+            ``seq``) for the input group last returned by ``receive_message`` \
+            (exposed to nodes as ``ctx.input_info``). Default: None.
         '''
         return None
 

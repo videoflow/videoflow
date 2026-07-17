@@ -26,7 +26,7 @@ import nats
 
 from ..core.constants import REALTIME
 from ..core.engine import Messenger
-from ..core.policies import MISSING_DROP, MISSING_ERROR, JoinPolicy
+from ..core.policies import JOIN_TIME, JoinPolicy
 from ..serialization import (
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
@@ -34,6 +34,7 @@ from ..serialization import (
     derive_message_id,
     encode_envelope,
 )
+from .grouping import make_assembler
 from .topology import (
     consumer_config_for,
     control_subject_for,
@@ -132,12 +133,14 @@ class NATSMessenger(Messenger):
             output stream.
         - blob_store: optional ``videoflow.serialization.BlobStore`` for payloads \
             over the inline size threshold.
-        - join_buffer_size (int): max number of not-yet-complete multi-parent \
-            join groups to hold in memory before evicting the oldest (protects \
-            against unbounded growth if a sibling branch stalls or drops a message).
+        - join_policy (dict): serialized ``videoflow.core.policies.JoinPolicy`` \
+            controlling how multi-parent input groups are formed (by trace id or \
+            by event time) and expired; defaults per flow type when unset. The \
+            policy's ``max_pending`` bounds how many not-yet-complete groups are \
+            held in memory before the oldest is evicted.
     '''
     def __init__(self, node, parent_names, nats_url : str, flow_id : str, flow_type : str,
-                run_id : str, blob_store = None, join_buffer_size : int = 256,
+                run_id : str, blob_store = None,
                 replica_id : int = 0, ack_wait : int = 60, max_retries : int = 3,
                 eos_quiescence_ms : int = 500, nb_tasks : int = 1, partition_by = None,
                 join_policy = None) -> None:
@@ -157,9 +160,15 @@ class NATSMessenger(Messenger):
         self._partition_by = partition_by if (partition_by and nb_tasks > 1) else None
         self._join_policy: JoinPolicy = (JoinPolicy.from_dict(join_policy)
                             if join_policy else None) or JoinPolicy.default_for(flow_type)
-        self._join_buffer_size = self._join_policy.max_pending
-        # first-seen wall-clock per pending group, for join timeout expiry.
-        self._group_first_seen: dict = {}
+        if (self._join_policy.mode == JOIN_TIME and len(self._parent_names) > 1
+                and nb_tasks > 1):
+            # Replicas (competing or partitioned) would each see only some halves
+            # of a time window, so no replica could ever complete a group.
+            raise ValueError(f'{node.name}: a time-aligned join (join_policy '
+                            f"mode='time') requires nb_tasks == 1, got {nb_tasks}")
+        # Assembles multi-parent input groups (by trace id or by event time) and
+        # owns all pending-group buffering/expiry — see videoflow.messaging.grouping.
+        self._assembler = make_assembler(node.name, self._parent_names, self._join_policy)
         # Unique per replica: names this replica's EOS consumers so every replica
         # observes end-of-stream (the shared data durable would deliver EOS to only
         # one of them).
@@ -167,13 +176,18 @@ class NATSMessenger(Messenger):
 
         self._trace_counter = 0
         self._last_trace_id: Optional[str] = None
-        # seq is carried forward from the input group so a re-run of the same
-        # logical output derives the same message_id (dedup). Producers use the
-        # local counter; downstream nodes inherit the input group's seq.
+        # seq/event_ts are carried forward from the input group so a re-run of the
+        # same logical output derives the same message_id (dedup) and event time
+        # survives the whole pipeline. Producers use the local counter (and stamp
+        # event time themselves); downstream nodes inherit the input group's values.
         self._last_seq = 0
-        # Optional partition key set by the node (via ctx.set_partition_key) and
-        # attached to the next published message's metadata.
+        self._last_event_ts: Optional[float] = None
+        self._last_input_info: Optional[dict] = None
+        # Optional partition key / event timestamp set by the node (via
+        # ctx.set_partition_key / ctx.set_event_timestamp) and attached to the
+        # next published message.
         self._output_partition_key = None
+        self._output_event_ts: Optional[float] = None
 
         self._stopped_parents: set = set()
         # EOS drain state: a parent is fully stopped only once its EOS has been
@@ -182,14 +196,11 @@ class NATSMessenger(Messenger):
         self._eos_seen: set = set()
         self._eos_handles: dict = {}
         self._quiescent_since: dict = {}
-        self._pending_groups: dict = {}
-        self._pending_order: list = []
-        # Ack handles for buffered/in-flight messages: _group_handles mirrors
-        # _pending_groups (per trace_id, per parent); _inflight_handles are the
-        # handles of the group last returned by receive_message, resolved by the
-        # task via ack_inputs()/fail_inputs(). _live_handles is every unresolved
-        # handle (for the keepalive extender), guarded by _live_lock.
-        self._group_handles: dict = {}
+        # Ack handles: _inflight_handles are the handles of the group last returned
+        # by receive_message, resolved by the task via ack_inputs()/fail_inputs()
+        # (handles of still-pending groups live inside the assembler).
+        # _live_handles is every unresolved handle (for the keepalive extender),
+        # guarded by _live_lock.
         self._inflight_handles: list = []
         self._live_lock = threading.Lock()
         self._live_handles: set = set()
@@ -410,6 +421,17 @@ class NATSMessenger(Messenger):
     def set_output_partition_key(self, value) -> None:
         self._output_partition_key = value
 
+    def set_output_event_timestamp(self, value : float) -> None:
+        self._output_event_ts = value
+
+    def last_input_info(self) -> Optional[dict]:
+        '''
+        Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, ``seq``)
+        for the input group last returned by ``receive_message``; ``None`` entries
+        for parents missing from a quorum emission. ``None`` for producers.
+        '''
+        return self._last_input_info
+
     def last_input_key(self) -> Optional[str]:
         '''
         A stable identity for the input group last returned by ``receive_message``,
@@ -431,11 +453,21 @@ class NATSMessenger(Messenger):
             self._trace_counter += 1
             trace_id = f'{self._node.name}:{self._trace_counter}'
             seq = self._trace_counter
+        # Event time: an explicit stamp from the node (ctx.set_event_timestamp)
+        # wins; otherwise it is inherited from the input group; a producer with
+        # neither gets publish wall-clock as a last resort.
+        if self._output_event_ts is not None:
+            event_ts = self._output_event_ts
+            self._output_event_ts = None
+        elif self._last_event_ts is not None:
+            event_ts = self._last_event_ts
+        else:
+            event_ts = time.time()
         if self._output_partition_key is not None:
             metadata = dict(metadata or {})
             metadata['_partition_key'] = self._output_partition_key
             self._output_partition_key = None
-        self._publish(message, metadata, trace_id, seq, MSG_TYPE_DATA)
+        self._publish(message, metadata, trace_id, seq, MSG_TYPE_DATA, event_ts = event_ts)
 
     def publish_stop_signal(self) -> None:
         # EOS goes on this node's dedicated _eos subject (not the data subject), so
@@ -445,11 +477,12 @@ class NATSMessenger(Messenger):
         eos_trace = f'eos-r{self._replica_id}'
         self._publish(None, None, eos_trace, self._last_seq, MSG_TYPE_EOS)
 
-    def _publish(self, message, metadata, trace_id, seq, msg_type) -> None:
+    def _publish(self, message, metadata, trace_id, seq, msg_type, event_ts = None) -> None:
         node_name = self._node.name
         buf = encode_envelope(
             node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
-            metadata, message, replica_id = self._replica_id, blob_store = self._blob_store,
+            metadata, message, replica_id = self._replica_id, event_ts = event_ts,
+            blob_store = self._blob_store,
         )
         if msg_type == MSG_TYPE_EOS:
             subject = eos_subject_for(self._flow_id, self._run_id, node_name)
@@ -555,39 +588,53 @@ class NATSMessenger(Messenger):
             # parent is "stopped" only once its EOS is seen and its data is drained.
             if self._termination_event.is_set() or self._all_parents_stopped():
                 self._last_trace_id = None
+                self._last_input_info = None
                 return {
                     name: {'message': None, 'metadata': None, 'is_stop_signal': True}
                     for name in self._parent_names
                 }
 
-            self._sweep_join_timeouts()
+            self._assembler.sweep()
 
-            complete_trace_id = self._find_complete_group()
-            if complete_trace_id is not None:
-                group = self._pending_groups.pop(complete_trace_id)
-                handles = self._group_handles.pop(complete_trace_id)
-                self._pending_order.remove(complete_trace_id)
-                self._group_first_seen.pop(complete_trace_id, None)
-                self._last_trace_id = complete_trace_id
-                # Carry a deterministic representative seq forward so this node's
-                # output derives a stable message_id across retries (min over the
-                # group is stable because the same messages reassemble on retry).
-                self._last_seq = min(group[name]['seq'] for name in self._parent_names)
+            ready = self._assembler.pop_ready()
+            if ready is not None:
+                self._last_trace_id = ready.trace_id
+                # Deterministic representative seq/event_ts carried forward so this
+                # node's output derives a stable message_id across retries and
+                # keeps its event time.
+                self._last_seq = ready.seq
+                self._last_event_ts = ready.event_ts
                 # Hold this group's handles for the task to ack/fail after process().
-                self._inflight_handles = [handles[name] for name in self._parent_names]
-                return {
-                    name: {
-                        'message': group[name]['message'],
-                        'metadata': group[name]['metadata'],
+                self._inflight_handles = list(ready.handles)
+                out = {}
+                info: dict = {}
+                for name in self._parent_names:
+                    entry = ready.entries.get(name)
+                    if entry is None:
+                        # Parent missing from a quorum emission: the node sees None.
+                        out[name] = {'message': None, 'metadata': None,
+                                    'is_stop_signal': False, 'event_ts': None}
+                        info[name] = None
+                        continue
+                    out[name] = {
+                        'message': entry['message'],
+                        'metadata': entry['metadata'],
                         'is_stop_signal': False,
+                        'event_ts': entry.get('event_ts'),
                     }
-                    for name in self._parent_names
-                }
+                    info[name] = {
+                        'event_ts': entry.get('event_ts'),
+                        'metadata': entry['metadata'],
+                        'trace_id': entry.get('trace_id'),
+                        'seq': entry.get('seq'),
+                    }
+                self._last_input_info = info
+                return out
 
             # asyncio.wait(FIRST_COMPLETED) can legitimately return more than one
             # completed get() if two parent queues both had data ready — every one
             # of those items has already been dequeued from its asyncio.Queue, so
-            # all of them must be folded into pending groups here. Discarding
+            # all of them must be folded into the assembler here. Discarding
             # all-but-one (an earlier version of this method did) silently lost
             # messages whenever two parents produced close together in time.
             for parent_name, entry, handle in self._recv_ready():
@@ -596,59 +643,7 @@ class NATSMessenger(Messenger):
                     # the EOS loop, not here. Ack defensively if one slips through.
                     handle.ack()
                     continue
-                trace_id = entry['trace_id']
-                group = self._pending_groups.setdefault(trace_id, {})
-                handles = self._group_handles.setdefault(trace_id, {})
-                if parent_name in handles:
-                    # Redelivery of a half we already buffered (the group hadn't
-                    # completed yet). Supersede: terminate the stale handle and keep
-                    # the fresh delivery so its ack deadline restarts.
-                    handles[parent_name].term()
-                elif trace_id not in self._pending_order:
-                    self._pending_order.append(trace_id)
-                    self._group_first_seen[trace_id] = time.monotonic()
-                group[parent_name] = entry
-                handles[parent_name] = handle
-
-            # Hard cap on buffered groups (last-resort memory guard): drop the oldest.
-            while len(self._pending_order) > self._join_buffer_size:
-                self._evict_group(self._pending_order[0], missing = MISSING_DROP, reason = 'max_pending exceeded')
-
-    def _sweep_join_timeouts(self) -> None:
-        '''Expire incomplete join groups older than the join policy's timeout, applying the missing policy (drop/error). WAIT policies have no timeout.'''
-        timeout = self._join_policy.timeout_seconds
-        if timeout is None or len(self._parent_names) < 2:
-            return
-        now = time.monotonic()
-        for trace_id in list(self._pending_order):
-            first = self._group_first_seen.get(trace_id, now)
-            if now - first >= timeout:
-                self._evict_group(trace_id, missing = self._join_policy.missing,
-                                reason = f'join timeout ({timeout}s)')
-
-    def _evict_group(self, trace_id, missing, reason) -> None:
-        if trace_id not in self._pending_groups:
-            return
-        group = self._pending_groups.pop(trace_id)
-        self._pending_order.remove(trace_id)
-        self._group_first_seen.pop(trace_id, None)
-        handles = self._group_handles.pop(trace_id, {})
-        for handle in handles.values():
-            if missing == MISSING_ERROR:
-                handle.nak()   # redeliver — the missing half may still arrive
-            else:
-                handle.ack()   # DROP: give up on this partial group
-        logger.warning(
-            f'{self._node.name}: evicting incomplete join group {trace_id} '
-            f'(had {list(group.keys())}, needed {self._parent_names}) — {reason}, '
-            f'missing policy={missing}.'
-        )
-
-    def _find_complete_group(self) -> Optional[str]:
-        for trace_id in self._pending_order:
-            if len(self._pending_groups[trace_id]) == len(self._parent_names):
-                return trace_id
-        return None
+                self._assembler.add(parent_name, entry, handle)
 
     # -- EOS drain -------------------------------------------------------
 
@@ -695,7 +690,7 @@ class NATSMessenger(Messenger):
         return False
 
     def _has_pending_from(self, parent : str) -> bool:
-        return any(parent in group for group in self._pending_groups.values())
+        return self._assembler.has_pending_from(parent)
 
     def _consumer_pending(self, parent : str) -> tuple:
         durable = self._data_durable_name(parent)
