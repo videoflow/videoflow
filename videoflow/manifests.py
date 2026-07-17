@@ -1,9 +1,12 @@
 '''
 Renders Kubernetes manifests for a compiled flow (a list of ``NodeSpec``). One
-workload per node:
+workload per node, chosen by flow type:
 
-  - finite producers      -> a Job (runs to completion when the source is exhausted)
-  - everything else       -> a Deployment (stays up until the control-channel stop)
+  - BATCH flow     -> every node is a Job (each worker exits 0 when its upstream
+                      end-of-stream drains, so the whole flow runs to completion).
+  - REALTIME flow  -> a finite producer is a Job; every other node is a Deployment
+                      (or a StatefulSet if partitioned) that stays up until the
+                      control-channel stop.
 
 plus a per-node ConfigMap holding the node's env, a shared ConfigMap for the NATS
 URL, and a default-deny-except-broker NetworkPolicy.
@@ -15,15 +18,32 @@ from __future__ import absolute_import, division, print_function
 
 import json
 import re
+import subprocess
 from typing import Optional
 
 import yaml
 
 from .compiler import NODE_KIND_PRODUCER
+from .core.constants import BATCH
 
 LABEL_FLOW_ID = 'videoflow.io/flow-id'
+LABEL_RUN_ID = 'videoflow.io/run-id'
 LABEL_NODE = 'videoflow.io/node'
 LABEL_MANAGED_BY = 'app.kubernetes.io/managed-by'
+
+# Built-in k8s kinds videoflow creates for a flow — always resolvable, deleted in one
+# call. The single source of truth for label-selector teardown.
+_CORE_DELETABLE_KINDS = ('deployment', 'statefulset', 'job', 'configmap', 'service',
+                         'networkpolicy', 'poddisruptionbudget')
+# Optional CRD kinds (only present if their operator is installed, e.g. KEDA). Deleted
+# separately so a missing CRD type doesn't make kubectl reject the whole delete and
+# leave the core resources behind.
+_CRD_DELETABLE_KINDS = ('scaledobject',)
+DELETABLE_KINDS = _CORE_DELETABLE_KINDS + _CRD_DELETABLE_KINDS
+
+# GC safety net on batch Jobs: even if the launching client dies mid-run, k8s reaps
+# completed Job objects (and their pods) after this many seconds.
+_BATCH_JOB_TTL_SECONDS = 600
 
 _DNS1123_RE = re.compile(r'[^a-z0-9-]+')
 
@@ -91,12 +111,23 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
     if getattr(spec, 'command', None):
         container['command'] = list(spec.command)
     if _is_partitioned(spec):
-        # Partitioned pods run as a StatefulSet; the ordinal in the pod name is the
-        # replica id (the worker parses it off POD_NAME).
-        container['env'] = [{
-            'name': 'POD_NAME',
-            'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
-        }]
+        if flow_type == BATCH:
+            # Partitioned BATCH node runs as an Indexed Job; the completion index is
+            # the stable 0..N-1 replica id. Feed it straight into VF_REPLICA_ID (the
+            # worker reads that first) — an indexed-Job pod name has a random suffix,
+            # so the POD_NAME-ordinal path would not recover it.
+            container['env'] = [{
+                'name': 'VF_REPLICA_ID',
+                'valueFrom': {'fieldRef': {
+                    'fieldPath': "metadata.annotations['batch.kubernetes.io/job-completion-index']"}},
+            }]
+        else:
+            # Partitioned REALTIME node runs as a StatefulSet; the ordinal in the pod
+            # name is the replica id (the worker parses it off POD_NAME).
+            container['env'] = [{
+                'name': 'POD_NAME',
+                'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
+            }]
 
     resources = {}
     node_selector = None
@@ -167,23 +198,42 @@ def workload(spec, flow_id, flow_type, image, nats_cm_name) -> dict:
         'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name),
     }
 
-    is_job = spec.kind == NODE_KIND_PRODUCER and spec.is_finite
+    batch = (flow_type == BATCH)
+    partitioned = _is_partitioned(spec)
+    # In a BATCH flow every node terminates: each worker exits 0 once its upstream
+    # end-of-stream drains. So every node is a Job — a Deployment (restartPolicy
+    # Always) would restart the finished pod into CrashLoopBackOff. In a REALTIME
+    # flow only a finite producer completes; the rest run until the control stop.
+    is_job = batch or (spec.kind == NODE_KIND_PRODUCER and spec.is_finite)
     if is_job:
-        # A finite producer completes; its worker pod should not be restarted on
-        # a clean exit, only on failure.
+        # A completing worker pod should not be restarted on a clean exit, only on
+        # failure.
         pod_template['spec']['restartPolicy'] = 'OnFailure'
         # Probes make no sense for a short-lived Job pod that has no long-running
         # health server contract; drop them.
-        pod_template['spec']['containers'][0].pop('readinessProbe', None)
-        pod_template['spec']['containers'][0].pop('livenessProbe', None)
+        for probe in ('readinessProbe', 'livenessProbe', 'startupProbe'):
+            pod_template['spec']['containers'][0].pop(probe, None)
+        job_spec: dict = {'backoffLimit': 3, 'template': pod_template}
+        if batch:
+            # Reap completed Jobs (and pods) even if the launching client dies.
+            job_spec['ttlSecondsAfterFinished'] = _BATCH_JOB_TTL_SECONDS
+            if partitioned:
+                # N distinct, stable replica ids → Indexed Job (completion index is
+                # the replica id, see _pod_spec).
+                job_spec['completionMode'] = 'Indexed'
+                job_spec['completions'] = spec.nb_tasks
+                job_spec['parallelism'] = spec.nb_tasks
+            elif spec.nb_tasks > 1:
+                # Competing consumers sharing one durable: N interchangeable pods,
+                # each with its own per-process EOS durable, so each independently
+                # sees EOS and exits 0. Require all N to complete.
+                job_spec['completions'] = spec.nb_tasks
+                job_spec['parallelism'] = spec.nb_tasks
         return {
             'apiVersion': 'batch/v1',
             'kind': 'Job',
             'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
-            'spec': {
-                'backoffLimit': 3,
-                'template': pod_template,
-            },
+            'spec': job_spec,
         }
 
     selector = {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}}
@@ -427,9 +477,61 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
             if so is not None:
                 manifests.append(so)
 
+    # Stamp namespace + the run-id label on every resource (and on workload pod
+    # templates, so `kubectl logs`/wait can select a single run). Done centrally here
+    # rather than threaded through every builder. The run-id label makes teardown
+    # run-scoped, so a redeploy under a new run-id never nukes a concurrent run.
+    run_label = k8s_name(run_id)
     for m in manifests:
         m['metadata']['namespace'] = namespace
+        m['metadata'].setdefault('labels', {})[LABEL_RUN_ID] = run_label
+        template = m.get('spec', {}).get('template')
+        if isinstance(template, dict):
+            template.setdefault('metadata', {}).setdefault('labels', {})[LABEL_RUN_ID] = run_label
     return manifests
+
+def split_provision_manifests(manifests, flow_id):
+    '''
+    Partitions rendered manifests into ``(provision_phase, worker_phase)`` so the
+    caller can apply provisioning first and wait for it before starting workers.
+
+    The provision phase is everything the provision Job needs to create the broker
+    streams/durables (including its EOS interest anchors) before any worker
+    publishes: the broker + specs ConfigMaps, the NetworkPolicy, and the provision
+    Job itself. The worker phase is every node's ConfigMap/workload/service/PDB.
+    '''
+    provision_names = {
+        k8s_name('vf', flow_id, 'broker'),
+        k8s_name('vf', flow_id, 'specs'),
+        k8s_name('vf', flow_id, 'netpol'),
+        k8s_name('vf', flow_id, 'provision'),
+    }
+    phase1, phase2 = [], []
+    for m in manifests:
+        (phase1 if m['metadata']['name'] in provision_names else phase2).append(m)
+    return phase1, phase2
+
+def delete_resources(kubectl, namespace, flow_id, run_id = None) -> None:
+    '''
+    Single source of truth for tearing down a flow's Kubernetes resources: deletes
+    every kind in ``DELETABLE_KINDS`` matching the flow-id label, scoped to one run
+    when ``run_id`` is given (else every run of the flow). Best-effort (never raises).
+    '''
+    selector = f'{LABEL_FLOW_ID}={k8s_name(flow_id)}'
+    if run_id is not None:
+        selector += f',{LABEL_RUN_ID}={k8s_name(run_id)}'
+    subprocess.run(
+        [kubectl, 'delete', '-n', namespace, ','.join(_CORE_DELETABLE_KINDS), '-l', selector],
+        check = False,
+    )
+    # CRD kinds one at a time: if the CRD isn't installed, kubectl errors on just that
+    # kind instead of aborting the whole delete. Output suppressed (the "no such
+    # resource type" message is expected when the operator is absent).
+    for kind in _CRD_DELETABLE_KINDS:
+        subprocess.run(
+            [kubectl, 'delete', '-n', namespace, kind, '-l', selector],
+            check = False, capture_output = True,
+        )
 
 def dump_manifests(manifests) -> str:
     '''Serializes a list of manifest dicts to a single multi-document YAML string.'''

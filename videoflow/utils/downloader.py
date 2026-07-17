@@ -139,7 +139,10 @@ def get_file(fname,
         download = True
 
     if download:
-        print('Downloading data from', origin)
+        # `origin` may be a single URL or an ordered list of candidate URLs
+        # (e.g. an upstream source followed by a durable mirror). They are tried
+        # in order; the first successful download wins.
+        origins = [origin] if isinstance(origin, str) else list(origin)
 
         class ProgressTracker(object):
             # Maintain progbar for the lifetime of download.
@@ -155,13 +158,26 @@ def get_file(fname,
                 ProgressTracker.progbar.update(count * block_size)
 
         error_msg = 'URL fetch failure on {} : {} -- {}'
+        last_error: Any = None
         try:
-            try:
-                urlretrieve(origin, fpath, dl_progress)
-            except HTTPError as e:
-                raise Exception(error_msg.format(origin, e.code, e.msg)) from e
-            except URLError as e:
-                raise Exception(error_msg.format(origin, e.errno, e.reason)) from e
+            for url in origins:
+                print('Downloading data from', url)
+                ProgressTracker.progbar = None
+                try:
+                    urlretrieve(url, fpath, dl_progress)
+                    last_error = None
+                    break
+                except HTTPError as e:
+                    last_error = Exception(error_msg.format(url, e.code, e.msg))
+                except URLError as e:
+                    last_error = Exception(error_msg.format(url, e.errno, e.reason))
+                except Exception as e:  # noqa: BLE001 — try the next mirror
+                    last_error = e
+                # Remove any partial file before trying the next candidate URL.
+                if os.path.exists(fpath):
+                    os.remove(fpath)
+            if last_error is not None:
+                raise last_error
         except (Exception, KeyboardInterrupt):
             if os.path.exists(fpath):
                 os.remove(fpath)

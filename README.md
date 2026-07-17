@@ -17,7 +17,9 @@ The same graph runs two ways with no code changes:
   scheduling, health probes and autoscaling for production.
 
 It ships with off-the-shelf components for object detection, tracking, pose
-estimation, segmentation and video I/O, and is easy to extend with your own.
+estimation, segmentation and video I/O, is easy to extend with your own, and can
+run [components written in any language](#language-agnostic-components) shipped as
+container images.
 
 ---
 
@@ -47,7 +49,7 @@ estimation, segmentation and video I/O, and is easy to extend with your own.
 
 ## Installation
 
-Requires **Python 3.6+** and a running NATS JetStream server at runtime.
+Requires **Python 3.12+** and a running NATS JetStream server at runtime.
 
 ```bash
 pip install "videoflow[distributed]"   # core + broker client + wire format
@@ -136,8 +138,11 @@ kubectl apply -k ./manifests
 Use `--dry-run` to print the manifests to stdout without writing files. Other CLI
 commands: `videoflow explain my_flow.py` (human-readable graph/topology summary),
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),
-and `videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...]`
-(stop a run and delete its streams and workloads).
+`videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...]`
+(stop a run and delete its streams and workloads), `videoflow debug decode`
+(decode wire envelopes from a file or a run's DLQ), and the
+`videoflow component validate|push|pull|inspect` family for
+[language-agnostic components](#language-agnostic-components).
 
 ### How graph concepts map onto the broker and Kubernetes
 
@@ -286,6 +291,82 @@ declares its own image in the graph — `MyDetector(name='det', image='ghcr.io/m
 — or is overridden at deploy time with `--image-override det=ghcr.io/me/gpu:v1`
 (override wins over the node's own image, which wins over `--image`). A pure built-in
 flow can just use `--image videoflow-base:latest`.
+
+---
+
+## Language-agnostic components
+
+A node doesn't have to be Python. Videoflow defines a **language-agnostic wire and
+runtime contract** so a component can be written in any language, shipped as its own
+container image, and dropped into a Python-authored graph by reference — the basis
+for a component **marketplace**.
+
+The Python process only ever *builds and compiles* the graph; a remote component's
+`next`/`process`/`consume` run out-of-process in the vendor image, driven by that
+image's own SDK speaking the protocol. You wire one in with the `component()` factory
+instead of importing a class:
+
+```python
+from videoflow.core import Flow, component
+from videoflow.core.constants import BATCH
+
+def build_flow():
+    reader  = component('oci://ghcr.io/acme/camera-reader:1.0.0',
+                        params={'address': 'rtsp://…'}, name='reader')
+    tracker = component('oci://ghcr.io/acme/sort-tracker:1.2.0',
+                        params={'max_age': 30})(reader)      # a Rust/C++/… node
+    sink    = component('./my-consumer')(tracker)            # a local descriptor dir
+    return Flow([sink], flow_type=BATCH)
+```
+
+A remote node behaves like a normal Producer/Processor/Consumer for wiring,
+validation, scaling (`nb_tasks`, `partition_by`), and manifest generation; the
+compiler records a `component_ref` + descriptor instead of a Python class.
+
+### Component descriptors
+
+A component is described by a `component.yaml` (validated against
+[`spec/descriptor/component-schema.json`](spec/descriptor/component-schema.json))
+that declares its params, inputs/outputs, device support, protocol version, and the
+container image(s) to run. A descriptor with a `spec.runtime.pythonClass` names a
+Python node the worker imports directly; without one it's a **native** component that
+runs its own image entrypoint. Validate any descriptor before shipping it:
+
+```bash
+videoflow component validate ./sort-tracker/component.yaml
+```
+
+### Publishing and consuming (OCI)
+
+Descriptors are distributed as **OCI artifacts** (media type
+`application/vnd.videoflow.component.v1+yaml`) alongside the images they reference, so
+a consumer can inspect a component's contract without pulling multi-gigabyte ML
+images. An `oci://` ref in `component()` is pulled and cached under
+`~/.videoflow/components/` automatically.
+
+```bash
+videoflow component push    ./sort-tracker oci://ghcr.io/acme/sort-tracker:1.2.0
+videoflow component inspect oci://ghcr.io/acme/sort-tracker:1.2.0   # params/io, no images
+videoflow component pull    oci://ghcr.io/acme/sort-tracker:1.2.0 --verify   # cosign
+```
+
+See [`spec/DISTRIBUTION.md`](spec/DISTRIBUTION.md) for the reference grammar and
+publishing model.
+
+### The wire protocol and spec
+
+Cross-language interop runs over a **protobuf envelope (wire v4)** with well-known
+payload types (`Tensor`, `Frame`, `Detections`, `Tracks`, `BlobRef`, `Value`). Pure
+Python flows are unaffected — they keep using the msgpack wire by default; a flow
+that contains any remote/native component automatically upgrades to v4. A mixed flow
+that would need Python pickle on the wire is a hard compile error.
+
+The normative contract lives in [`spec/`](spec/):
+[`spec/PROTOCOL.md`](spec/PROTOCOL.md) (protocol v1 — every requirement an SDK must
+implement, with stable IDs), the protobuf IDL under `spec/proto/videoflow/v1/`, and
+golden test vectors in `spec/vectors/` replayed against every SDK to enforce
+lockstep. A vendor can hand-write a conforming component against the spec today; the
+Python worker is the executable reference implementation.
 
 ---
 

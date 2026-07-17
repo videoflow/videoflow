@@ -34,6 +34,11 @@ Easy to extend
     Writing your own producers, processors and consumers is straightforward — sync
     or async, with an optional runtime context.
 
+Language-agnostic
+    Components can be written in any language, shipped as container images, and
+    dropped into a Python-authored graph by reference — the basis for a component
+    marketplace.
+
 Free and open source
     Videoflow uses the MIT License.
 
@@ -55,6 +60,7 @@ Free and open source
     user-documentation/writing-your-own-components
     user-documentation/batch-versus-realtime-mode
     user-documentation/task-allocation
+    user-documentation/time-synchronized-joins
     user-documentation/common-patterns
 
 .. toctree::
@@ -64,6 +70,7 @@ Free and open source
 
     distributed/distributed-execution
     distributed/deploying-to-kubernetes
+    distributed/language-agnostic-components
     user-documentation/debugging-flow-applications
 
 .. toctree::

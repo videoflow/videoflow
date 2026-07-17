@@ -3,6 +3,13 @@ Command-line entrypoint for deploying a videoflow graph to Kubernetes.
 
     videoflow deploy path/to/graph.py:build_flow --nats nats://nats:4222 --namespace videoflow
 
+By default ``deploy`` is one command that does everything: it provisions the broker,
+applies the flow, and — for a BATCH flow — waits for it to run to completion and then
+tears down every resource (Kubernetes workloads + broker streams). A REALTIME flow is
+applied and left running; stop it later with ``videoflow teardown``. Nothing is written
+to disk unless ``--render-only`` (write manifest files + kustomization) or ``--dry-run``
+(print YAML to stdout) is given.
+
 The graph module must expose a factory (default name ``build_flow``) that returns a
 built ``videoflow.core.flow.Flow`` without calling ``.run()`` on it — the CLI needs
 the graph, not a running flow.
@@ -49,8 +56,8 @@ def _cmd_deploy(args) -> None:
     import uuid
 
     from .compiler import compile_flow
+    from .core.constants import BATCH
     from .images import parse_override
-    from .manifests import dump_manifests, render_manifests
 
     overrides = {}
     for override in args.image_override or []:
@@ -67,6 +74,61 @@ def _cmd_deploy(args) -> None:
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     try:
         specs = compile_flow(flow, envelope_version = args.envelope_version, allow_pickle = args.allow_pickle)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+
+    # --dry-run / --render-only are the only paths that touch the working tree.
+    if args.dry_run or args.render_only:
+        _render_manifests_to_disk(args, flow, specs, run_id, overrides)
+        return
+
+    teardown_cmd = (f'  videoflow teardown --flow-id {flow.flow_id} --run-id {run_id} '
+                    f'--nats {args.nats} --namespace {args.namespace}')
+
+    from .engines.kubernetes import KubernetesExecutionEngine
+    engine = KubernetesExecutionEngine(
+        nats_url = args.nats, namespace = args.namespace, default_image = args.image,
+        image_overrides = overrides, blob_redis_url = args.blob_redis_url, specs = specs,
+        kubectl = args.kubectl, envelope_version = args.envelope_version,
+        allow_pickle = args.allow_pickle, provision_image = args.provision_image,
+        autoscaling = args.autoscaling, max_replicas = args.max_replicas,
+    )
+    try:
+        flow.run(engine, run_id = run_id)
+    except (RuntimeError, ValueError) as e:
+        raise SystemExit(str(e)) from e
+    print(f'Flow {flow.flow_id} run {run_id} applied to namespace {args.namespace}.')
+
+    if flow.flow_type != BATCH:
+        print('REALTIME flow is running. Tear it down with:')
+        print(teardown_cmd)
+        return
+
+    # BATCH: run to completion, then clean everything up — on success, failure, or
+    # Ctrl-C (the finally block always runs unless --keep is set).
+    failed = []
+    try:
+        failed = engine.wait_for_completion()
+    except KeyboardInterrupt:
+        print('\nInterrupted; cleaning up...', file = sys.stderr)
+    finally:
+        if failed:
+            engine.dump_failed_logs(failed)
+        if args.keep:
+            print('--keep set: leaving resources up. Tear them down with:')
+            print(teardown_cmd)
+        else:
+            engine.teardown()
+            print('Cleaned up all resources.')
+    if failed:
+        raise SystemExit(f'Flow failed: {", ".join(failed)}')
+    print(f'Flow {flow.flow_id} completed.')
+
+def _render_manifests_to_disk(args, flow, specs, run_id, overrides) -> None:
+    '''--dry-run (stdout) / --render-only (files) — the manifest-generation escape hatch.'''
+    from .manifests import dump_manifests, render_manifests
+
+    try:
         manifests = render_manifests(
             specs, flow.flow_id, flow.flow_type, args.nats, run_id,
             namespace = args.namespace, default_image = args.image,
@@ -77,10 +139,9 @@ def _cmd_deploy(args) -> None:
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
-    yaml_str = dump_manifests(manifests)
 
     if args.dry_run:
-        sys.stdout.write(yaml_str)
+        sys.stdout.write(dump_manifests(manifests))
         return
 
     os.makedirs(args.output, exist_ok = True)
@@ -222,8 +283,12 @@ def _cmd_teardown(args) -> None:
 
     from .messaging.topology import control_subject_for, delete_run_streams
 
+    async def _quiet(_e) -> None:
+        pass  # swallow the client's connect-retry error logging (we handle failure)
+
     async def _go() -> None:
-        nc = await nats.connect(args.nats)
+        nc = await nats.connect(args.nats, allow_reconnect = False, connect_timeout = 3,
+                                max_reconnect_attempts = 0, error_cb = _quiet)
         try:
             await nc.publish(control_subject_for(args.flow_id, args.run_id), b'stop')
             await nc.flush()
@@ -231,17 +296,22 @@ def _cmd_teardown(args) -> None:
         finally:
             await nc.drain()
 
-    asyncio.run(_go())
-    print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
-    if args.namespace:
-        import subprocess
+    async def _bounded() -> None:
+        await asyncio.wait_for(_go(), timeout = 8)
 
-        from .manifests import LABEL_FLOW_ID, k8s_name
-        selector = f'{LABEL_FLOW_ID}={k8s_name(args.flow_id)}'
-        subprocess.run(['kubectl', 'delete', '-n', args.namespace,
-                        'deployment,statefulset,job,configmap,service,networkpolicy,poddisruptionbudget,scaledobject',
-                        '-l', selector], check = False)
-        print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id}')
+    # Broker cleanup is best-effort: if the host can't reach --nats (e.g. an
+    # in-cluster-only URL), still delete the k8s workloads below.
+    try:
+        asyncio.run(_bounded())
+        print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
+    except Exception as e:
+        print(f'Broker teardown skipped (could not reach NATS at {args.nats}): {e}', file = sys.stderr)
+    if args.namespace:
+        from .manifests import delete_resources
+        # Scope to this run (matches the run-id label the deploy stamps on every
+        # resource); the broker phase above is already run-scoped.
+        delete_resources(args.kubectl, args.namespace, args.flow_id, args.run_id)
+        print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id} run {args.run_id}')
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
@@ -319,17 +389,32 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
     sub = parser.add_subparsers(dest = 'command', required = True)
 
-    deploy = sub.add_parser('deploy', help = 'Render/apply Kubernetes manifests for a graph.')
+    deploy = sub.add_parser(
+        'deploy',
+        help = 'Deploy a graph to Kubernetes: apply, and for a BATCH flow run it to completion '
+               'and tear everything down.',
+        description = 'Provisions the broker, applies the flow, and — for a BATCH flow — waits '
+                      'for it to finish and then deletes every resource (k8s + broker streams). '
+                      'A REALTIME flow is left running (tear it down with `videoflow teardown`). '
+                      'Writes nothing to disk unless --render-only or --dry-run is given.')
     deploy.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
     deploy.add_argument('--nats', required = True, help = 'NATS URL reachable from inside the cluster.')
     deploy.add_argument('--namespace', default = 'default')
+    deploy.add_argument('--kubectl', default = 'kubectl', help = 'kubectl binary name/path.')
     deploy.add_argument('--flow-id', default = None,
                         help = 'Stable flow id for naming resources (overrides the graph module\'s). '
                                'Use the same value to redeploy/update an existing flow.')
     deploy.add_argument('--run-id', default = None,
                         help = 'Per-run id that scopes this run\'s broker streams (auto-generated if omitted). '
                                'A new run id gives fresh streams; reuse it to target the same run.')
-    deploy.add_argument('--output', default = './manifests')
+    deploy.add_argument('--render-only', action = 'store_true',
+                        help = 'Write manifests to --output (+ a kustomization.yaml) and print the '
+                               'kubectl-apply command instead of applying. The old deploy behavior.')
+    deploy.add_argument('--keep', '--no-cleanup', dest = 'keep', action = 'store_true',
+                        help = 'For a BATCH flow, leave all resources up after the run finishes or '
+                               'fails (for debugging) instead of tearing them down.')
+    deploy.add_argument('--output', default = './manifests',
+                        help = 'Directory for --render-only manifest files (default ./manifests).')
     deploy.add_argument('--image', default = None,
                         help = 'Default container image ref for nodes that do not declare their own '
                                '(e.g. ghcr.io/acme/app:v1). Build it FROM videoflow-base with your code + deps.')
@@ -403,7 +488,8 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--flow-id', required = True)
     teardown.add_argument('--run-id', required = True)
     teardown.add_argument('--nats', required = True)
-    teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the flow\'s workloads.')
+    teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the run\'s workloads.')
+    teardown.add_argument('--kubectl', default = 'kubectl', help = 'kubectl binary name/path.')
     teardown.set_defaults(func = _cmd_teardown)
 
     debug = sub.add_parser('debug', help = 'Inspect wire messages (envelopes, DLQ).')
