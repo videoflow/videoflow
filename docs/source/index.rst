@@ -4,21 +4,32 @@ videoflow's documentation
 .. image:: assets/videoflow_logo.png
 
 .. meta::
-   :description lang=en: video processing, video analytics framework, object detection, object tracking.
+   :description lang=en: distributed video and stream processing framework, object detection, object tracking, Kubernetes, NATS JetStream.
 
-**Videoflow** is a Python framework for video stream processing. The library is designed to facilitate easy and quick definition of computer vision stream processing pipelines. It empowers developers to build applications and systems with self-contained Deep Learning and Computer Vision capabilities using simple and few lines of code.  It contains off-the-shelf reference components for object detection, object tracking, human pose estimation, etc, and it is easily extensible with your own.
+**Videoflow** is a Python framework for building **distributed** video and stream
+processing pipelines. You describe your pipeline once as a directed acyclic graph
+of producers, processors and consumers, and Videoflow runs it as a set of
+independent workers that communicate over a
+`NATS JetStream <https://docs.nats.io/nats-concepts/jetstream>`_ message broker.
+
+The same graph runs two ways with no code changes:
+
+Locally
+    As one OS subprocess per node — for fast development and testing.
+
+On Kubernetes
+    As one container per node — with per-node scaling, GPU scheduling, health
+    probes and autoscaling for production.
 
 Developer friendly
-    Even complex flow applications can be defined in a simple file with less than 20 lines of code.
-
-Automatic synchronization of resources
-    You only have to define flow as a computation graph. The framework automatically allocates the resources for the computation and takes care of the synchronization among them.
+    Even complex pipelines are defined in a small ``build_flow()`` factory of a few
+    lines of code.
 
 Easy to extend
-    It is very easy to create your own components and add them to the **flow**. 
+    Writing your own producers, processors and consumers is straightforward.
 
 Free and open source
-    **Videoflow** is free and open source.  It uses the MIT License, which means you can mostly do anything with it.
+    Videoflow uses the MIT License.
 
 .. toctree::
     :maxdepth: 2
@@ -32,14 +43,29 @@ Free and open source
 .. toctree::
     :maxdepth: 2
     :hidden:
-    :caption: Tutorials
+    :caption: Core concepts
 
+    user-documentation/nodes-and-flows
     user-documentation/writing-your-own-components
     user-documentation/batch-versus-realtime-mode
     user-documentation/task-allocation
-    user-documentation/advanced-flowing
     user-documentation/common-patterns
+
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+    :caption: Distributed execution
+
+    distributed/distributed-execution
+    distributed/deploying-to-kubernetes
     user-documentation/debugging-flow-applications
+
+.. toctree::
+    :maxdepth: 2
+    :hidden:
+    :caption: Under the hood
+
+    user-documentation/advanced-flowing
 
 .. toctree::
     :maxdepth: 2
@@ -47,18 +73,10 @@ Free and open source
     :caption: Computer vision recipes
 
     computer-vision-recipes/object-tracking-sample-application
-    
-.. toctree:: 
+
+.. toctree::
     :maxdepth: 2
     :hidden:
-    :caption: Api documentation
+    :caption: API documentation
 
-    apidocs/videoflow.core
-    apidocs/videoflow.engines
-    apidocs/videoflow.producers
-    apidocs/videoflow.processors
-    apidocs/videoflow.consumers
-    apidocs/videoflow.utils
-    
-
-
+    apidocs/modules

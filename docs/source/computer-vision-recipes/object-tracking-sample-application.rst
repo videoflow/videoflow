@@ -1,91 +1,92 @@
-Object Tracking Sample Application
+Object tracking sample application
 ==================================
 
-See below an example of an object tracking sample application::
+This recipe detects and tracks vehicles in a video and writes an annotated copy to
+``output.avi``. It uses the external
+`videoflow-contrib <https://github.com/videoflow/videoflow-contrib>`_ package for the
+TensorFlow detector and the SORT tracker. See the full script in
+`examples/object_tracking.py <https://github.com/videoflow/videoflow/blob/master/examples/object_tracking.py>`_.
+
+::
 
     import numpy as np
     import videoflow
-    import videoflow.core.flow as flow
+    from videoflow.core import Flow
     from videoflow.core.constants import BATCH
     from videoflow.consumers import VideofileWriter
     from videoflow.producers import VideofileReader
-    from videoflow_contrib.detector_tf import TensorflowObjectDetector
-    from videoflow_contrib.tracker_sort import KalmanFilterBoundingBoxTracker
     from videoflow.processors.vision.annotators import TrackerAnnotator
     from videoflow.utils.downloader import get_file
 
-    BASE_URL_EXAMPLES = "https://github.com/videoflow/videoflow/releases/download/examples/"
-    VIDEO_NAME = "intersection.mp4"
-    URL_VIDEO = BASE_URL_EXAMPLES + VIDEO_NAME
+    URL_VIDEO = "https://github.com/videoflow/videoflow/releases/download/examples/intersection.mp4"
 
     class BoundingBoxesFilter(videoflow.core.node.ProcessorNode):
-        def __init__(self, class_indexes_to_keep):
+        def __init__(self, class_indexes_to_keep, **kwargs):
             self._class_indexes_to_keep = class_indexes_to_keep
-            super(BoundingBoxesFilter, self).__init__()
+            super().__init__(**kwargs)
 
         def process(self, dets):
-            '''
-            Keeps only the boxes with the class indexes
-            specified in self._class_indexes_to_keep
-            - Arguments:
-                - dets: np.array of shape (nb_boxes, 6) \
-                    Specifically (nb_boxes, [xmin, ymin, xmax, ymax, class_index, score])
-            '''
             f = np.array([dets[:, 4] == a for a in self._class_indexes_to_keep])
-            f = np.any(f, axis = 0)
-            filtered = dets[f]
-            return filtered
+            f = np.any(f, axis=0)
+            return dets[f]
 
     class FrameIndexSplitter(videoflow.core.node.ProcessorNode):
-        def __init__(self):
-            super(FrameIndexSplitter, self).__init__()
+        def __init__(self, **kwargs):
+            super().__init__(**kwargs)
 
         def process(self, data):
             index, frame = data
             return frame
 
-    def main():
-        input_file = get_file(VIDEO_NAME, URL_VIDEO)
-        output_file = "output.avi"
+    def build_flow():
+        from videoflow_contrib.detector_tf import TensorflowObjectDetector
+        from videoflow_contrib.tracker_sort import KalmanFilterBoundingBoxTracker
 
-        reader = VideofileReader(input_file)
-        frame = FrameIndexSplitter()(reader)
-        detector = TensorflowObjectDetector()(frame)
-        # keeps only automobile classes: autos, buses, cycles, etc.
-        filter_ = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13])(detector)
-        tracker = KalmanFilterBoundingBoxTracker()(filter_)
-        annotator = TrackerAnnotator()(frame, tracker)
-        writer = VideofileWriter(output_file, fps = 30)(annotator)
-        fl = flow.Flow([reader], [writer], flow_type = BATCH)
-        fl.run()
-        fl.join()
+        input_file = get_file("intersection.mp4", URL_VIDEO)
+        reader    = VideofileReader(input_file, name='reader')
+        frame     = FrameIndexSplitter(name='frame')(reader)
+        detector  = TensorflowObjectDetector(name='detector')(frame)
+        # keep only vehicle classes
+        filtered  = BoundingBoxesFilter([1, 2, 3, 4, 6, 8, 10, 13], name='filter')(detector)
+        tracker   = KalmanFilterBoundingBoxTracker(name='tracker')(filtered)
+        annotator = TrackerAnnotator(name='annotator')(frame, tracker)
+        writer    = VideofileWriter("output.avi", fps=30, name='writer')(annotator)
+        return Flow([writer], flow_type=BATCH)
 
     if __name__ == "__main__":
-        main()
+        from videoflow.engines.local import LocalProcessEngine
+        flow = build_flow()
+        flow.run(LocalProcessEngine())
+        flow.join()
 
-The source code of the flow is very simple.  It first downloads from the internet a sample fake video of cars 
-crossing an interception.  The consumer in this case is the ``reader`` that will read the file, frame
-by frame from the filesystem. 
+Walking through the graph:
 
-Each time a frame is read, it is passed to the ``detector``, which
-in this case is a ``TensorflowObjectDetector``.  If no path to a local file is given,
-the ``TensorflowObjectDetector`` object will download a default pretrained model on the COCO dataset
-from the internet and use it.  
+- ``reader`` reads the video file frame by frame (as ``(index, frame)`` tuples), and
+  ``frame`` strips the index off. Note the reader **fans out**: both the detector
+  branch and the final annotator consume ``frame``.
+- ``detector`` runs a model and emits bounding boxes; ``filter`` (a custom node)
+  keeps only vehicle classes; ``tracker`` assigns a stable id to each box across
+  frames.
+- ``annotator`` is a **join**: it receives both the original ``frame`` and the
+  ``tracker`` boxes, and draws the boxes onto the frame. ``writer`` encodes the
+  annotated frames into a new video.
 
-The ``detector`` passes its bounding boxes output to the ``filter``.  Notice that the filter is a
-user defined processor node. It only keeps objects that are either persons, bicycles, cars, motorcycles,
-buses, trucks, traffic lights or stop signs.  It passes the filtered bounding boxes to the ``tracker``. 
-The ``tracker``'s job is to keep 'track' of objects across a sequence frames.  
-The output of the tracker is the bounding boxes with an id assigned to each of them. 
+Two things to note for a real deployment:
 
-Notice how the ``annotator`` receives as input both the picture from the ``reader``, and the bounding 
-boxes from the ``tracker``. Its job is to draw those bounding boxes in the picture, which in terms 
-it passes to the ``writer`` that creates a new video in the filesystem with such annotations.
+- The whole flow uses ``BATCH`` mode. A video **file** must never run in
+  ``REALTIME`` mode — the reader emits frames far faster than the detector can
+  process them, and realtime's drop policy would discard most of the video. See
+  :doc:`../user-documentation/batch-versus-realtime-mode`.
+- The ``tracker`` is stateful (it correlates boxes across frames), so it subclasses
+  ``OneTaskProcessorNode`` and always runs as a single worker. The ``detector``,
+  being stateless, can be scaled with ``nb_tasks`` to keep up with the reader.
 
-.. warning:: ``VideofileReader`` should not be used in a ``REALTIME`` setting.
-    The reason is that is likely that subsequent processors (such as object detectors) 
-    in the flow will not be able to keep up with the pace of the VideofileReader.
-    The default behaviour of the execution engine in ``REALTIME`` mode is to 
-    drop the excess frames.  Use ``REALTIME`` for when you need to process 
-    something in real time, such as when reading video from a realtime video stream.
-    For a more complete explanation, see the **Batch versus realtime mode** section.
+To run this on Kubernetes instead, build the images and deploy the same factory —
+the detector lands in the ``vision`` image and the reader/writer in the
+``video-io`` image automatically::
+
+    videoflow deploy examples/object_tracking.py:build_flow \
+        --nats nats://nats.videoflow.svc:4222 --namespace videoflow \
+        --registry ghcr.io/acme --image-tag v1
+
+See :doc:`../distributed/deploying-to-kubernetes`.

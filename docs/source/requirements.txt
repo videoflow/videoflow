@@ -1,4 +1,8 @@
-sphinxcontrib-apidoc==0.3.0
-opencv-python
-six>=1.9.0
-scikit-learn
+# Dependencies to build the documentation.
+# API docs are generated with autodoc, which imports the videoflow modules, so the
+# package's own runtime dependencies must be importable too (heavy optional ones —
+# cv2, nats, msgpack, redis, yaml — are mocked in conf.py).
+sphinx>=5
+sphinx-rtd-theme>=1.2
+sphinxcontrib-apidoc>=0.3
+numpy

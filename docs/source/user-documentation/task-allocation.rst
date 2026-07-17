@@ -1,56 +1,63 @@
-Node Allocation
-===============
+Scaling and node allocation
+===========================
 
-Allocating to multiple processes
+Each node in a flow runs in its own worker — a subprocess locally, a pod on
+Kubernetes. This page covers how to scale a node across workers and machines, and
+how to request a GPU.
+
+Replicating a processor with ``nb_tasks``
+-----------------------------------------
+
+If a **processor** is a bottleneck, run several copies of it by passing
+``nb_tasks``::
+
+    node = SomeProcessor(name='detector', nb_tasks=4)
+
+The replicas are **competing consumers** of the node's input: each incoming message
+is delivered to exactly one replica, so the work is spread across them. Locally each
+replica is a separate subprocess; on Kubernetes it is a Deployment replica.
+
+- Producers and consumers are not replicated with ``nb_tasks`` (a producer is a
+  single source; a consumer is a single sink).
+- Nodes that subclass ``OneTaskProcessorNode`` (trackers, aggregators — anything
+  stateful) always run as a single worker regardless of ``nb_tasks``.
+
+.. warning::
+    A **join** (a processor with more than one parent) must keep ``nb_tasks=1``.
+    Replicated joins are rejected when the flow is built, because the two halves of
+    a single event could be delivered to different replicas, and neither would be
+    able to assemble the join. Parallelize the work **before** or **after** the join
+    instead.
+
+Requesting a GPU
+----------------
+
+Instantiate a processor with ``device_type='gpu'`` to request GPU scheduling::
+
+    detector = ObjectDetector(name='detector', device_type='gpu')
+
+On Kubernetes this makes the node's pod request one ``nvidia.com/gpu`` and adds a
+GPU-pool ``nodeSelector`` and toleration, so the pod lands on a GPU node. The NVIDIA
+device plugin then exposes the GPU to the container through
+``CUDA_VISIBLE_DEVICES``; your node code is responsible for actually placing its
+model/computation on the GPU.
+
+You can combine GPU scheduling with ``nb_tasks`` to run several GPU replicas — each
+replica pod requests its own GPU.
+
+Autoscaling
+-----------
+
+On Kubernetes, ``nb_tasks`` is the **minimum** replica count. Pass ``--autoscaling``
+to ``videoflow deploy`` to also generate a `KEDA <https://keda.sh>`_ ``ScaledObject``
+per processor that scales replicas up (toward ``--max-replicas``) based on the
+node's input backlog on the broker, and back down when the backlog clears. See
+:doc:`../distributed/deploying-to-kubernetes`.
+
+Running across multiple machines
 --------------------------------
-If your **processor** node is a bottleneck of the graph, you might
-want to ask the framework to allocate it to more than one task.
 
-.. note::
-    In the current version of **Videoflow** there is a one to one correspondence
-    between a task and an operating system process.
-
-The allocation will not happen immediately; it will happen when ``flow.run()`` 
-is called.  **Producer** and **consumer** nodes cannot be allocated to more than one process.
-
-For example, to allocate a node to *n* processes, simply do at node definition time::
-    
-    node = Node(nb_tasks = n)
-
-.. warning::
-    Certain kind of processing nodes cannot be allocated to more than one process
-    because they inherit from the ``videoflow.core.node.OneTaskProcessorNode``. In
-    this case, the framework will ignore the `nb_tasks` parameter passed to the node
-    at creation time. 
-
-    If you are creating your own nodes, and if they are not stateless, it is highly likely
-    that you will want to implement them inheriting from ``videoflow.core.node.OneTaskProcessorNode``.
-
-.. warning::
-    If your **processing** node is CPU-bound and the number of CPU cores in the physical
-    system is less than the number CPU-bound tasks in your graph, you may not win a speed processing
-    advantage by allocating a node to more than one task (or process).
-
-Allocating to gpu
------------------
-When instantiating a node, you can ask the framework to run that node in a GPU like this:
-``node = Node(device_type = 'gpu')``.  This does not mean that the node will run in a GPU.  First, the
-source code of the node needs to support GPU allocation. Secondly, the machine where the flow is being
-ran may not have a GPU.  Thirdly, even if the machine has a GPU, it might be in use by another node 
-of the flow. 
-
-You can both allocate to GPU and allocate to more than one process. If the machine where the flow is
-running has enough GPUs, all the tasks (processes) will make use, each, of a GPU, otherwise, some of them 
-will run in a GPU and some in the CPU.
-
-Beware that some nodes have been defined to only be run in the GPU, and if no GPU is available at 
-allocation time, a ``ValueError`` exception will be raised.  See the section **Using the GPU 
-and the change_device method** under the heading **Writing your own components**
-for more details.
-
-
-Allocating to a different machine
----------------------------------
-.. note::
-    Currently **Videoflow** is designed for a multiprocessor setting.
-    In the future **Videoflow** will have the capability to be deployed in a distributed setting.
+Because nodes communicate over the broker rather than shared memory, a flow already
+spans as many machines as its workers are scheduled onto. Locally that is one host;
+on Kubernetes the scheduler places pods across the cluster automatically, honoring
+each node's resource requests (CPU, memory, GPU).

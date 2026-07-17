@@ -79,8 +79,8 @@ class NodeSpec:
 
 def specs_from_tasks_data(tasks_data):
     '''
-    Converts ``videoflow.core.flow.build_tasks_data`` output (tuples of \
-        ``(node, parent_names, is_last)``) into serializable ``NodeSpec``s.
+    Converts ``build_tasks_data`` output — tuples of
+    ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
     '''
     specs = []
     for node, parent_names, is_last in tasks_data:

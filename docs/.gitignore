@@ -68,3 +68,6 @@ env.bak/
 venv.bak/
 
 dev.db-journal
+
+# Auto-generated API docs (sphinxcontrib-apidoc)
+apidocs/

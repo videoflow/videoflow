@@ -1,69 +1,86 @@
-Advanced Flowing
-================
-This section describes in a more detailed way what happens behind the scenes
-when nodes and flows are created, and when flows are started and stopped.
+Under the hood
+==============
+
+This page describes what happens behind the scenes when a graph is defined,
+compiled and run.
 
 Node creation and graph definition
 ----------------------------------
-Consider the following simple example that defines a linear graph with one
-producer, one processor and one consumer::
+
+Consider a small linear graph::
 
     from videoflow.core import Flow
     from videoflow.producers import IntProducer
     from videoflow.processors import IdentityProcessor
     from videoflow.consumers import CommandlineConsumer
 
-    A = IntProducer(0, 40, 0.1)
-    B = IdentityProcessor()(A)
-    C = CommandlineConsumer()(B)
+    A = IntProducer(0, 40, 0.1, name='A')
+    B = IdentityProcessor(name='B')(A)
+    C = CommandlineConsumer(name='C')(B)
 
-In the case of the **processor** and the **consumer**, two calls happen: one call to the ``__init__``
-function, and another one to the ``__call__`` function of the just created object. 
-The call to ``__init__`` creates a node.  The call to ``__call__`` defines the edges between the
-nodes of the graph.
+For a processor or consumer, two things happen. The call to ``__init__`` **creates**
+the node; the subsequent call — ``IdentityProcessor(name='B')(A)`` — **wires the
+edge** ``A -> B``, recording that ``B`` takes ``A``'s output as input. Calling a node
+twice to set its parents raises a ``RuntimeError``.
 
-For example, ``A = IntProducer(0, 40, 0.1)`` creates node **A**. 
-``B = IdentityProcessor()(producer)`` creates node **B** and creates edge **A -> B**, indicating
-that **B** takes **A**'s output as its input.
+Each node also captures its constructor arguments (via ``get_params()``) so that a
+worker can later rebuild it from configuration alone.
 
-Calling ``__call__`` twice in an object will raise a ``RuntimeError``.
+Flow creation and validation
+----------------------------
 
-Flow creation
--------------
-A flow is created passing to it the list of **producers**, the list of **consumers**, an optional 
-**flow_type**, and an optional **flow_options** parameter::
+``Flow`` is created from the consumers::
 
-    flow = Flow([A], [C])
+    flow = Flow([C], flow_type=BATCH, flow_id='demo')
 
-When the flow is created, the constructor checks that there are no cycles in the graph, otherwise
-it raises a ``ValueError`` exception.  Also, only flows with exactly one **producer** are supported
-for now. 
+At construction the flow discovers the producers (the parentless ancestors of the
+consumers) and validates the graph:
 
-.. note:: 
-    In the future:
-        - Graphs with more than one **producer** will be supported.
+- it must be acyclic;
+- every consumer must be reachable from a producer;
+- all node names must be unique;
+- a multi-parent join must have ``nb_tasks=1``.
 
-flow.run() and the Execution Engine
------------------------------------
-Once the flow is built, when ``flow.run()`` is called, a topological sort of the nodes in the 
-graph is created, and the topological sort of nodes is passed to the execution engine, 
-whose function is: (1) to wrap each node as a task, (2) to create queues for communication between tasks,
-and (3) to allocate each task to run in an independent operating system **process**.  If at node creation time it
-was specified that more than one task (OS process) should be used for it, then more than one task is allocated
-for that node.
+Any violation raises a ``ValueError`` before anything is launched.
 
-A **flow** eventually stops running after any of the following events happen:
-    1. All **producers** of the graph have raised an ``StopIteration`` exception.
-    2. A ``KeyboardInterruption`` is received, such as ``Ctrl-C``.
-    3. ``flow.stop()`` is explicitly called on the **flow**.
+Compilation
+-----------
 
-For any of the three cases above, the **flow** stops naturally: **producers** stop
-emitting data and emit a ``STOP_FLOW`` signal.  ``STOP_FLOW`` is propagated through
-the graph in the same way the rest of the data has been propagated.  Each time a task receives the
-``STOP_FLOW`` signal, it closes any resources its corresponding node might have been using, passes
-the ``STOP_FLOW`` to its "children" (only one child, since now the graph has been linearized
-into a topological sort), and stops itself from running.
+When you call ``flow.run(engine)`` (or ``videoflow deploy``), the graph is compiled
+into one **node specification** per node — a flat, JSON-serializable record holding
+the node's class, its captured parameters, its parents' names, its kind
+(producer/processor/consumer), replica count, device type, and resolved image
+family. The engine turns those specs into workers.
 
-Multiple producers
-------------------
-To be supported in later versions of the framework.
+Routing and message assembly
+----------------------------
+
+Each node owns one broker stream, named from its node name. A node publishes only
+its own output there. To assemble its inputs, a node subscribes to a durable
+consumer on **each parent's** stream. Two mechanisms coexist:
+
+- **Broadcast**: distinct child nodes of the same parent each get their own durable
+  consumer, so each child receives a full copy of every message.
+- **Competing consumers**: replicas of one node (``nb_tasks > 1``) share a single
+  durable consumer, so each message goes to exactly one replica.
+
+Every message carries a **trace id** that originates at the producer and is carried
+forward through the graph. A join buffers incoming messages by trace id and releases
+a set to ``process()`` only once one message from every parent with a matching trace
+id has arrived. This is how multi-parent nodes stay correctly synchronized without
+any user-visible coordination.
+
+Termination
+-----------
+
+A flow stops after any of:
+
+1. all producers raise ``StopIteration``;
+2. ``flow.stop()`` is called;
+3. an interrupt (``Ctrl-C``) reaches the workers.
+
+Termination propagates two ways. Producers emit an explicit **stop marker** on their
+data streams, which flows through the graph like any other message so consumers
+drain in order. In parallel, ``flow.stop()`` publishes on a dedicated **control
+channel** every worker subscribes to, so long-idle workers stop waiting promptly.
+Each worker runs its node's ``close()`` before exiting.

@@ -1,105 +1,69 @@
 How to contribute
 =================
 
-Found a bug? Have a new feature to suggest? Want to contribute changes to the codebase? Make sure to read this first.
+Found a bug? Have a feature to suggest? Want to contribute code? Read this first.
 
 Bug reporting
 -------------
-Your code doesn't work, and you have determined that the issue lies with Videoflow? Follow
-these steps to report a bug.
 
-1. Your bug may already be fixed.  Make sure to update to the current
-Videoflow master branch.
+1. Make sure your bug is not already fixed — update to the current ``master`` branch.
 
-2. Search for similar issues. Make sure to delete `is:open` on the
-issue search to find solved tickets as well. It's possible somebody
-has encountered this bug already.  Still having a problem? Open an issue on Github
-to let us know.
+2. Search existing issues (including closed ones) for the same problem. If it is
+   new, open an issue on GitHub.
 
-3. Make sure to provide us with useful information about
-your configuration: What OS are you using? What Tensorflow version are you using?
-Are you running on GPU? If so, what is your version of Cuda, of CuDNN? 
-What is your GPU?
+3. Give us the information we need to reproduce it: your OS, Python version, how you
+   ran the flow (locally with ``LocalProcessEngine`` or on Kubernetes), your NATS
+   server version, and — if GPU-related — your CUDA/driver versions and GPU model.
 
-4. Provide us with a script to reproduce the issue.  This script should
-be runnable as-is and should not require external data download
-(use randomly generated data if you need to test the flow in some data).
-We recommend that you use Github Gists to post your code.
-Any issue that cannot be reproduced is likely to be closed.
+4. Provide a **minimal, runnable** script that reproduces the issue. It should not
+   require downloading external data — use ``IntProducer`` or randomly generated
+   arrays where possible. A small flow that fails is far easier to diagnose than a
+   full application.
 
-5. If possible, take a shot at fixing the bug yourself --if you can!
+The more information you provide, the faster we can help.
 
-The more information you provide, the easier it is for us to validate that
-there is a bug and the faster we'll be able to take action.
-If you want your issue to be resolved quickly, following the steps
-above is crucial.
-
-Requesting a Feature
+Requesting a feature
 --------------------
-You can also use Github issues to request features you would
-like to see in Videoflow, or changes to the Videoflow API.
 
-1. Provide a clear and detailed explanation of the feature
-you want and why it's important to add. Keep in mind that
-we want features that will be useful to the majority of our 
-users and not just a small subset.  If you are targeting 
-a minority of users, consider writing and add-on library
-for Videoflow.
+Open a GitHub issue with a clear explanation of the feature and why it is broadly
+useful, and code snippets demonstrating the API you have in mind. If it targets a
+narrow use case, consider an add-on in
+`videoflow-contrib <https://github.com/videoflow/videoflow-contrib>`_ instead.
 
-2. Provide code snippets demonstrating the API you have in
-mind and illustrating the use cases of your feature.
+Development setup
+-----------------
 
-3. After discussing the feature you may choose to attempt 
-a Pull Request.  If you are at all able, start writing
-some code.  We always have more work to do than time to
-do it.  If you can write some code then that will speed
-the process along.
+Videoflow uses `uv <https://docs.astral.sh/uv/>`_ for packaging and environments::
 
-Pull Requests (PRs)
--------------------
-**Where should I submit my pull request?** Videoflow
-improvements and bug fixes should go to the Videoflow
-`master` branch.
+    git clone https://github.com/videoflow/videoflow.git
+    cd videoflow
+    uv sync              # creates .venv with all dependencies, including dev tools
 
-Here is a quick guide on how to submit your improvements::
+The test suite needs a running NATS JetStream server::
 
-1. Write the 
-code.
+    docker compose up -d          # or: nats-server -js
+    uv run pytest tests/
 
-2. Make sure any new function or class you introduce has
-proper docstrings. Make sure any code you touch still
-has up-to-date docstrings and documentation.  Use
-previously written code as a reference on how to format
-them.  In particular, they should be formatted in MarkDown,
-and there should be sections for `Arguments`, `Returns` and
-`Raises` (if applicable). 
+Pull requests
+-------------
 
-3. Write tests. Your code should have full unit test coverage.
-If you want to see your PRs merged promptly, this is crucial.
+Improvements and bug fixes go to the ``master`` branch. A good PR:
 
-4. Run our test suite locally. It is easy: from the 
-Videoflow folder, simply run ``py.test tests/``
+1. Adds proper docstrings to any new function or class, and keeps touched code's
+   docstrings up to date. Docstrings use sections for **Arguments**, **Returns** and
+   **Raises** where applicable.
+2. Includes tests. Pure logic (serialization, compilation, manifest generation) is
+   covered by unit tests; end-to-end behavior is covered by integration tests that
+   run small flows against a local NATS server.
+3. Passes the full suite locally: ``uv run pytest tests/``.
+4. Uses clear, descriptive commit messages.
+5. Updates the documentation, including runnable snippets for new features.
 
+Adding examples
+---------------
 
-5. Make sure all tests are 
-passing.
-
-
-6. When committing, use appropriate, descriptive 
-commit messages.
-
-7. Update the documentation.  If introducing new functionality,
-make sure you include code snippets demonstrating the usage
-of your new feature.
-
-8. Submit your PR. If your changes have been approved in
-a previous discussion, and if you have complete (and passing)
-unit tests as well as proper doctrings/documentation, your
-PR is likely to be merged promptly.
-
-Adding new examples
--------------------
-Even if you do not contribute to the Videoflow source code,
-if you have an application of Videoflow as is concise and
-powerful, please consider adding it to our collection of
-`examples <https://github.com/jadielam/videoflow/tree/master/examples>`_.
+Even without touching the core, if you have a concise, powerful Videoflow
+application, consider adding it to the
+`examples <https://github.com/videoflow/videoflow/tree/master/examples>`_ folder.
+Each example should expose a ``build_flow()`` factory so it can be both run locally
+and deployed with ``videoflow deploy``.
