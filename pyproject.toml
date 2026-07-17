@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "videoflow"
+dynamic = ["version"]
+description = "Python framework for building distributed video and stream processing pipelines"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Jadiel de Armas", email = "jadielam@gmail.com" }]
+requires-python = ">=3.8"
+# Core is deliberately lean: the graph model, serialization and worker runtime.
+# Heavy or environment-specific dependencies live in optional-dependencies so each
+# per-component Docker image installs only what its node family needs.
+dependencies = [
+    "numpy>=1.9.1",
+    "six>=1.9.0",
+]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Education",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+
+[project.urls]
+Homepage = "https://github.com/videoflow/videoflow"
+Repository = "https://github.com/videoflow/videoflow"
+
+[project.optional-dependencies]
+# Broker client + wire format: needed by any node that actually runs in a
+# distributed flow (i.e. every worker), but not to merely import/inspect a graph.
+distributed = [
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+]
+vision = [
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+    "opencv-python-headless>=4.0.0",
+]
+video = [
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+    "opencv-python-headless>=4.0.0",
+]
+# Used by the deploy CLI to render Kubernetes manifests.
+deploy = [
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+    "PyYAML>=5.1",
+]
+# Optional external blob store for payloads over the inline size threshold.
+blob = [
+    "redis>=4.0.0",
+]
+all = [
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+    "opencv-python-headless>=4.0.0",
+    "PyYAML>=5.1",
+    "redis>=4.0.0",
+    "requests>=2.22.0",
+]
+
+[project.scripts]
+videoflow = "videoflow.cli:main"
+
+[dependency-groups]
+# Everything needed to run the test suite locally (`uv sync` installs these).
+dev = [
+    "pytest>=7.0",
+    "pytest-timeout>=2.0",
+    "nats-py>=2.0.0",
+    "msgpack>=1.0.0",
+    "PyYAML>=5.1",
+    "redis>=4.0.0",
+    "opencv-python-headless>=4.0.0",
+    "requests>=2.22.0",
+]
+
+[tool.hatch.version]
+# Single source of truth: reads __version__ from videoflow/version.py.
+path = "videoflow/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["videoflow"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "videoflow",
+    "README.md",
+    "LICENSE",
+]
+
+[tool.pytest.ini_options]
+markers = [
+    "timeout: mark a test with a maximum run time (pytest-timeout).",
+]

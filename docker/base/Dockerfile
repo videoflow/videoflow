@@ -7,15 +7,16 @@
 #   docker build -f docker/base/Dockerfile -t videoflow-base:latest .
 FROM python:3.9-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-COPY setup.py README.md ./
+# Install uv, then use it to install videoflow into the system environment.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY pyproject.toml README.md ./
 COPY videoflow ./videoflow
 
-RUN pip install --upgrade pip && \
-    pip install ".[distributed]"
+RUN uv pip install --system --no-cache ".[distributed]"
 
 ENTRYPOINT ["python", "-m", "videoflow.worker"]

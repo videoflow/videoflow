@@ -57,7 +57,8 @@ pip install "videoflow[deploy]"        # + Kubernetes manifest generation
 pip install "videoflow[all]"           # everything
 ```
 
-From a clone: `pip install ".[all]"`
+From a clone with [uv](https://docs.astral.sh/uv/): `uv sync` (creates `.venv`
+with all dependencies). Or with pip: `pip install ".[all]"`.
 
 Start a local broker for development (a `docker-compose.yml` with NATS + Redis is
 included):

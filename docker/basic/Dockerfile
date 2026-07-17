@@ -7,4 +7,4 @@
 ARG BASE_IMAGE=videoflow-base:latest
 FROM ${BASE_IMAGE}
 
-RUN pip install ".[blob]"
+RUN uv pip install --system --no-cache ".[blob]"

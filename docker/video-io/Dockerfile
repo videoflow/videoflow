@@ -11,4 +11,4 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg libglib2.0-0 libgl1 && \
     rm -rf /var/lib/apt/lists/*
 
-RUN pip install ".[video,blob]"
+RUN uv pip install --system --no-cache ".[video,blob]"

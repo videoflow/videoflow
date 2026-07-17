@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.9
+
+      - name: Install NATS JetStream server
+        run: |
+          curl -sf https://binaries.nats.dev/nats-io/nats-server/v2@latest | sh
+          sudo mv nats-server /usr/local/bin/
+
+      - name: Start NATS JetStream
+        run: nats-server -js -sd /tmp/nats-jetstream &
+
+      - name: Run tests
+        run: uv run pytest tests/ -q
