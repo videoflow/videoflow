@@ -8,7 +8,14 @@
 #
 # Build from the repo root:
 #   docker build -f docker/base/Dockerfile -t videoflow-base:latest .
-FROM python:3.9-slim
+#
+# The Python version is a build arg so downstream node images (e.g. videoflow-contrib
+# components) can target the highest interpreter their ML framework supports. Build a
+# specific interpreter tag with:
+#   docker build -f docker/base/Dockerfile --build-arg PYTHON_VERSION=3.11 \
+#       -t videoflow-base:py3.11 .
+ARG PYTHON_VERSION=3.13
+FROM python:${PYTHON_VERSION}-slim
 
 ENV PYTHONUNBUFFERED=1
 
