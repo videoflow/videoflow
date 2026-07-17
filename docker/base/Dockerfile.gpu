@@ -1,0 +1,44 @@
+# The videoflow GPU base image: same as docker/base/Dockerfile, but on an NVIDIA CUDA
+# runtime (CUDA 12.4 + cuDNN 9) so downstream node images can run GPU inference
+# (TensorFlow, PyTorch, ...). Ubuntu 24.04 ships Python 3.12, the version the project
+# targets, so no PPA is needed.
+#
+# For your own GPU nodes, build your image FROM this one — add your CUDA-enabled deps
+# (e.g. torch, tensorflow[and-cuda]) and your package — then deploy with
+#   videoflow deploy my_flow.py --image <your-gpu-image>
+# and schedule the pods onto GPU nodes (nvidia.com/gpu resource + runtime).
+#
+# Build from the repo root:
+#   docker build -f docker/base/Dockerfile.gpu -t videoflow-base:py3.12-cuda .
+#
+# A -devel CUDA image (ships nvcc + headers) is used, not -runtime, so downstream node
+# images that compile CUDA kernels from source (e.g. detectron2) build correctly.
+# Override CUDA_IMAGE to match your cluster's CUDA/cuDNN if needed.
+ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu24.04
+FROM ${CUDA_IMAGE}
+
+ENV PYTHONUNBUFFERED=1
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Python 3.12 (Ubuntu 24.04 default) + the system libraries the built-in video/vision
+# nodes need (ffmpeg + OpenCV's runtime). ``python`` is symlinked to python3 so the
+# worker entrypoint matches the CPU base.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3 python3-dev python3-venv \
+        ffmpeg libglib2.0-0 libgl1 && \
+    rm -rf /var/lib/apt/lists/* && \
+    ln -sf /usr/bin/python3 /usr/local/bin/python
+
+# Install uv, then use it to install videoflow (with all built-in node deps) into the
+# system environment. --break-system-packages: Ubuntu marks the system env as
+# externally managed (PEP 668); inside a container installing system-wide is intended.
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+COPY pyproject.toml README.md ./
+COPY videoflow ./videoflow
+
+RUN uv pip install --system --break-system-packages --no-cache ".[all]"
+
+ENTRYPOINT ["python", "-m", "videoflow.worker"]

@@ -9,12 +9,13 @@
 # Build from the repo root:
 #   docker build -f docker/base/Dockerfile -t videoflow-base:latest .
 #
-# The Python version is a build arg so downstream node images (e.g. videoflow-contrib
-# components) can target the highest interpreter their ML framework supports. Build a
-# specific interpreter tag with:
-#   docker build -f docker/base/Dockerfile --build-arg PYTHON_VERSION=3.11 \
-#       -t videoflow-base:py3.11 .
-ARG PYTHON_VERSION=3.13
+# This is the CPU base. The Python version is a build arg (default 3.12, the version
+# the whole project targets); override it only if you need a different interpreter:
+#   docker build -f docker/base/Dockerfile --build-arg PYTHON_VERSION=3.12 \
+#       -t videoflow-base:py3.12 .
+# For GPU workloads (CUDA + cuDNN), use docker/base/Dockerfile.gpu instead, which
+# produces videoflow-base:py3.12-cuda.
+ARG PYTHON_VERSION=3.12
 FROM python:${PYTHON_VERSION}-slim
 
 ENV PYTHONUNBUFFERED=1
