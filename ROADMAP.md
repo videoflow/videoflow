@@ -23,7 +23,7 @@
 - Commandline tools to detect bottlenecks by reading logs.
 - Commandline tools to debug errors in flow.
 
-## v0.6 
+## v0.6
 - Automatic detection of bottlenecks
 
 ## v0.7
@@ -48,5 +48,3 @@
 
 # v2.0
 - Distributed version of **Videoflow**
-
-

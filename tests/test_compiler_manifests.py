@@ -7,15 +7,15 @@ import json
 import pytest
 import yaml
 
+from videoflow.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
+from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
-from videoflow.core.constants import REALTIME, GPU
+from videoflow.core.constants import GPU, REALTIME
+from videoflow.images import parse_override, resolve_image
+from videoflow.manifests import dump_manifests, render_manifests
+from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.producers import IntProducer
 from videoflow.producers.video import VideoFileReader
-from videoflow.processors import IdentityProcessor, JoinerProcessor
-from videoflow.consumers import CommandlineConsumer
-from videoflow.compiler import compile_flow, NODE_KIND_PRODUCER, NODE_KIND_PROCESSOR, NODE_KIND_CONSUMER
-from videoflow.images import resolve_image, parse_override
-from videoflow.manifests import render_manifests, dump_manifests
 
 IMG = 'ghcr.io/acme/app:v1'  # a default image for manifest-render tests
 

@@ -14,9 +14,7 @@ Driven by environment variables:
     VF_FLOW_SPECS_JSON  the compiled NodeSpecs as a JSON list, OR
     VF_FLOW_SPECS_PATH  path to a file with that JSON (default /etc/videoflow/specs.json)
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import json
 import logging
@@ -27,7 +25,7 @@ from .messaging.topology import provision_flow_sync
 
 logger = logging.getLogger('videoflow.provision')
 
-def _load_specs():
+def _load_specs() -> list:
     raw = os.environ.get('VF_FLOW_SPECS_JSON')
     if raw is None:
         path = os.environ.get('VF_FLOW_SPECS_PATH', '/etc/videoflow/specs.json')
@@ -35,7 +33,7 @@ def _load_specs():
             raw = f.read()
     return [NodeSpec.from_dict(d) for d in json.loads(raw)]
 
-def main():
+def main() -> None:
     logging.basicConfig(level = logging.INFO,
                         format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s')
     specs = _load_specs()

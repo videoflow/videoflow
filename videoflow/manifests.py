@@ -11,12 +11,11 @@ URL, and a default-deny-except-broker NetworkPolicy.
 Manifests are built as plain dicts and serialized with ``yaml.dump`` rather than
 text-templated, so the output is always structurally valid YAML.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import json
 import re
+from typing import Optional
 
 import yaml
 
@@ -34,7 +33,7 @@ def k8s_name(*parts) -> str:
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
-def _env_pairs(spec, flow_id, flow_type, run_id):
+def _env_pairs(spec, flow_id, flow_type, run_id) -> dict:
     env = {
         'VF_NODE_CLASS': spec.node_class,
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
@@ -59,13 +58,13 @@ def _env_pairs(spec, flow_id, flow_type, run_id):
 def _is_partitioned(spec) -> bool:
     return bool(getattr(spec, 'partition_by', None)) and spec.nb_tasks > 1
 
-def _labels(flow_id, node_name = None):
+def _labels(flow_id, node_name = None) -> dict:
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
     if node_name is not None:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def _pod_spec(spec, flow_id, flow_type, image, nats_configmap):
+def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
     container = {
         'name': 'worker',
         'image': image,
@@ -112,14 +111,14 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap):
     }
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
 
-    pod_spec = {'containers': [container]}
+    pod_spec: dict = {'containers': [container]}
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
     if tolerations:
         pod_spec['tolerations'] = tolerations
     return pod_spec
 
-def node_configmap(spec, flow_id, flow_type, run_id):
+def node_configmap(spec, flow_id, flow_type, run_id) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -130,7 +129,7 @@ def node_configmap(spec, flow_id, flow_type, run_id):
         'data': _env_pairs(spec, flow_id, flow_type, run_id),
     }
 
-def nats_configmap(flow_id, nats_url, blob_redis_url = None):
+def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
     data = {'VF_NATS_URL': nats_url}
     if blob_redis_url:
         data['VF_BLOB_REDIS_URL'] = blob_redis_url
@@ -144,7 +143,7 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None):
         'data': data,
     }
 
-def workload(spec, flow_id, flow_type, image, nats_cm_name):
+def workload(spec, flow_id, flow_type, image, nats_cm_name) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
@@ -199,7 +198,7 @@ def workload(spec, flow_id, flow_type, image, nats_cm_name):
         },
     }
 
-def headless_service(spec, flow_id):
+def headless_service(spec, flow_id) -> dict:
     '''Headless Service backing a partitioned node's StatefulSet (required for stable pod network identity/ordinals).'''
     labels = _labels(flow_id, spec.name)
     return {
@@ -213,7 +212,7 @@ def headless_service(spec, flow_id):
         },
     }
 
-def pod_disruption_budget(spec, flow_id):
+def pod_disruption_budget(spec, flow_id) -> dict:
     '''Keeps at least one replica of a multi-replica node available during voluntary disruptions (node drains, upgrades).'''
     labels = _labels(flow_id, spec.name)
     return {
@@ -226,7 +225,7 @@ def pod_disruption_budget(spec, flow_id):
         },
     }
 
-def flow_spec_configmap(specs, flow_id, run_id):
+def flow_spec_configmap(specs, flow_id, run_id) -> dict:
     '''ConfigMap holding the compiled specs as JSON, mounted by the provisioning init Job.'''
     return {
         'apiVersion': 'v1',
@@ -235,7 +234,7 @@ def flow_spec_configmap(specs, flow_id, run_id):
         'data': {'specs.json': json.dumps([s.to_dict() for s in specs])},
     }
 
-def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name):
+def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name) -> dict:
     '''
     A one-shot Job that runs ``videoflow.provision`` to create all streams/durables
     before workers start (required so BATCH interest-retention streams don't drop
@@ -274,7 +273,7 @@ def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name):
         },
     }
 
-def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas):
+def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas) -> Optional[dict]:
     '''
     A KEDA ScaledObject that scales a processor Deployment on NATS JetStream
     consumer lag. ``nb_tasks`` becomes the floor (minReplicaCount); KEDA scales up
@@ -285,7 +284,7 @@ def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas)
     (port 8222) reachable at ``nats_monitoring_endpoint``.
     '''
     from .compiler import NODE_KIND_PROCESSOR
-    from .messaging.topology import stream_name_for, durable_name_for
+    from .messaging.topology import durable_name_for, stream_name_for
     if spec.kind != NODE_KIND_PROCESSOR or not spec.parents:
         return None
     if _is_partitioned(spec):
@@ -317,7 +316,7 @@ def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas)
         },
     }
 
-def network_policy(flow_id):
+def network_policy(flow_id) -> dict:
     '''
     Allows worker pods to talk to each other and out to the broker/DNS, and denies
     everything else ingress by default. Kept intentionally permissive on egress
@@ -339,7 +338,7 @@ def network_policy(flow_id):
 def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'default',
                     default_image = None, image_overrides = None, blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
-                    nats_monitoring_endpoint = None):
+                    nats_monitoring_endpoint = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).

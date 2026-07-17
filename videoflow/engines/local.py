@@ -8,20 +8,19 @@ flow without a cluster.
 Prerequisite: a running NATS JetStream server, e.g. ``nats-server -js`` or
 ``docker run -p 4222:4222 nats -js``.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import json
 import logging
 import os
 import subprocess
 import sys
+from typing import Optional
 
 import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
 
-from ..core.engine import ExecutionEngine
 from ..compiler import NodeSpec, specs_from_tasks_data
+from ..core.engine import ExecutionEngine
 
 logger = logging.getLogger(__package__)
 
@@ -35,16 +34,16 @@ class LocalProcessEngine(ExecutionEngine):
         - specs: optional precompiled list of ``NodeSpec``. If not given, they are \
             compiled from the flow's ``tasks_data`` at ``allocate_and_run_tasks`` time.
     '''
-    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None):
+    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
-        self._procs = []
-        self._flow_id = None
-        self._run_id = None
+        self._procs: list = []
+        self._flow_id: Optional[str] = None
+        self._run_id: Optional[str] = None
         super(LocalProcessEngine, self).__init__()
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
         self._flow_id = flow_id
         self._run_id = run_id
         specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
@@ -64,10 +63,10 @@ class LocalProcessEngine(ExecutionEngine):
                     f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx}'
                 )
 
-    def signal_flow_termination(self):
+    def signal_flow_termination(self) -> None:
         _publish_stop(self._nats_url, self._flow_id, self._run_id)
 
-    def join_task_processes(self):
+    def join_task_processes(self) -> None:
         try:
             for proc in self._procs:
                 try:
@@ -77,16 +76,18 @@ class LocalProcessEngine(ExecutionEngine):
         finally:
             self._teardown_streams()
 
-    def _teardown_streams(self):
-        if self._flow_id is None or self._run_id is None:
+    def _teardown_streams(self) -> None:
+        flow_id, run_id = self._flow_id, self._run_id
+        if flow_id is None or run_id is None:
             return
         import asyncio
+
         from ..messaging.topology import delete_run_streams
 
-        async def _go():
+        async def _go() -> None:
             nc = await nats.connect(self._nats_url)
             try:
-                await delete_run_streams(nc, self._flow_id, self._run_id)
+                await delete_run_streams(nc, flow_id, run_id)
             finally:
                 await nc.drain()
 
@@ -95,7 +96,7 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
-def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url, replica_id):
+def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url, replica_id) -> dict:
     env = dict(os.environ)
     env.update({
         'VF_NODE_CLASS': spec.node_class,
@@ -119,11 +120,12 @@ def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redi
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
     return env
 
-def _publish_stop(nats_url, flow_id, run_id):
+def _publish_stop(nats_url, flow_id, run_id) -> None:
     import asyncio
+
     from ..messaging.topology import control_subject_for
 
-    async def _go():
+    async def _go() -> None:
         nc = await nats.connect(nats_url)
         await nc.publish(control_subject_for(flow_id, run_id), b'stop')
         await nc.flush()

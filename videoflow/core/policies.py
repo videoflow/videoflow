@@ -6,11 +6,11 @@ survives ``get_params()`` serialization into a worker). It decides what to do wi
 a join group that never completes — a real possibility when one branch drops a
 message (REALTIME) or stalls.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-from .constants import BATCH, REALTIME
+from typing import Optional
+
+from .constants import BATCH
 
 #: What to do with an incomplete join group once it times out.
 MISSING_DROP = 'drop'    # give up on the group and ack the partial inputs
@@ -27,7 +27,7 @@ class JoinPolicy:
         - max_pending: hard cap on buffered incomplete groups; the oldest is \
             evicted (as ``drop``) beyond this, protecting against unbounded memory.
     '''
-    def __init__(self, timeout_seconds = None, missing = MISSING_DROP, max_pending = 256):
+    def __init__(self, timeout_seconds = None, missing = MISSING_DROP, max_pending = 256) -> None:
         if missing not in MISSING_POLICIES:
             raise ValueError(f'missing must be one of {MISSING_POLICIES}, got {missing!r}')
         if missing == MISSING_WAIT:
@@ -36,7 +36,7 @@ class JoinPolicy:
         self.missing = missing
         self.max_pending = max_pending
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
             'timeout_seconds': self.timeout_seconds,
             'missing': self.missing,
@@ -44,7 +44,7 @@ class JoinPolicy:
         }
 
     @classmethod
-    def from_dict(cls, d):
+    def from_dict(cls, d) -> Optional["JoinPolicy"]:
         if d is None:
             return None
         return cls(
@@ -54,7 +54,7 @@ class JoinPolicy:
         )
 
     @classmethod
-    def default_for(cls, flow_type):
+    def default_for(cls, flow_type) -> "JoinPolicy":
         '''
         BATCH waits (completeness matters; bounded by max_pending). REALTIME times
         out and drops (a dropped sibling frame must not stall the join forever).

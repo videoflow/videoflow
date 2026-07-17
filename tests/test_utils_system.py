@@ -2,6 +2,7 @@ import pytest
 
 import videoflow.utils.system as system
 
+
 def test_gpus_available_1(monkeypatch):
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
     gpus = system.get_gpus_available_to_process()
@@ -14,7 +15,7 @@ def test_gpus_available_1(monkeypatch):
 def test_gpus_available_2(monkeypatch):
     def get_system_gpus_mock():
         return set([0])
-    
+
     monkeypatch.setattr(system, 'get_system_gpus', get_system_gpus_mock)
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
     gpus = system.get_gpus_available_to_process()
@@ -28,7 +29,7 @@ def test_gpus_available_2(monkeypatch):
 def test_gpus_available_3(monkeypatch):
     def get_system_gpus_mock():
         return set([0, 1])
-    
+
     monkeypatch.setattr(system, 'get_system_gpus', get_system_gpus_mock)
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '1, 2')
     gpus = system.get_gpus_available_to_process()

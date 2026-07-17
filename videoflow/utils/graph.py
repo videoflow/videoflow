@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 
-def flatten(items):
+
+def flatten(items) -> list:
     """Returns flattened iterable from any nested iterable"""
     to_return = []
     for x in items:
@@ -11,7 +12,7 @@ def flatten(items):
             to_return.append(x)
     return to_return
 
-def _has_cycle_util(v, visited, rec):
+def _has_cycle_util(v, visited, rec) -> bool:
     '''
     - Arguments:
         - v : (Node)
@@ -20,7 +21,7 @@ def _has_cycle_util(v, visited, rec):
     '''
     visited[v] = True
     rec[v] = True
-    
+
     for child in v.children:
         if not child in visited:
             visited[child] = False
@@ -29,11 +30,11 @@ def _has_cycle_util(v, visited, rec):
                 return True
         elif rec[child] == True:
             return True
-    
+
     rec[v] = False
     return False
 
-def has_cycle(producers):
+def has_cycle(producers) -> bool:
     '''
     Used to detect if the graph is not acyclical.  Returns true if it \
     finds a cycle in the graph.  It begins exploring the graph from producers down \
@@ -44,14 +45,14 @@ def has_cycle(producers):
     for v in producers:
         visited[v] = False
         rec[v] = False
-    
+
     for v in producers:
         if visited[v] == False:
             if _has_cycle_util(v, visited, rec):
                 return True
     return False
-    
-def _topological_sort_util(v, visited, stack):
+
+def _topological_sort_util(v, visited, stack) -> None:
     '''
     - Arguments:
         - v : (Node)
@@ -64,13 +65,13 @@ def _topological_sort_util(v, visited, stack):
             _topological_sort_util(child, visited, stack)
     stack.insert(0, v)
 
-def topological_sort(producers):
+def topological_sort(producers) -> list:
     '''
     Creates a topological sort of the computation graph.
 
     - Arguments:
         - producers: a list of producer nodes, that is, nodes with no parents.
-    
+
     - Returns:
         - stack: a list of nodes in topological order.  If \
             a *node A* appears before a *node B* on the list, it means \
@@ -79,10 +80,10 @@ def topological_sort(producers):
     visited = {}
     for v in producers:
         visited[v] = False
-    stack = []
+    stack: list = []
 
     for v in producers:
         if visited[v] == False:
             _topological_sort_util(v, visited, stack)
-    
+
     return stack

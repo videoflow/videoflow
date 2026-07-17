@@ -1,16 +1,17 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
+
+from typing import Any
 
 import cv2
 import numpy as np
 
-def resize_add_padding(im, t_h, t_w):
+
+def resize_add_padding(im, t_h, t_w) -> Any:
     '''
     Resizes an image to a target size, adding padding if necessary to maintain
     the aspect ratio
     - Arguments:
-        - im (np.array): shape (h, w, 3)
+        - im (np.ndarray): shape (h, w, 3)
         - t_h (int): target height
         - t_w (int): target width
     '''

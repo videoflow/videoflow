@@ -1,34 +1,33 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import numpy as np
 
 from ...core.node import ProcessorNode
+
 
 class Segmenter(ProcessorNode):
     '''
     Abstract class that defines the interface to do image
     segmentation in images
     '''
-    def _segment(self, im : np.array) -> np.array:
+    def _segment(self, im : np.ndarray) -> np.ndarray:
         '''
         - Arguments:
-            - im (np.array): (h, w, 3)
-        
+            - im (np.ndarray): (h, w, 3)
+
         - Returns:
-            - mask: np.array of shape (h, w, num_classes)
+            - mask: np.ndarray of shape (h, w, num_classes)
         '''
         raise NotImplementedError('Subclass must implement it')
 
-    def process(self, im : np.array) -> np.array:
+    def process(self, im : np.ndarray) -> np.ndarray:
         '''
         - Arguments:
-            - im (np.array): (h, w, 3)
-        
+            - im (np.ndarray): (h, w, 3)
+
         - Returns:
-            - masks: np.array of shape (nb_masks, h, w)
-            - classes: np.array of shape (nb_masks,)
-            - scores: np.array of shape (nb_masks,)
+            - masks: np.ndarray of shape (nb_masks, h, w)
+            - classes: np.ndarray of shape (nb_masks,)
+            - scores: np.ndarray of shape (nb_masks,)
         '''
         return self._segment(im)

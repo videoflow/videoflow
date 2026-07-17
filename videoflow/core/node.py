@@ -1,16 +1,17 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import inspect
 import logging
 import re
+from typing import TYPE_CHECKING, Any, Optional
+
+if TYPE_CHECKING:
+    from .policies import JoinPolicy
 
 logger = logging.getLogger(__package__)
 
 from ..utils.graph import has_cycle, topological_sort
-from .constants import LOGGING_LEVEL
-from .constants import GPU, CPU, DEVICE_TYPES
+from .constants import CPU, DEVICE_TYPES, GPU, LOGGING_LEVEL
 
 _SLUG_RE = re.compile(r'[^a-z0-9]+')
 
@@ -38,22 +39,22 @@ class Node:
             a deploy-time ``--image-override`` beats both. Ignored by the local \
             engine, which runs workers in the current Python environment.
     '''
-    _name_counters = {}
+    _name_counters: dict = {}
 
-    def __init__(self, name = None, image = None):
+    def __init__(self, name = None, image = None) -> None:
         if name is None:
             cls_name = type(self).__name__
             Node._name_counters[cls_name] = Node._name_counters.get(cls_name, 0) + 1
             name = f'{_slugify(cls_name)}-{Node._name_counters[cls_name]}'
         self._name = name
         self._image = image
-        self._parents = None
-        self._children = set()
+        self._parents: Optional[list] = None
+        self._children: Optional[set] = set()
         self._is_part_of_taskmodule_node = False
         self._logger = self._configure_logger()
         self._logger.debug(f'Created Node with name {self._name}')
 
-    def _configure_logger(self):
+    def _configure_logger(self) -> logging.Logger:
         logger = logging.getLogger(f'{self.__repr__()}')
         logger.setLevel(LOGGING_LEVEL)
         ch = logging.StreamHandler()
@@ -63,10 +64,10 @@ class Node:
         logger.addHandler(ch)
         return logger
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return self._name
 
-    def open(self):
+    def open(self) -> None:
         '''
         This method is called by the task runner before doing any consuming,
         processing or producing.  Should be used to open any resources
@@ -75,7 +76,7 @@ class Node:
         '''
         pass
 
-    def close(self):
+    def close(self) -> None:
         '''
         This method is called by the task running after finishing doing all
         consuming, processing or producing because of and end signal receival.
@@ -95,7 +96,7 @@ class Node:
         return self._name
 
     @property
-    def image(self):
+    def image(self) -> Optional[str]:
         '''The container image ref declared for this node (or None to use the deploy-time default).'''
         return self._image
 
@@ -140,7 +141,7 @@ class Node:
                     )
         return params
 
-    def __call__(self, *parents):
+    def __call__(self, *parents) -> "Node":
         if self._parents is not None:
             raise RuntimeError('This method has already been called. It can only be called once.')
         if self._is_part_of_taskmodule_node:
@@ -152,24 +153,28 @@ class Node:
                 raise RuntimeError('Cannot make a node that belongs to a TaskModuleNode to be'
                                 ' a parent of another node. Use the TaskModuleNode as parent'
                                 ' if possible.')
-        self._parents = list()
+        self._parents = []
         for parent in parents:
             assert isinstance(parent, Node), '%s is not a node' % str(parent)
             self._parents.append(parent)
             parent.add_child(self)
         return self
 
-    def add_child(self, child):
+    def add_child(self, child) -> None:
         '''
         Adds child to the set of childs that depend on it.
         '''
+        # Only non-leaf nodes ever get children (a Leaf sets _children to None and
+        # is never made a parent), so this is always a real set here.
+        assert self._children is not None
         self._children.add(child)
 
-    def remove_child(self, child):
+    def remove_child(self, child) -> None:
+        assert self._children is not None
         self._children.remove(child)
 
     @property
-    def parents(self):
+    def parents(self) -> Optional[list]:
         '''
         Returns a list with the parent nodes
         '''
@@ -178,17 +183,19 @@ class Node:
         return list(self._parents)
 
     @property
-    def children(self):
+    def children(self) -> Optional[set]:
         '''
         Returns a set of the child nodes
         '''
+        if self._children is None:
+            return None
         return set(self._children)
 
 class Leaf(Node):
     '''
     Node with no children.
     '''
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, **kwargs) -> None:
         self._children = None
         super(Leaf, self).__init__(*args, **kwargs)
 
@@ -199,7 +206,7 @@ class ConsumerNode(Leaf):
             output of parent nodes, receives metadata produced by parent nodes.
         - name (str): see ``Node``.
     '''
-    def __init__(self, metadata = False, name = None, join_policy = None, idempotent = False, **kwargs):
+    def __init__(self, metadata = False, name = None, join_policy = None, idempotent = False, **kwargs) -> None:
         self._metadata = metadata
         self._idempotent = idempotent
         from .policies import JoinPolicy
@@ -209,25 +216,25 @@ class ConsumerNode(Leaf):
         super(ConsumerNode, self).__init__(name = name, **kwargs)
 
     @property
-    def metadata(self):
+    def metadata(self) -> bool:
         return self._metadata
 
     @property
-    def idempotent(self):
+    def idempotent(self) -> bool:
         '''If True (and the flow has a Redis blob/idempotency store), the consumer's side effects are deduplicated across redelivery.'''
         return self._idempotent
 
     @property
-    def partition_by(self):
+    def partition_by(self) -> Optional[str]:
         # Consumers are single sinks (no nb_tasks), so they never partition.
         return None
 
     @property
-    def join_policy(self):
+    def join_policy(self) -> Optional["JoinPolicy"]:
         from .policies import JoinPolicy
         return JoinPolicy.from_dict(self._join_policy)
 
-    def consume(self, item):
+    def consume(self, item) -> None:
         '''
         Method definition that needs to be implemented by subclasses.
 
@@ -254,7 +261,7 @@ class ProcessorNode(Node):
         - name (str): see ``Node``.
     '''
     def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None,
-                partition_by = None, join_policy = None, **kwargs):
+                partition_by = None, join_policy = None, **kwargs) -> None:
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
@@ -268,35 +275,35 @@ class ProcessorNode(Node):
         super(ProcessorNode, self).__init__(name = name, **kwargs)
 
     @property
-    def nb_tasks(self):
+    def nb_tasks(self) -> int:
         '''
         Returns the number of tasks to allocate to this processor
         '''
         return self._nb_tasks
 
     @property
-    def device_type(self):
+    def device_type(self) -> str:
         '''
         Returns the preferred device type to use to run the processor's code
         '''
         return self._device_type
 
     @property
-    def partition_by(self):
+    def partition_by(self) -> Optional[str]:
         return self._partition_by
 
     @property
-    def join_policy(self):
+    def join_policy(self) -> Optional["JoinPolicy"]:
         '''Returns the ``JoinPolicy`` object (or None), reconstructed from the stored dict.'''
         from .policies import JoinPolicy
         return JoinPolicy.from_dict(self._join_policy)
 
-    def change_device(self, device_type):
+    def change_device(self, device_type) -> None:
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
 
-    def process(self, inp : any) -> any:
+    def process(self, inp : Any) -> Any:
         '''
         Method definition that needs to be implemented by subclasses.
 
@@ -316,7 +323,7 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__(self, device_type = CPU, name = None, **kwargs):
+    def __init__(self, device_type = CPU, name = None, **kwargs) -> None:
         # nb_tasks is always 1 for this class; discard it if present (e.g. when
         # reconstructing from get_params(), which captures it from the ProcessorNode
         # level of the MRO) so it doesn't collide with the positional 1 below.
@@ -348,22 +355,23 @@ class TaskModuleNode(ProcessorNode):
         not support ``get_params()``-based reconstruction and is not yet supported \
         by the distributed Kubernetes execution path (see ``videoflow.compiler``).
     '''
-    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, name = None, **kwargs):
+    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, name = None, **kwargs) -> None:
         super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, name = name, **kwargs)
         self._entry_node = entry_node
         self._exit_node = exit_node
 
         #3. Relinking entry and exit nodes
         #3.1 Adopt entry_node parents if any
-        if entry_node.parents is not None:
-            self._parents = entry_node.parents
+        entry_parents = entry_node.parents
+        if entry_parents is not None:
+            self._parents = entry_parents
             entry_node._parents = None
-            for parent in self._parents:
+            for parent in entry_parents:
                 parent.remove_child(entry_node)
                 parent.add_child(self)
 
         #3.2 Relink things with exit_node
-        for child in exit_node.children:
+        for child in (exit_node.children or set()):
             self.add_child(child)
             if child._parents is not None:
                 pos_idx = child._parents.index(exit_node)
@@ -382,13 +390,13 @@ class TaskModuleNode(ProcessorNode):
         if exit_node not in self._tsort:
             logger.error(f'{exit_node} is not descendant of entry node. Exiting now...')
             raise ValueError(f'{exit_node} is not descendant of entry node')
-        if any([not isinstance(p, ProcessorNode) for p in self._tsort]):
-            raise ValueError(f'There is at least one instance in the module graph that is not instance of ProcessorNode')
-        if any([isinstance(p, TaskModuleNode) for p in self._tsort]):
+        if any(not isinstance(p, ProcessorNode) for p in self._tsort):
+            raise ValueError('There is at least one instance in the module graph that is not instance of ProcessorNode')
+        if any(isinstance(p, TaskModuleNode) for p in self._tsort):
             raise ValueError('TaskModuleNode type of nodes cannot be nested.')
-        if any([isinstance(p, OneTaskProcessorNode) for p in self._tsort]) and nb_tasks > 1:
+        if any(isinstance(p, OneTaskProcessorNode) for p in self._tsort) and nb_tasks > 1:
             raise ValueError('Cannot have nb_tasks > 1 if one of the processor nodes is derived from OneTaskProcessorNode')
-        if any([p.device_type == GPU for p in self._tsort]):
+        if any(p.device_type == GPU for p in self._tsort):
             raise ValueError('Cannot have nodes with device type GPU as part of the sequence')
         if len(self._tsort) < 1:
             raise ValueError('Must pass a list of at least one processor node')
@@ -399,7 +407,7 @@ class TaskModuleNode(ProcessorNode):
                                         ' of the list of processor nodes')
 
 
-    def process(self, *inp):
+    def process(self, *inp) -> Any:
         intermediate_results = {}
         result = self._tsort[0].process(*inp)
         intermediate_results[self._tsort[0]] = result
@@ -409,7 +417,7 @@ class TaskModuleNode(ProcessorNode):
             intermediate_results[p] = result
         return result
 
-    def get_params(self):
+    def get_params(self) -> None:
         raise NotImplementedError(
             'TaskModuleNode wraps live node references and is not supported by the '
             'distributed execution path yet. Deploy the fused nodes as separate, '
@@ -417,14 +425,14 @@ class TaskModuleNode(ProcessorNode):
         )
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs):
+    def __init__(self, processor_function, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs) -> None:
         self._processor_function = processor_function
         super(FunctionProcessorNode, self).__init__(nb_tasks, device_type, name = name, **kwargs)
 
-    def process(self, inp):
+    def process(self, inp) -> Any:
         return self._processor_function(inp)
 
-    def get_params(self):
+    def get_params(self) -> None:
         raise NotImplementedError(
             'FunctionProcessorNode wraps an arbitrary Python callable, which is not '
             'JSON-serializable. Define a ProcessorNode subclass instead if this node '
@@ -453,7 +461,7 @@ class ModuleNode(Node):
                 - There is a ModuleNode within the subgraph that does not have that flag set to true too.
                 - There is at least one node in the sequence that has device_type GPU
     '''
-    def __init__(self, entry_node : Node, exit_node : Node, *args, **kwargs):
+    def __init__(self, entry_node : Node, exit_node : Node, *args, **kwargs) -> None:
         self._entry_node = entry_node
         self._exit_node = exit_node
 
@@ -467,7 +475,7 @@ class ModuleNode(Node):
             logger.error(f'{exit_node} is not descendant of entry node. Exiting now...')
             raise ValueError(f'{exit_node} is not descendant of entry node')
 
-        if any([((not isinstance(p, ProcessorNode)) and (not isinstance(p, ModuleNode))) for p in temp_tsort]):
+        if any(((not isinstance(p, ProcessorNode)) and (not isinstance(p, ModuleNode))) for p in temp_tsort):
             raise ValueError('There is at least one node in the module graph that is not instance of ProcessorNode or of ModuleNode')
 
         # Create valid tsort here.
@@ -480,15 +488,15 @@ class ModuleNode(Node):
 
         super(ModuleNode, self).__init__(*args, **kwargs)
 
-    def __call__(self, *parents):
+    def __call__(self, *parents) -> None:
         #TODO
         pass
 
     @property
-    def nodes(self):
+    def nodes(self) -> list:
         return list(self._tsort)
 
-    def get_params(self):
+    def get_params(self) -> None:
         raise NotImplementedError(
             'ModuleNode wraps live node references and is not supported by the '
             'distributed execution path.'
@@ -512,7 +520,7 @@ class ProducerNode(Node):
             a ``Deployment`` (infinite).
         - name (str): see ``Node``.
     '''
-    def __init__(self, is_finite : bool = True, name = None, **kwargs):
+    def __init__(self, is_finite : bool = True, name = None, **kwargs) -> None:
         self._is_finite = is_finite
         super(ProducerNode, self).__init__(name = name, **kwargs)
 
@@ -520,7 +528,7 @@ class ProducerNode(Node):
     def is_finite(self) -> bool:
         return self._is_finite
 
-    def next(self) -> any:
+    def next(self) -> Any:
         '''
         Returns next produced element.
 

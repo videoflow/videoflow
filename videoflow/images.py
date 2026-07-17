@@ -12,11 +12,10 @@ match wins:
 
 If none apply, resolution raises with an actionable message instead of guessing.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-def parse_override(spec : str):
+
+def parse_override(spec : str) -> tuple:
     '''Parses a ``name=ref`` CLI override into a ``(name, ref)`` tuple.'''
     if '=' not in spec:
         raise ValueError(f'--image-override must be name=image-ref, got: {spec!r}')

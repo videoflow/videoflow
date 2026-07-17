@@ -1,6 +1,7 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
+
+from typing import Optional
+
 
 class Messenger:
     '''
@@ -12,7 +13,7 @@ class Messenger:
         position in a topological sort, so it works correctly for arbitrary DAGs \
         (multi-parent joins, multi-producer graphs).
     '''
-    def publish_message(self, message, metadata = None):
+    def publish_message(self, message, metadata = None) -> None:
         '''
         Publishes this node's own output message. Depending on the flow's \
             configured retention policy (REALTIME vs BATCH), this may drop the \
@@ -20,7 +21,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def publish_stop_signal(self):
+    def publish_stop_signal(self) -> None:
         '''
         Publishes a termination marker on this node's own subject. Unlike \
             ``publish_message``, this is never dropped regardless of retention \
@@ -36,7 +37,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def ack_inputs(self):
+    def ack_inputs(self) -> None:
         '''
         Acknowledge the input group last returned by ``receive_message`` — called by \
             the task only *after* the node has processed it (and, for a processor, \
@@ -46,7 +47,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def fail_inputs(self, exc):
+    def fail_inputs(self, exc) -> None:
         '''
         Report that the node raised while processing the last input group. The \
             messenger decides whether to redeliver (BATCH, up to a retry limit, then \
@@ -54,7 +55,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def set_output_partition_key(self, value):
+    def set_output_partition_key(self, value) -> None:
         '''
         Set the partition key attached to this node's next published output (via \
             ``RuntimeContext.set_partition_key``), so a downstream partitioned node \
@@ -62,12 +63,16 @@ class Messenger:
         '''
         pass
 
-    def last_input_key(self):
+    def last_input_key(self) -> Optional[str]:
         '''
         A stable identity for the input group last returned by ``receive_message``, \
             used as a sink idempotency key. Default: None (no idempotency).
         '''
         return None
+
+    def close(self) -> None:
+        '''Release any broker resources held by the messenger. Default: no-op.'''
+        pass
 
     def receive_message(self) -> dict:
         '''
@@ -88,10 +93,10 @@ class ExecutionEngine:
         started (as local OS processes for development, or as Kubernetes pods in \
         production) and how flow-wide termination and completion are observed.
     '''
-    def __init__(self):
+    def __init__(self) -> None:
         self._allocation_called = False
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
         '''
         - Arguments:
             - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \
@@ -103,20 +108,20 @@ class ExecutionEngine:
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def signal_flow_termination(self):
+    def signal_flow_termination(self) -> None:
         '''
         Signals the execution environment that the flow needs to stop.
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def join_task_processes(self):
+    def join_task_processes(self) -> None:
         '''
         Blocking method.  It is supposed to make the calling process sleep until all task \
         processes have finished processing.
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
+    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
         '''
         Defines a template with the order of methods that need to run in order to \
             allocate and run tasks.

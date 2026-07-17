@@ -1,8 +1,7 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-import logging 
+import logging
+from typing import Any
 
 import cv2
 import numpy as np
@@ -16,23 +15,25 @@ class ImageProducer(ProducerNode):
     Reads a single image and produces it
     '''
 
-    def __init__(self, image_path : str, **kwargs):
+    def __init__(self, image_path : str, **kwargs) -> None:
         self._image_path = image_path
         self._image_returned = False
         super(ImageProducer, self).__init__(**kwargs)
-    
-    def open(self):
+
+    def open(self) -> None:
         pass
-    
-    def close(self):
+
+    def close(self) -> None:
         pass
-    
-    def next(self) -> np.array:
+
+    def next(self) -> np.ndarray:
         '''
         Returns image in RGB format.
         '''
         if not self._image_returned:
             im = cv2.imread(self._image_path)
+            if im is None:
+                raise StopIteration()
             im = im[...,::-1]
             self._image_returned = True
             return im
@@ -44,16 +45,16 @@ class ImageFolderReader(ProducerNode):
     Reads from a folder of images and returns them one by one.
     Passes through images in alphabetical order.
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super(ImageFolderReader, self).__init__(**kwargs)
 
-    def open(self):
+    def open(self) -> None:
         raise NotImplementedError()
 
-    def close(self):
+    def close(self) -> None:
         raise NotImplementedError()
 
-    def next(self) -> np.array:
+    def next(self) -> np.ndarray:
         raise NotImplementedError()
 
 class VideoFolderReader(ProducerNode):
@@ -62,22 +63,22 @@ class VideoFolderReader(ProducerNode):
     the videos one by one.
     Passes through videos in alphabetical order.
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super(VideoFolderReader, self).__init__(**kwargs)
 
-    def open(self):
+    def open(self) -> None:
         raise NotImplementedError()
 
-    def close(self):
+    def close(self) -> None:
         raise NotImplementedError()
 
-    def next(self) -> np.array:
+    def next(self) -> np.ndarray:
         raise NotImplementedError()
 
 class VideostreamReader(ProducerNode):
     '''
     Reader of video streams, using ``cv2``
-    
+
     - Arguments:
         - url_or_deviceid: (int or str) The url, filesystem path or id of the \
             video stream.
@@ -87,9 +88,9 @@ class VideostreamReader(ProducerNode):
             many times to retry.
     '''
     def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1, nb_retries = 0,
-                is_finite : bool = True, **kwargs):
+                is_finite : bool = True, **kwargs) -> None:
         self._url_or_deviceid = url_or_deviceid
-        self._video = None
+        self._video: Any = None  # cv2.VideoCapture, opened lazily in open()
         self._swap_channels = swap_channels
         self._nb_frames = nb_frames
         self._frame_count = 0
@@ -97,26 +98,26 @@ class VideostreamReader(ProducerNode):
         self._retries_count = 0
         super(VideostreamReader, self).__init__(is_finite = is_finite, **kwargs)
 
-    def open(self):
+    def open(self) -> None:
         '''
         Opens the video stream
         '''
         if self._video is None:
             self._video = cv2.VideoCapture(self._url_or_deviceid)
 
-    def close(self):
+    def close(self) -> None:
         '''
         Releases the video stream object
         '''
         if self._video and self._video.isOpened():
             self._video.release()
 
-    def next(self):
+    def next(self) -> tuple:
         '''
         - Returns:
             - frame no / index  : integer value of the frame read
-            - frame: np.array of shape (h, w, 3)
-        
+            - frame: np.ndarray of shape (h, w, 3)
+
         - Raises:
             - StopIteration: after it finishes reading the videofile \
                 or when it reaches the specified number of frames to \
@@ -143,7 +144,7 @@ class VideostreamReader(ProducerNode):
             self._retries_count += 1
             logger.error(f'Error reading video, increasing retries count to {self._retries_count}')
         raise StopIteration()
-    
+
 class VideoUrlReader(VideostreamReader):
     '''
     Opens a video capture object and returns subsequent frames
@@ -153,11 +154,11 @@ class VideoUrlReader(VideostreamReader):
         - device_id: id of the video device connected to the computer
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, url : str, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs):
+    def __init__(self, url : str, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs) -> None:
         super(VideoUrlReader, self).__init__(url, nb_frames = nb_frames, nb_retries = nb_retries,
                                             is_finite = is_finite, **kwargs)
 
-    def get_params(self):
+    def get_params(self) -> dict:
         # Overridden because this class's own __init__ names its first argument
         # `url`, while the base class stores it as `self._url_or_deviceid` — the
         # default MRO-walking get_params() can't bridge that rename automatically.
@@ -179,11 +180,11 @@ class VideoDeviceReader(VideostreamReader):
         - device_id: id of the video device connected to the computer
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs):
+    def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs) -> None:
         super(VideoDeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries,
                                                 is_finite = is_finite, **kwargs)
 
-    def get_params(self):
+    def get_params(self) -> dict:
         return {
             'device_id': self._url_or_deviceid,
             'nb_frames': self._nb_frames,
@@ -203,11 +204,11 @@ class VideoFileReader(VideostreamReader):
         - swap_channels: If true, swaps from BGR to RGB
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1, **kwargs):
+    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1, **kwargs) -> None:
         super(VideoFileReader, self).__init__(video_file, swap_channels = swap_channels, nb_frames = nb_frames,
                                             nb_retries = 0, is_finite = True, **kwargs)
 
-    def get_params(self):
+    def get_params(self) -> dict:
         return {
             'video_file': self._url_or_deviceid,
             'swap_channels': self._swap_channels,

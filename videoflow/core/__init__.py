@@ -1,9 +1,10 @@
-from .task import Task, ConsumerTask, ProcessorTask, ProducerTask
-from .node import Node, ConsumerNode, ProcessorNode, ProducerNode, FunctionProcessorNode
-from .flow import Flow
-from .constants import LOGGING_LEVEL
-
 import logging
+
+from .constants import LOGGING_LEVEL
+from .flow import Flow
+from .node import ConsumerNode, FunctionProcessorNode, Node, ProcessorNode, ProducerNode
+from .task import ConsumerTask, ProcessorTask, ProducerTask, Task
+
 logger = logging.getLogger(__package__)
 logger.setLevel(LOGGING_LEVEL)
 ch = logging.StreamHandler()

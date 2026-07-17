@@ -4,9 +4,7 @@ line, easy to ship to a log aggregator) by setting ``VF_STRUCTURED_LOGS=1``;
 otherwise a plain human-readable format is used. Node-scoped fields (flow/run/node/
 replica/trace ids) are included when a log record carries them as ``extra=...``.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import json
 import logging
@@ -15,7 +13,7 @@ import os
 _CONTEXT_FIELDS = ('flow_id', 'run_id', 'node_name', 'replica_id', 'trace_id', 'span_id', 'edge_id')
 
 class JsonFormatter(logging.Formatter):
-    def format(self, record):
+    def format(self, record) -> str:
         payload = {
             'ts': self.formatTime(record),
             'level': record.levelname,
@@ -30,7 +28,7 @@ class JsonFormatter(logging.Formatter):
             payload['exc'] = self.formatException(record.exc_info)
         return json.dumps(payload)
 
-def configure_logging():
+def configure_logging() -> None:
     structured = os.environ.get('VF_STRUCTURED_LOGS', '').lower() in ('1', 'true', 'yes')
     handler = logging.StreamHandler()
     if structured:

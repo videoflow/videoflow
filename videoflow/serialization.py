@@ -4,13 +4,12 @@ Wire format used to move messages between nodes over the message broker
 running purely in a single local process — it's the boundary format for bytes
 that cross a network/process boundary.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import hashlib
 import os
 import pickle
+from typing import Any
 
 import msgpack
 import numpy as np
@@ -66,7 +65,7 @@ class BlobStore:
 
 class RedisBlobStore(BlobStore):
     '''Uses a Redis server purely as a large-value TTL cache, independent of whether Redis is used for messaging.'''
-    def __init__(self, url : str = None):
+    def __init__(self, url : str = None) -> None:
         import redis
         self._client = redis.Redis.from_url(url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL', 'redis://localhost:6379/0'))
 
@@ -80,7 +79,8 @@ class RedisBlobStore(BlobStore):
         data = self._client.get(ref)
         if data is None:
             raise KeyError(f'Blob {ref} not found (expired or never existed)')
-        return data
+        # redis-py types get() more broadly than what we store (always bytes here).
+        return data  # type: ignore[return-value]
 
 def _encode_ndarray(arr : np.ndarray) -> bytes:
     return msgpack.packb(
@@ -92,7 +92,7 @@ def _decode_ndarray(buf : bytes) -> np.ndarray:
     d = msgpack.unpackb(buf, raw = False)
     return np.frombuffer(d['data'], dtype = np.dtype(d['dtype'])).reshape(d['shape'])
 
-def encode_payload(payload, blob_store : BlobStore = None):
+def encode_payload(payload, blob_store : BlobStore = None) -> tuple:
     '''
     Encodes an arbitrary payload (numpy array, or any picklable Python object) into \
         ``(codec, bytes)``. If the encoded size exceeds ``MAX_INLINE_PAYLOAD_BYTES`` \
@@ -115,7 +115,7 @@ def encode_payload(payload, blob_store : BlobStore = None):
         return CODEC_EXTERNAL_REF, msgpack.packb({'ref': ref, 'inner_codec': codec}, use_bin_type = True)
     return codec, buf
 
-def decode_payload(codec : str, buf : bytes, blob_store : BlobStore = None):
+def decode_payload(codec : str, buf : bytes, blob_store : BlobStore = None) -> Any:
     '''Inverse of ``encode_payload``.'''
     if codec == CODEC_EXTERNAL_REF:
         d = msgpack.unpackb(buf, raw = False)

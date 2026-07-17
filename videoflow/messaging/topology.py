@@ -11,9 +11,7 @@ Naming is scoped by ``flow_id`` **and** ``run_id`` so that re-running or
 redeploying a flow gets a fresh set of streams instead of colliding with the
 previous run's durables.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import logging
 import re
@@ -170,7 +168,7 @@ def eos_consumer_config(flow_id : str, run_id : str, consumer_node_name : str,
 
 # -- provisioning ----------------------------------------------------------
 
-async def _ensure_stream(js, config : StreamConfig):
+async def _ensure_stream(js, config : StreamConfig) -> None:
     try:
         await js.add_stream(config)
     except Exception as e:  # noqa: BLE001 — nats raises a generic error on conflict
@@ -185,7 +183,7 @@ async def _ensure_stream(js, config : StreamConfig):
         else:
             raise
 
-async def _ensure_consumer(js, stream_name : str, config : ConsumerConfig):
+async def _ensure_consumer(js, stream_name : str, config : ConsumerConfig) -> None:
     try:
         await js.add_consumer(stream_name, config)
     except Exception as e:  # noqa: BLE001
@@ -193,7 +191,7 @@ async def _ensure_consumer(js, stream_name : str, config : ConsumerConfig):
 
 async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str,
                         max_retries : int = DEFAULT_MAX_RETRIES, ack_wait : int = 60,
-                        max_ack_pending : int = 8):
+                        max_ack_pending : int = 8) -> None:
     '''
     Idempotently create every stream and durable consumer a flow needs, before any
     worker publishes. Required for BATCH: under INTEREST retention a message
@@ -238,7 +236,7 @@ async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str
                 await _ensure_consumer(js, parent_stream, base)
 
 async def provision_flow_connect(nats_url : str, specs, flow_id : str, run_id : str,
-                                flow_type : str, **kwargs):
+                                flow_type : str, **kwargs) -> None:
     '''Connects to NATS, provisions, and drains — a self-contained entrypoint.'''
     import nats
     nc = await nats.connect(nats_url)
@@ -247,12 +245,12 @@ async def provision_flow_connect(nats_url : str, specs, flow_id : str, run_id : 
     finally:
         await nc.drain()
 
-def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow_type : str, **kwargs):
+def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow_type : str, **kwargs) -> None:
     '''Synchronous wrapper for callers outside an event loop (the local engine, the init entrypoint).'''
     import asyncio
     asyncio.run(provision_flow_connect(nats_url, specs, flow_id, run_id, flow_type, **kwargs))
 
-async def delete_run_streams(nc, flow_id : str, run_id : str):
+async def delete_run_streams(nc, flow_id : str, run_id : str) -> None:
     '''Best-effort teardown: delete every stream belonging to this run.'''
     js = nc.jetstream()
     prefix = stream_label_selector(flow_id, run_id)

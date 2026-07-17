@@ -12,16 +12,17 @@ from contextlib import redirect_stdout
 
 import pytest
 
+from videoflow.compiler import compile_flow
+from videoflow.consumers import CommandlineConsumer, VoidConsumer
 from videoflow.core import Flow
 from videoflow.core.constants import REALTIME
 from videoflow.core.engine import Messenger
-from videoflow.producers import IntProducer
-from videoflow.processors import IdentityProcessor
-from videoflow.consumers import CommandlineConsumer, VoidConsumer
-from videoflow.compiler import compile_flow
-from videoflow.manifests import render_manifests
-from videoflow.idempotency import idempotency_key, IdempotencyStore
 from videoflow.core.task import ConsumerTask
+from videoflow.idempotency import IdempotencyStore, idempotency_key
+from videoflow.manifests import render_manifests
+from videoflow.processors import IdentityProcessor
+from videoflow.producers import IntProducer
+
 
 def _demo_flow():
     p = IntProducer(0, 5, name = 'producer')
@@ -92,6 +93,7 @@ def test_explain_prints_nodes_and_dlq():
 
 def test_json_formatter_includes_context_fields():
     import logging
+
     from videoflow.logging_config import JsonFormatter
     rec = logging.LogRecord('n', logging.INFO, __file__, 1, 'hello', None, None)
     rec.flow_id = 'f'

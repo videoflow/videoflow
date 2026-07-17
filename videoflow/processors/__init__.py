@@ -1,2 +1,2 @@
+from .aggregators import CountAggregator, MaxAggregator, MinAggregator, MultiplicationAggregator, SumAggregator
 from .basic import IdentityProcessor, JoinerProcessor
-from .aggregators import SumAggregator, MultiplicationAggregator, CountAggregator, MaxAggregator, MinAggregator

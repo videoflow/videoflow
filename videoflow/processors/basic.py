@@ -1,16 +1,16 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import time
+from typing import Any
 
 from ..core.node import ProcessorNode
+
 
 class IdentityProcessor(ProcessorNode):
     '''
     IdentityProcessor implements the identity
     function: it returns the same value that it received
-    as input. You can introduce some delay by setting fps 
+    as input. You can introduce some delay by setting fps
     to a value greater than 0.
 
     - Arguments:
@@ -18,7 +18,7 @@ class IdentityProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(self, fps = -1, **kwargs):
+    def __init__(self, fps = -1, **kwargs) -> None:
         super(IdentityProcessor, self).__init__(**kwargs)
         self._fps = fps
         if fps > 0:
@@ -26,7 +26,7 @@ class IdentityProcessor(ProcessorNode):
         else:
             self._wts = 0
 
-    def process(self, inp):
+    def process(self, inp) -> Any:
         if self._wts > 0:
             time.sleep(self._wts)
         return inp
@@ -41,15 +41,15 @@ class JoinerProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(self, fps = -1, **kwargs):
+    def __init__(self, fps = -1, **kwargs) -> None:
         super(JoinerProcessor, self).__init__(**kwargs)
         self._fps = fps
         if fps > 0:
             self._wts = 1.0 / fps
         else:
             self._wts = 0
-    
-    def process(self, *inp):
+
+    def process(self, *inp) -> Any:
         if self._wts > 0:
             time.sleep(self._wts)
         return tuple(inp)

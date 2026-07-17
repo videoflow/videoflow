@@ -8,7 +8,6 @@ import os
 import uuid
 
 import pytest
-
 from nats.js.api import DiscardPolicy, RetentionPolicy
 
 from videoflow.core.constants import BATCH, REALTIME

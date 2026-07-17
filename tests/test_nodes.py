@@ -1,10 +1,11 @@
 import pytest
 
-from videoflow.core.graph import GraphEngine
-from videoflow.core.node import TaskModuleNode, ProcessorNode
-from videoflow.producers import IntProducer
-from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.consumers import CommandlineConsumer
+from videoflow.core.graph import GraphEngine
+from videoflow.core.node import TaskModuleNode
+from videoflow.processors import IdentityProcessor, JoinerProcessor
+from videoflow.producers import IntProducer
+
 
 def test_taskmodule_node():
     '''
@@ -21,7 +22,7 @@ def test_taskmodule_node():
     f = JoinerProcessor()(d, e, c, b)
     module = TaskModuleNode(a, f)
     out = CommandlineConsumer()(module)
-    
+
     #2. Tests that you raise an exception as error here.
     with pytest.raises(RuntimeError):
         out1 = CommandlineConsumer()(f)
@@ -35,7 +36,7 @@ def test_taskmodule_node_1():
     Tests that task module can create its own parents without
     having to take them from the entry node.
     '''
-    
+
     zero = IntProducer()
     a = IdentityProcessor()
     b = IdentityProcessor()(a)
@@ -44,7 +45,7 @@ def test_taskmodule_node_1():
     out = CommandlineConsumer()(task_module)
 
     graph_engine = GraphEngine([zero], [out])
-    
+
 def test_taskmodule_node_2():
     '''
     Tests that task module can take the childs from its exit_entry
@@ -89,4 +90,3 @@ def test_taskmodule_node_4():
 
 if __name__ == "__main__":
     pytest.main([__file__])
-

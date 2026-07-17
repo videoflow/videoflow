@@ -5,11 +5,12 @@ graph support.
 '''
 import pytest
 
+from videoflow.consumers import CommandlineConsumer
 from videoflow.core.graph import GraphEngine
 from videoflow.core.node import Node
-from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
-from videoflow.consumers import CommandlineConsumer
+from videoflow.producers import IntProducer
+
 
 def test_auto_generated_names_are_unique():
     a = IntProducer()

@@ -23,19 +23,17 @@ the original graph-building script.
     VF_JOIN_POLICY_JSON optional; JSON JoinPolicy for a multi-parent node
     VF_BLOB_REDIS_URL   optional; enables the external blob store for large payloads
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import importlib
 import json
 import logging
 import os
-import sys
+from typing import Any
 
 logger = logging.getLogger('videoflow.worker')
 
-def _import_class(fq_class : str):
+def _import_class(fq_class : str) -> type:
     module_path, class_name = fq_class.rsplit('.', 1)
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
@@ -60,15 +58,15 @@ def _resolve_replica_id() -> int:
                 return int(tail)
     return 0
 
-def build_node_from_env():
+def build_node_from_env() -> Any:
     node_class = _import_class(os.environ['VF_NODE_CLASS'])
     params = json.loads(os.environ.get('VF_NODE_PARAMS_JSON', '{}'))
     return node_class(**params)
 
-def run_from_env():
-    from .core.task import ProducerTask, ProcessorTask, ConsumerTask
+def run_from_env() -> None:
+    from .compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
+    from .core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
     from .messaging.nats_messenger import NATSMessenger
-    from .compiler import NODE_KIND_PRODUCER, NODE_KIND_PROCESSOR, NODE_KIND_CONSUMER
 
     node_name = os.environ['VF_NODE_NAME']
     kind = os.environ['VF_NODE_KIND']
@@ -98,7 +96,8 @@ def run_from_env():
     # (they should match, but the env is authoritative for routing).
     node._name = node_name
 
-    messenger = NATSMessenger(
+    from .core.engine import Messenger
+    messenger: Messenger = NATSMessenger(
         node, parent_names, nats_url, flow_id, flow_type, run_id,
         blob_store = blob_store, replica_id = replica_id,
         ack_wait = ack_wait, max_retries = max_retries,
@@ -108,7 +107,7 @@ def run_from_env():
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
     # engine where several workers share a host and would collide on the port).
-    from .health import HealthState, HealthServer, InstrumentedMessenger
+    from .health import HealthServer, HealthState, InstrumentedMessenger
     health_port = int(os.environ.get('VF_HEALTH_PORT', '0'))
     health_server = None
     if health_port > 0:
@@ -123,6 +122,7 @@ def run_from_env():
         logging.getLogger(f'videoflow.node.{node_name}'), messenger = messenger,
     )
 
+    task: Task
     if kind == NODE_KIND_PRODUCER:
         task = ProducerTask(node, messenger, has_children, ctx = ctx)
     elif kind == NODE_KIND_PROCESSOR:
@@ -146,7 +146,7 @@ def run_from_env():
             health_server.stop()
     logger.info(f'Worker finished: node={node_name}')
 
-def main():
+def main() -> None:
     from .logging_config import configure_logging
     configure_logging()
     run_from_env()

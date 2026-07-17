@@ -1,5 +1,6 @@
-import subprocess
 import os
+import subprocess
+
 
 def get_number_of_gpus() -> int:
     '''
@@ -18,7 +19,7 @@ def get_system_gpus() -> set:
     n = get_number_of_gpus()
     return set(range(n))
 
-def get_gpus_available_to_process() -> [int]:
+def get_gpus_available_to_process() -> list:
     '''
     Returns the list of ids of the gpus available to the process calling the function.
     It first gets the set of ids of the gpus in the system.  Then it gets the set of ids marked as
@@ -40,9 +41,6 @@ def get_gpus_available_to_process() -> [int]:
                     visible_devices.add(device_id)
                 except:
                     pass
-    
+
     available_devices = system_devices & visible_devices
     return list(available_devices)
-
-
-    

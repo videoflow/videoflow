@@ -1,17 +1,17 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import logging
 import uuid
+from typing import List, Optional
 
+from .constants import FLOW_TYPES, REALTIME
+from .engine import ExecutionEngine
 from .graph import GraphEngine
-from .constants import BATCH, REALTIME, FLOW_TYPES
-from .node import Node, ProducerNode, ConsumerNode, ProcessorNode
+from .node import ProducerNode
 
 logger = logging.getLogger(__package__)
 
-def _discover_producers(consumers):
+def _discover_producers(consumers) -> list:
     '''
     Walks the ``.parents`` chain backwards from each consumer to find the set of \
         root ``ProducerNode``s that feed it. A flow no longer needs producers to be \
@@ -39,7 +39,7 @@ def _discover_producers(consumers):
             stack.extend(parents)
     return producers
 
-def build_tasks_data(graph_engine : GraphEngine):
+def build_tasks_data(graph_engine : GraphEngine) -> list:
     '''
     Turns a validated ``GraphEngine`` into the list of ``(node, parent_names, is_last)`` \
         tuples that both the local execution engine and the Kubernetes compiler \
@@ -72,15 +72,15 @@ class Flow:
         - flow_id: a stable identifier for this flow, used to namespace broker \
             subjects and Kubernetes resources. Auto-generated if not given.
     '''
-    def __init__(self, consumers, flow_type = REALTIME, flow_id = None):
+    def __init__(self, consumers, flow_type = REALTIME, flow_id = None) -> None:
         producers = _discover_producers(consumers)
         self._graph_engine = GraphEngine(producers, consumers)
         if flow_type not in FLOW_TYPES:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         self._flow_type = flow_type
         self._flow_id = flow_id or uuid.uuid4().hex[:12]
-        self._run_id = None
-        self._execution_engine = None
+        self._run_id: Optional[str] = None
+        self._execution_engine: Optional[ExecutionEngine] = None
 
     @property
     def flow_id(self) -> str:
@@ -91,11 +91,11 @@ class Flow:
         return self._flow_type
 
     @property
-    def run_id(self) -> str:
+    def run_id(self) -> Optional[str]:
         '''The id of the most recent (or in-progress) run, or None before ``run()``.'''
         return self._run_id
 
-    def topological_sort(self):
+    def topological_sort(self) -> list:
         '''
         Returns the topologically-sorted list of nodes in this flow. Exposed so the \
             Kubernetes manifest-generation CLI (``videoflow.cli``) can inspect the \
@@ -103,10 +103,10 @@ class Flow:
         '''
         return self._graph_engine.topological_sort()
 
-    def tasks_data(self):
+    def tasks_data(self) -> List[tuple]:
         return build_tasks_data(self._graph_engine)
 
-    def run(self, execution_engine, run_id = None):
+    def run(self, execution_engine : ExecutionEngine, run_id = None) -> None:
         '''
         Starts the flow using the given ``ExecutionEngine`` (e.g. \
             ``videoflow.engines.local.LocalProcessEngine`` or \
@@ -127,18 +127,20 @@ class Flow:
             len(tasks_data), self._flow_id, self._run_id))
         logger.info('Started running flow.')
 
-    def join(self):
+    def join(self) -> None:
         '''
         Blocking method. Will make the process that calls this method block until the flow finishes
         running naturally.
         '''
+        assert self._execution_engine is not None, 'join() called before run()'
         self._execution_engine.join_task_processes()
         logger.info('Flow has stopped.')
 
-    def stop(self):
+    def stop(self) -> None:
         '''
         Blocking method. Stops the flow.  Makes the execution environment send a flow termination signal.
         '''
+        assert self._execution_engine is not None, 'stop() called before run()'
         logger.info('Stop termination signal placed on flow.')
         self._execution_engine.signal_flow_termination()
         self.join()

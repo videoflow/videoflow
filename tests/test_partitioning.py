@@ -9,16 +9,15 @@ import os
 import tempfile
 
 import pytest
-import yaml
 
+from videoflow.compiler import compile_flow
+from videoflow.consumers import CommandlineConsumer, FileAppenderConsumer
 from videoflow.core import Flow
 from videoflow.core.constants import BATCH, REALTIME
-from videoflow.core.policies import JoinPolicy, MISSING_DROP, MISSING_WAIT
-from videoflow.producers import IntProducer
-from videoflow.processors import IdentityProcessor, JoinerProcessor
-from videoflow.consumers import CommandlineConsumer, FileAppenderConsumer
-from videoflow.compiler import compile_flow
+from videoflow.core.policies import MISSING_DROP, MISSING_WAIT, JoinPolicy
 from videoflow.manifests import render_manifests
+from videoflow.processors import IdentityProcessor, JoinerProcessor
+from videoflow.producers import IntProducer
 
 # -- unit: policy + params -------------------------------------------------
 

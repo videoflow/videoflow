@@ -18,7 +18,7 @@ to let us know.
 
 3. Make sure to provide us with useful information about
 your configuration: What OS are you using? What Tensorflow version are you using?
-Are you running on GPU? If so, what is your version of Cuda, of CuDNN? 
+Are you running on GPU? If so, what is your version of Cuda, of CuDNN?
 What is your GPU?
 
 4. Provide us with a script to reproduce the issue.  This script should
@@ -41,15 +41,15 @@ like to see in Videoflow, or changes to the Videoflow API.
 
 1. Provide a clear and detailed explanation of the feature
 you want and why it's important to add. Keep in mind that
-we want features that will be useful to the majority of our 
-users and not just a small subset.  If you are targeting 
+we want features that will be useful to the majority of our
+users and not just a small subset.  If you are targeting
 a minority of users, consider writing and add-on library
 for Videoflow.
 
 2. Provide code snippets demostrating the API you have in
 mind and illustrating the use cases of your feature.
 
-3. After discussing the feature you may choose to attempt 
+3. After discussing the feature you may choose to attempt
 a Pull Request.  If you are at all able, start writing
 some code.  We always have more work to do than time to
 do it.  If you can write some code then that will speed
@@ -63,7 +63,7 @@ improvements and bug gixes should go to the Videoflow
 
 Here is a quick guide on how to submit your improvements::
 
-1. Write the 
+1. Write the
 code.
 
 2. Make sure any new function or class you introduce has
@@ -72,20 +72,20 @@ has up-to-date docstrings and documentation.  Use
 previously written code as a reference on how to format
 them.  In particular, they should be formatted in MarkDown,
 and there should be sections for `Arguments`, `Returns` and
-`Raises` (if applicable). 
+`Raises` (if applicable).
 
 3. Write tests. Your code should have full unit test coverage.
 If you want to see your PRs merged promptly, this is crucial.
 
-4. Run our test suite locally. It is easy: from the 
+4. Run our test suite locally. It is easy: from the
 Videoflow folder, simply run ``py.test tests/``
 
 
-5. Make sure all tests are 
+5. Make sure all tests are
 passing.
 
 
-6. When committing, use appropriate, descriptive 
+6. When committing, use appropriate, descriptive
 commit messages.
 
 7. Update the documentation.  If introducing new functionality,

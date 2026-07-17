@@ -5,17 +5,15 @@ per node, without any of the live ``Node`` objects. A ``NodeSpec`` is fully
 JSON-serializable, which is what lets it cross into a separate process or a
 Kubernetes pod as environment variables / a ConfigMap.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-from .core.node import ProducerNode, ProcessorNode, ConsumerNode
+from .core.node import ConsumerNode, ProcessorNode, ProducerNode
 
 NODE_KIND_PRODUCER = 'producer'
 NODE_KIND_PROCESSOR = 'processor'
 NODE_KIND_CONSUMER = 'consumer'
 
-def _node_kind(node):
+def _node_kind(node) -> str:
     if isinstance(node, ProducerNode):
         return NODE_KIND_PRODUCER
     if isinstance(node, ProcessorNode):
@@ -43,7 +41,7 @@ class NodeSpec:
     '''
     def __init__(self, name, node_class, params, parents, kind, has_children,
                 nb_tasks, device_type, is_finite, image = None,
-                partition_by = None, join_policy = None):
+                partition_by = None, join_policy = None) -> None:
         self.name = name
         self.node_class = node_class
         self.params = params
@@ -59,7 +57,7 @@ class NodeSpec:
         self.partition_by = partition_by
         self.join_policy = join_policy  # dict or None
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
         return {
             'name': self.name,
             'node_class': self.node_class,
@@ -76,7 +74,7 @@ class NodeSpec:
         }
 
     @classmethod
-    def from_dict(cls, d):
+    def from_dict(cls, d) -> "NodeSpec":
         return cls(
             name = d['name'], node_class = d['node_class'], params = d['params'],
             parents = d['parents'], kind = d['kind'], has_children = d['has_children'],
@@ -85,7 +83,7 @@ class NodeSpec:
             partition_by = d.get('partition_by'), join_policy = d.get('join_policy'),
         )
 
-def specs_from_tasks_data(tasks_data):
+def specs_from_tasks_data(tasks_data) -> list:
     '''
     Converts ``build_tasks_data`` output — tuples of
     ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
@@ -115,7 +113,7 @@ def specs_from_tasks_data(tasks_data):
         ))
     return specs
 
-def compile_flow(flow):
+def compile_flow(flow) -> list:
     '''
     - Arguments:
         - flow: a built ``videoflow.core.flow.Flow`` (do NOT call ``.run()`` on it first).

@@ -3,7 +3,8 @@ import time
 import pytest
 
 from videoflow.core.engine import Messenger
-from videoflow.health import HealthState, InstrumentedMessenger, LIVENESS_STALL_SECONDS
+from videoflow.health import LIVENESS_STALL_SECONDS, HealthState, InstrumentedMessenger
+
 
 class _FakeInner(Messenger):
     def __init__(self):

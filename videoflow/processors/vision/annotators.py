@@ -1,36 +1,36 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-import numpy as np
+from typing import Any
+
 import cv2
+import numpy as np
 
 from ...core.node import ProcessorNode
-from ...utils.parsers import parse_label_map
 from ...utils.downloader import get_file
-
+from ...utils.parsers import parse_label_map
 from .detectors import BASE_URL_DETECTION
+
 
 class ImageAnnotator(ProcessorNode):
     '''
-    Interface for all image annotators. 
+    Interface for all image annotators.
     All image annotators receive as input an image and annotation
     metadata, and return as output a copy of the image with
     the drawings representing the metadata.
     '''
-    def __init__(self, nb_tasks = 1, **kwargs):
+    def __init__(self, nb_tasks = 1, **kwargs) -> None:
         super(ImageAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
-    
-    def _annotate(self, im : np.array, annotations : any) -> np.array:
+
+    def _annotate(self, im : np.ndarray, annotations : Any) -> np.ndarray:
         raise NotImplementedError('Subclass must implement this method')
 
-    def process(self, im : np.array, annotations : any) -> np.array:
+    def process(self, im : np.ndarray, annotations : Any) -> np.ndarray:
         '''
         Returns a copy of ``im`` visually annotated with the annotations defined in `annotations`
         '''
         to_annotate = np.array(im)
         return self._annotate(to_annotate, annotations)
-        
+
 class BoundingBoxAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images.
@@ -54,7 +54,7 @@ class BoundingBoxAnnotator(ImageAnnotator):
 
     def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
                 box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1,
-                **kwargs):
+                **kwargs) -> None:
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
@@ -74,13 +74,13 @@ class BoundingBoxAnnotator(ImageAnnotator):
         self._index_label_d = parse_label_map(class_labels_path)
         super(BoundingBoxAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
-    def _annotate(self, im : np.array, boxes : np.array) -> np.array:
+    def _annotate(self, im : np.ndarray, boxes : np.ndarray) -> np.ndarray:
         '''
         - Arguments:
-            - im: np.array
-            - boxes: np.array of shape (nb_boxes, 6) \
+            - im: np.ndarray
+            - boxes: np.ndarray of shape (nb_boxes, 6) \
                 second dimension entries are [ymin, xmin, ymax, xmax, class_index, score]
-        
+
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
         '''
@@ -102,19 +102,19 @@ class TrackerAnnotator(ImageAnnotator):
     Draws bounding boxes on images with track id.
     '''
     def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1,
-                **kwargs):
+                **kwargs) -> None:
         self._box_color = box_color
         self._text_color = text_color
         self._box_thickness = box_thickness
         super(TrackerAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
-    def _annotate(self, im : np.array, boxes : np.array) -> np.array:
+    def _annotate(self, im : np.ndarray, boxes : np.ndarray) -> np.ndarray:
         '''
         - Arguments:
-            - im: np.array
-            - boxes: np.array of shape (nb_boxes, 5) \
+            - im: np.ndarray
+            - boxes: np.ndarray of shape (nb_boxes, 5) \
                 second dimension entries are [ymin, xmin, ymax, xmax, track_id]
-        
+
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
         '''
@@ -162,7 +162,7 @@ class SegmenterAnnotator(ImageAnnotator):
     ]
 
     def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
-                transparency = 0.5, nb_tasks = 1, **kwargs):
+                transparency = 0.5, nb_tasks = 1, **kwargs) -> None:
 
         if class_labels_path is None and class_labels_dataset is None:
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')
@@ -179,21 +179,21 @@ class SegmenterAnnotator(ImageAnnotator):
         self._transparency = transparency
         super(SegmenterAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
-    def _annotate(self, im : np.array, annotations : list) -> np.array:
+    def _annotate(self, im : np.ndarray, annotations : list) -> np.ndarray:
         '''
         - Arguments:
-            - im: np.array of shape (h, w, 3)
+            - im: np.ndarray of shape (h, w, 3)
             - annotations: a list with 3 entries:
-                - masks: np.array of shape (nb_masks, h, w)
-                - classes: np.array of shape (nb_masks, )
-                - scores: np.array of shape (nb_masks, )
-        
+                - masks: np.ndarray of shape (nb_masks, h, w)
+                - classes: np.ndarray of shape (nb_masks, )
+                - scores: np.ndarray of shape (nb_masks, )
+
         - Returns:
             - annotated_im: image with the visual annotations embedded in it.
         '''
         masks = annotations[0]
         classes = annotations[1]
-        
+
         to_return = im.copy().astype(float)
 
         # TODO: Add border to masks
@@ -209,9 +209,9 @@ class SegmenterAnnotator(ImageAnnotator):
             foreground = np.zeros_like(to_return, dtype = float)
             foreground[:] = self.colors[int(classes[idx]) % len(self.colors)]
             foreground = cv2.multiply(alpha, foreground)
-            
+
             #2. Image background
             background = cv2.multiply(1.0 - alpha, to_return)
             to_return = cv2.add(foreground, background)
-        
+
         return to_return.astype(np.uint8)

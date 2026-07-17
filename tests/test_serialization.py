@@ -2,10 +2,20 @@ import numpy as np
 import pytest
 
 from videoflow.serialization import (
-    encode_envelope, decode_envelope, encode_payload, decode_payload, derive_message_id,
-    CODEC_RAW_NDARRAY, CODEC_PICKLE, CODEC_EXTERNAL_REF, MAX_INLINE_PAYLOAD_BYTES,
-    MSG_TYPE_DATA, MSG_TYPE_EOS, ENVELOPE_VERSION, BlobStore,
+    CODEC_EXTERNAL_REF,
+    CODEC_PICKLE,
+    CODEC_RAW_NDARRAY,
+    MAX_INLINE_PAYLOAD_BYTES,
+    MSG_TYPE_DATA,
+    MSG_TYPE_EOS,
+    BlobStore,
+    decode_envelope,
+    decode_payload,
+    derive_message_id,
+    encode_envelope,
+    encode_payload,
 )
+
 
 def test_ndarray_round_trip():
     arr = np.random.randint(0, 255, size = (64, 48, 3), dtype = np.uint8)

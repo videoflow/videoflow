@@ -1,29 +1,30 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
+
 import json
+
 import requests
+
 from ..core.node import ConsumerNode
 
 
 class CommandlineConsumer(ConsumerNode):
     '''
     Writes the input received to the command line.
-    
+
     - Arguments:
         - sep: separator to use between tokens.
         - end: end of line character
     '''
-    def __init__(self, sep = ' ', end = '\n', **kwargs):
+    def __init__(self, sep = ' ', end = '\n', **kwargs) -> None:
 
         self._end = end
         self._sep = sep
         super(CommandlineConsumer, self).__init__(**kwargs)
-    
-    def consume(self, item):
+
+    def consume(self, item) -> None:
         '''
         Prints `item` to the command line, adding an end of line character after it.
-        
+
         - Arguments:
             - item: It can be anything that can be printed with the ``print()`` function
         '''
@@ -34,10 +35,10 @@ class VoidConsumer(ConsumerNode):
     Ignores the input received.
     Helpful in debugging flows.
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         super(VoidConsumer, self).__init__(**kwargs)
-    
-    def consume(self, item):
+
+    def consume(self, item) -> None:
         '''
         Does nothing with the item passed
         '''
@@ -45,13 +46,13 @@ class VoidConsumer(ConsumerNode):
 
 
 class WebhookConsumer(ConsumerNode):
-    def __init__(self, host, method = "post", **kwargs):
+    def __init__(self, host, method = "post", **kwargs) -> None:
         # TODO: Add other pertinent parameters to the init method.
         self.host = host
         self.method = method
         super(WebhookConsumer, self).__init__(**kwargs)
 
-    def consume(self, item):
+    def consume(self, item) -> None:
         # convert item to json
         try:
             item = json.loads(item)
@@ -69,10 +70,10 @@ class FileAppenderConsumer(ConsumerNode):
         - filepath: path to the file to append to (created if missing). The folder \
             must already exist.
     '''
-    def __init__(self, filepath : str, **kwargs):
+    def __init__(self, filepath : str, **kwargs) -> None:
         self._filepath = filepath
         super(FileAppenderConsumer, self).__init__(**kwargs)
 
-    def consume(self, item):
+    def consume(self, item) -> None:
         with open(self._filepath, 'a') as f:
             f.write(f'{item}\n')

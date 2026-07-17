@@ -1,8 +1,9 @@
 import pytest
 
-from videoflow.utils.graph import has_cycle, topological_sort
-from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor, JoinerProcessor
+from videoflow.producers import IntProducer
+from videoflow.utils.graph import has_cycle, topological_sort
+
 
 def test_topological_sort():
     a = IntProducer()
@@ -22,7 +23,7 @@ def test_setting_parents_twice():
 
     with pytest.raises(RuntimeError):
         c(b)
-    
+
     # Testing once more, just to check that is not a fluke
     with pytest.raises(RuntimeError):
         c(b)
@@ -44,7 +45,7 @@ def test_cycle_detection():
     f1 = JoinerProcessor()(e1, d1)
     g1 = JoinerProcessor()(c1, b1, d1)
     e1(g1)
-    
+
     assert not has_cycle([e1]), "#2 Cycle detected"
     assert not has_cycle([a1]), "#3 Cycle not detected"
 
@@ -56,7 +57,7 @@ def test_cycle_detection():
     f2 = JoinerProcessor()(e2, d2)
     g2 = JoinerProcessor()(c2, b2, f2)
     e2(g2)
-    
+
     assert has_cycle([e2]), '#4 Cycle not detected'
     assert has_cycle([a2]), "#5 Cycle not detected"
 

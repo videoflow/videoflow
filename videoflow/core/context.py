@@ -7,9 +7,8 @@ final ``ctx`` (or ``context``) parameter; if it does, the task passes a
 output without depending on any global state. Methods that don't declare it are
 called exactly as before, so this is fully backward compatible with existing nodes.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
+
 
 class RuntimeContext:
     '''
@@ -17,7 +16,7 @@ class RuntimeContext:
         - flow_id / run_id / node_name / replica_id: identity of this running node.
         - logger: a standard library logger scoped to the node.
     '''
-    def __init__(self, flow_id, run_id, node_name, replica_id, logger, messenger = None):
+    def __init__(self, flow_id, run_id, node_name, replica_id, logger, messenger = None) -> None:
         self.flow_id = flow_id
         self.run_id = run_id
         self.node_name = node_name
@@ -25,7 +24,7 @@ class RuntimeContext:
         self.logger = logger
         self._messenger = messenger
 
-    def set_partition_key(self, value):
+    def set_partition_key(self, value) -> None:
         '''
         Set the partition key carried on this node's *next* published output, so a
         downstream partitioned node can route by a business key. Applied to the

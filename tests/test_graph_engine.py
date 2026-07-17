@@ -1,9 +1,10 @@
 import pytest
 
-from videoflow.core.graph import GraphEngine
-from videoflow.producers import IntProducer
-from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.consumers import CommandlineConsumer
+from videoflow.core.graph import GraphEngine
+from videoflow.processors import IdentityProcessor
+from videoflow.producers import IntProducer
+
 
 def test_no_raise_error():
     a = IntProducer()

@@ -1,22 +1,23 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
+
+from typing import Any
 
 from ..core.node import OneTaskProcessorNode
+
 
 class SumAggregator(OneTaskProcessorNode):
     '''
     Keeps a running sum of all the inputs processed
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self._sum = 0
         super(SumAggregator, self).__init__(**kwargs)
-    
-    def process(self, inp):
+
+    def process(self, inp) -> Any:
         '''
         - Arguments:
             - inp: a number
-        
+
         - Returns:
             - sum: the cumulative sum up to this point, including ``inp`` in it.
         '''
@@ -27,34 +28,34 @@ class MultiplicationAggregator(OneTaskProcessorNode):
     '''
     Keeps a running multiplication of all the inputs processed
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self._mult = 1
         super(MultiplicationAggregator, self).__init__(**kwargs)
 
-    def process(self, inp):
+    def process(self, inp) -> Any:
         '''
         - Arguments:
             - inp: a number
-        
+
         - Returns:
             - mult: the cumulative multiplication up to this point, including ``inp`` in it.
         '''
         self._mult *= inp
-        return self._mult  
+        return self._mult
 
 class CountAggregator(OneTaskProcessorNode):
     '''
     Keeps count of all the items processed
     '''
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self._count = 0
         super(CountAggregator, self).__init__(**kwargs)
-    
-    def process(self, inp):
+
+    def process(self, inp) -> Any:
         '''
         - Arguments:
             - inp: a number
-        
+
         - Returns:
             - count: the cumulative count up to this point
         '''
@@ -62,15 +63,15 @@ class CountAggregator(OneTaskProcessorNode):
         return self._count
 
 class MaxAggregator(OneTaskProcessorNode):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self._max = float("-inf")
         super(MaxAggregator, self).__init__(**kwargs)
-    
-    def process(self, inp):
+
+    def process(self, inp) -> Any:
         '''
         - Arguments:
             - inp: a number
-        
+
         - Returns:
             - max: the maximum seen value up to this point
         '''
@@ -79,15 +80,15 @@ class MaxAggregator(OneTaskProcessorNode):
         return self._max
 
 class MinAggregator(OneTaskProcessorNode):
-    def __init__(self, **kwargs):
+    def __init__(self, **kwargs) -> None:
         self._min = float("inf")
         super(MinAggregator, self).__init__(**kwargs)
-    
-    def process(self, inp):
+
+    def process(self, inp) -> Any:
         '''
         - Arguments:
             - inp: a number
-        
+
         - Returns:
             - min: the the minimum seen value up to this point
         '''

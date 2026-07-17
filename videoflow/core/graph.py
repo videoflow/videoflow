@@ -1,7 +1,8 @@
-from ..utils.graph import has_cycle, topological_sort
-from .node import ProducerNode, ProcessorNode
-
 import logging
+
+from ..utils.graph import has_cycle, topological_sort
+from .node import ProcessorNode, ProducerNode
+
 logger = logging.getLogger(__package__)
 
 class GraphEngine:
@@ -20,7 +21,7 @@ class GraphEngine:
         - ``ValueError`` if the graph has a cycle, if any consumer is unreachable \
             from the given producers, or if two or more nodes share the same ``name``.
     '''
-    def __init__(self, producers, consumers):
+    def __init__(self, producers, consumers) -> None:
         for producer in producers:
             if not isinstance(producer, ProducerNode):
                 raise AttributeError('{} is not instance of ProducerNode'.format(producer))
@@ -71,5 +72,5 @@ class GraphEngine:
         #3. TODO: Check that all producers' results are
         #being read by a consumer.
 
-    def topological_sort(self):
+    def topological_sort(self) -> list:
         return list(self._tsort)

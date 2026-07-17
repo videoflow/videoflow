@@ -70,7 +70,8 @@ all = [
 videoflow = "videoflow.cli:main"
 
 [dependency-groups]
-# Everything needed to run the test suite locally (`uv sync` installs these).
+# Everything needed to run the test suite and the checks locally (`uv sync`
+# installs these).
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.0",
@@ -80,6 +81,11 @@ dev = [
     "redis>=4.0.0",
     "opencv-python-headless>=4.0.0",
     "requests>=2.22.0",
+    "mypy>=1.8",
+    "ruff>=0.6",
+    "pre-commit>=3.5",
+    "types-PyYAML",
+    "types-requests",
 ]
 
 [tool.hatch.version]
@@ -107,3 +113,45 @@ filterwarnings = [
     # worker/messenger manage their own loop cleanly), so silence the noise.
     "ignore::pytest.PytestUnraisableExceptionWarning",
 ]
+
+[tool.mypy]
+files = ["videoflow"]
+# Third-party clients (nats, msgpack, redis, cv2) ship no type stubs; treat them as
+# Any rather than failing on the missing imports.
+ignore_missing_imports = true
+warn_redundant_casts = true
+warn_unused_ignores = false
+# Many signatures use `x: T = None` for optional args; allow it instead of churning
+# every one into Optional[T].
+implicit_optional = true
+no_implicit_optional = false
+# Validate the annotated signatures without diving into every dynamic function body:
+# the codebase has intentionally dynamic spots (get_params introspection, nats/cv2
+# interop) whose bodies aren't worth fighting the checker over.
+check_untyped_defs = false
+# A node's process()/consume() arity varies by parent count, so subclasses
+# deliberately don't match the base signature (it's a positional-args-by-parent
+# contract, not LSP substitutability). Don't flag those as override violations.
+disable_error_code = ["override"]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 120
+extend-exclude = ["docs", "examples"]
+
+[tool.ruff.lint]
+# Real-bug rules (pyflakes, bugbear, comprehensions), import sorting, and syntax
+# errors — deliberately excluding whitespace/style rules that would fight the
+# codebase's ``x : int`` annotation style.
+select = ["E9", "F", "B", "C4", "I"]
+ignore = [
+    "B008",  # function call in default arg — used intentionally in a few places
+    "E741",  # ambiguous var names (l/I) in existing math code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # re-exports are intentional
+# Tests are held to a looser lint standard: construct-and-discard assertions (F841),
+# blind pytest.raises(Exception) (B017), set/comprehension nitpicks (C4xx), and
+# post-sys.path-insert imports (E402) are all fine in test code.
+"tests/*" = ["F811", "E402", "F841", "B017", "C4"]

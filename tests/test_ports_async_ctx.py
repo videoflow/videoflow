@@ -11,11 +11,12 @@ import pytest
 TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TESTS_DIR)  # so this process can import support_nodes as the workers will
 
+from support_nodes import AsyncDoubler, CtxPartitionTagger  # noqa: E402
+
+from videoflow.consumers import FileAppenderConsumer
 from videoflow.core import Flow
 from videoflow.core.constants import BATCH
 from videoflow.producers import IntProducer
-from videoflow.consumers import FileAppenderConsumer
-from support_nodes import AsyncDoubler, CtxPartitionTagger  # noqa: E402
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 

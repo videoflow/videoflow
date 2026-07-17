@@ -10,11 +10,11 @@ import tempfile
 
 import pytest
 
+from videoflow.consumers import FileAppenderConsumer
 from videoflow.core import Flow
 from videoflow.core.constants import BATCH
-from videoflow.producers import IntProducer
 from videoflow.processors import IdentityProcessor
-from videoflow.consumers import FileAppenderConsumer
+from videoflow.producers import IntProducer
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 

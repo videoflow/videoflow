@@ -10,14 +10,13 @@ Endpoints (default port 8080):
 Kept dependency-free (no prometheus_client) so the base image stays lean; the
 metrics text format is simple enough to emit by hand.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import logging
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from typing import Optional
 
 from .core.engine import Messenger
 
@@ -31,25 +30,25 @@ LIVENESS_STALL_SECONDS = 60
 
 class HealthState:
     '''Thread-safe holder for readiness/liveness/metrics, shared between the run loop (via the messenger) and the HTTP handler.'''
-    def __init__(self, node_name : str):
+    def __init__(self, node_name : str) -> None:
         self._node_name = node_name
         self._lock = threading.Lock()
         self._ready = False
         self._last_beat = time.time()
         # metric name -> {'count': int, 'sum': float}
-        self._metrics = {}
+        self._metrics: dict = {}
         # counter name -> int (rendered as videoflow_<name>_total)
-        self._counters = {}
+        self._counters: dict = {}
 
-    def mark_ready(self):
+    def mark_ready(self) -> None:
         with self._lock:
             self._ready = True
 
-    def beat(self):
+    def beat(self) -> None:
         with self._lock:
             self._last_beat = time.time()
 
-    def observe(self, metric : str, value : float):
+    def observe(self, metric : str, value : float) -> None:
         if value is None:
             return
         with self._lock:
@@ -57,7 +56,7 @@ class HealthState:
             m['count'] += 1
             m['sum'] += value
 
-    def incr(self, counter : str, amount : int = 1):
+    def incr(self, counter : str, amount : int = 1) -> None:
         with self._lock:
             self._counters[counter] = self._counters.get(counter, 0) + amount
 
@@ -81,12 +80,12 @@ class HealthState:
                 lines.append(f'videoflow_{counter}_total{labels} {value}')
             return '\n'.join(lines) + '\n'
 
-def _make_handler(state : HealthState):
+def _make_handler(state : HealthState) -> type:
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args):
+        def log_message(self, *args) -> None:
             pass  # silence per-request stderr logging
 
-        def _respond(self, code, body, content_type = 'text/plain'):
+        def _respond(self, code, body, content_type = 'text/plain') -> None:
             payload = body.encode('utf-8')
             self.send_response(code)
             self.send_header('Content-Type', content_type)
@@ -94,7 +93,7 @@ def _make_handler(state : HealthState):
             self.end_headers()
             self.wfile.write(payload)
 
-        def do_GET(self):
+        def do_GET(self) -> None:
             if self.path == '/readyz':
                 ok = state.is_ready()
                 self._respond(200 if ok else 503, 'ready' if ok else 'not-ready')
@@ -109,15 +108,15 @@ def _make_handler(state : HealthState):
     return Handler
 
 class HealthServer:
-    def __init__(self, state : HealthState, port : int = DEFAULT_HEALTH_PORT):
+    def __init__(self, state : HealthState, port : int = DEFAULT_HEALTH_PORT) -> None:
         self._state = state
         self._httpd = ThreadingHTTPServer(('0.0.0.0', port), _make_handler(state))
         self._thread = threading.Thread(target = self._httpd.serve_forever, daemon = True)
 
-    def start(self):
+    def start(self) -> None:
         self._thread.start()
 
-    def stop(self):
+    def stop(self) -> None:
         self._httpd.shutdown()
 
 class InstrumentedMessenger(Messenger):
@@ -128,11 +127,11 @@ class InstrumentedMessenger(Messenger):
     only after ``node.open()`` has returned inside ``NodeTask.run()`` — so a slow
     model-loading ``open()`` correctly keeps the pod un-ready until it finishes.
     '''
-    def __init__(self, inner : Messenger, state : HealthState):
+    def __init__(self, inner : Messenger, state : HealthState) -> None:
         self._inner = inner
         self._state = state
 
-    def publish_message(self, message, metadata = None):
+    def publish_message(self, message, metadata = None) -> None:
         self._state.mark_ready()
         self._state.beat()
         if metadata:
@@ -141,7 +140,7 @@ class InstrumentedMessenger(Messenger):
         self._state.incr('messages_published')
         return self._inner.publish_message(message, metadata)
 
-    def publish_stop_signal(self):
+    def publish_stop_signal(self) -> None:
         return self._inner.publish_stop_signal()
 
     def check_for_termination(self) -> bool:
@@ -154,19 +153,19 @@ class InstrumentedMessenger(Messenger):
         self._state.incr('messages_received')
         return self._inner.receive_message()
 
-    def ack_inputs(self):
+    def ack_inputs(self) -> None:
         self._state.incr('messages_processed')
         return self._inner.ack_inputs()
 
-    def fail_inputs(self, exc):
+    def fail_inputs(self, exc) -> None:
         self._state.incr('messages_failed')
         return self._inner.fail_inputs(exc)
 
-    def set_output_partition_key(self, value):
+    def set_output_partition_key(self, value) -> None:
         return self._inner.set_output_partition_key(value)
 
-    def last_input_key(self):
+    def last_input_key(self) -> Optional[str]:
         return self._inner.last_input_key()
 
-    def close(self):
+    def close(self) -> None:
         return self._inner.close()

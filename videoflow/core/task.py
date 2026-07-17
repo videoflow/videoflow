@@ -1,19 +1,18 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import asyncio
 import inspect
 import logging
 import time
+from typing import Any, Optional
 
-from .node import Node, ProducerNode, ProcessorNode, ConsumerNode
 from ..utils.generic_utils import DelayedKeyboardInterrupt
+from .node import ConsumerNode, Node, ProcessorNode, ProducerNode
 
 logger = logging.getLogger(__package__)
 
 class Task:
-    def run(self):
+    def run(self) -> None:
         '''
         Starts the task in an infinite loop.
         '''
@@ -34,24 +33,24 @@ class NodeTask(Task):
         - has_children (bool): True if this node has at least one downstream child \
             in the graph — used to skip publishing when nothing would ever consume it.
     '''
-    def __init__(self, computation_node : Node, messenger, has_children : bool, ctx = None):
+    def __init__(self, computation_node : Node, messenger, has_children : bool, ctx = None) -> None:
         self._messenger = messenger
         self._computation_node = computation_node
         self._has_children = has_children
         self._ctx = ctx
-        self._async_loop = None
+        self._async_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
-    def computation_node(self):
+    def computation_node(self) -> Node:
         '''
         Returns the current computation node
         '''
         return self._computation_node
 
-    def _assert_messenger(self):
+    def _assert_messenger(self) -> None:
         assert self._messenger is not None, 'Task cannot run if messenger has not been set.'
 
-    def _ctx_kwarg(self, method):
+    def _ctx_kwarg(self, method) -> Optional[str]:
         '''Returns 'ctx'/'context' if the method declares that parameter, else None.'''
         try:
             params = inspect.signature(method).parameters
@@ -63,7 +62,7 @@ class NodeTask(Task):
             return 'context'
         return None
 
-    def _call(self, method, *args):
+    def _call(self, method, *args) -> Any:
         '''
         Invoke a node method, passing ``ctx`` only if it declares it, and awaiting
         the result if the method is a coroutine (async ``def``). Async node methods
@@ -78,10 +77,10 @@ class NodeTask(Task):
             return self._async_loop.run_until_complete(result)
         return result
 
-    def _run(self):
+    def _run(self) -> None:
         raise NotImplementedError('Sublcass needs to implement _run')
 
-    def run(self):
+    def run(self) -> None:
         '''
         Starts the task in an infinite loop.  If this method is called and the \
             ``set_messenger()`` method has not been called yet, an assertion error \
@@ -103,11 +102,11 @@ class ProducerTask(NodeTask):
     At each iteration it checks for a termination signal, and if so it \
     sends a termination message to its child task and breaks the infinite loop.
     '''
-    def __init__(self, producer : ProducerNode, messenger, has_children : bool, ctx = None):
+    def __init__(self, producer : ProducerNode, messenger, has_children : bool, ctx = None) -> None:
         self._producer = producer
         super(ProducerTask, self).__init__(producer, messenger, has_children, ctx)
 
-    def _run(self):
+    def _run(self) -> None:
         previous_end_t = time.time()
         while True:
             try:
@@ -144,7 +143,7 @@ class ProcessorTask(NodeTask):
     the flow. If every parent has signaled termination, it passes termination \
     message down the flow and breaks from infinite loop.
     '''
-    def __init__(self, processor : ProcessorNode, messenger, has_children : bool, parent_names, ctx = None):
+    def __init__(self, processor : ProcessorNode, messenger, has_children : bool, parent_names, ctx = None) -> None:
         '''
         - Arguments:
             - parent_names ([str]): names of this node's real parents, in the exact \
@@ -159,13 +158,13 @@ class ProcessorTask(NodeTask):
         super(ProcessorTask, self).__init__(processor, messenger, has_children, ctx)
 
     @property
-    def device_type(self):
+    def device_type(self) -> str:
         return self._processor.device_type
 
-    def change_device(self, device_type : str):
+    def change_device(self, device_type : str) -> None:
         self._processor.change_device(device_type)
 
-    def _run(self):
+    def _run(self) -> None:
         previous_end_t = time.time()
         while True:
             try:
@@ -216,14 +215,14 @@ class ConsumerTask(NodeTask):
     back down the pipe — consumers are the leaves of the graph.
     '''
     def __init__(self, consumer : ConsumerNode, messenger, has_children : bool, parent_names,
-                ctx = None, idempotency_store = None):
+                ctx = None, idempotency_store = None) -> None:
         self._consumer = consumer
         self._parent_names = list(parent_names)
         # Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).
         self._idem_store = idempotency_store if getattr(consumer, 'idempotent', False) else None
         super(ConsumerTask, self).__init__(consumer, messenger, has_children, ctx)
 
-    def _run(self):
+    def _run(self) -> None:
         while True:
             try:
                 with DelayedKeyboardInterrupt():
@@ -235,8 +234,9 @@ class ConsumerTask(NodeTask):
                     try:
                         # Idempotent sink: if we've already applied this exact input's
                         # effects (a redelivery/restart), skip re-consuming.
-                        key = self._messenger.last_input_key() if self._idem_store else None
-                        if key is not None and self._idem_store.seen(key):
+                        store = self._idem_store
+                        key = self._messenger.last_input_key() if store is not None else None
+                        if store is not None and key is not None and store.seen(key):
                             self._messenger.ack_inputs()
                             continue
 
@@ -247,8 +247,8 @@ class ConsumerTask(NodeTask):
                             metadatas = [e['metadata'] for e in entries]
                             self._call(self._consumer.consume, *metadatas)
 
-                        if key is not None:
-                            self._idem_store.mark(key)
+                        if store is not None and key is not None:
+                            store.mark(key)
                         self._messenger.ack_inputs()
                     except Exception as e:
                         logger.exception(f'{self._consumer} failed to consume a message: {e}')

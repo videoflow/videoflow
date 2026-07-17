@@ -1,0 +1,47 @@
+# Pre-commit hooks for videoflow.
+#   pre-commit install                      # enable the commit-stage hooks
+#   pre-commit install --hook-type pre-push # enable the pytest pre-push hook
+#
+# Commit stage: fast file-hygiene checks, ruff lint (auto-fix), and mypy type checks.
+# Push stage: the full pytest suite (too slow to run on every commit; it also needs a
+# local NATS JetStream server for the integration tests).
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+        # k8s manifests bundle several resources per file with `---` separators.
+        args: [--allow-multiple-documents]
+      - id: check-toml
+      - id: check-added-large-files
+      - id: check-merge-conflict
+      - id: debug-statements
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: [--fix]
+
+  - repo: local
+    hooks:
+      # Run mypy through uv so it uses the project environment (real deps like
+      # redis/opencv/nats and the [tool.mypy] config in pyproject.toml) rather than
+      # an isolated env with a hand-maintained, drift-prone stub list.
+      - id: mypy
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types: [python]
+        files: ^videoflow/
+        pass_filenames: false
+
+      - id: pytest
+        name: pytest (full suite)
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

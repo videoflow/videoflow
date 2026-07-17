@@ -1,24 +1,22 @@
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
-from contextlib import closing
-import sys
 import hashlib
 import os
 import shutil
+import sys
 import tarfile
 import zipfile
+from contextlib import closing
+from typing import Any
 
 import six
-from six.moves.urllib.error import HTTPError
-from six.moves.urllib.error import URLError
+from six.moves.urllib.error import HTTPError, URLError
 from six.moves.urllib.request import urlopen
 
 from ..utils.generic_utils import Progbar
 
 if sys.version_info[0] == 2:
-    def urlretrieve(url, filename, reporthook=None, data=None):
+    def urlretrieve(url, filename, reporthook=None, data=None) -> None:
         """Replacement for `urlretrive` for Python 2.
         Under Python 2, `urlretrieve` relies on `FancyURLopener` from legacy
         `urllib` module, known to have issues with proxy management.
@@ -34,7 +32,7 @@ if sys.version_info[0] == 2:
             data: `data` argument passed to `urlopen`.
         """
 
-        def chunk_read(response, chunk_size=8192, reporthook=None):
+        def chunk_read(response, chunk_size=8192, reporthook=None) -> Any:
             content_type = response.info().get('Content-Length')
             total_size = -1
             if content_type is not None:
@@ -65,7 +63,7 @@ def get_file(fname,
              hash_algorithm='auto',
              extract=False,
              archive_format='auto',
-             cache_dir=None):
+             cache_dir=None) -> str:
     """
     Copied from Keras repository.
 
@@ -77,7 +75,7 @@ def get_file(fname,
     Files in tar, tar.gz, tar.bz, and zip formats can also be extracted.
     Passing a hash will verify the file after download. The command line
     programs `shasum` and `sha256sum` can compute the hash.
-    
+
     - Arguments:
         - fname: Name of the file. If an absolute path `/path/to/file.txt` is
             specified the file will be saved at that location.
@@ -102,7 +100,7 @@ def get_file(fname,
             None or an empty list will return no matches found.
         - cache_dir: Location to store cached files, when None it
             defaults to the [Keras Directory](/faq/#where-is-the-keras-configuration-filed-stored).
-    
+
     - Returns
         - Path to the downloaded file
     """
@@ -146,9 +144,9 @@ def get_file(fname,
         class ProgressTracker(object):
             # Maintain progbar for the lifetime of download.
             # This design was chosen for Python 2.7 compatibility.
-            progbar = None
+            progbar: Any = None
 
-        def dl_progress(count, block_size, total_size):
+        def dl_progress(count, block_size, total_size) -> None:
             if ProgressTracker.progbar is None:
                 if total_size == -1:
                     total_size = None
@@ -161,9 +159,9 @@ def get_file(fname,
             try:
                 urlretrieve(origin, fpath, dl_progress)
             except HTTPError as e:
-                raise Exception(error_msg.format(origin, e.code, e.msg))
+                raise Exception(error_msg.format(origin, e.code, e.msg)) from e
             except URLError as e:
-                raise Exception(error_msg.format(origin, e.errno, e.reason))
+                raise Exception(error_msg.format(origin, e.errno, e.reason)) from e
         except (Exception, KeyboardInterrupt):
             if os.path.exists(fpath):
                 os.remove(fpath)
@@ -180,9 +178,9 @@ def get_file(fname,
 
     return fpath
 
-def _extract_archive(file_path, path='.', archive_format='auto'):
+def _extract_archive(file_path, path='.', archive_format='auto') -> bool:
     """Extracts an archive if it matches tar, tar.gz, tar.bz, or zip formats.
-    
+
     - Arguments
         - file_path: path to the archive file
         - path: path to extract the archive file
@@ -191,7 +189,7 @@ def _extract_archive(file_path, path='.', archive_format='auto'):
             'tar' includes tar, tar.gz, and tar.bz files.\
             The default 'auto' is ['tar', 'zip'].\
             None or an empty list will return no matches found.
-    
+
     - Returns
         - True if a match was found and an archive extraction was completed,\
         False otherwise.
@@ -204,6 +202,8 @@ def _extract_archive(file_path, path='.', archive_format='auto'):
         archive_format = [archive_format]
 
     for archive_type in archive_format:
+        open_fn: Any
+        is_match_fn: Any
         if archive_type == 'tar':
             open_fn = tarfile.open
             is_match_fn = tarfile.is_tarfile
@@ -226,26 +226,26 @@ def _extract_archive(file_path, path='.', archive_format='auto'):
             return True
     return False
 
-def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
+def _hash_file(fpath, algorithm='sha256', chunk_size=65535) -> str:
     """Calculates a file sha256 or md5 hash.
-    
+
     - Example
     ```python
         >>> from videoflow.utils.generic_utils import _hash_file
         >>> _hash_file('/path/to/file.zip')
         'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
     ```
-    
+
     - Arguments
         - fpath: path to the file being validated
         - algorithm: hash algorithm, one of 'auto', 'sha256', or 'md5'. \
             The default 'auto' detects the hash algorithm in use.
         - chunk_size: Bytes to read at a time, important for large files.
-    
+
     - Returns
         The file hash
     """
-    if (algorithm == 'sha256') or (algorithm == 'auto' and len(hash) == 64):
+    if (algorithm == 'sha256') or (algorithm == 'auto' and len(hash) == 64):  # type: ignore[arg-type]
         hasher = hashlib.sha256()
     else:
         hasher = hashlib.md5()
@@ -257,9 +257,9 @@ def _hash_file(fpath, algorithm='sha256', chunk_size=65535):
     return hasher.hexdigest()
 
 
-def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535):
+def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535) -> bool:
     """Validates a file against a sha256 or md5 hash.
-    
+
     - Arguments:
         - fpath: path to the file being validated
         - file_hash:  The expected hash string of the file.\
@@ -267,7 +267,7 @@ def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535):
         - algorithm: Hash algorithm, one of 'auto', 'sha256', or 'md5'.\
             The default 'auto' detects the hash algorithm in use.
         - chunk_size: Bytes to read at a time, important for large files.
-    
+
     - Returns:
         Whether the file is valid
     """

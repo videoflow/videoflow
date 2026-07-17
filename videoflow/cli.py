@@ -7,16 +7,16 @@ The graph module must expose a factory (default name ``build_flow``) that return
 built ``videoflow.core.flow.Flow`` without calling ``.run()`` on it — the CLI needs
 the graph, not a running flow.
 '''
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+from __future__ import absolute_import, division, print_function
 
 import argparse
 import importlib.util
 import os
 import sys
+from typing import Any
 
-def _load_flow(target : str):
+
+def _load_flow(target : str) -> Any:
     '''
     - Arguments:
         - target: ``path/to/graph.py`` or ``path/to/graph.py:factory_name`` \
@@ -34,6 +34,8 @@ def _load_flow(target : str):
         raise SystemExit(f'Graph module not found: {path}')
 
     spec = importlib.util.spec_from_file_location('_videoflow_user_graph', path)
+    if spec is None or spec.loader is None:
+        raise SystemExit(f'Could not load graph module: {path}')
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
 
@@ -43,18 +45,19 @@ def _load_flow(target : str):
     factory = getattr(module, factory_name)
     return factory()
 
-def _cmd_deploy(args):
+def _cmd_deploy(args) -> None:
     import uuid
+
     from .compiler import compile_flow
     from .images import parse_override
-    from .manifests import render_manifests, dump_manifests
+    from .manifests import dump_manifests, render_manifests
 
     overrides = {}
     for override in args.image_override or []:
         try:
             name, ref = parse_override(override)
         except ValueError as e:
-            raise SystemExit(str(e))
+            raise SystemExit(str(e)) from e
         overrides[name] = ref
 
     flow = _load_flow(args.graph)
@@ -71,7 +74,7 @@ def _cmd_deploy(args):
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
         )
     except ValueError as e:
-        raise SystemExit(str(e))
+        raise SystemExit(str(e)) from e
     yaml_str = dump_manifests(manifests)
 
     if args.dry_run:
@@ -100,7 +103,7 @@ def _cmd_deploy(args):
     print(f'Apply with:  kubectl apply -k {args.output}')
     print(f'Flow id: {flow.flow_id}   Run id: {run_id}')
 
-def _cmd_run_local(args):
+def _cmd_run_local(args) -> None:
     from .engines.local import LocalProcessEngine
 
     flow = _load_flow(args.graph)
@@ -112,9 +115,9 @@ def _cmd_run_local(args):
     except KeyboardInterrupt:
         flow.stop()
 
-def _cmd_explain(args):
+def _cmd_explain(args) -> None:
     from .compiler import compile_flow
-    from .messaging.topology import subject_for, dlq_stream_name
+    from .messaging.topology import dlq_stream_name, subject_for
 
     flow = _load_flow(args.graph)
     run_id = args.run_id or '<run-id>'
@@ -137,8 +140,9 @@ def _cmd_explain(args):
     lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
     print('\n'.join(lines))
 
-def _cmd_provision(args):
+def _cmd_provision(args) -> None:
     import uuid
+
     from .compiler import compile_flow
     from .messaging.topology import provision_flow_sync
 
@@ -148,12 +152,14 @@ def _cmd_provision(args):
     provision_flow_sync(args.nats, specs, flow.flow_id, run_id, flow.flow_type)
     print(f'Provisioned {len(specs)} node streams for flow {flow.flow_id} run {run_id}')
 
-def _cmd_teardown(args):
+def _cmd_teardown(args) -> None:
     import asyncio
+
     import nats
+
     from .messaging.topology import control_subject_for, delete_run_streams
 
-    async def _go():
+    async def _go() -> None:
         nc = await nats.connect(args.nats)
         try:
             await nc.publish(control_subject_for(args.flow_id, args.run_id), b'stop')
@@ -166,6 +172,7 @@ def _cmd_teardown(args):
     print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
     if args.namespace:
         import subprocess
+
         from .manifests import LABEL_FLOW_ID, k8s_name
         selector = f'{LABEL_FLOW_ID}={k8s_name(args.flow_id)}'
         subprocess.run(['kubectl', 'delete', '-n', args.namespace,
@@ -173,7 +180,7 @@ def _cmd_teardown(args):
                         '-l', selector], check = False)
         print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id}')
 
-def build_parser():
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
     sub = parser.add_subparsers(dest = 'command', required = True)
 
@@ -228,7 +235,7 @@ def build_parser():
 
     return parser
 
-def main(argv = None):
+def main(argv = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)

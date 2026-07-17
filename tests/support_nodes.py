@@ -7,6 +7,7 @@ import asyncio
 
 from videoflow.core.node import ProcessorNode
 
+
 class AsyncDoubler(ProcessorNode):
     '''A processor whose process() is an async coroutine — exercises the task's async bridge.'''
     async def process(self, x):

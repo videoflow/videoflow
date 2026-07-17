@@ -1,18 +1,16 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
+from __future__ import absolute_import, division, print_function
 
-import time
-import sys
 import collections
 import signal
-import logging
+import sys
+import time
 
 import numpy as np
 
+
 class Progbar(object):
     """Displays a progress bar.
-    
+
     - Arguments
         - target: Total number of steps expected, None if unknown.
         - width: Progress bar width on screen.
@@ -25,7 +23,7 @@ class Progbar(object):
     """
 
     def __init__(self, target, width=30, verbose=1, interval=0.05,
-                 stateful_metrics=None):
+                 stateful_metrics=None) -> None:
         self.target = target
         self.width = width
         self.verbose = verbose
@@ -40,13 +38,13 @@ class Progbar(object):
                                  'ipykernel' in sys.modules)
         self._total_width = 0
         self._seen_so_far = 0
-        self._values = collections.OrderedDict()
+        self._values: dict = collections.OrderedDict()
         self._start = time.time()
-        self._last_update = 0
+        self._last_update: float = 0
 
-    def update(self, current, values=None):
+    def update(self, current, values=None) -> None:
         """Updates the progress bar.
-        
+
         - Arguments
             - current: Index of current step.
             - values: List of tuples:\
@@ -167,38 +165,40 @@ class Progbar(object):
 
         self._last_update = now
 
-    def add(self, n, values=None):
+    def add(self, n, values=None) -> None:
         self.update(self._seen_so_far + n, values)
 
 class DelayedInterrupt(object):
     '''
     class based on: http://stackoverflow.com/a/21919644/487556
-    
+
     It delays interrupts until the code exits the entered block
     '''
-    def __init__(self, signals):
+    def __init__(self, signals) -> None:
         if not isinstance(signals, list) and not isinstance(signals, tuple):
             signals = [signals]
-        self.sigs = signals        
+        self.sigs = signals
 
-    def __enter__(self):
-        self.signal_received = {}
-        self.old_handlers = {}
+    def __enter__(self) -> None:
+        self.signal_received: dict = {}
+        self.old_handlers: dict = {}
         for sig in self.sigs:
             self.signal_received[sig] = False
             self.old_handlers[sig] = signal.getsignal(sig)
-            def handler(s, frame):
+            # Bind sig per-iteration (default arg) so each handler records against
+            # its own signal, not whichever value sig holds after the loop ends.
+            def handler(s, frame, sig=sig) -> None:
                 self.signal_received[sig] = (s, frame)
                 # Note: in Python 3.5, you can use signal.Signals(sig).name
             self.old_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, handler)
 
-    def __exit__(self, type, value, traceback):
+    def __exit__(self, type, value, traceback) -> None:
         for sig in self.sigs:
             signal.signal(sig, self.old_handlers[sig])
             if self.signal_received[sig] and self.old_handlers[sig]:
                 self.old_handlers[sig](*self.signal_received[sig])
 
 class DelayedKeyboardInterrupt(DelayedInterrupt):
-    def __init__(self):
+    def __init__(self) -> None:
         super(DelayedKeyboardInterrupt, self).__init__([signal.SIGINT])
