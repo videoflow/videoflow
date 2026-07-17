@@ -25,10 +25,37 @@ the subjects of its **real parents** and reassembles its inputs before calling
 multi-parent joins, multiple producers, fan-out — work without any special cases.
 
 A worker is given only what it needs to run one node: the node's class, its
-JSON-serializable constructor parameters, its parents' names, the broker URL and the
-flow id. It reconstructs the node, connects to the broker, and runs the node's loop.
-This is why constructor arguments must be serializable and heavy setup belongs in
-``open()`` (see :doc:`../user-documentation/nodes-and-flows`).
+JSON-serializable constructor parameters, its parents' names, the broker URL, the
+flow id and the run id. It reconstructs the node, connects to the broker, and runs
+the node's loop. This is why constructor arguments must be serializable and heavy
+setup belongs in ``open()`` (see :doc:`../user-documentation/nodes-and-flows`).
+
+The optional ``ctx`` argument that a node method can declare is a ``RuntimeContext``
+carrying exactly this identity — ``ctx.flow_id`` / ``ctx.run_id`` /
+``ctx.node_name`` / ``ctx.replica_id`` / ``ctx.logger`` — plus
+``ctx.set_partition_key(...)``.
+
+Run scoping and provisioning
+----------------------------
+
+Every ``flow.run()`` (or ``videoflow deploy``) mints a **run id**. All of a run's
+broker streams, subjects and durable consumers are named by ``flow_id`` **and**
+``run_id``, so re-running or redeploying never collides with a previous run's
+streams. Before any worker starts, the flow's streams and consumers are
+**provisioned** up front (the local engine does this inline; on Kubernetes a
+one-shot init Job does) — this is required for BATCH, whose interest-retention
+streams would drop a message published before its consumer exists.
+
+Delivery guarantees
+-------------------
+
+Workers **acknowledge a message only after processing it** (and, for a processor,
+after publishing its output). A crash in between therefore redelivers the message
+rather than losing it. Each message carries a content-derived id, so the re-run's
+republished output is de-duplicated by the broker instead of double-emitted. In
+BATCH mode a message that keeps failing is retried and then dead-lettered to a
+per-run DLQ stream; in REALTIME mode a failed message is dropped (freshness wins).
+See :doc:`../user-documentation/batch-versus-realtime-mode`.
 
 Execution engines
 -----------------
@@ -74,9 +101,13 @@ Stopping a flow
 ---------------
 
 A flow stops when its producers are exhausted, or when you call ``flow.stop()``.
-``stop()`` publishes a message on the broker's **control channel**, to which every
-worker is subscribed. Producers stop first; the remaining nodes drain their inputs
-and exit in turn, and their resources are released as each node's ``close()`` runs.
+When a producer finishes it emits an **end-of-stream** marker; this is
+**replica-safe** — every replica of a downstream node observes it and keeps
+draining its input until the broker reports nothing pending before it terminates, so
+no in-flight data is lost when a node has several replicas. ``flow.stop()`` instead
+publishes on the broker's **control channel**, to which every worker is subscribed,
+for an immediate flow-wide stop. Either way, each node's ``close()`` runs as it
+exits.
 
 Large payloads
 --------------

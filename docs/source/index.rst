@@ -25,8 +25,14 @@ Developer friendly
     Even complex pipelines are defined in a small ``build_flow()`` factory of a few
     lines of code.
 
+Reliable
+    At-least-once delivery with ack-after-process, per-message de-duplication,
+    retries and a dead-letter queue, so a crash or a bad message never silently
+    loses or double-emits data.
+
 Easy to extend
-    Writing your own producers, processors and consumers is straightforward.
+    Writing your own producers, processors and consumers is straightforward — sync
+    or async, with an optional runtime context.
 
 Free and open source
     Videoflow uses the MIT License.

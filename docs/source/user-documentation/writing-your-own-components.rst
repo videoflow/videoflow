@@ -14,12 +14,38 @@ configuration:
 
 1. **Accept and forward** ``**kwargs`` **to** ``super().__init__()``. That is how
    framework parameters (``name``, ``nb_tasks``, ``device_type``, ``is_finite``,
-   ``metadata``) reach the base class.
+   ``partition_by``, ``join_policy``, ``idempotent``, ``metadata``) reach the base
+   class.
 2. **Constructor arguments must be JSON-serializable, and each must be stored on**
    ``self`` **under the same name** (``self._cutoff = cutoff`` for a ``cutoff``
    argument). This lets ``get_params()`` capture them automatically. Put any
    non-serializable or expensive setup (opening files, loading models) in
    ``open()`` instead.
+
+Async methods and the runtime context
+-------------------------------------
+
+Any lifecycle or processing method (``open``/``next``/``process``/``consume``/
+``close``) may be:
+
+- **an** ``async def`` — the worker awaits it without blocking broker I/O, so a node
+  can ``await`` network calls or async model inference::
+
+      class AsyncDetector(ProcessorNode):
+          async def process(self, frame):
+              return await self._model.infer(frame)
+
+- **given a runtime context** — declare a final ``ctx`` (or ``context``) parameter
+  and the worker passes a ``RuntimeContext`` with ``ctx.flow_id`` / ``ctx.run_id`` /
+  ``ctx.node_name`` / ``ctx.replica_id`` / ``ctx.logger``, plus
+  ``ctx.set_partition_key(k)`` to route a downstream partitioned node by a business
+  key. Methods that don't declare ``ctx`` are called exactly as before::
+
+      class Tagger(ProcessorNode):
+          def process(self, record, ctx=None):
+              if ctx is not None:
+                  ctx.set_partition_key(record['customer_id'])
+              return record
 
 Writing producers
 -----------------
@@ -94,8 +120,9 @@ Stateful processors and ``OneTaskProcessorNode``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 If a processor keeps internal state that depends on the order or completeness of
-the stream (a tracker, an aggregator), it must **not** be replicated. Subclass
-``videoflow.core.node.OneTaskProcessorNode``, which fixes ``nb_tasks`` to 1::
+the stream (a tracker, an aggregator), it must not be replicated by plain
+competing consumers. Subclass ``videoflow.core.node.OneTaskProcessorNode``, which
+fixes ``nb_tasks`` to 1::
 
     from videoflow.core.node import OneTaskProcessorNode
 
@@ -107,6 +134,10 @@ the stream (a tracker, an aggregator), it must **not** be replicated. Subclass
         def process(self, inp):
             self._min = min(self._min, inp)
             return self._min
+
+To scale a stateful processor or a join, use ``partition_by`` instead: replicas
+then partition the stream by a key so each key is always handled by the same
+replica (see :doc:`task-allocation`).
 
 Running on the GPU
 ^^^^^^^^^^^^^^^^^^
@@ -136,6 +167,14 @@ leaves and return nothing::
 
 Use ``open()``/``close()`` for a consumer that writes to an external resource (a
 file handle, a socket, an API client).
+
+Because delivery is at-least-once, a consumer may occasionally be handed the same
+message twice (after a redelivery or restart). If the side effect must not be
+duplicated, either make ``consume`` naturally idempotent, or pass
+``idempotent=True`` and give the flow a Redis URL (``--blob-redis-url``): the worker
+then records each processed message id and skips re-applying it::
+
+    writer = MyApiWriter(name='writer', idempotent=True)(result)
 
 Choosing an image family
 -------------------------

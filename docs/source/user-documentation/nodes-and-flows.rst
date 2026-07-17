@@ -14,13 +14,18 @@ The three node types
 |           |                   |                     | stream). Set ``is_finite=False`` for unbounded ones. |
 +-----------+-------------------+---------------------+------------------------------------------------------+
 | Processor | ``ProcessorNode`` | ``process(*inputs)``| Transforms inputs into an output. Supports           |
-|           |                   |                     | ``nb_tasks`` (replicas) and ``device_type``.         |
+|           |                   |                     | ``nb_tasks``, ``device_type``, ``partition_by``,     |
+|           |                   |                     | ``join_policy``.                                     |
 +-----------+-------------------+---------------------+------------------------------------------------------+
-| Consumer  | ``ConsumerNode``  | ``consume(item)``   | Terminal sink; produces no output.                   |
+| Consumer  | ``ConsumerNode``  | ``consume(item)``   | Terminal sink; produces no output. Supports          |
+|           |                   |                     | ``idempotent`` and ``join_policy``.                  |
 +-----------+-------------------+---------------------+------------------------------------------------------+
 
 Every node also has ``open()`` and ``close()`` lifecycle hooks for acquiring and
-releasing resources.
+releasing resources. Any lifecycle or processing method may be an ``async def`` (the
+worker awaits it) and may take a final ``ctx`` parameter to receive a
+:doc:`runtime context <../distributed/distributed-execution>` — see
+:doc:`writing-your-own-components`.
 
 Node identity: the ``name``
 ---------------------------
@@ -66,13 +71,13 @@ are discovered automatically::
     flow = Flow([consumer_a, consumer_b], flow_type=REALTIME, flow_id='my-flow')
 
 - ``flow_type`` is ``REALTIME`` (drop stale messages, never block producers) or
-  ``BATCH`` (at-least-once delivery). See :doc:`batch-versus-realtime-mode`.
+  ``BATCH`` (at-least-once, loss-free delivery). See :doc:`batch-versus-realtime-mode`.
 - ``flow_id`` namespaces the broker subjects and Kubernetes resources; pass a stable
   value when you want to redeploy the same logical flow.
 
 When the flow is built it validates the graph: it must be acyclic, every consumer
-must be reachable from a producer, all names must be unique, and a multi-parent
-join node must keep ``nb_tasks=1`` (see :doc:`task-allocation`).
+must be reachable from a producer, all names must be unique, and a replicated
+multi-parent join node must set ``partition_by`` (see :doc:`task-allocation`).
 
 Running a Flow
 --------------
@@ -84,9 +89,22 @@ A flow runs through an **execution engine**::
     flow.join()                       # block until done
     # flow.stop()                     # signal termination early
 
-``flow.run(engine)`` is non-blocking. ``flow.join()`` blocks until the flow finishes
-naturally (all producers exhausted). ``flow.stop()`` publishes a termination signal
-on the broker's control channel that every worker is subscribed to, then waits for
-them to drain and exit.
+``flow.run(engine)`` mints a fresh ``run_id`` and is non-blocking. ``flow.join()``
+blocks until the flow finishes naturally (all producers exhausted). ``flow.stop()``
+publishes a termination signal on the broker's control channel that every worker is
+subscribed to, then waits for them to drain and exit.
 
 See :doc:`../distributed/distributed-execution` for the available engines.
+
+Reliability
+-----------
+
+Each call to ``flow.run()`` is scoped by a **run id**, so re-running a flow gets a
+fresh set of broker streams instead of colliding with a previous run.
+
+Delivery is **at-least-once**: a worker acknowledges a message only after it has
+processed it (and published its output), so a crash mid-processing causes
+redelivery, not loss. In BATCH mode a message that keeps failing is retried a few
+times and then **dead-lettered** to a DLQ stream (``vf-<flow>-<run>-dlq``) with the
+error attached, instead of being dropped or crashing the pod. See
+:doc:`../distributed/distributed-execution` and :doc:`batch-versus-realtime-mode`.

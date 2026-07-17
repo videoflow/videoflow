@@ -51,10 +51,11 @@ from, so a downstream annotator can draw on the original image::
     detector  = ObjectDetector(name='detector', nb_tasks=4)(frame)
     annotator = BoundingBoxAnnotator(name='annotator')(frame, detector)
 
-.. warning::
-    A join must keep ``nb_tasks=1``; only the nodes around it can be replicated (here
-    ``detector`` runs with ``nb_tasks=4`` while the join stays single). See
-    :doc:`task-allocation`.
+.. note::
+    A join runs single (``nb_tasks=1``) by default; the nodes around it can still be
+    replicated (here ``detector`` runs with ``nb_tasks=4``). To scale the join
+    itself, give it ``partition_by='trace_id'`` so both halves of an event land on
+    the same replica. See :doc:`task-allocation`.
 
 Reducing broker hops
 --------------------
