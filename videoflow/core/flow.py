@@ -79,6 +79,7 @@ class Flow:
             raise ValueError('flow_type must be one of {}'.format(','.join(FLOW_TYPES)))
         self._flow_type = flow_type
         self._flow_id = flow_id or uuid.uuid4().hex[:12]
+        self._run_id = None
         self._execution_engine = None
 
     @property
@@ -88,6 +89,11 @@ class Flow:
     @property
     def flow_type(self) -> str:
         return self._flow_type
+
+    @property
+    def run_id(self) -> str:
+        '''The id of the most recent (or in-progress) run, or None before ``run()``.'''
+        return self._run_id
 
     def topological_sort(self):
         '''
@@ -100,17 +106,25 @@ class Flow:
     def tasks_data(self):
         return build_tasks_data(self._graph_engine)
 
-    def run(self, execution_engine):
+    def run(self, execution_engine, run_id = None):
         '''
         Starts the flow using the given ``ExecutionEngine`` (e.g. \
             ``videoflow.engines.local.LocalProcessEngine`` or \
             ``videoflow.engines.kubernetes.KubernetesExecutionEngine``). \
             Non-blocking: returns once tasks have been allocated/started.
+
+        - Arguments:
+            - run_id: optional stable per-run id (auto-generated if omitted). Every \
+                broker stream/subject for this run is namespaced by it, so re-running \
+                the same flow never collides with a previous run's streams.
         '''
         self._execution_engine = execution_engine
+        self._run_id = run_id or uuid.uuid4().hex[:12]
         tasks_data = self.tasks_data()
-        self._execution_engine.allocate_and_run_tasks(tasks_data, self._flow_id, self._flow_type)
-        logger.info('Allocated {} tasks for flow {}'.format(len(tasks_data), self._flow_id))
+        self._execution_engine.allocate_and_run_tasks(
+            tasks_data, self._flow_id, self._flow_type, self._run_id)
+        logger.info('Allocated {} tasks for flow {} run {}'.format(
+            len(tasks_data), self._flow_id, self._run_id))
         logger.info('Started running flow.')
 
     def join(self):

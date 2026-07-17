@@ -38,8 +38,8 @@ def _image_ref(image_family : str, registry : str, tag : str) -> str:
     prefix = registry.rstrip('/') + '/' if registry else ''
     return f'{prefix}videoflow-{image_family}:{tag}'
 
-def _env_pairs(spec, flow_id, flow_type):
-    return {
+def _env_pairs(spec, flow_id, flow_type, run_id):
+    env = {
         'VF_NODE_CLASS': spec.node_class,
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
         'VF_NODE_KIND': spec.kind,
@@ -48,10 +48,20 @@ def _env_pairs(spec, flow_id, flow_type):
         'VF_HAS_CHILDREN': '1' if spec.has_children else '0',
         'VF_FLOW_ID': flow_id,
         'VF_FLOW_TYPE': flow_type,
+        'VF_RUN_ID': run_id,
+        'VF_NB_TASKS': str(spec.nb_tasks),
         # In-cluster each pod has its own IP, so a fixed health port is safe and
         # matches the probe/containerPort below.
         'VF_HEALTH_PORT': '8080',
     }
+    if spec.partition_by:
+        env['VF_PARTITION_BY'] = spec.partition_by
+    if spec.join_policy:
+        env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    return env
+
+def _is_partitioned(spec) -> bool:
+    return bool(getattr(spec, 'partition_by', None)) and spec.nb_tasks > 1
 
 def _labels(flow_id, node_name = None):
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
@@ -68,6 +78,13 @@ def _pod_spec(spec, flow_id, flow_type, registry, tag, nats_configmap):
             {'configMapRef': {'name': nats_configmap}},
         ],
     }
+    if _is_partitioned(spec):
+        # Partitioned pods run as a StatefulSet; the ordinal in the pod name is the
+        # replica id (the worker parses it off POD_NAME).
+        container['env'] = [{
+            'name': 'POD_NAME',
+            'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
+        }]
 
     resources = {}
     node_selector = None
@@ -91,6 +108,12 @@ def _pod_spec(spec, flow_id, flow_type, registry, tag, nats_configmap):
         'httpGet': {'path': '/healthz', 'port': 8080},
         'initialDelaySeconds': 10, 'periodSeconds': 15,
     }
+    # Startup probe covers slow model loading in open() (a GPU detector can take
+    # tens of seconds) without letting the liveness probe kill the pod meanwhile.
+    container['startupProbe'] = {
+        'httpGet': {'path': '/readyz', 'port': 8080},
+        'periodSeconds': 2, 'failureThreshold': 60,
+    }
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
 
     pod_spec = {'containers': [container]}
@@ -100,7 +123,7 @@ def _pod_spec(spec, flow_id, flow_type, registry, tag, nats_configmap):
         pod_spec['tolerations'] = tolerations
     return pod_spec
 
-def node_configmap(spec, flow_id, flow_type):
+def node_configmap(spec, flow_id, flow_type, run_id):
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -108,7 +131,7 @@ def node_configmap(spec, flow_id, flow_type):
             'name': k8s_name('vf', flow_id, spec.name, 'env'),
             'labels': _labels(flow_id, spec.name),
         },
-        'data': _env_pairs(spec, flow_id, flow_type),
+        'data': _env_pairs(spec, flow_id, flow_type, run_id),
     }
 
 def nats_configmap(flow_id, nats_url, blob_redis_url = None):
@@ -151,18 +174,110 @@ def workload(spec, flow_id, flow_type, registry, tag, nats_cm_name):
             },
         }
 
+    selector = {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}}
+
+    if _is_partitioned(spec):
+        # Partitioned node → StatefulSet, so pod ordinals give stable replica ids
+        # (changing the replica count rehashes ownership, so these are NOT
+        # autoscaled — see scaled_object).
+        return {
+            'apiVersion': 'apps/v1',
+            'kind': 'StatefulSet',
+            'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
+            'spec': {
+                'serviceName': k8s_name('vf', flow_id, spec.name, 'hl'),
+                'replicas': spec.nb_tasks,
+                'selector': selector,
+                'template': pod_template,
+            },
+        }
+
     return {
         'apiVersion': 'apps/v1',
         'kind': 'Deployment',
         'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
         'spec': {
             'replicas': spec.nb_tasks,
-            'selector': {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}},
+            'selector': selector,
             'template': pod_template,
         },
     }
 
-def scaled_object(spec, flow_id, nats_monitoring_endpoint, max_replicas):
+def headless_service(spec, flow_id):
+    '''Headless Service backing a partitioned node's StatefulSet (required for stable pod network identity/ordinals).'''
+    labels = _labels(flow_id, spec.name)
+    return {
+        'apiVersion': 'v1',
+        'kind': 'Service',
+        'metadata': {'name': k8s_name('vf', flow_id, spec.name, 'hl'), 'labels': labels},
+        'spec': {
+            'clusterIP': 'None',
+            'selector': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)},
+            'ports': [{'port': 8080, 'name': 'health'}],
+        },
+    }
+
+def pod_disruption_budget(spec, flow_id):
+    '''Keeps at least one replica of a multi-replica node available during voluntary disruptions (node drains, upgrades).'''
+    labels = _labels(flow_id, spec.name)
+    return {
+        'apiVersion': 'policy/v1',
+        'kind': 'PodDisruptionBudget',
+        'metadata': {'name': k8s_name('vf', flow_id, spec.name, 'pdb'), 'labels': labels},
+        'spec': {
+            'minAvailable': 1,
+            'selector': {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}},
+        },
+    }
+
+def flow_spec_configmap(specs, flow_id, run_id):
+    '''ConfigMap holding the compiled specs as JSON, mounted by the provisioning init Job.'''
+    return {
+        'apiVersion': 'v1',
+        'kind': 'ConfigMap',
+        'metadata': {'name': k8s_name('vf', flow_id, 'specs'), 'labels': _labels(flow_id)},
+        'data': {'specs.json': json.dumps([s.to_dict() for s in specs])},
+    }
+
+def provision_init_job(flow_id, run_id, flow_type, registry, tag, nats_cm_name):
+    '''
+    A one-shot Job that runs ``videoflow.provision`` to create all streams/durables
+    before workers start (required so BATCH interest-retention streams don't drop
+    early messages). Uses the base image, which has the framework + broker client.
+    '''
+    labels = _labels(flow_id)
+    spec_cm = k8s_name('vf', flow_id, 'specs')
+    container = {
+        'name': 'provision',
+        'image': _image_ref('base', registry, tag),
+        'command': ['python', '-m', 'videoflow.provision'],
+        'envFrom': [{'configMapRef': {'name': nats_cm_name}}],
+        'env': [
+            {'name': 'VF_FLOW_ID', 'value': flow_id},
+            {'name': 'VF_RUN_ID', 'value': run_id},
+            {'name': 'VF_FLOW_TYPE', 'value': flow_type},
+            {'name': 'VF_FLOW_SPECS_PATH', 'value': '/etc/videoflow/specs.json'},
+        ],
+        'volumeMounts': [{'name': 'specs', 'mountPath': '/etc/videoflow', 'readOnly': True}],
+    }
+    return {
+        'apiVersion': 'batch/v1',
+        'kind': 'Job',
+        'metadata': {'name': k8s_name('vf', flow_id, 'provision'), 'labels': labels},
+        'spec': {
+            'backoffLimit': 6,
+            'template': {
+                'metadata': {'labels': labels},
+                'spec': {
+                    'restartPolicy': 'OnFailure',
+                    'containers': [container],
+                    'volumes': [{'name': 'specs', 'configMap': {'name': spec_cm}}],
+                },
+            },
+        },
+    }
+
+def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas):
     '''
     A KEDA ScaledObject that scales a processor Deployment on NATS JetStream
     consumer lag. ``nb_tasks`` becomes the floor (minReplicaCount); KEDA scales up
@@ -173,8 +288,12 @@ def scaled_object(spec, flow_id, nats_monitoring_endpoint, max_replicas):
     (port 8222) reachable at ``nats_monitoring_endpoint``.
     '''
     from .compiler import NODE_KIND_PROCESSOR
-    from .messaging.nats_messenger import stream_name_for, durable_name_for
+    from .messaging.topology import stream_name_for, durable_name_for
     if spec.kind != NODE_KIND_PROCESSOR or not spec.parents:
+        return None
+    if _is_partitioned(spec):
+        # Rehashing ownership on a replica-count change would double- or zero-process
+        # messages, so partitioned nodes run at a fixed scale (no KEDA).
         return None
 
     # Scale on the lag of this node's consumer against its first parent's stream.
@@ -184,7 +303,7 @@ def scaled_object(spec, flow_id, nats_monitoring_endpoint, max_replicas):
         'metadata': {
             'natsServerMonitoringEndpoint': nats_monitoring_endpoint,
             'account': '$G',
-            'stream': stream_name_for(flow_id, parent),
+            'stream': stream_name_for(flow_id, run_id, parent),
             'consumer': durable_name_for(spec.name, parent),
             'lagThreshold': '10',
         },
@@ -220,7 +339,7 @@ def network_policy(flow_id):
         },
     }
 
-def render_manifests(specs, flow_id, flow_type, nats_url, namespace = 'default',
+def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'default',
                     registry = '', image_tag = 'latest', blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
                     nats_monitoring_endpoint = None):
@@ -228,6 +347,7 @@ def render_manifests(specs, flow_id, flow_type, nats_url, namespace = 'default',
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
 
+    - run_id: per-run identifier stamped into each node's env (scopes broker streams).
     - autoscaling: if True, emit a KEDA ScaledObject per processor node.
     - max_replicas: upper bound for autoscaled processors.
     - nats_monitoring_endpoint: NATS monitoring host:port for KEDA (defaults to \
@@ -237,14 +357,22 @@ def render_manifests(specs, flow_id, flow_type, nats_url, namespace = 'default',
     nats_cm_name = nats_cm['metadata']['name']
 
     manifests = [nats_cm, network_policy(flow_id)]
+    # Provision streams/durables up front via a one-shot init Job (BATCH interest
+    # retention drops messages published before their consumers exist).
+    manifests.append(flow_spec_configmap(specs, flow_id, run_id))
+    manifests.append(provision_init_job(flow_id, run_id, flow_type, registry, image_tag, nats_cm_name))
     for spec in specs:
-        manifests.append(node_configmap(spec, flow_id, flow_type))
+        manifests.append(node_configmap(spec, flow_id, flow_type, run_id))
+        if _is_partitioned(spec):
+            manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, registry, image_tag, nats_cm_name))
+        if spec.nb_tasks > 1:
+            manifests.append(pod_disruption_budget(spec, flow_id))
 
     if autoscaling:
         endpoint = nats_monitoring_endpoint or f'nats.{namespace}.svc:8222'
         for spec in specs:
-            so = scaled_object(spec, flow_id, endpoint, max_replicas)
+            so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)
             if so is not None:
                 manifests.append(so)
 

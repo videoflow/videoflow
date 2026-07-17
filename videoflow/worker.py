@@ -11,8 +11,16 @@ the original graph-building script.
     VF_PARENT_NAMES     comma-separated parent node names ('' if none)
     VF_HAS_CHILDREN     '1' or '0'
     VF_NATS_URL         nats://host:port
-    VF_FLOW_ID          shared flow identifier
+    VF_FLOW_ID          shared flow identifier (stable across runs)
     VF_FLOW_TYPE        realtime | batch
+    VF_RUN_ID           per-run identifier that scopes this run's broker streams
+    VF_REPLICA_ID       index of this replica (0 for single-task nodes)
+    VF_ACK_WAIT_SECONDS optional; per-message ack deadline (default 60)
+    VF_MAX_RETRIES      optional; BATCH redelivery attempts before dead-letter (default 3)
+    VF_EOS_QUIESCENCE_MS optional; drain quiescence window before honoring EOS (default 500)
+    VF_NB_TASKS         optional; replica count of this node (for partition ownership)
+    VF_PARTITION_BY     optional; partition key ('trace_id' or a metadata field)
+    VF_JOIN_POLICY_JSON optional; JSON JoinPolicy for a multi-parent node
     VF_BLOB_REDIS_URL   optional; enables the external blob store for large payloads
 '''
 from __future__ import print_function
@@ -32,6 +40,26 @@ def _import_class(fq_class : str):
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
+def _resolve_replica_id() -> int:
+    '''
+    Replica id from VF_REPLICA_ID (local engine sets it), else parsed from the
+    trailing ordinal of POD_NAME/HOSTNAME (a StatefulSet pod is ``<name>-<n>``),
+    else 0.
+    '''
+    explicit = os.environ.get('VF_REPLICA_ID')
+    if explicit not in (None, ''):
+        try:
+            return int(explicit)
+        except ValueError:
+            pass
+    for var in ('POD_NAME', 'HOSTNAME'):
+        val = os.environ.get(var, '')
+        if '-' in val:
+            tail = val.rsplit('-', 1)[1]
+            if tail.isdigit():
+                return int(tail)
+    return 0
+
 def build_node_from_env():
     node_class = _import_class(os.environ['VF_NODE_CLASS'])
     params = json.loads(os.environ.get('VF_NODE_PARAMS_JSON', '{}'))
@@ -49,6 +77,15 @@ def run_from_env():
     nats_url = os.environ['VF_NATS_URL']
     flow_id = os.environ['VF_FLOW_ID']
     flow_type = os.environ.get('VF_FLOW_TYPE', 'realtime')
+    run_id = os.environ['VF_RUN_ID']
+    replica_id = _resolve_replica_id()
+    ack_wait = int(os.environ.get('VF_ACK_WAIT_SECONDS', '60'))
+    max_retries = int(os.environ.get('VF_MAX_RETRIES', '3'))
+    eos_quiescence_ms = int(os.environ.get('VF_EOS_QUIESCENCE_MS', '500'))
+    nb_tasks = int(os.environ.get('VF_NB_TASKS', '1'))
+    partition_by = os.environ.get('VF_PARTITION_BY') or None
+    join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
+    join_policy = json.loads(join_policy_json) if join_policy_json else None
 
     blob_store = None
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
@@ -62,7 +99,11 @@ def run_from_env():
     node._name = node_name
 
     messenger = NATSMessenger(
-        node, parent_names, nats_url, flow_id, flow_type, blob_store = blob_store,
+        node, parent_names, nats_url, flow_id, flow_type, run_id,
+        blob_store = blob_store, replica_id = replica_id,
+        ack_wait = ack_wait, max_retries = max_retries,
+        eos_quiescence_ms = eos_quiescence_ms, nb_tasks = nb_tasks,
+        partition_by = partition_by, join_policy = join_policy,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
@@ -76,12 +117,23 @@ def run_from_env():
         health_server.start()
         messenger = InstrumentedMessenger(messenger, state)
 
+    from .core.context import RuntimeContext
+    ctx = RuntimeContext(
+        flow_id, run_id, node_name, replica_id,
+        logging.getLogger(f'videoflow.node.{node_name}'), messenger = messenger,
+    )
+
     if kind == NODE_KIND_PRODUCER:
-        task = ProducerTask(node, messenger, has_children)
+        task = ProducerTask(node, messenger, has_children, ctx = ctx)
     elif kind == NODE_KIND_PROCESSOR:
-        task = ProcessorTask(node, messenger, has_children, parent_names)
+        task = ProcessorTask(node, messenger, has_children, parent_names, ctx = ctx)
     elif kind == NODE_KIND_CONSUMER:
-        task = ConsumerTask(node, messenger, has_children, parent_names)
+        idem_store = None
+        if getattr(node, 'idempotent', False) and blob_redis_url:
+            from .idempotency import RedisIdempotencyStore
+            idem_store = RedisIdempotencyStore(blob_redis_url)
+        task = ConsumerTask(node, messenger, has_children, parent_names, ctx = ctx,
+                            idempotency_store = idem_store)
     else:
         raise ValueError(f'Unknown VF_NODE_KIND: {kind}')
 
@@ -95,10 +147,8 @@ def run_from_env():
     logger.info(f'Worker finished: node={node_name}')
 
 def main():
-    logging.basicConfig(
-        level = logging.INFO,
-        format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    )
+    from .logging_config import configure_logging
+    configure_logging()
     run_from_env()
 
 if __name__ == '__main__':

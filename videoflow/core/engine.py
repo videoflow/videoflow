@@ -36,6 +36,39 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
+    def ack_inputs(self):
+        '''
+        Acknowledge the input group last returned by ``receive_message`` — called by \
+            the task only *after* the node has processed it (and, for a processor, \
+            published its output). This ack-after-process ordering is what makes a \
+            crash mid-processing safe: the un-acked message is redelivered instead \
+            of lost.
+        '''
+        raise NotImplementedError('Messenger subclass must implement method')
+
+    def fail_inputs(self, exc):
+        '''
+        Report that the node raised while processing the last input group. The \
+            messenger decides whether to redeliver (BATCH, up to a retry limit, then \
+            dead-letter) or drop (REALTIME).
+        '''
+        raise NotImplementedError('Messenger subclass must implement method')
+
+    def set_output_partition_key(self, value):
+        '''
+        Set the partition key attached to this node's next published output (via \
+            ``RuntimeContext.set_partition_key``), so a downstream partitioned node \
+            can route by a business key. Default: no-op.
+        '''
+        pass
+
+    def last_input_key(self):
+        '''
+        A stable identity for the input group last returned by ``receive_message``, \
+            used as a sink idempotency key. Default: None (no idempotency).
+        '''
+        return None
+
     def receive_message(self) -> dict:
         '''
         Blocks until this node has received a complete input: one message from \
@@ -58,14 +91,15 @@ class ExecutionEngine:
     def __init__(self):
         self._allocation_called = False
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str):
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
         '''
         - Arguments:
             - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \
                 as produced by ``videoflow.core.flow.build_tasks_data``.
-            - flow_id: stable identifier for this flow run.
+            - flow_id: stable identifier for this flow (constant across runs).
             - flow_type: 'realtime' or 'batch' — the broker retention policy to use \
                 for every edge.
+            - run_id: per-run identifier that scopes this execution's broker streams.
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
@@ -82,17 +116,18 @@ class ExecutionEngine:
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str):
+    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
         '''
         Defines a template with the order of methods that need to run in order to \
             allocate and run tasks.
 
         - Arguments:
             - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``.
-            - flow_id: stable identifier for this flow run.
+            - flow_id: stable identifier for this flow (constant across runs).
             - flow_type: 'realtime' or 'batch'.
+            - run_id: per-run identifier that scopes this execution's broker streams.
         '''
         if self._allocation_called:
             raise RuntimeError('This method has already been called. It can only be called once.')
-        self._al_create_and_start_processes(tasks_data, flow_id, flow_type)
+        self._al_create_and_start_processes(tasks_data, flow_id, flow_type, run_id)
         self._allocation_called = True

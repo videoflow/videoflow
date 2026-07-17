@@ -66,15 +66,23 @@ def test_single_producer_still_works():
     graph_engine = GraphEngine([a], [c])
     assert len(graph_engine.topological_sort()) == 3
 
-def test_multi_parent_join_cannot_be_replicated():
+def test_replicated_join_without_partition_by_is_rejected():
     a = IntProducer(name = 'a')
     b = IdentityProcessor(name = 'b')(a)
-    # joiner with 2 parents and nb_tasks > 1 is invalid: replicas would receive
-    # the two halves of a join on different workers.
+    # joiner with 2 parents and nb_tasks > 1 needs partition_by: otherwise replicas
+    # would receive the two halves of a join on different workers.
     joined = JoinerProcessor(name = 'joined', nb_tasks = 3)(a, b)
     out = CommandlineConsumer(name = 'out')(joined)
     with pytest.raises(ValueError):
         GraphEngine([a], [out])
+
+def test_replicated_join_with_partition_by_is_accepted():
+    a = IntProducer(name = 'a')
+    b = IdentityProcessor(name = 'b')(a)
+    # partition_by='trace_id' co-locates both halves of a join on one replica.
+    joined = JoinerProcessor(name = 'joined', nb_tasks = 3, partition_by = 'trace_id')(a, b)
+    out = CommandlineConsumer(name = 'out')(joined)
+    GraphEngine([a], [out])  # must not raise
 
 def test_single_parent_processor_can_be_replicated():
     a = IntProducer(name = 'a')

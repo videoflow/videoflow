@@ -46,13 +46,15 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._specs = specs
         self._kubectl = kubectl
         self._flow_id = None
+        self._run_id = None
         super(KubernetesExecutionEngine, self).__init__()
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str):
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
         self._flow_id = flow_id
+        self._run_id = run_id
         specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
         manifests = render_manifests(
-            specs, flow_id, flow_type, self._nats_url, namespace = self._namespace,
+            specs, flow_id, flow_type, self._nats_url, run_id, namespace = self._namespace,
             registry = self._registry, image_tag = self._image_tag,
             blob_redis_url = self._blob_redis_url,
         )
@@ -76,7 +78,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         control message lets in-flight pods drain cleanly; the delete tears down the
         long-running Deployments that would otherwise never exit on their own.
         '''
-        _publish_stop(self._nats_url, self._flow_id)
+        _publish_stop(self._nats_url, self._flow_id, self._run_id)
         selector = f'{LABEL_FLOW_ID}={k8s_name(self._flow_id)}'
         subprocess.run(
             [self._kubectl, 'delete', '-n', self._namespace,
@@ -97,15 +99,18 @@ class KubernetesExecutionEngine(ExecutionEngine):
             check = False,
         )
 
-def _publish_stop(nats_url, flow_id):
+def _publish_stop(nats_url, flow_id, run_id):
     import asyncio
     import nats
-    from ..messaging.nats_messenger import control_subject_for
+    from ..messaging.topology import control_subject_for, delete_run_streams
 
     async def _go():
         nc = await nats.connect(nats_url)
-        await nc.publish(control_subject_for(flow_id), b'stop')
-        await nc.flush()
-        await nc.drain()
+        try:
+            await nc.publish(control_subject_for(flow_id, run_id), b'stop')
+            await nc.flush()
+            await delete_run_streams(nc, flow_id, run_id)
+        finally:
+            await nc.drain()
 
     asyncio.run(_go())

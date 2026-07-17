@@ -9,6 +9,8 @@ class _FakeInner(Messenger):
     def __init__(self):
         self.published = []
         self.received = 0
+        self.acked = 0
+        self.failed = []
 
     def publish_message(self, message, metadata = None):
         self.published.append((message, metadata))
@@ -22,6 +24,12 @@ class _FakeInner(Messenger):
     def receive_message(self):
         self.received += 1
         return {'p': {'message': 1, 'metadata': None, 'is_stop_signal': False}}
+
+    def ack_inputs(self):
+        self.acked += 1
+
+    def fail_inputs(self, exc):
+        self.failed.append(exc)
 
     def close(self):
         pass
@@ -59,6 +67,21 @@ def test_instrumented_delegates():
     im.publish_stop_signal()
     assert inner.received == 1
     assert ('STOP', None) in inner.published
+
+def test_ack_fail_delegate_and_count():
+    inner = _FakeInner()
+    state = HealthState('n')
+    im = InstrumentedMessenger(inner, state)
+    im.receive_message()
+    im.ack_inputs()
+    err = RuntimeError('boom')
+    im.fail_inputs(err)
+    assert inner.acked == 1
+    assert inner.failed == [err]
+    text = state.render_metrics()
+    assert 'videoflow_messages_received_total{node="n"} 1' in text
+    assert 'videoflow_messages_processed_total{node="n"} 1' in text
+    assert 'videoflow_messages_failed_total{node="n"} 1' in text
 
 if __name__ == "__main__":
     pytest.main([__file__])

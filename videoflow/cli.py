@@ -54,13 +54,16 @@ def _cmd_deploy(args):
         node_name, family = override.split('=', 1)
         set_override(node_name, family)
 
+    import uuid
+
     flow = _load_flow(args.graph)
     if args.flow_id:
         flow._flow_id = args.flow_id
+    run_id = args.run_id or uuid.uuid4().hex[:12]
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     specs = compile_flow(flow)
     manifests = render_manifests(
-        specs, flow.flow_id, flow.flow_type, args.nats,
+        specs, flow.flow_id, flow.flow_type, args.nats, run_id,
         namespace = args.namespace, registry = args.registry,
         image_tag = args.image_tag, blob_redis_url = args.blob_redis_url,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
@@ -91,7 +94,7 @@ def _cmd_deploy(args):
 
     print(f'Wrote {len(manifests)} manifests + kustomization.yaml to {args.output}')
     print(f'Apply with:  kubectl apply -k {args.output}')
-    print(f'Flow id: {flow.flow_id}')
+    print(f'Flow id: {flow.flow_id}   Run id: {run_id}')
 
 def _cmd_run_local(args):
     from .engines.local import LocalProcessEngine
@@ -105,6 +108,66 @@ def _cmd_run_local(args):
     except KeyboardInterrupt:
         flow.stop()
 
+def _cmd_explain(args):
+    from .compiler import compile_flow
+    from .messaging.topology import subject_for, dlq_stream_name
+
+    flow = _load_flow(args.graph)
+    run_id = args.run_id or '<run-id>'
+    specs = compile_flow(flow)
+    lines = [f'Flow: {flow.flow_id}   type={flow.flow_type}   run={run_id}',
+            f'Nodes ({len(specs)}):']
+    for s in specs:
+        bits = [f'replicas={s.nb_tasks}']
+        if s.device_type == 'gpu':
+            bits.append('device=gpu')
+        if s.partition_by:
+            bits.append(f'partition_by={s.partition_by}')
+        if s.join_policy:
+            bits.append(f"join={s.join_policy.get('missing')}")
+        lines.append(f'  {s.name}  [{s.kind}]  image={s.image_family}  ' + '  '.join(bits))
+        lines.append(f'      subject: {subject_for(flow.flow_id, run_id, s.name)}')
+        if s.parents:
+            lines.append(f'      from: {", ".join(s.parents)}')
+    lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
+    print('\n'.join(lines))
+
+def _cmd_provision(args):
+    import uuid
+    from .compiler import compile_flow
+    from .messaging.topology import provision_flow_sync
+
+    flow = _load_flow(args.graph)
+    run_id = args.run_id or uuid.uuid4().hex[:12]
+    specs = compile_flow(flow)
+    provision_flow_sync(args.nats, specs, flow.flow_id, run_id, flow.flow_type)
+    print(f'Provisioned {len(specs)} node streams for flow {flow.flow_id} run {run_id}')
+
+def _cmd_teardown(args):
+    import asyncio
+    import nats
+    from .messaging.topology import control_subject_for, delete_run_streams
+
+    async def _go():
+        nc = await nats.connect(args.nats)
+        try:
+            await nc.publish(control_subject_for(args.flow_id, args.run_id), b'stop')
+            await nc.flush()
+            await delete_run_streams(nc, args.flow_id, args.run_id)
+        finally:
+            await nc.drain()
+
+    asyncio.run(_go())
+    print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
+    if args.namespace:
+        import subprocess
+        from .manifests import LABEL_FLOW_ID, k8s_name
+        selector = f'{LABEL_FLOW_ID}={k8s_name(args.flow_id)}'
+        subprocess.run(['kubectl', 'delete', '-n', args.namespace,
+                        'deployment,statefulset,job,configmap,service,networkpolicy,poddisruptionbudget,scaledobject',
+                        '-l', selector], check = False)
+        print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id}')
+
 def build_parser():
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
     sub = parser.add_subparsers(dest = 'command', required = True)
@@ -116,6 +179,9 @@ def build_parser():
     deploy.add_argument('--flow-id', default = None,
                         help = 'Stable flow id for naming resources (overrides the graph module\'s). '
                                'Use the same value to redeploy/update an existing flow.')
+    deploy.add_argument('--run-id', default = None,
+                        help = 'Per-run id that scopes this run\'s broker streams (auto-generated if omitted). '
+                               'A new run id gives fresh streams; reuse it to target the same run.')
     deploy.add_argument('--output', default = './manifests')
     deploy.add_argument('--registry', default = '', help = 'Image registry prefix, e.g. ghcr.io/acme.')
     deploy.add_argument('--image-tag', default = 'latest')
@@ -134,6 +200,24 @@ def build_parser():
     run.add_argument('--nats', default = 'nats://localhost:4222')
     run.add_argument('--blob-redis-url', default = None)
     run.set_defaults(func = _cmd_run_local)
+
+    explain = sub.add_parser('explain', help = 'Print a human-readable summary of a compiled graph.')
+    explain.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    explain.add_argument('--run-id', default = None)
+    explain.set_defaults(func = _cmd_explain)
+
+    prov = sub.add_parser('provision', help = 'Create a flow\'s streams/durables on the broker (usually run automatically).')
+    prov.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    prov.add_argument('--nats', required = True)
+    prov.add_argument('--run-id', default = None)
+    prov.set_defaults(func = _cmd_provision)
+
+    teardown = sub.add_parser('teardown', help = 'Stop a run and delete its broker streams (and, with --namespace, its K8s workloads).')
+    teardown.add_argument('--flow-id', required = True)
+    teardown.add_argument('--run-id', required = True)
+    teardown.add_argument('--nats', required = True)
+    teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the flow\'s workloads.')
+    teardown.set_defaults(func = _cmd_teardown)
 
     return parser
 

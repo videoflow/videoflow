@@ -77,6 +77,26 @@ Useful options:
 ``--blob-redis-url``
     Enable the external blob store for large payloads.
 
+``--run-id``
+    Per-run id that scopes this run's broker streams (auto-generated otherwise). A
+    new run id gives fresh streams; reuse it to target the same run.
+
+Other CLI commands
+------------------
+
+``videoflow explain my_flow.py``
+    Print a human-readable summary of the compiled graph — nodes, replicas, image
+    families, partitioning, subjects, and the DLQ stream — without touching a cluster.
+
+``videoflow provision my_flow.py --nats ...``
+    Create the flow's broker streams and durable consumers up front. This normally
+    happens automatically (a generated init Job on Kubernetes, or the local engine
+    before it spawns workers), but is exposed for manual/debug use.
+
+``videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...]``
+    Stop a run (control-channel signal) and delete its broker streams; with
+    ``--namespace`` it also ``kubectl delete``\ s the flow's workloads.
+
 How graph concepts map onto Kubernetes
 --------------------------------------
 
@@ -85,9 +105,13 @@ How graph concepts map onto Kubernetes
 +=======================================+=============================================================+
 | ``flow_type=REALTIME``                | broker keeps only the freshest message per edge             |
 +---------------------------------------+-------------------------------------------------------------+
-| ``flow_type=BATCH``                   | at-least-once delivery with a deep buffer and acks          |
+| ``flow_type=BATCH``                   | at-least-once, loss-free delivery (interest retention +     |
+|                                       | backpressure); failures retry then dead-letter to a DLQ     |
 +---------------------------------------+-------------------------------------------------------------+
 | ``ProcessorNode(nb_tasks=N)``         | N Deployment replicas (competing consumers)                 |
++---------------------------------------+-------------------------------------------------------------+
+| ``ProcessorNode(..., partition_by=)`` | N StatefulSet replicas, partitioned by key (scales joins);  |
+|                                       | not autoscaled                                              |
 +---------------------------------------+-------------------------------------------------------------+
 | ``device_type='gpu'``                 | pod requests ``nvidia.com/gpu`` + GPU-pool nodeSelector     |
 +---------------------------------------+-------------------------------------------------------------+

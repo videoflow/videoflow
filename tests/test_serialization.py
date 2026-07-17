@@ -2,33 +2,53 @@ import numpy as np
 import pytest
 
 from videoflow.serialization import (
-    encode_envelope, decode_envelope, encode_payload, decode_payload,
+    encode_envelope, decode_envelope, encode_payload, decode_payload, derive_message_id,
     CODEC_RAW_NDARRAY, CODEC_PICKLE, CODEC_EXTERNAL_REF, MAX_INLINE_PAYLOAD_BYTES,
-    BlobStore,
+    MSG_TYPE_DATA, MSG_TYPE_EOS, ENVELOPE_VERSION, BlobStore,
 )
 
 def test_ndarray_round_trip():
     arr = np.random.randint(0, 255, size = (64, 48, 3), dtype = np.uint8)
-    buf = encode_envelope('nodeA', 'flow1', 'trace-1', 3, False, {'proctime': 0.1}, arr)
+    buf = encode_envelope('nodeA', 'flow1', 'run1', 'trace-1', 3, MSG_TYPE_DATA,
+                        {'proctime': 0.1}, arr, replica_id = 2)
     out = decode_envelope(buf)
     assert np.array_equal(out['message'], arr)
+    assert out['run_id'] == 'run1'
     assert out['trace_id'] == 'trace-1'
     assert out['seq'] == 3
+    assert out['type'] == MSG_TYPE_DATA
     assert out['is_stop_signal'] is False
+    assert out['replica_id'] == 2
     assert out['metadata'] == {'proctime': 0.1}
 
 def test_arbitrary_object_round_trip():
     payload = (np.zeros((2, 2)), {'boxes': [1, 2, 3], 'label': 'cat'})
-    buf = encode_envelope('nodeB', 'flow1', 'trace-2', 1, False, None, payload)
+    buf = encode_envelope('nodeB', 'flow1', 'run1', 'trace-2', 1, MSG_TYPE_DATA, None, payload)
     out = decode_envelope(buf)
     assert out['message'][1]['label'] == 'cat'
     assert np.array_equal(out['message'][0], payload[0])
 
 def test_stop_signal_round_trip():
-    buf = encode_envelope('nodeA', 'flow1', '', 99, True, None, None)
+    buf = encode_envelope('nodeA', 'flow1', 'run1', '', 99, MSG_TYPE_EOS, None, None)
     out = decode_envelope(buf)
+    assert out['type'] == MSG_TYPE_EOS
     assert out['is_stop_signal'] is True
     assert out['message'] is None
+
+def test_message_id_is_deterministic_and_type_sensitive():
+    a = derive_message_id('f', 'r', 'node', 'trace-1', 5, MSG_TYPE_DATA)
+    b = derive_message_id('f', 'r', 'node', 'trace-1', 5, MSG_TYPE_DATA)
+    c = derive_message_id('f', 'r', 'node', 'trace-1', 6, MSG_TYPE_DATA)
+    d = derive_message_id('f', 'r', 'node', 'trace-1', 5, MSG_TYPE_EOS)
+    assert a == b            # same inputs → same id (enables dedup across retries)
+    assert a != c and a != d  # different seq / type → different id
+    assert len(a) == 32
+
+def test_wrong_version_rejected():
+    import msgpack
+    bad = msgpack.packb({'v': 999, 'type': MSG_TYPE_DATA}, use_bin_type = True)
+    with pytest.raises(ValueError):
+        decode_envelope(bad)
 
 def test_codec_selection():
     codec, _ = encode_payload(np.zeros((3, 3)))

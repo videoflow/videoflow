@@ -42,7 +42,8 @@ class NodeSpec:
         - image_family: resolved Docker image family key (see image_registry).
     '''
     def __init__(self, name, node_class, params, parents, kind, has_children,
-                nb_tasks, device_type, is_finite, image_family):
+                nb_tasks, device_type, is_finite, image_family,
+                partition_by = None, join_policy = None):
         self.name = name
         self.node_class = node_class
         self.params = params
@@ -53,6 +54,10 @@ class NodeSpec:
         self.device_type = device_type
         self.is_finite = is_finite
         self.image_family = image_family
+        # Routing-relevant fields lifted out of params so engines/manifests see
+        # them without parsing constructor kwargs.
+        self.partition_by = partition_by
+        self.join_policy = join_policy  # dict or None
 
     def to_dict(self):
         return {
@@ -66,6 +71,8 @@ class NodeSpec:
             'device_type': self.device_type,
             'is_finite': self.is_finite,
             'image_family': self.image_family,
+            'partition_by': self.partition_by,
+            'join_policy': self.join_policy,
         }
 
     @classmethod
@@ -75,6 +82,7 @@ class NodeSpec:
             parents = d['parents'], kind = d['kind'], has_children = d['has_children'],
             nb_tasks = d['nb_tasks'], device_type = d['device_type'],
             is_finite = d['is_finite'], image_family = d['image_family'],
+            partition_by = d.get('partition_by'), join_policy = d.get('join_policy'),
         )
 
 def specs_from_tasks_data(tasks_data):
@@ -89,6 +97,8 @@ def specs_from_tasks_data(tasks_data):
         nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
         device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
+        partition_by = getattr(node, 'partition_by', None)
+        join_policy = node._join_policy if hasattr(node, '_join_policy') else None
         specs.append(NodeSpec(
             name = node.name,
             node_class = node_class,
@@ -100,6 +110,8 @@ def specs_from_tasks_data(tasks_data):
             device_type = device_type,
             is_finite = is_finite,
             image_family = image_family_for(node_class, node.name),
+            partition_by = partition_by,
+            join_policy = join_policy,
         ))
     return specs
 

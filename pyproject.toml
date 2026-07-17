@@ -34,22 +34,22 @@ Repository = "https://github.com/videoflow/videoflow"
 # Broker client + wire format: needed by any node that actually runs in a
 # distributed flow (i.e. every worker), but not to merely import/inspect a graph.
 distributed = [
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
 ]
 vision = [
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "opencv-python-headless>=4.0.0",
 ]
 video = [
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "opencv-python-headless>=4.0.0",
 ]
 # Used by the deploy CLI to render Kubernetes manifests.
 deploy = [
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "PyYAML>=5.1",
 ]
@@ -58,7 +58,7 @@ blob = [
     "redis>=4.0.0",
 ]
 all = [
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "opencv-python-headless>=4.0.0",
     "PyYAML>=5.1",
@@ -74,7 +74,7 @@ videoflow = "videoflow.cli:main"
 dev = [
     "pytest>=7.0",
     "pytest-timeout>=2.0",
-    "nats-py>=2.0.0",
+    "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "PyYAML>=5.1",
     "redis>=4.0.0",
@@ -99,4 +99,11 @@ include = [
 [tool.pytest.ini_options]
 markers = [
     "timeout: mark a test with a maximum run time (pytest-timeout).",
+]
+filterwarnings = [
+    # nats-py schedules a background flusher task that, in the short-lived
+    # asyncio.run() helpers used by some integration tests, fires after the loop
+    # has already closed. It's a teardown-only artifact of those test helpers (the
+    # worker/messenger manage their own loop cleanly), so silence the noise.
+    "ignore::pytest.PytestUnraisableExceptionWarning",
 ]

@@ -53,19 +53,19 @@ class GraphEngine:
                 '{}. Pass an explicit, unique name= to each affected node.'.format(', '.join(sorted(duplicates)))
             )
 
-        # Multi-parent nodes (joins) cannot be replicated. With nb_tasks > 1 the
-        # replicas are competing consumers on each parent stream, so the two
-        # inputs of a single logical event can be delivered to different replicas
-        # — neither of which can then assemble the join. Force joins to run as a
-        # single task; parallelize the work upstream/downstream of the join instead.
+        # A replicated multi-parent (join) node must partition its input, otherwise
+        # the two halves of one logical event could land on different replicas and
+        # neither could assemble the join. With partition_by='trace_id' both halves
+        # hash to the same replica, so joins can safely scale out.
         for node in self._tsort:
             if (isinstance(node, ProcessorNode) and node.parents is not None
-                    and len(node.parents) > 1 and node.nb_tasks > 1):
+                    and len(node.parents) > 1 and node.nb_tasks > 1
+                    and not node.partition_by):
                 raise ValueError(
-                    f'Node {node.name} joins {len(node.parents)} parents but has '
-                    f'nb_tasks={node.nb_tasks}. A multi-parent (join) node must have '
-                    'nb_tasks=1, because replicas would receive the two halves of a '
-                    'join on different workers. Set nb_tasks=1 on this node.'
+                    f'Node {node.name} joins {len(node.parents)} parents with '
+                    f'nb_tasks={node.nb_tasks} but no partition_by. Replicas would '
+                    'receive the two halves of a join on different workers. Set '
+                    "partition_by='trace_id' (recommended for joins) or nb_tasks=1."
                 )
 
         #3. TODO: Check that all producers' results are

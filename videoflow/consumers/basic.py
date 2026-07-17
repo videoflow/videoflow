@@ -62,10 +62,17 @@ class WebhookConsumer(ConsumerNode):
 
 
 class FileAppenderConsumer(ConsumerNode):
-    def __init__(self, **kwargs):
-        # TODO: Add other pertinent parameters to init method.
+    '''
+    Appends a text representation of each received item, one per line, to a file.
+
+    - Arguments:
+        - filepath: path to the file to append to (created if missing). The folder \
+            must already exist.
+    '''
+    def __init__(self, filepath : str, **kwargs):
+        self._filepath = filepath
         super(FileAppenderConsumer, self).__init__(**kwargs)
 
     def consume(self, item):
-        # item should be serializable, otherwise error.
-        raise NotImplementedError()
+        with open(self._filepath, 'a') as f:
+            f.write(f'{item}\n')

@@ -187,13 +187,33 @@ class ConsumerNode(Leaf):
             output of parent nodes, receives metadata produced by parent nodes.
         - name (str): see ``Node``.
     '''
-    def __init__(self, metadata = False, name = None, **kwargs):
+    def __init__(self, metadata = False, name = None, join_policy = None, idempotent = False, **kwargs):
         self._metadata = metadata
+        self._idempotent = idempotent
+        from .policies import JoinPolicy
+        if isinstance(join_policy, JoinPolicy):
+            join_policy = join_policy.to_dict()
+        self._join_policy = join_policy
         super(ConsumerNode, self).__init__(name = name, **kwargs)
 
     @property
     def metadata(self):
         return self._metadata
+
+    @property
+    def idempotent(self):
+        '''If True (and the flow has a Redis blob/idempotency store), the consumer's side effects are deduplicated across redelivery.'''
+        return self._idempotent
+
+    @property
+    def partition_by(self):
+        # Consumers are single sinks (no nb_tasks), so they never partition.
+        return None
+
+    @property
+    def join_policy(self):
+        from .policies import JoinPolicy
+        return JoinPolicy.from_dict(self._join_policy)
 
     def consume(self, item):
         '''
@@ -210,13 +230,29 @@ class ProcessorNode(Node):
     - Arguments:
         - nb_tasks (int): number of parallel replicas to allocate for this processor.
         - device_type (str): ``videoflow.core.constants.CPU`` or ``GPU``.
+        - partition_by (str): if set (and ``nb_tasks > 1``), replicas partition the \
+            input by a key instead of competing for it: each message is handled by \
+            exactly one replica chosen by ``hash(key) % nb_tasks``. The key is the \
+            message's ``trace_id`` (the special value ``'trace_id'``, which co-locates \
+            both halves of a join on the same replica) or a metadata field name. \
+            Required for a multi-parent (join) node with ``nb_tasks > 1``.
+        - join_policy (JoinPolicy | dict): for multi-parent nodes, how to handle a \
+            join group that never completes (timeout + missing policy). Defaults per \
+            flow type when unset.
         - name (str): see ``Node``.
     '''
-    def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs):
+    def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None,
+                partition_by = None, join_policy = None, **kwargs):
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
+        self._partition_by = partition_by
+        # Stored as a plain dict so get_params() stays JSON-serializable.
+        from .policies import JoinPolicy
+        if isinstance(join_policy, JoinPolicy):
+            join_policy = join_policy.to_dict()
+        self._join_policy = join_policy
         super(ProcessorNode, self).__init__(name = name, **kwargs)
 
     @property
@@ -232,6 +268,16 @@ class ProcessorNode(Node):
         Returns the preferred device type to use to run the processor's code
         '''
         return self._device_type
+
+    @property
+    def partition_by(self):
+        return self._partition_by
+
+    @property
+    def join_policy(self):
+        '''Returns the ``JoinPolicy`` object (or None), reconstructed from the stored dict.'''
+        from .policies import JoinPolicy
+        return JoinPolicy.from_dict(self._join_policy)
 
     def change_device(self, device_type):
         if device_type not in DEVICE_TYPES:

@@ -53,7 +53,7 @@ def test_image_family_override():
 def test_finite_producer_is_job_infinite_is_deployment():
     # finite producer
     specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', namespace = 'ns')
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', namespace = 'ns')
     by_name = {(m['kind'], m['metadata']['name']): m for m in manifests}
     assert ('Job', 'vf-demo-producer') in by_name
     # processors and consumer are Deployments
@@ -62,7 +62,7 @@ def test_finite_producer_is_job_infinite_is_deployment():
 
 def test_nb_tasks_maps_to_replicas():
     specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222')
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1')
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-demo-identity'][0]
     assert dep['spec']['replicas'] == 2
 
@@ -71,7 +71,7 @@ def test_gpu_node_resources():
     gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
     printer = CommandlineConsumer(name = 'c')(gpu)
     flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
-    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222')
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1')
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
     container = dep['spec']['template']['spec']['containers'][0]
     assert container['resources']['limits']['nvidia.com/gpu'] == 1
@@ -79,7 +79,7 @@ def test_gpu_node_resources():
 
 def test_manifests_are_valid_yaml():
     specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', autoscaling = True)
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', autoscaling = True)
     ystr = dump_manifests(manifests)
     parsed = list(yaml.safe_load_all(ystr))
     assert len(parsed) == len(manifests)

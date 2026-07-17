@@ -22,12 +22,26 @@ replica is a separate subprocess; on Kubernetes it is a Deployment replica.
 - Nodes that subclass ``OneTaskProcessorNode`` (trackers, aggregators — anything
   stateful) always run as a single worker regardless of ``nb_tasks``.
 
-.. warning::
-    A **join** (a processor with more than one parent) must keep ``nb_tasks=1``.
-    Replicated joins are rejected when the flow is built, because the two halves of
-    a single event could be delivered to different replicas, and neither would be
-    able to assemble the join. Parallelize the work **before** or **after** the join
-    instead.
+- A **join** (a processor with more than one parent) may only be replicated if it
+  partitions its input (see below); otherwise it must keep ``nb_tasks=1``, because
+  the two halves of a single event could be delivered to different replicas.
+
+Partitioned scale-out (stateful nodes and joins)
+------------------------------------------------
+
+Pass ``partition_by`` alongside ``nb_tasks`` to make replicas **partition** the
+input by a key instead of competing for it — each message is owned by exactly one
+replica, chosen by ``hash(key) % nb_tasks``::
+
+    tracker = MyTracker(name='tracker', nb_tasks=4, partition_by='trace_id')
+
+The key is either the special value ``'trace_id'`` (the per-event id, which
+co-locates both halves of a join on the same replica) or the name of a metadata
+field set upstream via ``ctx.set_partition_key(...)``. This is what lets **stateful
+nodes and joins scale horizontally**: a replicated join *requires* ``partition_by``
+(``partition_by='trace_id'`` is the usual choice). On Kubernetes a partitioned node
+becomes a **StatefulSet** (stable replica ordinals) and is **not** autoscaled, since
+changing the replica count would rehash ownership mid-flight.
 
 Requesting a GPU
 ----------------

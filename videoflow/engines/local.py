@@ -41,15 +41,23 @@ class LocalProcessEngine(ExecutionEngine):
         self._specs = specs
         self._procs = []
         self._flow_id = None
+        self._run_id = None
         super(LocalProcessEngine, self).__init__()
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str):
+    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str):
         self._flow_id = flow_id
+        self._run_id = run_id
         specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
+
+        # Provision streams + durable consumers up front. Required for BATCH: under
+        # interest retention, a message published before its consumer exists is lost.
+        from ..messaging.topology import provision_flow_sync
+        provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type)
 
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
-                env = _worker_env(spec, self._nats_url, flow_id, flow_type, self._blob_redis_url)
+                env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
+                                self._blob_redis_url, replica_idx)
                 proc = subprocess.Popen([sys.executable, '-m', 'videoflow.worker'], env = env)
                 self._procs.append(proc)
                 logger.info(
@@ -57,16 +65,37 @@ class LocalProcessEngine(ExecutionEngine):
                 )
 
     def signal_flow_termination(self):
-        _publish_stop(self._nats_url, self._flow_id)
+        _publish_stop(self._nats_url, self._flow_id, self._run_id)
 
     def join_task_processes(self):
-        for proc in self._procs:
-            try:
-                proc.wait()
-            except KeyboardInterrupt:
-                proc.wait()
+        try:
+            for proc in self._procs:
+                try:
+                    proc.wait()
+                except KeyboardInterrupt:
+                    proc.wait()
+        finally:
+            self._teardown_streams()
 
-def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, blob_redis_url):
+    def _teardown_streams(self):
+        if self._flow_id is None or self._run_id is None:
+            return
+        import asyncio
+        from ..messaging.topology import delete_run_streams
+
+        async def _go():
+            nc = await nats.connect(self._nats_url)
+            try:
+                await delete_run_streams(nc, self._flow_id, self._run_id)
+            finally:
+                await nc.drain()
+
+        try:
+            asyncio.run(_go())
+        except Exception:
+            logger.debug('stream teardown failed', exc_info = True)
+
+def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url, replica_id):
     env = dict(os.environ)
     env.update({
         'VF_NODE_CLASS': spec.node_class,
@@ -78,18 +107,25 @@ def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, blob_redis_url):
         'VF_NATS_URL': nats_url,
         'VF_FLOW_ID': flow_id,
         'VF_FLOW_TYPE': flow_type,
+        'VF_RUN_ID': run_id,
+        'VF_REPLICA_ID': str(replica_id),
+        'VF_NB_TASKS': str(spec.nb_tasks),
     })
+    if spec.partition_by:
+        env['VF_PARTITION_BY'] = spec.partition_by
+    if spec.join_policy:
+        env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
     if blob_redis_url:
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
     return env
 
-def _publish_stop(nats_url, flow_id):
+def _publish_stop(nats_url, flow_id, run_id):
     import asyncio
-    from ..messaging.nats_messenger import control_subject_for
+    from ..messaging.topology import control_subject_for
 
     async def _go():
         nc = await nats.connect(nats_url)
-        await nc.publish(control_subject_for(flow_id), b'stop')
+        await nc.publish(control_subject_for(flow_id, run_id), b'stop')
         await nc.flush()
         await nc.drain()
 

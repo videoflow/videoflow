@@ -133,19 +133,42 @@ videoflow deploy my_flow.py:build_flow \
 kubectl apply -k ./manifests
 ```
 
-Use `--dry-run` to print the manifests to stdout without writing files.
+Use `--dry-run` to print the manifests to stdout without writing files. Other CLI
+commands: `videoflow explain my_flow.py` (human-readable graph/topology summary),
+`videoflow provision my_flow.py --nats ...` (create the broker streams up front),
+and `videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...]`
+(stop a run and delete its streams and workloads).
 
 ### How graph concepts map onto the broker and Kubernetes
 
 | Concept | Behavior |
 | --- | --- |
 | `flow_type=REALTIME` | broker keeps only the freshest message per edge — stale frames are dropped, producers never block |
-| `flow_type=BATCH` | at-least-once delivery with a deep buffer and explicit acks |
-| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas). A **multi-parent join must keep `nb_tasks=1`** |
+| `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
+| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas) |
+| `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
 | `device_type=GPU` | pod requests `nvidia.com/gpu` plus a GPU-pool nodeSelector/toleration |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
-| observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` probes |
+| observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag |
+
+### Reliability
+
+Every run is scoped by a **`run_id`**, so re-running or redeploying a flow gets a
+fresh set of streams instead of colliding with the previous run.
+
+Delivery is **at-least-once with ack-after-process**: a worker acknowledges a
+message to the broker only after it has processed it (and published its output), so
+a crash mid-processing causes redelivery, not loss. Content-derived message ids give
+the broker publish-dedup, so the retry after a crash doesn't double-emit. In BATCH
+mode a failing message is retried up to a limit and then **dead-lettered** to a DLQ
+stream (`vf-<flow>-<run>-dlq`) with the error attached, instead of being silently
+dropped or crashing the pod. REALTIME favors freshness and drops on failure.
+
+Multi-parent **joins** support timeout + missing-input policies (drop / wait /
+error) so a stalled or dropped branch can't hang the join forever. End-of-stream is
+**replica-safe**: every replica of a node observes it and drains its inputs before
+terminating.
 
 ---
 
@@ -181,6 +204,17 @@ Always accept and forward `**kwargs` to `super().__init__()` (that's how `name`,
 `nb_tasks`, `device_type`, etc. are passed through), and store each constructor
 argument on `self` under the same name so it can be captured for reconstruction in
 a worker.
+
+Nodes can also:
+
+- **Be async** — declare `async def process(self, value)` (or `next`/`consume`);
+  the worker awaits it without blocking broker I/O.
+- **Receive a runtime context** — add a final `ctx` parameter to any lifecycle or
+  processing method (`def process(self, value, ctx=None)`) to read `ctx.run_id` /
+  `ctx.node_name` / `ctx.replica_id` or call `ctx.set_partition_key(k)` to route the
+  output of a downstream partitioned node by a business key.
+- **Deduplicate sink effects** — `ConsumerNode(idempotent=True)` plus a Redis URL
+  (`--blob-redis-url`) makes a sink skip re-applying an effect on redelivery.
 
 ---
 

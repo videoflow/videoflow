@@ -38,6 +38,8 @@ class HealthState:
         self._last_beat = time.time()
         # metric name -> {'count': int, 'sum': float}
         self._metrics = {}
+        # counter name -> int (rendered as videoflow_<name>_total)
+        self._counters = {}
 
     def mark_ready(self):
         with self._lock:
@@ -55,6 +57,10 @@ class HealthState:
             m['count'] += 1
             m['sum'] += value
 
+    def incr(self, counter : str, amount : int = 1):
+        with self._lock:
+            self._counters[counter] = self._counters.get(counter, 0) + amount
+
     def is_ready(self) -> bool:
         with self._lock:
             return self._ready
@@ -67,10 +73,12 @@ class HealthState:
         with self._lock:
             lines = []
             safe_node = self._node_name.replace('"', '')
+            labels = f'{{node="{safe_node}"}}'
             for metric, m in self._metrics.items():
-                labels = f'{{node="{safe_node}"}}'
                 lines.append(f'videoflow_{metric}_count{labels} {m["count"]}')
                 lines.append(f'videoflow_{metric}_sum{labels} {m["sum"]}')
+            for counter, value in self._counters.items():
+                lines.append(f'videoflow_{counter}_total{labels} {value}')
             return '\n'.join(lines) + '\n'
 
 def _make_handler(state : HealthState):
@@ -130,6 +138,7 @@ class InstrumentedMessenger(Messenger):
         if metadata:
             self._state.observe('proctime_seconds', metadata.get('proctime'))
             self._state.observe('actual_proctime_seconds', metadata.get('actual_proctime'))
+        self._state.incr('messages_published')
         return self._inner.publish_message(message, metadata)
 
     def publish_stop_signal(self):
@@ -142,7 +151,22 @@ class InstrumentedMessenger(Messenger):
     def receive_message(self) -> dict:
         self._state.mark_ready()
         self._state.beat()
+        self._state.incr('messages_received')
         return self._inner.receive_message()
+
+    def ack_inputs(self):
+        self._state.incr('messages_processed')
+        return self._inner.ack_inputs()
+
+    def fail_inputs(self, exc):
+        self._state.incr('messages_failed')
+        return self._inner.fail_inputs(exc)
+
+    def set_output_partition_key(self, value):
+        return self._inner.set_output_partition_key(value)
+
+    def last_input_key(self):
+        return self._inner.last_input_key()
 
     def close(self):
         return self._inner.close()
