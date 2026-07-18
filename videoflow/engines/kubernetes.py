@@ -44,12 +44,14 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - blob_redis_url: optional Redis URL for the large-payload blob store.
         - specs: optional precompiled ``NodeSpec`` list; compiled from tasks_data if omitted.
         - kubectl: kubectl binary name/path.
+        - mounts: optional mount dicts (see ``manifests.parse_mounts``) — hostPath \
+            volumes added to every node workload.
     '''
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str = None,
                 image_overrides : dict = None, blob_redis_url : str = None, specs = None,
                 kubectl : str = 'kubectl', envelope_version : int = None, allow_pickle : bool = False,
                 provision_image : str = None, autoscaling : bool = False, max_replicas : int = 10,
-                nats_monitoring_endpoint : str = None) -> None:
+                nats_monitoring_endpoint : str = None, mounts : list = None) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -63,6 +65,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._autoscaling = autoscaling
         self._max_replicas = max_replicas
         self._nats_monitoring_endpoint = nats_monitoring_endpoint
+        self._mounts = mounts
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -77,7 +80,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             blob_redis_url = self._blob_redis_url, autoscaling = self._autoscaling,
             max_replicas = self._max_replicas, nats_monitoring_endpoint = self._nats_monitoring_endpoint,
             envelope_version = self._envelope_version, allow_pickle = self._allow_pickle,
-            provision_image = self._provision_image,
+            provision_image = self._provision_image, mounts = self._mounts,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer

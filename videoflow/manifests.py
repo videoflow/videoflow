@@ -53,6 +53,35 @@ def k8s_name(*parts) -> str:
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
+def parse_mounts(values) -> list:
+    '''
+    Parses repeatable ``--mount`` specs into mount dicts consumed by ``_pod_spec``.
+
+    - Arguments:
+        - values: list of ``/host/path:/container/path[:ro]`` strings. The \
+            single-path shorthand ``/path[:ro]`` mounts the same absolute path on \
+            both sides (what a flow compiled against local files needs, since the \
+            paths baked into node params must resolve identically in the pods).
+
+    - Raises:
+        - ``ValueError`` on a relative path or a malformed suffix.
+    '''
+    mounts = []
+    for i, value in enumerate(values or []):
+        parts = value.split(':')
+        read_only = False
+        if parts and parts[-1] == 'ro':
+            read_only = True
+            parts = parts[:-1]
+        if len(parts) == 1:
+            parts = parts * 2
+        if len(parts) != 2 or not parts[0].startswith('/') or not parts[1].startswith('/'):
+            raise ValueError(f'--mount must be /host/path[:/container/path][:ro] with '
+                             f'absolute paths, got: {value!r}')
+        mounts.append({'name': f'vf-mount-{i}', 'host_path': parts[0],
+                       'container_path': parts[1], 'read_only': read_only})
+    return mounts
+
 def _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
     env = {
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
@@ -97,7 +126,7 @@ def _labels(flow_id, node_name = None) -> dict:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
+def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None) -> dict:
     container = {
         'name': 'worker',
         'image': image,
@@ -160,6 +189,14 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap) -> dict:
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
 
     pod_spec: dict = {'containers': [container]}
+    if mounts:
+        # hostPath type left unset on purpose: the mounted path may be a directory
+        # or a single file, and an unset type skips kubelet existence-kind checks.
+        container['volumeMounts'] = [
+            {'name': m['name'], 'mountPath': m['container_path'], 'readOnly': m['read_only']}
+            for m in mounts]
+        pod_spec['volumes'] = [
+            {'name': m['name'], 'hostPath': {'path': m['host_path']}} for m in mounts]
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
     if tolerations:
@@ -191,11 +228,11 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
         'data': data,
     }
 
-def workload(spec, flow_id, flow_type, image, nats_cm_name) -> dict:
+def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
-        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name),
+        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts),
     }
 
     batch = (flow_type == BATCH)
@@ -406,7 +443,7 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
                     default_image = None, image_overrides = None, blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
                     nats_monitoring_endpoint = None, envelope_version = None,
-                    allow_pickle = False, provision_image = None) -> list:
+                    allow_pickle = False, provision_image = None, mounts = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -428,6 +465,9 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         ``default_image`` may not be. Defaults to ``default_image``; set it \
         explicitly (``--provision-image``) for flows whose default image is a \
         non-Python vendor image.
+    - mounts: mount dicts from ``parse_mounts`` — each becomes a hostPath \
+        volume + volumeMount on every node workload (not the provision Job, \
+        which never touches node data).
 
     - Raises:
         - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``), \
@@ -466,7 +506,8 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, allow_pickle))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
-        manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name))
+        manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
+                                  mounts = mounts))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 

@@ -113,12 +113,32 @@ videoflow run-local my_flow.py:build_flow --nats nats://localhost:4222
 
 ## Deploying to Kubernetes
 
-The CLI imports your `build_flow()`, compiles the graph, and renders one
-Deployment (or a Job, for finite producers) plus a ConfigMap per node, each running
-your container image.
+On a dev cluster (k3s / kind / minikube / Docker Desktop), deploying is one
+command:
 
 ```bash
-# 1. Broker in the cluster (for dev clusters; use the NATS Helm chart in prod)
+videoflow deploy my_flow.py
+```
+
+`deploy` compiles the graph and renders one Deployment (or a Job, for finite
+producers) plus a ConfigMap per node — and by default automates everything
+around that: it builds the node image from the `[gpu.]Dockerfile` next to your
+graph (auto-building `videoflow-base` first when missing) and loads it into the
+detected cluster flavor, provisions a dev NATS (+ Redis for the blob store) in
+the namespace, applies the flow, and — for a BATCH flow — waits for completion
+and tears down the run and the infra it created. Solutions can additionally ship
+a `config.template.yaml` (deploy asks its questions interactively to generate
+`config.yaml`) and a `prepare.py` hook (run inside the solution image before
+compiling); when the graph's ML deps aren't installed on the operator machine,
+deploy compiles the graph inside the image too. Local input files are exposed to
+the pods with repeatable `--mount /abs/path[:ro]` hostPath mounts (solution
+`x-mounts` are added automatically).
+
+Every automatic step has an explicit override — the fully manual path still
+works:
+
+```bash
+# 1. Bring your own broker (use the NATS Helm chart in prod)
 kubectl create namespace videoflow
 kubectl apply -n videoflow -f k8s/nats.yaml
 
@@ -126,20 +146,22 @@ kubectl apply -n videoflow -f k8s/nats.yaml
 ./docker/build-images.sh ghcr.io/acme v1     # build videoflow-base
 docker build -t ghcr.io/acme/app:v1 . && docker push ghcr.io/acme/app:v1
 
-# 3. Render and apply the manifests for your graph
+# 3. Deploy against that broker and image
 videoflow deploy my_flow.py:build_flow \
     --nats nats://nats.videoflow.svc:4222 \
     --namespace videoflow \
     --image ghcr.io/acme/app:v1 \
     --autoscaling                             # optional KEDA scalers
-kubectl apply -k ./manifests
 ```
 
-Use `--dry-run` to print the manifests to stdout without writing files. Other CLI
-commands: `videoflow explain my_flow.py` (human-readable graph/topology summary),
+Use `--dry-run` to print the manifests to stdout (including the dev-infra
+manifests when `--nats` is omitted), or `--render-only` to write them plus a
+`kustomization.yaml` for `kubectl apply -k`. Other CLI commands:
+`videoflow explain my_flow.py` (human-readable graph/topology summary),
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),
-`videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...]`
-(stop a run and delete its streams and workloads), `videoflow debug decode`
+`videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...] [--infra]`
+(stop a run and delete its streams and workloads — `--infra` also removes
+auto-provisioned NATS/Redis), `videoflow debug decode`
 (decode wire envelopes from a file or a run's DLQ), and the
 `videoflow component validate|push|pull|inspect` family for
 [language-agnostic components](#language-agnostic-components).

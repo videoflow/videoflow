@@ -1,23 +1,29 @@
 '''
 Command-line entrypoint for deploying a videoflow graph to Kubernetes.
 
-    videoflow deploy path/to/graph.py:build_flow --nats nats://nats:4222 --namespace videoflow
+    videoflow deploy path/to/graph.py
 
-By default ``deploy`` is one command that does everything: it provisions the broker,
-applies the flow, and — for a BATCH flow — waits for it to run to completion and then
-tears down every resource (Kubernetes workloads + broker streams). A REALTIME flow is
-applied and left running; stop it later with ``videoflow teardown``. Nothing is written
-to disk unless ``--render-only`` (write manifest files + kustomization) or ``--dry-run``
-(print YAML to stdout) is given.
+``deploy`` is one command that does everything: it generates the solution config
+(asking the template's questions when none exists), runs the solution's prepare
+hook, builds and loads the node image into the detected local cluster, provisions
+the broker (an in-cluster dev NATS + Redis when ``--nats`` is omitted), applies
+the flow, and — for a BATCH flow — waits for it to run to completion and then
+tears down every resource (Kubernetes workloads + broker streams + owned infra).
+A REALTIME flow is applied and left running; stop it later with ``videoflow
+teardown``. Each automatic step has an explicit override (``--config``,
+``--image``, ``--nats``, ``--mount``, ``--no-prepare``, ``--no-build``, ...).
+Nothing is written to disk (beyond a generated ``config.yaml``) unless
+``--render-only`` (write manifest files + kustomization) or ``--dry-run`` (print
+YAML to stdout) is given.
 
 The graph module must expose a factory (default name ``build_flow``) that returns a
 built ``videoflow.core.flow.Flow`` without calling ``.run()`` on it — the CLI needs
-the graph, not a running flow.
+the graph, not a running flow. When the graph's dependencies are not importable on
+this machine, deploy compiles it inside the solution image instead.
 '''
 from __future__ import absolute_import, division, print_function
 
 import argparse
-import importlib.util
 import os
 import sys
 from typing import Any
@@ -32,32 +38,16 @@ def _load_flow(target : str) -> Any:
     - Returns:
         - a built ``Flow`` produced by calling the factory.
     '''
-    if ':' in target:
-        path, factory_name = target.rsplit(':', 1)
-    else:
-        path, factory_name = target, 'build_flow'
-
-    if not os.path.isfile(path):
-        raise SystemExit(f'Graph module not found: {path}')
-
-    spec = importlib.util.spec_from_file_location('_videoflow_user_graph', path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f'Could not load graph module: {path}')
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-
-    if not hasattr(module, factory_name):
-        raise SystemExit(f"Module '{path}' has no factory '{factory_name}'. "
-                        f"Define '{factory_name}() -> Flow'.")
-    factory = getattr(module, factory_name)
-    return factory()
+    from .compile import load_flow
+    return load_flow(target)
 
 def _cmd_deploy(args) -> None:
+    import subprocess
     import uuid
 
-    from .compiler import compile_flow
     from .core.constants import BATCH
-    from .images import parse_override
+    from .images import parse_override, resolve_image
+    from .manifests import parse_mounts
 
     overrides = {}
     for override in args.image_override or []:
@@ -67,39 +57,134 @@ def _cmd_deploy(args) -> None:
             raise SystemExit(str(e)) from e
         overrides[name] = ref
 
-    flow = _load_flow(args.graph)
-    if args.flow_id:
-        flow._flow_id = args.flow_id
-    run_id = args.run_id or uuid.uuid4().hex[:12]
-    # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
+    graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
+    if not os.path.isfile(graph_path):
+        raise SystemExit(f'Graph module not found: {graph_path}')
+    graph_dir = os.path.dirname(os.path.abspath(graph_path))
+    graph_target = os.path.abspath(graph_path) + \
+        (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
+
+    # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
+    # config.template.yaml when none exists) and collect its x-mounts.
+    from .solution import ensure_config, find_template, load_template, resolve_mounts
+    interactive = not args.non_interactive and sys.stdin.isatty()
+    config_path = ensure_config(graph_dir, args.config, interactive)
+    template_path = find_template(graph_dir)
+    template_mounts = []
+    if template_path and config_path:
+        import yaml
+        with open(config_path) as f:
+            template_mounts = resolve_mounts(load_template(template_path), yaml.safe_load(f),
+                                             graph_dir)
     try:
-        specs = compile_flow(flow, envelope_version = args.envelope_version, allow_pickle = args.allow_pickle)
+        mounts = parse_mounts((args.mount or []) + template_mounts)
+        # Prep/compile containers additionally see the solution directory itself
+        # (config, prepare.py, work dir) at its host path.
+        container_mounts = parse_mounts([graph_dir]) + mounts
     except ValueError as e:
         raise SystemExit(str(e)) from e
 
-    # --dry-run / --render-only are the only paths that touch the working tree.
+    # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
+    # (base image auto-built from a source checkout when missing).
+    from .build import autobuild, docker_gpus_available, image_exists, run_in_image
+    gpus = docker_gpus_available()
+    image = args.image
+    if image is None and not args.no_build:
+        try:
+            image = autobuild(graph_dir, needs_gpu = gpus, context_override = args.build_context)
+        except RuntimeError as e:
+            raise SystemExit(str(e)) from e
+
+    # 2. Prepare hook: runs inside the image, before compiling (its outputs get
+    # baked into the compiled specs).
+    prepare_path = os.path.join(graph_dir, 'prepare.py')
+    if os.path.isfile(prepare_path) and not args.no_prepare:
+        prepare_cmd = ['python', 'prepare.py'] + (['--config', config_path] if config_path else [])
+        try:
+            if image is not None:
+                run_in_image(image, prepare_cmd, mounts = container_mounts,
+                             workdir = graph_dir, gpus = gpus, interactive = interactive)
+            else:
+                subprocess.run([sys.executable] + prepare_cmd[1:], cwd = graph_dir, check = True)
+        except (RuntimeError, subprocess.CalledProcessError) as e:
+            raise SystemExit(str(e)) from e
+
+    # 3. Compile: locally when the graph's deps import on the host, else inside
+    # the image (specs round-trip as JSON — same format as the specs ConfigMap).
+    flow_id, flow_type, specs = _compile_graph(args, graph_target, graph_dir, image,
+                                               container_mounts, gpus)
+    if args.flow_id:
+        flow_id = args.flow_id
+    run_id = args.run_id or uuid.uuid4().hex[:12]
+
+    # --dry-run / --render-only never touch the cluster (they include the dev-infra
+    # manifests whenever the broker would have been auto-provisioned).
     if args.dry_run or args.render_only:
-        _render_manifests_to_disk(args, flow, specs, run_id, overrides)
+        _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides, mounts)
         return
 
-    teardown_cmd = (f'  videoflow teardown --flow-id {flow.flow_id} --run-id {run_id} '
-                    f'--nats {args.nats} --namespace {args.namespace}')
+    # 4. Cluster mechanics: detect the flavor, load locally built images into it,
+    # and warn (with copy-pasteable fixes) on hostPath/GPU mismatches.
+    from .cluster import detect_cluster, gpu_preflight, hostpath_warning, load_images
+    flavor = detect_cluster(args.kubectl)
+    try:
+        images = sorted({resolve_image(s.name, s.image, image, overrides) for s in specs})
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    local_images = [ref for ref in images if image_exists(ref)]
+    if local_images:
+        try:
+            load_images(flavor, local_images, kubectl = args.kubectl)
+        except RuntimeError as e:
+            raise SystemExit(str(e)) from e
+    if mounts:
+        warning = hostpath_warning(flavor)
+        if warning:
+            print(f'WARNING: {warning}', file = sys.stderr)
+    if any(s.device_type == 'gpu' for s in specs):
+        for problem in gpu_preflight(args.kubectl):
+            print(f'WARNING: {problem}', file = sys.stderr)
+
+    # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
+    # (+ Redis for the blob store) in the namespace, owning only what we created.
+    from .infra import ensure_infra, ensure_namespace, teardown_infra, wait_infra_ready
+    nats_url = args.nats
+    blob_redis_url = args.blob_redis_url
+    created = []
+    if nats_url is None:
+        try:
+            ensure_namespace(args.kubectl, args.namespace)
+            urls, created = ensure_infra(args.kubectl, args.namespace,
+                                         need_redis = blob_redis_url is None)
+            wait_infra_ready(args.kubectl, args.namespace, created)
+        except RuntimeError as e:
+            raise SystemExit(str(e)) from e
+        nats_url = urls['nats']
+        blob_redis_url = blob_redis_url or urls['redis']
+        if created:
+            print(f'Provisioned dev {" + ".join(created)} in namespace {args.namespace}.')
+
+    keep_infra = args.keep or args.keep_infra
+    teardown_cmd = (f'  videoflow teardown --flow-id {flow_id} --run-id {run_id} '
+                    f'--nats {nats_url} --namespace {args.namespace}'
+                    + (' --infra' if created and not keep_infra else ''))
 
     from .engines.kubernetes import KubernetesExecutionEngine
     engine = KubernetesExecutionEngine(
-        nats_url = args.nats, namespace = args.namespace, default_image = args.image,
-        image_overrides = overrides, blob_redis_url = args.blob_redis_url, specs = specs,
+        nats_url = nats_url, namespace = args.namespace, default_image = image,
+        image_overrides = overrides, blob_redis_url = blob_redis_url, specs = specs,
         kubectl = args.kubectl, envelope_version = args.envelope_version,
         allow_pickle = args.allow_pickle, provision_image = args.provision_image,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
+        mounts = mounts,
     )
     try:
-        flow.run(engine, run_id = run_id)
+        engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
     except (RuntimeError, ValueError) as e:
         raise SystemExit(str(e)) from e
-    print(f'Flow {flow.flow_id} run {run_id} applied to namespace {args.namespace}.')
+    print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
-    if flow.flow_type != BATCH:
+    if flow_type != BATCH:
         print('REALTIME flow is running. Tear it down with:')
         print(teardown_cmd)
         return
@@ -119,26 +204,81 @@ def _cmd_deploy(args) -> None:
             print(teardown_cmd)
         else:
             engine.teardown()
+            if created and not keep_infra:
+                teardown_infra(args.kubectl, args.namespace, created)
             print('Cleaned up all resources.')
     if failed:
         raise SystemExit(f'Flow failed: {", ".join(failed)}')
-    print(f'Flow {flow.flow_id} completed.')
+    print(f'Flow {flow_id} completed.')
 
-def _render_manifests_to_disk(args, flow, specs, run_id, overrides) -> None:
+def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus) -> tuple:
+    '''
+    ``(flow_id, flow_type, specs)`` — via a local import when the graph's deps are
+    installed on the host (cheap), else compiled inside the solution image (the
+    graph dir is mounted at the same absolute path, so config paths resolve
+    identically).
+    '''
+    from .compiler import compile_flow
+
+    try:
+        flow = _load_flow(graph_target)
+    except ImportError as e:
+        if image is None:
+            raise SystemExit(
+                f'Cannot import the graph on this machine ({e}) and there is no '
+                f'solution image to compile it in — pass --image or drop --no-build.') from e
+        from .build import run_in_image
+        from .compile import specs_from_document
+        compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
+        if args.envelope_version is not None:
+            compile_cmd += ['--envelope-version', str(args.envelope_version)]
+        if args.allow_pickle:
+            compile_cmd.append('--allow-pickle')
+        try:
+            out = run_in_image(image, compile_cmd, mounts = container_mounts,
+                               workdir = graph_dir, gpus = gpus, capture = True)
+        except RuntimeError as e2:
+            raise SystemExit(str(e2)) from e2
+        return specs_from_document(out)
+
+    # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
+    try:
+        specs = compile_flow(flow, envelope_version = args.envelope_version,
+                             allow_pickle = args.allow_pickle)
+    except ValueError as e:
+        raise SystemExit(str(e)) from e
+    return flow.flow_id, flow.flow_type, specs
+
+def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides, mounts) -> None:
     '''--dry-run (stdout) / --render-only (files) — the manifest-generation escape hatch.'''
+    from .infra import infra_urls, nats_manifests, redis_manifests
     from .manifests import dump_manifests, render_manifests
+
+    # When the broker would be auto-provisioned, emit its manifests too so the
+    # rendered output is a complete, appliable deployment.
+    infra_manifests = []
+    nats_url = args.nats
+    blob_redis_url = args.blob_redis_url
+    if nats_url is None:
+        urls = infra_urls(args.namespace)
+        nats_url = urls['nats']
+        infra_manifests += nats_manifests(args.namespace)
+        if blob_redis_url is None:
+            blob_redis_url = urls['redis']
+            infra_manifests += redis_manifests(args.namespace)
 
     try:
         manifests = render_manifests(
-            specs, flow.flow_id, flow.flow_type, args.nats, run_id,
+            specs, flow_id, flow_type, nats_url, run_id,
             namespace = args.namespace, default_image = args.image,
-            image_overrides = overrides, blob_redis_url = args.blob_redis_url,
+            image_overrides = overrides, blob_redis_url = blob_redis_url,
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
             envelope_version = args.envelope_version, allow_pickle = args.allow_pickle,
-            provision_image = args.provision_image,
+            provision_image = args.provision_image, mounts = mounts,
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
+    manifests = infra_manifests + manifests
 
     if args.dry_run:
         sys.stdout.write(dump_manifests(manifests))
@@ -164,7 +304,7 @@ def _render_manifests_to_disk(args, flow, specs, run_id, overrides) -> None:
 
     print(f'Wrote {len(manifests)} manifests + kustomization.yaml to {args.output}')
     print(f'Apply with:  kubectl apply -k {args.output}')
-    print(f'Flow id: {flow.flow_id}   Run id: {run_id}')
+    print(f'Flow id: {flow_id}   Run id: {run_id}')
 
 def _cmd_component_validate(args) -> None:
     from .component import load_descriptor
@@ -312,6 +452,12 @@ def _cmd_teardown(args) -> None:
         # resource); the broker phase above is already run-scoped.
         delete_resources(args.kubectl, args.namespace, args.flow_id, args.run_id)
         print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id} run {args.run_id}')
+    if args.infra:
+        if not args.namespace:
+            raise SystemExit('--infra requires --namespace.')
+        from .infra import teardown_infra
+        teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'])
+        print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
@@ -391,14 +537,21 @@ def build_parser() -> argparse.ArgumentParser:
 
     deploy = sub.add_parser(
         'deploy',
-        help = 'Deploy a graph to Kubernetes: apply, and for a BATCH flow run it to completion '
-               'and tear everything down.',
-        description = 'Provisions the broker, applies the flow, and — for a BATCH flow — waits '
-                      'for it to finish and then deletes every resource (k8s + broker streams). '
-                      'A REALTIME flow is left running (tear it down with `videoflow teardown`). '
-                      'Writes nothing to disk unless --render-only or --dry-run is given.')
+        help = 'Deploy a graph to Kubernetes: config Q&A, prepare, image build+load, broker '
+               'provisioning, apply — and for a BATCH flow run to completion and tear down.',
+        description = 'One-stop deploy: generates the solution config (interactive Q&A over its '
+                      'template), runs its prepare.py hook, builds the node image from its '
+                      '[gpu.]Dockerfile and loads it into the detected cluster, provisions the '
+                      'broker (dev NATS/Redis when --nats is omitted), applies the flow, and — '
+                      'for a BATCH flow — waits for it to finish and then deletes every resource '
+                      '(k8s + broker streams + owned infra). A REALTIME flow is left running '
+                      '(tear it down with `videoflow teardown`). Every automatic step has an '
+                      'explicit override flag.')
     deploy.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
-    deploy.add_argument('--nats', required = True, help = 'NATS URL reachable from inside the cluster.')
+    deploy.add_argument('--nats', default = None,
+                        help = 'NATS URL reachable from inside the cluster. Omit to auto-provision '
+                               'a dev NATS (and Redis for the blob store) in --namespace; a BATCH '
+                               'run tears them down again unless --keep-infra is set.')
     deploy.add_argument('--namespace', default = 'default')
     deploy.add_argument('--kubectl', default = 'kubectl', help = 'kubectl binary name/path.')
     deploy.add_argument('--flow-id', default = None,
@@ -412,7 +565,28 @@ def build_parser() -> argparse.ArgumentParser:
                                'kubectl-apply command instead of applying. The old deploy behavior.')
     deploy.add_argument('--keep', '--no-cleanup', dest = 'keep', action = 'store_true',
                         help = 'For a BATCH flow, leave all resources up after the run finishes or '
-                               'fails (for debugging) instead of tearing them down.')
+                               'fails (for debugging) instead of tearing them down. Implies --keep-infra.')
+    deploy.add_argument('--keep-infra', action = 'store_true',
+                        help = 'Leave auto-provisioned NATS/Redis up after a BATCH run (faster '
+                               'redeploys; they are reused when present).')
+    deploy.add_argument('--config', default = None,
+                        help = 'Solution config file (default: config.yaml next to the graph; when '
+                               'absent and the solution ships config.template.yaml, deploy asks its '
+                               'questions and writes config.yaml).')
+    deploy.add_argument('--non-interactive', action = 'store_true',
+                        help = 'Never prompt; fail with the list of missing config inputs instead.')
+    deploy.add_argument('--no-prepare', action = 'store_true',
+                        help = 'Skip the solution\'s prepare.py hook.')
+    deploy.add_argument('--no-build', action = 'store_true',
+                        help = 'Never auto-build images from the solution\'s Dockerfile.')
+    deploy.add_argument('--build-context', default = None,
+                        help = 'Docker build context for the auto-built solution image '
+                               '(default: the git root enclosing the graph).')
+    deploy.add_argument('--mount', action = 'append', metavar = 'HOST[:CONTAINER][:ro]',
+                        help = 'hostPath volume mounted into every node workload (and prep/compile '
+                               'containers), e.g. --mount /data/videos:ro. Absolute paths; the '
+                               'single-path form mounts the same path on both sides. Repeatable. '
+                               'Solution x-mounts are added automatically.')
     deploy.add_argument('--output', default = './manifests',
                         help = 'Directory for --render-only manifest files (default ./manifests).')
     deploy.add_argument('--image', default = None,
@@ -490,6 +664,9 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--nats', required = True)
     teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the run\'s workloads.')
     teardown.add_argument('--kubectl', default = 'kubectl', help = 'kubectl binary name/path.')
+    teardown.add_argument('--infra', action = 'store_true',
+                          help = 'Also delete auto-provisioned dev NATS/Redis in --namespace '
+                                 '(only resources labeled videoflow.io/infra).')
     teardown.set_defaults(func = _cmd_teardown)
 
     debug = sub.add_parser('debug', help = 'Inspect wire messages (envelopes, DLQ).')

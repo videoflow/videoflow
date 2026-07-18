@@ -1,0 +1,110 @@
+'''
+Cluster auto-detection and image loading: classification from the kubectl
+context / node labels, the per-flavor load command, the remote-cluster error,
+and the GPU preflight messages.
+
+Pure/unit: subprocess is monkeypatched — no cluster, no docker.
+'''
+import subprocess
+
+import pytest
+
+from videoflow import cluster
+
+
+class _Proc:
+    def __init__(self, stdout = '', returncode = 0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def _fake_run(responses):
+    '''Returns a subprocess.run stand-in serving canned stdout keyed by a substring of the command.'''
+    calls = []
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        joined = ' '.join(cmd)
+        for key, out in responses.items():
+            if key in joined:
+                return _Proc(stdout = out)
+        return _Proc()
+    return run, calls
+
+
+@pytest.mark.parametrize('ctx,expected', [
+    ('kind-dev', cluster.KIND),
+    ('minikube', cluster.MINIKUBE),
+    ('docker-desktop', cluster.DOCKER_DESKTOP),
+])
+def test_detect_by_context_name(monkeypatch, ctx, expected):
+    run, _ = _fake_run({'current-context': ctx})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == expected
+
+
+def test_detect_k3s_by_node_labels(monkeypatch):
+    run, _ = _fake_run({'current-context': 'default', 'get nodes': 'k3s \n'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == cluster.K3S
+
+
+def test_detect_falls_back_to_remote(monkeypatch):
+    run, _ = _fake_run({'current-context': 'gke_my-proj_us-east1_prod'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == cluster.GENERIC_REMOTE
+
+
+def test_load_images_kind_uses_context_cluster_name(monkeypatch):
+    run, calls = _fake_run({'current-context': 'kind-dev'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    cluster.load_images(cluster.KIND, ['img:1', 'img:2'])
+    load = [c for c in calls if c[0] == 'kind'][0]
+    assert load == ['kind', 'load', 'docker-image', 'img:1', 'img:2', '--name', 'dev']
+
+
+def test_load_images_minikube_one_per_image(monkeypatch):
+    run, calls = _fake_run({})
+    monkeypatch.setattr(subprocess, 'run', run)
+    cluster.load_images(cluster.MINIKUBE, ['img:1', 'img:2'])
+    loads = [c for c in calls if c[0] == 'minikube']
+    assert loads == [['minikube', 'image', 'load', 'img:1'],
+                     ['minikube', 'image', 'load', 'img:2']]
+
+
+def test_load_images_remote_raises_with_push_hint(monkeypatch):
+    run, _ = _fake_run({})
+    monkeypatch.setattr(subprocess, 'run', run)
+    with pytest.raises(RuntimeError, match = 'docker push'):
+        cluster.load_images(cluster.GENERIC_REMOTE, ['img:1'])
+
+
+def test_load_images_docker_desktop_is_a_noop(monkeypatch, capsys):
+    def boom(cmd, **kwargs):
+        raise AssertionError('no subprocess expected')
+    monkeypatch.setattr(subprocess, 'run', boom)
+    cluster.load_images(cluster.DOCKER_DESKTOP, ['img:1'])
+    assert 'no loading' in capsys.readouterr().out
+
+
+def test_hostpath_warning_only_for_vm_backed_clusters():
+    assert 'extraMounts' in cluster.hostpath_warning(cluster.KIND)
+    assert 'minikube mount' in cluster.hostpath_warning(cluster.MINIKUBE)
+    assert cluster.hostpath_warning(cluster.K3S) is None
+    assert cluster.hostpath_warning(cluster.DOCKER_DESKTOP) is None
+    assert cluster.hostpath_warning(cluster.GENERIC_REMOTE) is None
+
+
+def test_gpu_preflight_reports_both_problems_with_fixes(monkeypatch):
+    run, _ = _fake_run({'get nodes -l videoflow.io/gpu-pool=true': '',
+                        'get nodes -o name': 'node/gpu-box\n'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight()
+    assert len(problems) == 2
+    assert 'kubectl label node gpu-box videoflow.io/gpu-pool=true' in problems[0]
+    assert 'nvidia-device-plugin' in problems[1]
+
+
+def test_gpu_preflight_ok(monkeypatch):
+    run, _ = _fake_run({'gpu-pool=true': 'node/gpu-box', 'allocatable': '1'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight() == []
