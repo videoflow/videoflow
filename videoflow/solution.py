@@ -27,7 +27,6 @@ identically in the pods); a ``host:container`` pair maps them explicitly
 from __future__ import absolute_import, division, print_function
 
 import os
-import sys
 from typing import List, Optional
 
 import yaml
@@ -59,7 +58,7 @@ def _get_dotted(config, parts) -> list:
     '''Resolves a dotted path (already split) against nested dicts; ``*`` fans out. Returns all matches.'''
     values = [config]
     for part in parts:
-        next_values = []
+        next_values: list = []
         for value in values:
             if not isinstance(value, dict):
                 continue

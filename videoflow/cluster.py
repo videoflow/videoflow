@@ -98,7 +98,8 @@ def _k3s_import(image) -> None:
         save = subprocess.Popen(['docker', 'save', image], stdout = subprocess.PIPE)
         imp = subprocess.run(['sudo', 'k3s', 'ctr', 'images', 'import', '-'],
                              stdin = save.stdout, check = False)
-        save.stdout.close()
+        if save.stdout is not None:
+            save.stdout.close()
         save.wait()
     except FileNotFoundError as e:
         raise RuntimeError(f'{e.filename!r} not found on PATH — load the image '
