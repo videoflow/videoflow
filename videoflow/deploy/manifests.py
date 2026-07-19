@@ -23,8 +23,8 @@ from typing import Optional
 
 import yaml
 
-from .core.compiler import NODE_KIND_PRODUCER
-from .core.constants import BATCH
+from ..core.compiler import NODE_KIND_PRODUCER
+from ..core.constants import BATCH
 
 LABEL_FLOW_ID = 'videoflow.io/flow-id'
 LABEL_RUN_ID = 'videoflow.io/run-id'
@@ -443,8 +443,8 @@ def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas)
     Requires KEDA installed in the cluster and the NATS monitoring endpoint
     (port 8222) reachable at ``nats_monitoring_endpoint``.
     '''
-    from .core.compiler import NODE_KIND_PROCESSOR
-    from .messaging.topology import durable_name_for, stream_name_for
+    from ..core.compiler import NODE_KIND_PROCESSOR
+    from ..messaging.topology import durable_name_for, stream_name_for
     if spec.kind != NODE_KIND_PROCESSOR or not spec.parents:
         return None
     if _is_partitioned(spec):
@@ -542,12 +542,12 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         can demand more devices than the cluster has and strand pods Pending.
 
     - Raises:
-        - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``), \
+        - ``ValueError`` if a node has no resolvable image (see ``videoflow.deploy.images``), \
             or if the wire settings are incompatible with the flow's components.
     '''
-    from .core.compiler import has_native_components, validate_wire_compatibility
+    from ..core.compiler import has_native_components, validate_wire_compatibility
+    from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
     from .images import resolve_image
-    from .wire.serialization import DEFAULT_ENVELOPE_VERSION
 
     if gpu_mode not in GPU_MODES:
         raise ValueError(f'gpu_mode must be one of {GPU_MODES}, got {gpu_mode!r}')

@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from videoflow import build
+from videoflow.deploy import build
 
 
 class _Proc:

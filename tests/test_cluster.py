@@ -9,7 +9,7 @@ import subprocess
 
 import pytest
 
-from videoflow import cluster
+from videoflow.deploy import cluster
 
 
 class _Proc:

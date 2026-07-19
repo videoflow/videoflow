@@ -10,7 +10,7 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
-from videoflow.manifests import (
+from videoflow.deploy.manifests import (
     _CORE_DELETABLE_KINDS,
     _CRD_DELETABLE_KINDS,
     LABEL_RUN_ID,

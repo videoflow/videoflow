@@ -10,7 +10,7 @@ import os
 import pytest
 import yaml
 
-from videoflow import solution
+from videoflow.deploy import solution
 
 TEMPLATE = '''
 work_dir: ./out

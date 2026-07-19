@@ -139,7 +139,7 @@ def test_python_component_get_params_merges_node_level():
 
 
 def test_python_component_singleton_and_env():
-    from videoflow.manifests import render_manifests
+    from videoflow.deploy.manifests import render_manifests
     node = component(_py_descriptor(constraints = {'singleton': True}))
     with pytest.raises(ValueError, match = 'singleton'):
         component(_py_descriptor(constraints = {'singleton': True}), nb_tasks = 4)
@@ -194,7 +194,7 @@ def test_compile_flow_rejects_remote_on_v3():
 
 def test_render_manifests_for_remote_flow():
     pytest.importorskip('yaml')
-    from videoflow.manifests import render_manifests
+    from videoflow.deploy.manifests import render_manifests
     specs = compile_flow(_remote_flow(), envelope_version = 4)
     manifests = render_manifests(specs, 'flow', 'realtime', 'nats://n:4222', 'run-1',
                                 default_image = 'ghcr.io/acme/python-worker:1',
@@ -221,7 +221,7 @@ def test_command_override_flows_to_pod():
     specs = compile_flow(Flow([cons]), envelope_version = 4)
     remote = next(s for s in specs if s.is_remote)
     assert remote.command == ['/bin/thing', '--serve']
-    from videoflow.manifests import workload
+    from videoflow.deploy.manifests import workload
     wl = workload(remote, 'flow', 'realtime', 'x:1', 'nats-cm')
     container = wl['spec']['template']['spec']['containers'][0]
     assert container['command'] == ['/bin/thing', '--serve']

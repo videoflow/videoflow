@@ -42,7 +42,7 @@ class NodeSpec:
             to use the deploy-time default (``nvidia.com/gpu``).
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
-            deploy-time default/override supplies it — see ``videoflow.images``).
+            deploy-time default/override supplies it — see ``videoflow.deploy.images``).
     '''
     def __init__(self, name, node_class, params, parents, kind, has_children,
                 nb_tasks, device_type, is_finite, image = None,

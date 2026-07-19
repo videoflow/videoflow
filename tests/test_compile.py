@@ -7,7 +7,7 @@ import json
 import subprocess
 import sys
 
-from videoflow.compile import compile_to_dict, specs_from_document
+from videoflow.deploy.compile import compile_to_dict, specs_from_document
 
 GRAPH = '''
 from videoflow.consumers import CommandlineConsumer

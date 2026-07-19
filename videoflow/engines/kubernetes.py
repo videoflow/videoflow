@@ -17,7 +17,7 @@ from typing import List, Optional
 
 from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
-from ..manifests import (
+from ..deploy.manifests import (
     LABEL_NODE,
     LABEL_RUN_ID,
     delete_resources,

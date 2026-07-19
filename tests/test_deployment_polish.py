@@ -18,8 +18,8 @@ from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import REALTIME
 from videoflow.core.engine import Messenger
 from videoflow.core.task import ConsumerTask
+from videoflow.deploy.manifests import render_manifests
 from videoflow.idempotency import IdempotencyStore, idempotency_key
-from videoflow.manifests import render_manifests
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
 
@@ -74,7 +74,7 @@ def build_flow():
 '''
 
 def test_explain_prints_nodes_and_dlq():
-    from videoflow.cli import build_parser
+    from videoflow.deploy.cli import build_parser
     with tempfile.TemporaryDirectory() as d:
         path = os.path.join(d, 'graph.py')
         with open(path, 'w') as f:

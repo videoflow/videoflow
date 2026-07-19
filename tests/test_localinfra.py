@@ -8,7 +8,7 @@ import subprocess
 
 import pytest
 
-from videoflow import localinfra
+from videoflow.deploy import localinfra
 
 
 class _Proc:

@@ -11,8 +11,8 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
 from videoflow.core.constants import GPU, REALTIME
-from videoflow.images import parse_override, resolve_image
-from videoflow.manifests import dump_manifests, render_manifests
+from videoflow.deploy.images import parse_override, resolve_image
+from videoflow.deploy.manifests import dump_manifests, render_manifests
 from videoflow.processors import IdentityProcessor, JoinerProcessor
 from videoflow.producers import IntProducer
 from videoflow.producers.video import VideoFileReader

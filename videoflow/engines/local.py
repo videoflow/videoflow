@@ -39,7 +39,7 @@ def inherited_python_path() -> list:
     '''
     The ``sys.path`` entries this process added beyond the interpreter's own
     defaults — typically the graph/solution directory (inserted by
-    ``videoflow.compile.load_flow``), an editable checkout, or a test support dir.
+    ``videoflow.deploy.compile.load_flow``), an editable checkout, or a test support dir.
 
     Worker subprocesses inherit the environment but *not* ``sys.path``, so without
     re-exporting these as ``PYTHONPATH`` every node class living next to the graph

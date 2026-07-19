@@ -7,8 +7,8 @@ Pure/unit: subprocess is monkeypatched — no cluster.
 '''
 import subprocess
 
-from videoflow import infra
-from videoflow.manifests import LABEL_MANAGED_BY
+from videoflow.deploy import infra
+from videoflow.deploy.manifests import LABEL_MANAGED_BY
 
 
 class _Proc:

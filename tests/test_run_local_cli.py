@@ -10,7 +10,7 @@ import sys
 
 import pytest
 
-from videoflow import cli, localinfra, solution
+from videoflow.deploy import cli, localinfra, solution
 
 GRAPH = '''
 from videoflow.consumers import CommandlineConsumer

@@ -98,7 +98,7 @@ class Flow:
     def topological_sort(self) -> list:
         '''
         Returns the topologically-sorted list of nodes in this flow. Exposed so the \
-            Kubernetes manifest-generation CLI (``videoflow.cli``) can inspect the \
+            Kubernetes manifest-generation CLI (``videoflow.deploy.cli``) can inspect the \
             graph without needing to call ``.run()``.
         '''
         return self._graph_engine.topological_sort()

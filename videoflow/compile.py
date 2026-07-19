@@ -1,135 +1,14 @@
 '''
-Compiles a graph module to a JSON specs document, for use where the operator
-machine cannot import the graph (its ML dependencies live only in the solution
-image). ``videoflow deploy`` runs this *inside* that image::
+Moved to ``videoflow.deploy.compile``.
 
-    docker run --rm -v <graph_dir>:<graph_dir> -w <graph_dir> <image> \
-        python -m videoflow.compile graph.py[:factory]
-
-and rebuilds the ``NodeSpec`` list on the host with ``NodeSpec.from_dict`` —
-the same serialization the provision Job's specs ConfigMap uses.
-
-Output (stdout): ``{"flow_id": ..., "flow_type": ..., "specs": [...]}``.
+This module remains as a permanent compatibility shim: ``videoflow deploy``
+spawns ``python -m videoflow.compile`` *inside the solution image*, so the host
+CLI and the image can be different videoflow versions in either direction and
+the old path must keep resolving. Do not add code — edit
+``videoflow/deploy/compile.py`` instead.
 '''
-from __future__ import absolute_import, division, print_function
-
-import argparse
-import importlib.util
-import json
-import keyword
-import os
-import sys
-from typing import Any
-
-FALLBACK_MODULE_NAME = '_videoflow_user_graph'
-
-def _graph_module_name(path) -> str:
-    '''
-    The module name to load a graph file under: its own basename, so that a node
-    class defined *in* the graph module records a ``__module__`` a worker can
-    actually import (workers reconstruct nodes by ``<module>.<Class>`` path, and
-    the graph's directory is on their PYTHONPATH).
-
-    Falls back to a private synthetic name when the basename isn't a usable
-    identifier or is already taken in ``sys.modules`` — importing a graph must
-    never shadow an installed module (a graph literally named ``json.py`` or
-    ``common.py``). Node classes defined in such a module stay unreconstructable,
-    which is the pre-existing behavior and is why the documented convention is to
-    put them in a sibling ``*_nodes.py``.
-    '''
-    resolved = os.path.abspath(path)
-    name = os.path.splitext(os.path.basename(path))[0]
-    if not name.isidentifier() or keyword.iskeyword(name):
-        return FALLBACK_MODULE_NAME
-    existing = sys.modules.get(name)
-    if existing is not None:
-        # Re-loading the same file (a second load_flow call in one process) is fine;
-        # anything else would be shadowing an already-imported module.
-        return name if getattr(existing, '__file__', None) == resolved else FALLBACK_MODULE_NAME
-    try:
-        spec = importlib.util.find_spec(name)
-    except (ImportError, ValueError):
-        return FALLBACK_MODULE_NAME
-    # find_spec resolves the graph's own directory (already on sys.path), so a hit
-    # on this very file is not a collision — only a hit on a *different* one is.
-    if spec is not None and spec.origin and os.path.abspath(spec.origin) != resolved:
-        return FALLBACK_MODULE_NAME
-    return name
-
-def load_flow(target : str) -> Any:
-    '''
-    - Arguments:
-        - target: ``path/to/graph.py`` or ``path/to/graph.py:factory_name`` \
-            (factory defaults to ``build_flow``).
-
-    - Returns:
-        - a built ``Flow`` produced by calling the factory.
-    '''
-    if ':' in target:
-        path, factory_name = target.rsplit(':', 1)
-    else:
-        path, factory_name = target, 'build_flow'
-
-    if not os.path.isfile(path):
-        raise SystemExit(f'Graph module not found: {path}')
-
-    # Make the graph's sibling modules importable (e.g. `from common import ...`)
-    # regardless of the caller's cwd.
-    graph_dir = os.path.dirname(os.path.abspath(path))
-    if graph_dir not in sys.path:
-        sys.path.insert(0, graph_dir)
-
-    module_name = _graph_module_name(path)
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    if spec is None or spec.loader is None:
-        raise SystemExit(f'Could not load graph module: {path}')
-    module = importlib.util.module_from_spec(spec)
-    # Register before exec so a node class defined in the graph module gets a
-    # __module__ that actually resolves — see _graph_module_name.
-    if module_name != FALLBACK_MODULE_NAME:
-        sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-
-    if not hasattr(module, factory_name):
-        raise SystemExit(f"Module '{path}' has no factory '{factory_name}'. "
-                        f"Define '{factory_name}() -> Flow'.")
-    factory = getattr(module, factory_name)
-    return factory()
-
-def compile_to_dict(target, envelope_version = None, allow_pickle = False) -> dict:
-    from .core.compiler import compile_flow
-
-    flow = load_flow(target)
-    specs = compile_flow(flow, envelope_version = envelope_version, allow_pickle = allow_pickle)
-    return {
-        'flow_id': flow.flow_id,
-        'flow_type': flow.flow_type,
-        'specs': [s.to_dict() for s in specs],
-    }
-
-def specs_from_document(document) -> tuple:
-    '''``(flow_id, flow_type, specs)`` from a compile-JSON document (dict or JSON string).'''
-    from .core.compiler import NodeSpec
-
-    if isinstance(document, str):
-        document = json.loads(document)
-    specs = [NodeSpec.from_dict(d) for d in document['specs']]
-    return document['flow_id'], document['flow_type'], specs
-
-def main(argv = None) -> None:
-    ap = argparse.ArgumentParser(prog = 'python -m videoflow.compile',
-                                 description = 'Compile a graph module to a JSON specs document on stdout.')
-    ap.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
-    ap.add_argument('--envelope-version', type = int, default = None)
-    ap.add_argument('--allow-pickle', action = 'store_true')
-    args = ap.parse_args(argv)
-    try:
-        document = compile_to_dict(args.graph, envelope_version = args.envelope_version,
-                                   allow_pickle = args.allow_pickle)
-    except ValueError as e:
-        raise SystemExit(str(e)) from e
-    json.dump(document, sys.stdout)
-    sys.stdout.write('\n')
+from videoflow.deploy.compile import *  # noqa: F401,F403
+from videoflow.deploy.compile import main  # noqa: F401
 
 if __name__ == '__main__':
     main()
