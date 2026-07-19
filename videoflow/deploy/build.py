@@ -145,7 +145,13 @@ def run_in_image(image : str, command : List[str], mounts : Optional[List['Mount
     # run an arbitrary command.
     cmd += ['--entrypoint', command[0], image, *command[1:]]
     try:
-        proc = subprocess.run(cmd, capture_output = capture, text = True, check = False)
+        if capture:
+            proc = subprocess.run(cmd, capture_output = True, text = True, check = False)
+        else:
+            # Uncaptured child output goes to stderr, not stdout: deploy's stdout is
+            # machine-readable (--dry-run streams the rendered manifests there), so a
+            # prepare hook printing progress must not interleave with it.
+            proc = subprocess.run(cmd, stdout = sys.stderr, text = True, check = False)
     except FileNotFoundError as e:
         raise RuntimeError('docker not found on PATH.') from e
     if proc.returncode != 0:

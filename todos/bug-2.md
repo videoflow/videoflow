@@ -1,0 +1,1 @@
+if a batch run's Jobs are deleted externally mid-run, wait_for_completion sees nothing pending and cheerfully prints Flow ... completed. with exit 0. That's a real reporting hole, though checking the artifact is the right discipline regardless. Want me to fix it, or split these diffs into reviewable commits?

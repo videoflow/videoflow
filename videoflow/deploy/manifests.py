@@ -363,9 +363,13 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     # flow only a finite producer completes; the rest run until the control stop.
     is_job = batch or (spec.kind == NODE_KIND_PRODUCER and spec.is_finite)
     if is_job:
-        # A completing worker pod should not be restarted on a clean exit, only on
-        # failure.
-        pod_template['spec']['restartPolicy'] = 'OnFailure'
+        # A completing worker pod should not be restarted on a clean exit. Retries
+        # use 'Never', not 'OnFailure': when an OnFailure Job exhausts its
+        # backoffLimit the controller deletes the failed pod itself, which destroys
+        # the very logs dump_failed_logs exists to print before teardown. With
+        # 'Never' each retry is a fresh pod and the failed ones persist (until the
+        # Job's TTL reaps them), so the failure evidence survives.
+        pod_template['spec']['restartPolicy'] = 'Never'
         # Probes make no sense for a short-lived Job pod that has no long-running
         # health server contract; drop them.
         for probe in ('readinessProbe', 'livenessProbe', 'startupProbe'):

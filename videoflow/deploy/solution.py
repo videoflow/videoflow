@@ -317,5 +317,9 @@ def run_prepare_local(graph_dir : str, config_path : Optional[str] = None) -> bo
     '''
     if find_prepare(graph_dir) is None:
         return False
-    subprocess.run(prepare_command(config_path, sys.executable), cwd = graph_dir, check = True)
+    # The hook's output goes to stderr, not stdout: deploy's stdout is machine-readable
+    # (--dry-run streams the rendered manifests there), so prepare progress must not
+    # interleave with it.
+    subprocess.run(prepare_command(config_path, sys.executable), cwd = graph_dir,
+                   stdout = sys.stderr, check = True)
     return True

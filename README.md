@@ -168,7 +168,8 @@ videoflow deploy my_flow.py:build_flow \
 ```
 
 Use `--dry-run` to print the manifests to stdout (including the dev-infra
-manifests when `--nats` is omitted), or `--render-only` to write them plus a
+manifests when `--nats` is omitted) — the prepare hook's output goes to stderr,
+so stdout stays valid YAML — or `--render-only` to write them plus a
 `kustomization.yaml` for `kubectl apply -k`. Other CLI commands:
 `videoflow explain my_flow.py` (human-readable graph/topology summary),
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),

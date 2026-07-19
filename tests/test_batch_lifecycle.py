@@ -45,7 +45,9 @@ def test_batch_renders_every_node_as_a_completing_job():
     for node in ('producer', 'work', 'printer'):
         job = by.get(('Job', f'vf-demo-{node}'))
         assert job is not None, f'{node} should be a Job in a BATCH flow'
-        assert job['spec']['template']['spec']['restartPolicy'] == 'OnFailure'
+        # 'Never', not 'OnFailure': an OnFailure Job deletes its failed pod when the
+        # backoffLimit is exhausted, destroying the logs dump_failed_logs prints.
+        assert job['spec']['template']['spec']['restartPolicy'] == 'Never'
         assert job['spec']['ttlSecondsAfterFinished'] > 0
     # No Deployments/StatefulSets remain to CrashLoopBackOff.
     assert not any(kind in ('Deployment', 'StatefulSet') for kind, _ in by)
