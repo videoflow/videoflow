@@ -18,6 +18,7 @@ from typing import List, Optional
 
 from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
+from ..deploy.images import DEFAULT_IMAGE_PULL_POLICY
 from ..deploy.manifests import (
     LABEL_NODE,
     LABEL_RUN_ID,
@@ -58,6 +59,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
             claims; a node's own ``gpu_resource_name`` wins.
         - gpu_autoscaling: include GPU nodes in KEDA autoscaling (off by default — \
             each extra replica claims whole GPUs).
+        - image_pull_policy: ``imagePullPolicy`` for every rendered container. \
+            Defaults to ``IfNotPresent``, which is what lets a locally built image \
+            loaded into the cluster actually run (see ``manifests.render_manifests``).
     '''
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str | None = None,
                 image_overrides : dict | None = None, blob_redis_url : str | None = None,
@@ -66,7 +70,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 provision_image : str | None = None, autoscaling : bool = False, max_replicas : int = 10,
                 nats_monitoring_endpoint : str | None = None, mounts : list[Mount] | None = None,
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
-                gpu_resource_name : str | None = None, gpu_autoscaling : bool = False) -> None:
+                gpu_resource_name : str | None = None, gpu_autoscaling : bool = False,
+                image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -85,6 +90,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._gpu_mode = gpu_mode
         self._gpu_resource_name = gpu_resource_name
         self._gpu_autoscaling = gpu_autoscaling
+        self._image_pull_policy = image_pull_policy
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -113,6 +119,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             gpu_runtime_class = self._gpu_runtime_class, gpu_mode = self._gpu_mode,
             gpu_resource_name = self._gpu_resource_name,
             gpu_autoscaling = self._gpu_autoscaling,
+            image_pull_policy = self._image_pull_policy,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer

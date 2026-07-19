@@ -84,6 +84,41 @@ def test_default_image_and_override_applied_to_pods():
     assert images['vf-demo-printer'] == IMG             # default
     assert images['vf-demo-identity'] == 'ghcr.io/acme/gpu:v1'  # override wins
 
+def _pull_policies(manifests):
+    '''Every container's imagePullPolicy, keyed by resource name (workers + provision Job).'''
+    policies = {}
+    for m in manifests:
+        if m['kind'] in ('Deployment', 'Job', 'StatefulSet'):
+            container = m['spec']['template']['spec']['containers'][0]
+            policies[m['metadata']['name']] = container.get('imagePullPolicy')
+    return policies
+
+def test_image_pull_policy_defaults_to_if_not_present_everywhere():
+    # Unset, k8s infers 'Always' from the ':latest' tag autobuild produces, and a
+    # locally loaded image is re-pulled from a registry that never had it.
+    specs = compile_flow(_demo_flow())
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
+    policies = _pull_policies(manifests)
+    assert policies, 'expected at least one container'
+    assert set(policies.values()) == {'IfNotPresent'}
+
+def test_provision_job_pull_policy_matches_the_workers():
+    # The provision Job runs first: if it alone cannot pull, the only symptom is the
+    # provision-wait timeout, with no worker ever started.
+    specs = compile_flow(_demo_flow())
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, image_pull_policy = 'Always')
+    policies = _pull_policies(manifests)
+    assert policies['vf-demo-provision'] == 'Always'
+    assert set(policies.values()) == {'Always'}
+
+def test_invalid_image_pull_policy_names_the_valid_values():
+    specs = compile_flow(_demo_flow())
+    with pytest.raises(ValueError) as e:
+        render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
+                        default_image = IMG, image_pull_policy = 'ifnotpresent')
+    assert 'IfNotPresent' in str(e.value)
+
 def test_finite_producer_is_job_infinite_is_deployment():
     # finite producer
     specs = compile_flow(_demo_flow())

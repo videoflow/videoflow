@@ -147,6 +147,13 @@ deploy compiles the graph inside the image too. Local input files are exposed to
 the pods with repeatable `--mount /abs/path[:ro]` hostPath mounts (solution
 `x-mounts` are added automatically).
 
+Because that image is built locally and loaded straight into the cluster, every
+container is rendered with `imagePullPolicy: IfNotPresent` — there is nothing to
+pull. (Left to Kubernetes' own inference, the `:latest` tag the build produces
+would mean `Always`, and the pod would try to fetch a locally built image from a
+registry that has never seen it.) Pass `--image-pull-policy Always` when every
+image instead comes from a registry the nodes can reach.
+
 Every automatic step has an explicit override — the fully manual path still
 works:
 

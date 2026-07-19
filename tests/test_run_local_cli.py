@@ -41,10 +41,15 @@ class _FakeEngine:
 
 
 class _FakeFlow:
-    def __init__(self):
+    def __init__(self, tasks_data = None):
         self.flow_id = 'demo'
         self.run_id = 'run1'
         self.joined = False
+        self._tasks_data = tasks_data or []
+
+    def tasks_data(self):
+        '''run-local inspects the flow to decide whether it must build an image.'''
+        return self._tasks_data
 
     def run(self, engine, run_id = None):
         self.engine = engine
@@ -167,3 +172,70 @@ def test_prepare_failure_is_a_clean_error(wiring, monkeypatch):
 def test_missing_graph_is_reported(tmp_path):
     with pytest.raises(SystemExit, match = 'Graph module not found'):
         cli.main(['run-local', str(tmp_path / 'nope.py')])
+
+
+def _spec(name, node_class = None, image = None, descriptor = None):
+    '''A NodeSpec with the routing fields defaulted; only the image-related ones vary.'''
+    from videoflow.core.compiler import NODE_KIND_PROCESSOR, NodeSpec
+    return NodeSpec(name = name, node_class = node_class, params = {}, parents = [],
+                    kind = NODE_KIND_PROCESSOR, has_children = False, nb_tasks = 1,
+                    device_type = 'cpu', is_finite = False,
+                    image = image, descriptor = descriptor)
+
+
+def test_pure_python_flow_never_builds(wiring, monkeypatch):
+    # The common case: every node is a host subprocess, so building the solution
+    # image (potentially multi-GB CUDA) would cost minutes and buy nothing.
+    tmp_path, _calls = wiring
+    built = []
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
+    monkeypatch.setattr(cli, 'specs_from_tasks_data',
+                        lambda td: [_spec('producer', node_class = 'pkg.P'),
+                                    _spec('printer', node_class = 'pkg.C')])
+    _run(tmp_path)
+    assert built == []
+    assert _FakeEngine.instances[-1].kwargs['default_image'] is None
+
+
+def test_native_component_without_image_triggers_a_build(wiring, monkeypatch):
+    tmp_path, _calls = wiring
+    built = []
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
+    monkeypatch.setattr(cli, 'docker_gpus_available', lambda: False)
+    monkeypatch.setattr(cli, 'specs_from_tasks_data',
+                        lambda td: [_spec('native')])          # no node_class, no image
+    _run(tmp_path)
+    assert len(built) == 1
+    assert _FakeEngine.instances[-1].kwargs['default_image'] == 'img:1'
+
+
+def test_native_component_with_a_local_command_does_not_build(wiring, monkeypatch):
+    # runtime.localCommand runs the binary directly — no container, no image.
+    tmp_path, _calls = wiring
+    built = []
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
+    descriptor = {'spec': {'runtime': {'localCommand': ['./run.sh']}}}
+    monkeypatch.setattr(cli, 'specs_from_tasks_data',
+                        lambda td: [_spec('native', descriptor = descriptor)])
+    _run(tmp_path)
+    assert built == []
+
+
+def test_explicit_image_suppresses_the_build(wiring, monkeypatch):
+    tmp_path, _calls = wiring
+    built = []
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
+    monkeypatch.setattr(cli, 'specs_from_tasks_data', lambda td: [_spec('native')])
+    _run(tmp_path, '--image', 'ghcr.io/acme/app:v1')
+    assert built == []
+    assert _FakeEngine.instances[-1].kwargs['default_image'] == 'ghcr.io/acme/app:v1'
+
+
+def test_no_build_skips_the_build_even_when_needed(wiring, monkeypatch):
+    tmp_path, _calls = wiring
+    built = []
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
+    monkeypatch.setattr(cli, 'specs_from_tasks_data', lambda td: [_spec('native')])
+    _run(tmp_path, '--no-build')
+    assert built == []
+    assert _FakeEngine.instances[-1].kwargs['default_image'] is None

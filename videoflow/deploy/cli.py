@@ -56,7 +56,12 @@ from .gpu import (
     registered_gpu_modes,
     resolve_gpu_resource,
 )
-from .images import parse_override, resolve_image
+from .images import (
+    DEFAULT_IMAGE_PULL_POLICY,
+    IMAGE_PULL_POLICIES,
+    parse_override,
+    resolve_image,
+)
 
 
 def _load_flow(target : str) -> Flow:
@@ -280,6 +285,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         mounts = mounts, gpu_runtime_class = args.gpu_runtime_class,
         gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
         gpu_autoscaling = args.gpu_autoscaling,
+        image_pull_policy = args.image_pull_policy,
     )
     # Cluster setup the GPU mode needs for this run (no-op for the built-in modes;
     # the hook exists for strategies that retune the device plugin per run).
@@ -422,6 +428,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_typ
             gpu_runtime_class = args.gpu_runtime_class, gpu_mode = args.gpu_mode,
             gpu_resource_name = args.gpu_resource_name,
             gpu_autoscaling = args.gpu_autoscaling,
+            image_pull_policy = args.image_pull_policy,
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
@@ -498,6 +505,22 @@ def _cmd_component_inspect(args : argparse.Namespace) -> None:
     if d.params_schema.get('properties'):
         print(f'  params: {", ".join(sorted(d.params_schema["properties"]))}')
 
+def _needs_local_build(flow : Flow) -> bool:
+    '''
+    Whether ``run-local`` must build the solution image for this flow.
+
+    True only when some node is a native component that declares no ``image=`` and no
+    ``runtime.localCommand`` — the one case ``LocalProcessEngine`` runs via
+    ``docker run``. A pure-Python flow spawns host subprocesses and needs no image, so
+    building one (potentially a multi-GB CUDA image) would cost minutes and buy
+    nothing.
+
+    '''
+    # optional dep: the local engine imports nats at module scope
+    from ..engines.local import needs_container_image
+    specs = specs_from_tasks_data(flow.tasks_data())
+    return any(needs_container_image(s) and not s.image for s in specs)
+
 def _cmd_run_local(args : argparse.Namespace) -> None:
     graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
     if not os.path.isfile(graph_path):
@@ -551,9 +574,21 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     # re-exports as PYTHONPATH so the workers can import its sibling modules.
     flow = _load_flow(graph_target)
     from ..engines.local import LocalProcessEngine  # optional dep: the local engine imports nats
+    # 4a. Image, but only if some node actually needs one. A pure-Python flow runs as
+    # host subprocesses, so building the solution image would cost minutes and buy
+    # nothing; a native component without a localCommand is docker-run and can't start
+    # without it. --image wins over building, mirroring deploy.
+    image = args.image
+    if image is None and not args.no_build and _needs_local_build(flow):
+        try:
+            image = autobuild(graph_dir, needs_gpu = docker_gpus_available(),
+                              context_override = args.build_context)
+        except RuntimeError as e:
+            raise SystemExit(str(e)) from e
     engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
                                 allow_pickle = args.allow_pickle,
-                                local_docker_nats_url = args.local_docker_nats_url)
+                                local_docker_nats_url = args.local_docker_nats_url,
+                                default_image = image)
     try:
         try:
             flow.run(engine, run_id = args.run_id)
@@ -891,6 +926,12 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument('--image-override', action = 'append', metavar = 'NAME=IMAGE',
                         help = 'Override the container image for one node (wins over --image and the node\'s '
                                'own image=). Repeatable.')
+    deploy.add_argument('--image-pull-policy', default = DEFAULT_IMAGE_PULL_POLICY,
+                        choices = list(IMAGE_PULL_POLICIES),
+                        help = f'imagePullPolicy for every container (default {DEFAULT_IMAGE_PULL_POLICY}). '
+                               'The default is what lets a locally built image run: deploy loads it into '
+                               'the cluster itself, so there is nothing to pull. Use Always only when every '
+                               'image comes from a registry the nodes can reach.')
     deploy.add_argument('--autoscaling', action = 'store_true',
                         help = 'Emit a KEDA ScaledObject per processor node (requires KEDA in-cluster).')
     deploy.add_argument('--max-replicas', type = int, default = 10,
@@ -948,6 +989,16 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--local-docker-nats-url', default = None,
                     help = 'NATS URL a docker-run remote component connects to '
                            '(default rewrites localhost -> host.docker.internal).')
+    run.add_argument('--image', default = None,
+                    help = 'Image for native components that declare no image= of their own. '
+                           'Suppresses the auto-build. Python nodes never need one — they run '
+                           'as host subprocesses.')
+    run.add_argument('--no-build', action = 'store_true',
+                    help = 'Never auto-build the solution image. A native component with no '
+                           'image= and no runtime.localCommand then fails to start.')
+    run.add_argument('--build-context', default = None,
+                    help = 'docker build context for the auto-build (default: the git root '
+                           'enclosing the graph).')
     run.set_defaults(func = _cmd_run_local)
 
     comp = sub.add_parser('component', help = 'Work with component descriptors.')

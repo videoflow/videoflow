@@ -77,6 +77,22 @@ def inherited_python_path() -> list:
         entries.append(resolved)
     return entries
 
+def needs_container_image(spec : NodeSpec) -> bool:
+    '''
+    Whether running ``spec`` locally requires a container image to exist.
+
+    Only a native component with no ``runtime.localCommand`` does: a Python node runs
+    as a host subprocess in the current interpreter, and a native component with a
+    ``localCommand`` runs that binary directly. This is the predicate ``run-local``
+    uses to decide whether to auto-build at all — most flows are pure Python, and
+    building a (possibly CUDA) solution image to launch a few subprocesses would be a
+    large and pointless cost.
+    '''
+    if spec.node_class:
+        return False
+    runtime = (spec.descriptor or {}).get('spec', {}).get('runtime', {})
+    return not runtime.get('localCommand')
+
 class LocalProcessEngine(ExecutionEngine):
     '''
     - Arguments:
@@ -88,15 +104,22 @@ class LocalProcessEngine(ExecutionEngine):
         - inherit_python_path: also re-export this process's own ``sys.path`` \
             additions (default True) — what makes node classes defined next to the \
             graph importable in the workers. Set False for a hermetic child env.
+        - default_image: image used for a native component that declares no \
+            ``image=`` — the solution image ``run-local`` auto-builds. A node's own \
+            ``image=`` still wins.
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
                 specs : List[NodeSpec] | None = None,
                 allow_pickle : bool = False, local_docker_nats_url : str | None = None,
-                python_path : list | None = None, inherit_python_path : bool = True) -> None:
+                python_path : list | None = None, inherit_python_path : bool = True,
+                default_image : str | None = None) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
         self._allow_pickle = allow_pickle
+        # Fallback image for a native component that declares none — the solution image
+        # run-local auto-builds. A node's own image= still wins.
+        self._default_image = default_image
         # NATS URL a docker-run remote component connects to (containers can't reach a
         # host 'localhost'); on macOS/Windows this is typically host.docker.internal.
         self._local_docker_nats_url = local_docker_nats_url
@@ -189,11 +212,12 @@ class LocalProcessEngine(ExecutionEngine):
         docker = ['docker', 'run', '--rm', '--network', 'host']
         for k, v in vf_env.items():
             docker += ['-e', f'{k}={v}']
-        if not spec.image:
+        image = spec.image or self._default_image
+        if not image:
             raise ValueError(
                 f'remote component node {spec.name!r} has no image to run locally — give it an '
                 f'`image=` or a `runtime.localCommand` in its component descriptor.')
-        docker.append(spec.image)
+        docker.append(image)
         if spec.command:
             docker += list(spec.command)
         return docker, dict(os.environ)

@@ -146,6 +146,15 @@ Option reference
     one node and wins over both (repeatable). ``--build-context`` overrides the
     git-root build context.
 
+``--image-pull-policy {Always,IfNotPresent,Never}``
+    ``imagePullPolicy`` for every container, workers and the provision Job alike.
+    Defaults to ``IfNotPresent``, which is what lets a locally built image run:
+    deploy loads it into the cluster itself, so there is nothing to pull. Left to
+    Kubernetes' own inference, a ``:latest`` tag — the tag auto-build produces —
+    would default to ``Always`` and the pod would try to pull from a registry that
+    has never seen the image, landing in ``ImagePullBackOff``. Use ``Always`` only
+    when every image comes from a registry the nodes can reach.
+
 ``--no-prepare``
     Skip the solution's ``prepare.py`` hook.
 

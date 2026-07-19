@@ -50,7 +50,7 @@ from .gpu import (
     get_gpu_mode,
     resolve_gpu_resource,
 )
-from .images import resolve_image
+from .images import DEFAULT_IMAGE_PULL_POLICY, resolve_image, validate_image_pull_policy
 
 LABEL_FLOW_ID = 'videoflow.io/flow-id'
 LABEL_RUN_ID = 'videoflow.io/run-id'
@@ -213,10 +213,12 @@ def gpu_demand(specs : List[NodeSpec],
 def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
               nats_configmap : str, mounts : Optional[List[Mount]] = None,
               gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
-              gpu_resource_name : Optional[str] = None) -> dict:
+              gpu_resource_name : Optional[str] = None,
+              image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> dict:
     container : dict = {
         'name': 'worker',
         'image': image,
+        'imagePullPolicy': image_pull_policy,
         'envFrom': [
             {'configMapRef': {'name': k8s_name('vf', flow_id, spec.name, 'env')}},
             {'configMapRef': {'name': nats_configmap}},
@@ -346,13 +348,15 @@ def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str]
 def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
              nats_cm_name : str, mounts : Optional[List[Mount]] = None,
              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
-             gpu_resource_name : Optional[str] = None) -> dict:
+             gpu_resource_name : Optional[str] = None,
+             image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
         'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts,
                           gpu_runtime_class = gpu_runtime_class, gpu_mode = gpu_mode,
-                          gpu_resource_name = gpu_resource_name),
+                          gpu_resource_name = gpu_resource_name,
+                          image_pull_policy = image_pull_policy),
     }
 
     batch = (flow_type == BATCH)
@@ -463,18 +467,24 @@ def flow_spec_configmap(specs : List[NodeSpec], flow_id : str, run_id : str) -> 
     }
 
 def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str,
-                       nats_cm_name : str) -> dict:
+                       nats_cm_name : str,
+                       image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> dict:
     '''
     A one-shot Job that runs ``videoflow.provision`` to create all streams/durables
     before workers start (required so BATCH interest-retention streams don't drop
     early messages). Runs on ``image`` — any worker image has the framework + broker
     client installed.
+
+    Its pull policy must match the workers': this Job runs first, so when it is the
+    one that cannot pull, the flow fails before any worker starts and the only symptom
+    is the provision-wait timeout.
     '''
     labels = _labels(flow_id)
     spec_cm = k8s_name('vf', flow_id, 'specs')
     container = {
         'name': 'provision',
         'image': image,
+        'imagePullPolicy': image_pull_policy,
         'command': ['python', '-m', 'videoflow.provision'],
         'envFrom': [{'configMapRef': {'name': nats_cm_name}}],
         'env': [
@@ -578,7 +588,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     allow_pickle : bool = False, provision_image : Optional[str] = None,
                     mounts : Optional[List[Mount]] = None,
                     gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
-                    gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False) -> list:
+                    gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False,
+                    image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -617,10 +628,15 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     - gpu_autoscaling: emit KEDA ScaledObjects for GPU nodes too. Off by default: \
         each autoscaled replica claims its own GPUs, so scaling to ``max_replicas`` \
         can demand more devices than the cluster has and strand pods Pending.
+    - image_pull_policy: ``imagePullPolicy`` for every rendered container, workers \
+        and the provision Job alike (``--image-pull-policy``). Defaults to \
+        ``IfNotPresent``, which is what makes a locally built-and-loaded image \
+        actually run — see ``DEFAULT_IMAGE_PULL_POLICY``.
 
     - Raises:
         - ``ValueError`` if a node has no resolvable image (see ``videoflow.deploy.images``), \
-            or if the wire settings are incompatible with the flow's components.
+            if ``image_pull_policy`` is not a valid k8s policy, or if the wire settings \
+            are incompatible with the flow's components.
     '''
     # Function-level: videoflow.wire.serialization imports the optional `msgpack`
     # extra at module scope, and rendering manifests must work without it.
@@ -628,6 +644,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
 
     # Fail before any manifest is built, rather than at the first GPU node.
     get_gpu_mode(gpu_mode)
+    validate_image_pull_policy(image_pull_policy)
 
     # Resolve the whole-run wire version: a flow with any native component must use
     # the protobuf wire (v4+) so every node — native or not — speaks it.
@@ -653,14 +670,16 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     # Provision streams/durables up front via a one-shot init Job (BATCH interest
     # retention drops messages published before their consumers exist).
     manifests.append(flow_spec_configmap(specs, flow_id, run_id))
-    manifests.append(provision_init_job(flow_id, run_id, flow_type, init_image, nats_cm_name))
+    manifests.append(provision_init_job(flow_id, run_id, flow_type, init_image, nats_cm_name,
+                                        image_pull_policy = image_pull_policy))
     for spec in specs:
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, allow_pickle))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
                                   mounts = mounts, gpu_runtime_class = gpu_runtime_class,
-                                  gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name))
+                                  gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name,
+                                  image_pull_policy = image_pull_policy))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 

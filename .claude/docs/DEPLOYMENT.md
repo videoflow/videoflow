@@ -81,10 +81,23 @@ its outputs are baked into the compiled specs.
 
 `--dry-run` / `--render-only` never touch the cluster. Other flags worth knowing:
 `--image-override name=ref`, `--mount`, `--namespace`, `--autoscaling`, `--gpu-mode`,
-`--strict-preflight`, `--envelope-version`, `--allow-pickle`.
+`--strict-preflight`, `--envelope-version`, `--allow-pickle`, `--image-pull-policy`.
 
-`run-local` mirrors this: config → `prepare.py` on the host → start or reuse dev NATS/Redis
-containers → `LocalProcessEngine` → report non-zero worker exits → tear down only what it started.
+Every rendered container carries an explicit `imagePullPolicy`, defaulting to `IfNotPresent`
+(`DEFAULT_IMAGE_PULL_POLICY` in [images.py](../../videoflow/deploy/images.py)). This is
+load-bearing, not cosmetic: left unset, k8s infers `Always` from the `:latest` tag the auto-build
+produces, and the image deploy just loaded into the cluster is re-pulled from a registry that has
+never seen it — the pod lands in `ImagePullBackOff`, and when it is the provision Job the only
+symptom is `provision Job did not complete within 180s`. Pass `--image-pull-policy Always` only
+when every image comes from a registry the nodes can reach.
+
+`run-local` mirrors this: config → `prepare.py` on the host → **build the solution image if (and
+only if) some node needs one** → start or reuse dev NATS/Redis containers → `LocalProcessEngine` →
+report non-zero worker exits → tear down only what it started. The build is gated on
+`needs_container_image` ([engines/local.py](../../videoflow/engines/local.py)): only a *native*
+component (no `pythonClass`, no `runtime.localCommand`) is `docker run` and needs an image. A
+pure-Python flow spawns host subprocesses, so it never builds — which is every solution in
+videoflow-contrib today. `--image` / `--no-build` / `--build-context` work as they do on `deploy`.
 
 ## Manifests
 
