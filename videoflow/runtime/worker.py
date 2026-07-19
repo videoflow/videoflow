@@ -21,7 +21,10 @@ the original graph-building script.
     VF_NB_TASKS         optional; replica count of this node (for partition ownership)
     VF_PARTITION_BY     optional; partition key ('trace_id' or a metadata field)
     VF_JOIN_POLICY_JSON optional; JSON JoinPolicy for a multi-parent node
-    VF_BLOB_REDIS_URL   optional; enables the external blob store for large payloads
+    VF_BLOB_REDIS_URL   optional; enables the external blob store for large payloads.
+                        The store is chosen by the URL's scheme (redis:// and
+                        rediss:// built in; others via register_blob_store), so the
+                        name is historical rather than a restriction to Redis.
     VF_ENVELOPE_VERSION optional; wire envelope version to emit (3 msgpack | 4 protobuf)
     VF_ALLOW_PICKLE     optional; '1' permits the legacy Python-only pickle payload codec
 '''
@@ -105,10 +108,11 @@ def run_from_env() -> None:
     allow_pickle = os.environ.get('VF_ALLOW_PICKLE', '0') == '1'
 
     blob_store = None
+    # Env var name is historical: any registered URL scheme works, not just Redis.
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
-        from ..wire.serialization import RedisBlobStore
-        blob_store = RedisBlobStore(blob_redis_url)
+        from ..wire.serialization import make_blob_store
+        blob_store = make_blob_store(blob_redis_url)
 
     node = build_node_from_env()
     # The node's own name comes from the env, not from whatever get_params captured

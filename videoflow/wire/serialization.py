@@ -26,7 +26,7 @@ from __future__ import absolute_import, division, print_function
 import hashlib
 import os
 import pickle
-from typing import Any, Tuple
+from typing import Any, Callable, Tuple
 
 import msgpack
 import numpy as np
@@ -127,6 +127,73 @@ class RedisBlobStore(BlobStore):
             raise KeyError(f'Blob {ref} not found (expired or never existed)')
         # redis-py types get() more broadly than what we store (always bytes here).
         return data  # type: ignore[return-value]
+
+# -- blob store selection --------------------------------------------------
+#
+# The store is chosen by the URL scheme of the configured blob URL, so adding one
+# (S3, MinIO, a filesystem store for tests) means registering a factory rather
+# than editing the worker's construction site.
+
+BLOB_STORE_ENTRY_POINT_GROUP = 'videoflow.blob_stores'
+
+_BLOB_STORE_SCHEMES : dict = {}
+
+def register_blob_store(scheme : str, factory : Callable[[str], BlobStore]) -> None:
+    '''
+    Registers a ``BlobStore`` factory for a URL scheme. ``factory`` receives the
+    full URL (not just the remainder) and returns a ready store.
+
+    Third-party packages may register either by calling this on import, or by
+    declaring an entry point in the ``videoflow.blob_stores`` group — the latter
+    is what lets a store be selected purely by configuration, with nothing in the
+    flow importing the package that provides it.
+
+    - Arguments:
+        - scheme: URL scheme without the separator, e.g. ``'s3'``.
+        - factory: callable taking the blob URL and returning a ``BlobStore``.
+    '''
+    _BLOB_STORE_SCHEMES[scheme] = factory
+
+def registered_blob_store_schemes() -> list:
+    '''The URL schemes a blob store is currently registered for, sorted.'''
+    return sorted(_BLOB_STORE_SCHEMES)
+
+def make_blob_store(url : str) -> BlobStore:
+    '''
+    Builds the blob store for ``url``, dispatching on its scheme.
+
+    - Arguments:
+        - url: blob store URL, e.g. ``redis://localhost:6379/0``.
+
+    - Returns: a ready ``BlobStore``.
+
+    - Raises:
+        - ValueError: the URL has no scheme, or no store is registered for it. \
+            The message names the known schemes and ``register_blob_store``.
+    '''
+    scheme = url.split('://', 1)[0].strip().lower() if '://' in url else ''
+    if not scheme:
+        raise ValueError(
+            f'Blob store URL must include a scheme, got {url!r}. '
+            f'Known schemes: {", ".join(registered_blob_store_schemes())}.'
+        )
+    if scheme not in _BLOB_STORE_SCHEMES:
+        # A scheme we do not know may belong to an installed-but-unimported
+        # plugin; consult entry points once before giving up.
+        from ..utils.plugins import load_plugin_group
+        load_plugin_group(BLOB_STORE_ENTRY_POINT_GROUP)
+    if scheme not in _BLOB_STORE_SCHEMES:
+        raise ValueError(
+            f'No blob store registered for URL scheme {scheme!r} (from {url!r}). '
+            f'Known schemes: {", ".join(registered_blob_store_schemes())}. '
+            f'Register one with videoflow.wire.serialization.register_blob_store('
+            f'{scheme!r}, factory), or declare a '
+            f'{BLOB_STORE_ENTRY_POINT_GROUP!r} entry point.'
+        )
+    return _BLOB_STORE_SCHEMES[scheme](url)
+
+register_blob_store('redis', RedisBlobStore)
+register_blob_store('rediss', RedisBlobStore)   # TLS
 
 # ==========================================================================
 # v2 / v3 — msgpack payload codec (legacy, unchanged behavior)
