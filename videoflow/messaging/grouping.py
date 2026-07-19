@@ -18,12 +18,24 @@ handles. It owns the pending buffers and resolves the handles of anything it
 travel out unresolved inside the ``ReadyGroup`` for the task loop to ack/fail
 after processing — preserving ack-after-process semantics end to end.
 
+This module also owns the *internal* record types for those entries.
+``decode_envelope`` returns a plain ``dict`` and must keep doing so — it is
+re-exported through the frozen ``videoflow.serialization`` shim, where a
+dead-lettered payload recorded under the old module path still has to decode.
+So the dict is adapted **once**, where messaging first receives it
+(``NATSMessenger._pull_loop``), into an ``EnvelopeEntry``, and everything from
+there down the join/EOS path uses typed attributes. A collected window is a
+genuinely different record — its ``message``/``metadata``/``event_ts`` are
+*lists* over a parent's samples and it has no lineage of its own — so it is a
+separate ``CollectEntry`` rather than an ``EnvelopeEntry`` with lying types.
+
 All methods are called from the single task thread; no locking is needed.
 '''
 from __future__ import absolute_import, division, print_function
 
 import logging
 import time
+from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..core.policies import JOIN_TIME, MISSING_ERROR, JoinPolicy
@@ -35,6 +47,82 @@ logger = logging.getLogger(__package__)
 #: is configured to derive the bound from.
 _DEFAULT_COLLECT_RETENTION_SECONDS = 30.0
 
+@dataclass(slots = True)
+class EnvelopeEntry:
+    '''
+    One decoded envelope as the messaging layer carries it: the exact field set
+    ``videoflow.wire.serialization.decode_envelope`` returns, as attributes.
+
+    Built at the messenger's receive boundary via ``from_decoded`` and never
+    mutated afterwards — an assembler that supersedes a redelivery swaps the
+    whole entry rather than editing one.
+    '''
+    trace_id : str
+    seq : int
+    event_ts : float | None
+    message : Any
+    metadata : dict | None
+    is_stop_signal : bool
+    type : str = ''
+    producer_name : str = ''
+    flow_id : str = ''
+    run_id : str = ''
+    span_id : Any = None
+    parent_span_id : Any = None
+    replica_id : int = 0
+
+    @classmethod
+    def from_decoded(cls, decoded : dict[str, Any]) -> 'EnvelopeEntry':
+        '''
+        Adapts a ``decode_envelope`` result to an ``EnvelopeEntry``.
+
+        - Arguments:
+            - decoded (dict): the envelope dict from \
+                ``videoflow.wire.serialization.decode_envelope``.
+        - Returns:
+            - The equivalent ``EnvelopeEntry``. Only the fields the join path \
+                actually reads are required; the rest are tolerated as absent \
+                (carrying their declared default) so a caller can hand over a \
+                partial envelope.
+        - Raises:
+            - KeyError: if ``trace_id`` or ``seq`` is missing — without them a \
+                group has no identity to assemble on.
+        '''
+        return cls(
+            trace_id = decoded['trace_id'],
+            seq = decoded['seq'],
+            event_ts = decoded.get('event_ts'),
+            message = decoded.get('message'),
+            metadata = decoded.get('metadata'),
+            is_stop_signal = decoded.get('is_stop_signal', False),
+            type = decoded.get('type', ''),
+            producer_name = decoded.get('producer_name', ''),
+            flow_id = decoded.get('flow_id', ''),
+            run_id = decoded.get('run_id', ''),
+            span_id = decoded.get('span_id'),
+            parent_span_id = decoded.get('parent_span_id'),
+            replica_id = decoded.get('replica_id', 0),
+        )
+
+@dataclass(slots = True)
+class CollectEntry:
+    '''
+    The window of samples a *collect* parent contributes to one time group:
+    every sample within that parent's window of the group's time, oldest first.
+
+    Deliberately not an ``EnvelopeEntry`` — ``message``, ``metadata`` and
+    ``event_ts`` are lists here, and the window has no single trace id or seq of
+    its own (which is why ``last_input_info`` reports ``None`` for both).
+    '''
+    message : list = field(default_factory = list)
+    metadata : list = field(default_factory = list)
+    event_ts : list = field(default_factory = list)
+    is_stop_signal : bool = False
+
+#: What one parent contributes to a ``ReadyGroup``: a normal entry, a collected
+#: window, or ``None`` for a parent missing from a quorum emission.
+GroupEntry = EnvelopeEntry | CollectEntry | None
+
 class ReadyGroup:
     '''
     A fully assembled input group, ready to hand to the node.
@@ -45,14 +133,14 @@ class ReadyGroup:
         - seq: deterministic representative sequence number (stable across \
             redelivery of the same group, for output dedup).
         - event_ts: the group's event time (min over members), carried forward.
-        - entries: ``{parent_name: entry}`` where entry is a decoded envelope \
-            dict, ``None`` for a parent missing from a quorum emission, or a \
-            collect entry whose ``message``/``metadata``/``event_ts`` are lists.
+        - entries: ``{parent_name: entry}`` where entry is an \
+            ``EnvelopeEntry``, ``None`` for a parent missing from a quorum \
+            emission, or a ``CollectEntry`` for a collect parent's window.
         - handles: every unresolved ack handle backing this group, in no \
             particular order.
     '''
     def __init__(self, trace_id : str, seq : int, event_ts : float | None,
-                entries : dict[str, Any], handles : list) -> None:
+                entries : dict[str, GroupEntry], handles : list) -> None:
         self.trace_id = trace_id
         self.seq = seq
         self.event_ts = event_ts
@@ -71,7 +159,7 @@ class GroupAssembler:
         self._parent_names = list(parent_names)
         self._policy = policy
 
-    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
+    def add(self, parent_name : str, entry : EnvelopeEntry, handle : Any) -> None:
         raise NotImplementedError
 
     def sweep(self, now : float | None = None) -> None:
@@ -94,13 +182,13 @@ class TraceGroupAssembler(GroupAssembler):
     '''
     def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
         super().__init__(node_name, parent_names, policy)
-        self._groups: dict[str, dict[str, Any]] = {}    # trace_id -> {parent: entry}
+        self._groups: dict[str, dict[str, EnvelopeEntry]] = {}   # trace_id -> {parent: entry}
         self._handles: dict[str, dict[str, Any]] = {}   # trace_id -> {parent: handle}
         self._order: list[str] = []
         self._first_seen: dict[str, float] = {}
 
-    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
-        trace_id = entry['trace_id']
+    def add(self, parent_name : str, entry : EnvelopeEntry, handle : Any) -> None:
+        trace_id = entry.trace_id
         group = self._groups.setdefault(trace_id, {})
         handles = self._handles.setdefault(trace_id, {})
         if parent_name in handles:
@@ -154,9 +242,9 @@ class TraceGroupAssembler(GroupAssembler):
                 self._first_seen.pop(trace_id, None)
                 # A deterministic representative seq/event_ts (min over the group is
                 # stable because the same messages reassemble on retry).
-                seq = min(group[name]['seq'] for name in self._parent_names)
-                timestamps = [group[name].get('event_ts') for name in self._parent_names]
-                timestamps = [t for t in timestamps if t is not None]
+                seq = min(group[name].seq for name in self._parent_names)
+                timestamps = [t for t in (group[name].event_ts for name in self._parent_names)
+                            if t is not None]
                 event_ts = min(timestamps) if timestamps else None
                 return ReadyGroup(trace_id, seq, event_ts, dict(group),
                                 [handles[name] for name in self._parent_names])
@@ -172,7 +260,7 @@ class _TimeGroup:
         self.gid = gid
         self.ts = ts                 # min event_ts over members: the group's time
         self.first_seen = first_seen
-        self.entries: dict[str, Any] = {}   # sync parent -> entry
+        self.entries: dict[str, EnvelopeEntry] = {}   # sync parent -> entry
         self.handles: dict[str, Any] = {}   # sync parent -> handle
 
 class TimeGroupAssembler(GroupAssembler):
@@ -231,9 +319,9 @@ class TimeGroupAssembler(GroupAssembler):
 
     # -- ingestion -----------------------------------------------------
 
-    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
+    def add(self, parent_name : str, entry : EnvelopeEntry, handle : Any) -> None:
         now = time.monotonic()
-        ts = entry.get('event_ts')
+        ts = entry.event_ts
         if ts is None:
             ts = time.time()
         if parent_name in self._collect_windows:
@@ -250,8 +338,8 @@ class TimeGroupAssembler(GroupAssembler):
         # in place so its ack deadline restarts, instead of seeding a duplicate.
         for group in self._groups.values():
             existing = group.entries.get(parent_name)
-            if (existing is not None and existing['trace_id'] == entry['trace_id']
-                    and existing['seq'] == entry['seq']):
+            if (existing is not None and existing.trace_id == entry.trace_id
+                    and existing.seq == entry.seq):
                 group.handles[parent_name].term()
                 group.entries[parent_name] = entry
                 group.handles[parent_name] = handle
@@ -351,7 +439,7 @@ class TimeGroupAssembler(GroupAssembler):
     def _emit(self, gid : int) -> ReadyGroup:
         group = self._groups.pop(gid)
         self._order.remove(gid)
-        entries: dict[str, Any] = {}
+        entries: dict[str, GroupEntry] = {}
         handles = list(group.handles.values())
         for parent in self._sync_parents:
             entries[parent] = group.entries.get(parent)  # None if below-quorum missing
@@ -362,12 +450,11 @@ class TimeGroupAssembler(GroupAssembler):
                 (claimed if abs(item[0] - group.ts) <= window_s else rest).append(item)
             self._collect_buffers[parent] = rest
             claimed.sort(key = lambda item: item[0])
-            entries[parent] = {
-                'message': [item[2]['message'] for item in claimed],
-                'metadata': [item[2]['metadata'] for item in claimed],
-                'event_ts': [item[0] for item in claimed],
-                'is_stop_signal': False,
-            }
+            entries[parent] = CollectEntry(
+                message = [item[2].message for item in claimed],
+                metadata = [item[2].metadata for item in claimed],
+                event_ts = [item[0] for item in claimed],
+            )
             handles.extend(item[3] for item in claimed)
         # Identity of the group is its event time: stable across redelivery (the
         # same members regroup to the same min ts), so downstream dedup holds.
@@ -381,7 +468,7 @@ class TimeGroupAssembler(GroupAssembler):
         for ready in self._ready:
             entry = ready.entries.get(parent_name)
             if parent_name in self._collect_windows:
-                if entry and entry['message']:
+                if isinstance(entry, CollectEntry) and entry.message:
                     return True
             elif entry is not None:
                 return True

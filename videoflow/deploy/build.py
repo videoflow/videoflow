@@ -15,9 +15,14 @@ import os
 import re
 import subprocess
 import sys
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import videoflow
+
+if TYPE_CHECKING:
+    # Type-only: .manifests imports yaml at module scope and this module must stay
+    # importable without the optional deploy extras.
+    from .manifests import Mount
 
 _BASE_ARG_RE = re.compile(r'^ARG\s+BASE_IMAGE\s*=\s*(\S+)\s*$', re.MULTILINE)
 
@@ -112,13 +117,13 @@ def docker_gpus_available() -> bool:
                           capture_output = True, text = True, check = False)
     return proc.returncode == 0 and 'nvidia' in proc.stdout
 
-def run_in_image(image : str, command : List[str], mounts : Optional[List[dict]] = None,
+def run_in_image(image : str, command : List[str], mounts : Optional[List['Mount']] = None,
                  workdir : Optional[str] = None, gpus : bool = False,
                  capture : bool = False, interactive : bool = False) -> Optional[str]:
     '''
     Runs a command in the solution image with the given hostPath-style mounts
-    (dicts from ``manifests.parse_mounts``) — how deploy executes the prepare
-    hook and the graph compile without the graph's deps on the host.
+    (``Mount`` records from ``manifests.parse_mounts``) — how deploy executes the
+    prepare hook and the graph compile without the graph's deps on the host.
 
     - Returns:
         - the command's stdout when ``capture``, else None.
@@ -132,8 +137,8 @@ def run_in_image(image : str, command : List[str], mounts : Optional[List[dict]]
     if gpus:
         cmd += ['--gpus', 'all']
     for m in mounts or []:
-        suffix = ':ro' if m['read_only'] else ''
-        cmd += ['-v', f"{m['host_path']}:{m['container_path']}{suffix}"]
+        suffix = ':ro' if m.read_only else ''
+        cmd += ['-v', f'{m.host_path}:{m.container_path}{suffix}']
     if workdir:
         cmd += ['-w', workdir]
     # The worker entrypoint is baked into videoflow-base images; override it to

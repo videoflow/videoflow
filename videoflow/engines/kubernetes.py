@@ -21,6 +21,7 @@ from ..core.engine import ExecutionEngine
 from ..deploy.manifests import (
     LABEL_NODE,
     LABEL_RUN_ID,
+    Mount,
     delete_resources,
     dump_manifests,
     k8s_name,
@@ -45,7 +46,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - blob_redis_url: optional Redis URL for the large-payload blob store.
         - specs: optional precompiled ``NodeSpec`` list; compiled from tasks_data if omitted.
         - kubectl: kubectl binary name/path.
-        - mounts: optional mount dicts (see ``manifests.parse_mounts``) — hostPath \
+        - mounts: optional ``Mount`` records (see ``manifests.parse_mounts``) — hostPath \
             volumes added to every node workload.
         - gpu_runtime_class: ``runtimeClassName`` for GPU pods (``nvidia`` on k3s and \
             other distros where the NVIDIA runtime is opt-in rather than the node \
@@ -63,7 +64,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 specs : list | None = None,
                 kubectl : str = 'kubectl', envelope_version : int | None = None, allow_pickle : bool = False,
                 provision_image : str | None = None, autoscaling : bool = False, max_replicas : int = 10,
-                nats_monitoring_endpoint : str | None = None, mounts : list | None = None,
+                nats_monitoring_endpoint : str | None = None, mounts : list[Mount] | None = None,
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
                 gpu_resource_name : str | None = None, gpu_autoscaling : bool = False) -> None:
         self._nats_url = nats_url
@@ -116,10 +117,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
         # can't publish end-of-stream before its consumers' interest exists.
-        phase1, phase2 = split_provision_manifests(manifests, flow_id)
-        self._kubectl_apply(dump_manifests(phase1))
+        phases = split_provision_manifests(manifests, flow_id)
+        self._kubectl_apply(dump_manifests(phases.provision))
         self._wait_provision(flow_id)
-        self._kubectl_apply(dump_manifests(phase2))
+        self._kubectl_apply(dump_manifests(phases.worker))
         logger.info(f'Applied {len(manifests)} manifests for flow {flow_id} to namespace {self._namespace}')
 
     def _kubectl_apply(self, yaml_str : str) -> None:

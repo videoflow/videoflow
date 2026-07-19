@@ -13,13 +13,21 @@ URL, and a default-deny-except-broker NetworkPolicy.
 
 Manifests are built as plain dicts and serialized with ``yaml.dump`` rather than
 text-templated, so the output is always structurally valid YAML.
+
+The dict/dataclass split here is deliberate: anything that mirrors the Kubernetes
+API schema (workloads, ConfigMaps, Services, pod specs, ...) stays a dict, because
+we do not own that schema and a typed mirror of it would be a second source of
+truth that silently drifts from the real API — and would still have to become a
+dict at the YAML boundary. Records this module owns outright (``Mount``,
+``ProvisionSplit``) are dataclasses, since nothing external constrains their shape.
 '''
 from __future__ import absolute_import, division, print_function
 
 import json
 import re
 import subprocess
-from typing import List, Optional
+from dataclasses import dataclass
+from typing import List, NamedTuple, Optional
 
 import yaml
 
@@ -71,9 +79,27 @@ def k8s_name(*parts : object) -> str:
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
-def parse_mounts(values : Optional[List[str]]) -> list:
+@dataclass(frozen = True)
+class Mount:
     '''
-    Parses repeatable ``--mount`` specs into mount dicts consumed by ``_pod_spec``.
+    One host-path mount threaded into every node workload (and into the prepare /
+    compile containers by ``deploy.build.run_in_image``). Produced by
+    ``parse_mounts``; rendered into a hostPath volume + volumeMount by ``_pod_spec``.
+
+    - Arguments:
+        - name: the volume name, unique within the pod (``vf-mount-<i>``).
+        - host_path: absolute path on the cluster node.
+        - container_path: absolute path it appears at inside the container.
+        - read_only: whether the container gets it read-only.
+    '''
+    name : str
+    host_path : str
+    container_path : str
+    read_only : bool
+
+def parse_mounts(values : Optional[List[str]]) -> List[Mount]:
+    '''
+    Parses repeatable ``--mount`` specs into ``Mount`` records consumed by ``_pod_spec``.
 
     - Arguments:
         - values: list of ``/host/path:/container/path[:ro]`` strings. The \
@@ -81,10 +107,16 @@ def parse_mounts(values : Optional[List[str]]) -> list:
             both sides (what a flow compiled against local files needs, since the \
             paths baked into node params must resolve identically in the pods).
 
+    - Returns:
+        - a list of ``Mount``, in argument order. ``name`` is only unique within \
+            one call, so a concatenation of two ``parse_mounts`` results repeats \
+            names — fine for ``run_in_image`` (docker ``-v`` ignores them), which \
+            is the only caller that concatenates.
+
     - Raises:
         - ``ValueError`` on a relative path or a malformed suffix.
     '''
-    mounts = []
+    mounts : List[Mount] = []
     for i, value in enumerate(values or []):
         parts = value.split(':')
         read_only = False
@@ -96,8 +128,8 @@ def parse_mounts(values : Optional[List[str]]) -> list:
         if len(parts) != 2 or not parts[0].startswith('/') or not parts[1].startswith('/'):
             raise ValueError(f'--mount must be /host/path[:/container/path][:ro] with '
                              f'absolute paths, got: {value!r}')
-        mounts.append({'name': f'vf-mount-{i}', 'host_path': parts[0],
-                       'container_path': parts[1], 'read_only': read_only})
+        mounts.append(Mount(name = f'vf-mount-{i}', host_path = parts[0],
+                            container_path = parts[1], read_only = read_only))
     return mounts
 
 def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
@@ -145,15 +177,32 @@ def _labels(flow_id : str, node_name : Optional[str] = None) -> dict:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def gpu_demand(specs : List[NodeSpec], default_resource : Optional[str] = None) -> dict:
+def gpu_demand(specs : List[NodeSpec],
+               default_resource : Optional[str] = None) -> dict[str, int]:
     '''
     Whole-flow GPU demand per extended-resource name: every replica of a GPU node
     claims its own ``gpu_count`` devices exclusively, so this is the allocatable
     capacity the cluster must have for the flow to fully schedule. The single
     source of truth for deploy's preflight and ``videoflow explain`` — the two
     must never disagree.
+
+    Deliberately a ``dict[str, int]`` and not a dataclass: the keys are
+    cluster-defined extended-resource names (``nvidia.com/gpu``, ``amd.com/gpu``,
+    a MIG profile, a vendor's own), discovered from the specs at runtime. There is
+    no fixed field set to name, and every caller iterates it against the cluster's
+    equally open-ended allocatable map, so this is a mapping in substance, not a
+    record wearing a dict's clothes.
+
+    - Arguments:
+        - specs: the compiled flow. Non-GPU nodes contribute nothing.
+        - default_resource: extended-resource name for GPU nodes that don't name \
+            their own (``--gpu-resource-name``). Defaults to ``nvidia.com/gpu``.
+
+    - Returns:
+        - resource name -> total devices the flow needs at full scale. Empty when \
+            no node requests a GPU.
     '''
-    demand : dict = {}
+    demand : dict[str, int] = {}
     for spec in specs:
         if spec.device_type != 'gpu':
             continue
@@ -162,7 +211,7 @@ def gpu_demand(specs : List[NodeSpec], default_resource : Optional[str] = None) 
     return demand
 
 def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
-              nats_configmap : str, mounts : Optional[List[dict]] = None,
+              nats_configmap : str, mounts : Optional[List[Mount]] = None,
               gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
               gpu_resource_name : Optional[str] = None) -> dict:
     container : dict = {
@@ -240,13 +289,26 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
 
     pod_spec: dict = {'containers': [container]}
     if mounts:
+        # Volume names must be unique within a pod — the API server rejects a
+        # duplicate. parse_mounts numbers from vf-mount-0 per call, so concatenating
+        # two of its results repeats names (see its docstring). That list is only
+        # meant for run_in_image, where docker ignores names; catch it here rather
+        # than shipping a pod spec the cluster refuses.
+        names = [m.name for m in mounts]
+        duplicates = sorted({n for n in names if names.count(n) > 1})
+        if duplicates:
+            raise ValueError(
+                f'duplicate mount volume names {duplicates} for node {spec.name!r}: '
+                'these come from concatenating two parse_mounts() results, which each '
+                'number from vf-mount-0. Pass a single parse_mounts() call to '
+                'render_manifests — the concatenated list is only for run_in_image.')
         # hostPath type left unset on purpose: the mounted path may be a directory
         # or a single file, and an unset type skips kubelet existence-kind checks.
         container['volumeMounts'] = [
-            {'name': m['name'], 'mountPath': m['container_path'], 'readOnly': m['read_only']}
+            {'name': m.name, 'mountPath': m.container_path, 'readOnly': m.read_only}
             for m in mounts]
         pod_spec['volumes'] = [
-            {'name': m['name'], 'hostPath': {'path': m['host_path']}} for m in mounts]
+            {'name': m.name, 'hostPath': {'path': m.host_path}} for m in mounts]
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
     if tolerations:
@@ -282,7 +344,7 @@ def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str]
     }
 
 def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
-             nats_cm_name : str, mounts : Optional[List[dict]] = None,
+             nats_cm_name : str, mounts : Optional[List[Mount]] = None,
              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
              gpu_resource_name : Optional[str] = None) -> dict:
     labels = _labels(flow_id, spec.name)
@@ -510,7 +572,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     nats_monitoring_endpoint : Optional[str] = None,
                     envelope_version : Optional[int] = None,
                     allow_pickle : bool = False, provision_image : Optional[str] = None,
-                    mounts : Optional[List[dict]] = None,
+                    mounts : Optional[List[Mount]] = None,
                     gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
                     gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False) -> list:
     '''
@@ -534,7 +596,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         ``default_image`` may not be. Defaults to ``default_image``; set it \
         explicitly (``--provision-image``) for flows whose default image is a \
         non-Python vendor image.
-    - mounts: mount dicts from ``parse_mounts`` — each becomes a hostPath \
+    - mounts: ``Mount`` records from ``parse_mounts`` — each becomes a hostPath \
         volume + volumeMount on every node workload (not the provision Job, \
         which never touches node data).
     - gpu_runtime_class: ``runtimeClassName`` to put on GPU pods (``--gpu-runtime-class``). \
@@ -624,15 +686,37 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
             template.setdefault('metadata', {}).setdefault('labels', {})[LABEL_RUN_ID] = run_label
     return manifests
 
-def split_provision_manifests(manifests : List[dict], flow_id : str) -> tuple:
+class ProvisionSplit(NamedTuple):
     '''
-    Partitions rendered manifests into ``(provision_phase, worker_phase)`` so the
-    caller can apply provisioning first and wait for it before starting workers.
+    The two apply phases of a flow's manifests, in the order they must be applied.
+
+    A ``NamedTuple`` rather than a plain ``@dataclass``: the phases are genuinely
+    ordered (phase 1 must be applied and awaited before phase 2), and existing
+    callers unpack the result positionally, which keeps working unchanged.
+
+    - Arguments:
+        - provision: manifests the provision Job needs before any worker publishes.
+        - worker: every node's own ConfigMap/workload/service/PDB.
+    '''
+    provision : List[dict]
+    worker : List[dict]
+
+def split_provision_manifests(manifests : List[dict], flow_id : str) -> ProvisionSplit:
+    '''
+    Partitions rendered manifests into a ``ProvisionSplit`` so the caller can apply
+    provisioning first and wait for it before starting workers.
 
     The provision phase is everything the provision Job needs to create the broker
     streams/durables (including its EOS interest anchors) before any worker
     publishes: the broker + specs ConfigMaps, the NetworkPolicy, and the provision
     Job itself. The worker phase is every node's ConfigMap/workload/service/PDB.
+
+    - Arguments:
+        - manifests: the full rendered manifest list from ``render_manifests``.
+        - flow_id: the flow id the provision-phase resource names are derived from.
+
+    - Returns:
+        - a ``ProvisionSplit(provision, worker)``, each preserving input order.
     '''
     provision_names = {
         k8s_name('vf', flow_id, 'broker'),
@@ -640,11 +724,11 @@ def split_provision_manifests(manifests : List[dict], flow_id : str) -> tuple:
         k8s_name('vf', flow_id, 'netpol'),
         k8s_name('vf', flow_id, 'provision'),
     }
-    phase1 : list = []
-    phase2 : list = []
+    provision : List[dict] = []
+    worker : List[dict] = []
     for m in manifests:
-        (phase1 if m['metadata']['name'] in provision_names else phase2).append(m)
-    return phase1, phase2
+        (provision if m['metadata']['name'] in provision_names else worker).append(m)
+    return ProvisionSplit(provision = provision, worker = worker)
 
 def delete_resources(kubectl : str, namespace : str, flow_id : str,
                      run_id : Optional[str] = None) -> None:

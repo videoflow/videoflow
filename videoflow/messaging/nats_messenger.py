@@ -39,7 +39,7 @@ from ..wire.serialization import (
     derive_message_id,
     encode_envelope,
 )
-from .grouping import make_assembler
+from .grouping import EnvelopeEntry, make_assembler
 from .topology import (
     consumer_config_for,
     control_subject_for,
@@ -293,14 +293,15 @@ class NATSMessenger(Messenger):
             return partitioned_durable_name_for(self._node.name, parent_name, self._replica_id)
         return durable_name_for(self._node.name, parent_name)
 
-    def _owns(self, entry : dict[str, Any]) -> bool:
+    def _owns(self, entry : EnvelopeEntry) -> bool:
         '''For a partitioned node, whether this replica owns the message (hash of the partition key modulo replica count).'''
         if not self._partition_by:
             return True
+        key : Any
         if self._partition_by == 'trace_id':
-            key = entry.get('trace_id')
+            key = entry.trace_id
         else:
-            key = (entry.get('metadata') or {}).get(self._partition_by)
+            key = (entry.metadata or {}).get(self._partition_by)
         digest = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
         return (int(digest[:8], 16) % self._nb_tasks) == self._replica_id
 
@@ -332,7 +333,11 @@ class NATSMessenger(Messenger):
                 continue
             for msg in msgs:
                 try:
-                    entry = decode_envelope(msg.data, blob_store = self._blob_store)
+                    # The one place a decoded envelope crosses into messaging:
+                    # adapt the wire dict to the typed record here so nothing
+                    # downstream (join, EOS drain, ownership) reads it by key.
+                    entry = EnvelopeEntry.from_decoded(
+                        decode_envelope(msg.data, blob_store = self._blob_store))
                 except Exception:
                     # Undecodable message: terminate it so it is not redelivered
                     # forever (a genuinely poisoned wire payload).
@@ -643,7 +648,7 @@ class NATSMessenger(Messenger):
                 self._last_event_ts = ready.event_ts
                 # Hold this group's handles for the task to ack/fail after process().
                 self._inflight_handles = list(ready.handles)
-                out = {}
+                out: dict[str, dict[str, Any]] = {}
                 info: dict = {}
                 for name in self._parent_names:
                     entry = ready.entries.get(name)
@@ -653,17 +658,19 @@ class NATSMessenger(Messenger):
                                     'is_stop_signal': False, 'event_ts': None}
                         info[name] = None
                         continue
+                    # A CollectEntry carries lists and has no lineage of its own,
+                    # so it reports trace_id/seq as None — as it always has.
                     out[name] = {
-                        'message': entry['message'],
-                        'metadata': entry['metadata'],
+                        'message': entry.message,
+                        'metadata': entry.metadata,
                         'is_stop_signal': False,
-                        'event_ts': entry.get('event_ts'),
+                        'event_ts': entry.event_ts,
                     }
                     info[name] = {
-                        'event_ts': entry.get('event_ts'),
-                        'metadata': entry['metadata'],
-                        'trace_id': entry.get('trace_id'),
-                        'seq': entry.get('seq'),
+                        'event_ts': entry.event_ts,
+                        'metadata': entry.metadata,
+                        'trace_id': entry.trace_id if isinstance(entry, EnvelopeEntry) else None,
+                        'seq': entry.seq if isinstance(entry, EnvelopeEntry) else None,
                     }
                 self._last_input_info = info
                 return out
@@ -685,7 +692,7 @@ class NATSMessenger(Messenger):
                 if self._eos_seen and self._idle_polls % 15 == 0:
                     self._log_drain_stall()
             for parent_name, entry, handle in ready_items:
-                if entry['is_stop_signal']:
+                if entry.is_stop_signal:
                     # Data consumers filter to the data subject, so EOS is handled by
                     # the EOS loop, not here. Ack defensively if one slips through.
                     handle.ack()
@@ -783,7 +790,7 @@ class NATSMessenger(Messenger):
         if handle is not None:
             handle.ack()
 
-    def _recv_ready(self) -> list[tuple[str, dict, _AckHandle]]:
+    def _recv_ready(self) -> list[tuple[str, EnvelopeEntry, _AckHandle]]:
         '''
         Waits up to a short timeout for at least one parent queue to have an item, \
             then returns every parent item that became ready within that wait as \
@@ -791,7 +798,7 @@ class NATSMessenger(Messenger):
             which lets ``receive_message`` loop back and re-check the termination \
             event instead of blocking forever when the flow is being torn down.
         '''
-        async def _wait_for_any_parent() -> list[tuple[str, dict, _AckHandle]]:
+        async def _wait_for_any_parent() -> list[tuple[str, EnvelopeEntry, _AckHandle]]:
             get_tasks = {
                 asyncio.ensure_future(self._parent_queues[name].get()): name
                 for name in self._parent_names

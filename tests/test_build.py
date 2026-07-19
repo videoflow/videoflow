@@ -12,9 +12,10 @@ from videoflow.deploy import build
 
 
 class _Proc:
-    def __init__(self, returncode = 0, stdout = ''):
+    def __init__(self, returncode = 0, stdout = '', stderr = ''):
         self.returncode = returncode
         self.stdout = stdout
+        self.stderr = stderr
 
 
 def test_find_dockerfile_prefers_gpu_for_gpu_flows(tmp_path):
@@ -83,3 +84,66 @@ def test_ensure_base_errors_for_wheel_installs(monkeypatch, tmp_path):
     monkeypatch.setattr(videoflow, '__file__', str(tmp_path / 'videoflow' / '__init__.py'))
     with pytest.raises(RuntimeError, match = 'build-images.sh'):
         build.ensure_base_image('videoflow-base:py3.12')
+
+
+# -- run_in_image: the docker -v flags built from Mount records ---------------
+# This is the second consumer of parse_mounts output (the first is _pod_spec).
+# It had no coverage, so a change to the Mount shape broke it silently at deploy
+# time rather than in CI.
+
+def _capture_argv(monkeypatch, returncode = 0, stdout = 'out'):
+    seen = {}
+    def run(cmd, **kw):
+        seen['cmd'] = cmd
+        return _Proc(returncode = returncode, stdout = stdout)
+    monkeypatch.setattr(subprocess, 'run', run)
+    return seen
+
+
+def _v_flags(cmd):
+    return [cmd[i + 1] for i, a in enumerate(cmd) if a == '-v']
+
+
+def test_run_in_image_builds_v_flags_from_mounts(monkeypatch):
+    from videoflow.deploy.manifests import parse_mounts
+    seen = _capture_argv(monkeypatch)
+    mounts = parse_mounts(['/data/in:/data/in:ro', '/work', '/a:/b'])
+    build.run_in_image('img:1', ['python', '-c', 'pass'], mounts = mounts)
+    # read-only keeps its :ro suffix; read-write has none; shorthand maps both sides.
+    assert _v_flags(seen['cmd']) == ['/data/in:/data/in:ro', '/work:/work', '/a:/b']
+
+
+def test_run_in_image_accepts_concatenated_mounts_with_duplicate_names(monkeypatch):
+    '''
+    cli.py builds ``parse_mounts([graph_dir]) + mounts``, and each parse_mounts call
+    numbers from vf-mount-0, so the concatenation repeats volume names. That is fine
+    here — docker addresses mounts by path, not name — and this is the only consumer
+    allowed to receive such a list. ``_pod_spec`` rejects it instead.
+    '''
+    from videoflow.deploy.manifests import parse_mounts
+    seen = _capture_argv(monkeypatch)
+    container_mounts = parse_mounts(['/graph/dir']) + parse_mounts(['/data:/data:ro'])
+    assert len({m.name for m in container_mounts}) == 1   # names collide...
+    build.run_in_image('img:1', ['python'], mounts = container_mounts)
+    # ...but both mounts still reach docker, addressed by path.
+    assert _v_flags(seen['cmd']) == ['/graph/dir:/graph/dir', '/data:/data:ro']
+
+
+def test_run_in_image_argv_shape_and_capture(monkeypatch):
+    seen = _capture_argv(monkeypatch, stdout = 'compiled')
+    out = build.run_in_image('img:1', ['videoflow-compile', '--x'], mounts = None,
+                             workdir = '/w', gpus = True, capture = True)
+    cmd = seen['cmd']
+    assert out == 'compiled'
+    assert cmd[:3] == ['docker', 'run', '--rm']
+    assert ['--gpus', 'all'] == cmd[cmd.index('--gpus'):cmd.index('--gpus') + 2]
+    assert ['-w', '/w'] == cmd[cmd.index('-w'):cmd.index('-w') + 2]
+    # The base image bakes in the worker entrypoint; it must be overridden.
+    assert cmd[cmd.index('--entrypoint') + 1] == 'videoflow-compile'
+    assert cmd[-2:] == ['img:1', '--x']
+
+
+def test_run_in_image_raises_with_stderr_on_failure(monkeypatch):
+    _capture_argv(monkeypatch, returncode = 1)
+    with pytest.raises(RuntimeError, match = 'command failed in img:1'):
+        build.run_in_image('img:1', ['boom'], capture = True)

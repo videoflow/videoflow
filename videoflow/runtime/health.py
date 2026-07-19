@@ -15,6 +15,7 @@ from __future__ import absolute_import, division, print_function
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Optional
 
@@ -28,6 +29,21 @@ DEFAULT_HEALTH_PORT = 8080
 # Kubernetes restarts the pod (e.g. a wedged broker connection).
 LIVENESS_STALL_SECONDS = 60
 
+@dataclass
+class _MetricAggregate:
+    '''
+    The running aggregate behind one observed metric: how many observations have
+    arrived and their running total. Rendered as the Prometheus summary pair
+    ``videoflow_<metric>_count`` / ``videoflow_<metric>_sum``, hence the two fields
+    and no others — this is a fixed-shape record, not a bag of metric keys.
+
+    ``total`` starts as a float so a metric's ``_sum`` renders as ``0.0`` rather
+    than ``0`` on the (unreachable in practice) zero-observation path, and so the
+    accumulation is float arithmetic from the first observation on.
+    '''
+    count : int = 0
+    total : float = 0.0
+
 class HealthState:
     '''Thread-safe holder for readiness/liveness/metrics, shared between the run loop (via the messenger) and the HTTP handler.'''
     def __init__(self, node_name : str) -> None:
@@ -35,10 +51,10 @@ class HealthState:
         self._lock = threading.Lock()
         self._ready = False
         self._last_beat = time.time()
-        # metric name -> {'count': int, 'sum': float}
-        self._metrics: dict = {}
+        # metric name -> its running aggregate. Arbitrary keys, fixed-shape values.
+        self._metrics : dict[str, _MetricAggregate] = {}
         # counter name -> int (rendered as videoflow_<name>_total)
-        self._counters: dict = {}
+        self._counters : dict[str, int] = {}
 
     def mark_ready(self) -> None:
         with self._lock:
@@ -52,9 +68,9 @@ class HealthState:
         if value is None:
             return
         with self._lock:
-            m = self._metrics.setdefault(metric, {'count': 0, 'sum': 0.0})
-            m['count'] += 1
-            m['sum'] += value
+            m = self._metrics.setdefault(metric, _MetricAggregate())
+            m.count += 1
+            m.total += value
 
     def incr(self, counter : str, amount : int = 1) -> None:
         with self._lock:
@@ -74,8 +90,8 @@ class HealthState:
             safe_node = self._node_name.replace('"', '')
             labels = f'{{node="{safe_node}"}}'
             for metric, m in self._metrics.items():
-                lines.append(f'videoflow_{metric}_count{labels} {m["count"]}')
-                lines.append(f'videoflow_{metric}_sum{labels} {m["sum"]}')
+                lines.append(f'videoflow_{metric}_count{labels} {m.count}')
+                lines.append(f'videoflow_{metric}_sum{labels} {m.total}')
             for counter, value in self._counters.items():
                 lines.append(f'videoflow_{counter}_total{labels} {value}')
             return '\n'.join(lines) + '\n'

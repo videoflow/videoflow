@@ -7,6 +7,7 @@ Kubernetes pod as environment variables / a ConfigMap.
 '''
 from __future__ import absolute_import, division, print_function
 
+from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from .flow import Flow
@@ -26,6 +27,7 @@ def _node_kind(node : Node) -> str:
         return NODE_KIND_CONSUMER
     raise ValueError(f'{node} is not a Producer/Processor/Consumer node')
 
+@dataclass
 class NodeSpec:
     '''
     A flat, serializable description of one node's deployment.
@@ -45,40 +47,40 @@ class NodeSpec:
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
             deploy-time default/override supplies it — see ``videoflow.deploy.images``).
+
+    The field order below *is* the constructor signature — callers pass these
+    positionally (``NodeSpec('n', 'pkg.Cls', {}, [], 'processor', ...)``), so
+    reordering or inserting a field is a breaking change. Not ``frozen``: a spec is
+    a plain mutable record, and ``to_dict``/``from_dict`` stay explicit because
+    they are the ``VF_FLOW_SPECS_JSON`` serialization boundary — ``asdict()``
+    would deep-copy and rewrite the nested ``params``/``descriptor`` values.
     '''
-    def __init__(self, name : str, node_class : Optional[str], params : Dict[str, Any],
-                parents : List[str], kind : str, has_children : bool,
-                nb_tasks : int, device_type : str, is_finite : bool, image : Optional[str] = None,
-                partition_by : Optional[str] = None, join_policy : Optional[Dict[str, Any]] = None,
-                component_ref : Optional[str] = None, descriptor : Optional[Dict[str, Any]] = None,
-                command : Optional[List[str]] = None, protocol_version : Optional[int] = None,
-                gpu_count : int = 1, gpu_resource_name : Optional[str] = None) -> None:
-        self.name = name
-        # ``node_class`` is the Python import path for a native node, or None for a
-        # remote (language-agnostic) component — those are identified by
-        # ``component_ref`` and run their own image's entrypoint instead of the
-        # Python worker. Exactly one of node_class / component_ref is set.
-        self.node_class = node_class
-        self.params = params
-        self.parents = parents
-        self.kind = kind
-        self.has_children = has_children
-        self.nb_tasks = nb_tasks
-        self.device_type = device_type
-        # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
-        self.gpu_count = gpu_count
-        self.gpu_resource_name = gpu_resource_name
-        self.is_finite = is_finite
-        self.image = image
-        # Routing-relevant fields lifted out of params so engines/manifests see
-        # them without parsing constructor kwargs.
-        self.partition_by = partition_by
-        self.join_policy = join_policy  # dict or None
-        # Remote-component fields (None for native Python nodes).
-        self.component_ref = component_ref
-        self.descriptor = descriptor        # the component descriptor as a dict
-        self.command = command              # container command override, or None
-        self.protocol_version = protocol_version
+    name : str
+    # ``node_class`` is the Python import path for a native node, or None for a
+    # remote (language-agnostic) component — those are identified by
+    # ``component_ref`` and run their own image's entrypoint instead of the
+    # Python worker. Exactly one of node_class / component_ref is set.
+    node_class : Optional[str]
+    params : Dict[str, Any]
+    parents : List[str]
+    kind : str
+    has_children : bool
+    nb_tasks : int
+    device_type : str
+    is_finite : bool
+    image : Optional[str] = None
+    # Routing-relevant fields lifted out of params so engines/manifests see
+    # them without parsing constructor kwargs.
+    partition_by : Optional[str] = None
+    join_policy : Optional[Dict[str, Any]] = None   # dict or None
+    # Remote-component fields (None for native Python nodes).
+    component_ref : Optional[str] = None
+    descriptor : Optional[Dict[str, Any]] = None    # the component descriptor as a dict
+    command : Optional[List[str]] = None            # container command override, or None
+    protocol_version : Optional[int] = None
+    # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
+    gpu_count : int = 1
+    gpu_resource_name : Optional[str] = None
 
     @property
     def is_remote(self) -> bool:

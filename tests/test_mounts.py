@@ -11,7 +11,7 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
-from videoflow.deploy.manifests import parse_mounts, render_manifests
+from videoflow.deploy.manifests import Mount, parse_mounts, render_manifests
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
 
@@ -36,14 +36,14 @@ def _by_kind(flow_type, mounts, **kw):
 
 def test_parse_mounts_forms():
     mounts = parse_mounts(['/data/in:/data/in:ro', '/work', '/cache:ro', '/a:/b'])
-    assert mounts[0] == {'name': 'vf-mount-0', 'host_path': '/data/in',
-                         'container_path': '/data/in', 'read_only': True}
+    assert mounts[0] == Mount(name = 'vf-mount-0', host_path = '/data/in',
+                              container_path = '/data/in', read_only = True)
     # Single-path shorthand mounts the same path on both sides.
-    assert (mounts[1]['host_path'], mounts[1]['container_path'], mounts[1]['read_only']) == \
+    assert (mounts[1].host_path, mounts[1].container_path, mounts[1].read_only) == \
         ('/work', '/work', False)
-    assert (mounts[2]['host_path'], mounts[2]['container_path'], mounts[2]['read_only']) == \
+    assert (mounts[2].host_path, mounts[2].container_path, mounts[2].read_only) == \
         ('/cache', '/cache', True)
-    assert (mounts[3]['host_path'], mounts[3]['container_path']) == ('/a', '/b')
+    assert (mounts[3].host_path, mounts[3].container_path) == ('/a', '/b')
     assert parse_mounts(None) == []
     assert parse_mounts([]) == []
 
@@ -86,3 +86,30 @@ def test_no_mounts_leaves_manifests_unchanged():
     _, by = _by_kind(BATCH, None)
     volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-work')])
     assert volumes is None and vmounts is None
+
+
+def test_parse_mounts_numbers_from_zero_per_call():
+    '''
+    Names are unique within one call but NOT across calls — each starts at
+    vf-mount-0. Concatenating two results is what ``cli.py`` does for the
+    prepare/compile containers, and it is only safe because ``run_in_image``
+    addresses mounts by path. Pinning the numbering so the collision below
+    stays reproducible rather than accidental.
+    '''
+    assert [m.name for m in parse_mounts(['/a', '/b'])] == ['vf-mount-0', 'vf-mount-1']
+    concatenated = parse_mounts(['/graph']) + parse_mounts(['/a', '/b'])
+    assert [m.name for m in concatenated] == ['vf-mount-0', 'vf-mount-0', 'vf-mount-1']
+
+
+def test_render_rejects_duplicate_mount_names():
+    '''
+    A pod may not declare two volumes with the same name — the API server rejects
+    it. Routing cli.py's concatenated ``container_mounts`` into render_manifests
+    (instead of the single-call ``mounts``) would do exactly that, so fail with a
+    message naming the fix rather than emitting a manifest the cluster refuses.
+    '''
+    concatenated = parse_mounts(['/graph']) + parse_mounts(['/data:/data:ro'])
+    with pytest.raises(ValueError, match = 'duplicate mount volume names'):
+        _by_kind(BATCH, concatenated)
+    # The single-call list this is easily confused with renders fine.
+    _by_kind(BATCH, parse_mounts(['/graph', '/data:/data:ro']))

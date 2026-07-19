@@ -61,13 +61,18 @@ class GpuStrategy:
         The container ``resources`` fragment for one GPU pod — ``{}`` for a
         strategy that requests nothing.
 
+        Stays a plain dict on purpose: it is spliced straight into a container
+        spec, so its shape is Kubernetes' ``ResourceRequirements`` schema and not
+        a record we own. A strategy may legitimately emit ``requests``, ``limits``
+        or neither, with arbitrary extended-resource keys.
+
         - Arguments:
             - spec: the node's ``NodeSpec`` (``gpu_count``, ``gpu_resource_name``).
             - gpu_resource_name: deploy-level default extended-resource name.
         '''
         raise NotImplementedError('GpuStrategy subclass must implement pod_resources()')
 
-    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict] = None,
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
                         gpu_runtime_class : Optional[str] = None) -> List[str]:
         '''
         Strategy-specific preflight problems, each a string naming its fix. The
@@ -81,7 +86,7 @@ class GpuStrategy:
         '''
         return []
 
-    def prepare(self, demand : Optional[dict] = None, kubectl : str = 'kubectl') -> None:
+    def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl') -> None:
         '''
         Cluster setup this strategy needs before a run's manifests are applied.
         Default: nothing. A strategy that mutates cluster state here is
@@ -110,7 +115,7 @@ class ExclusiveGpu(GpuStrategy):
         # pods beyond capacity stay Pending.
         return {'limits': {resolve_gpu_resource(spec, gpu_resource_name): spec.gpu_count}}
 
-    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict] = None,
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
                         gpu_runtime_class : Optional[str] = None) -> List[str]:
         # Function-level: cluster.py imports this module at module scope (for
         # SHARED_NEEDS_RUNTIME_CLASS and get_gpu_mode), so importing it back at
@@ -162,7 +167,7 @@ class SharedGpu(GpuStrategy):
         # device.
         return {}
 
-    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict] = None,
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
                         gpu_runtime_class : Optional[str] = None) -> List[str]:
         # Function-level to break the same cycle as in ExclusiveGpu above.
         from .cluster import nvidia_runtimeclass
@@ -182,7 +187,7 @@ class SharedGpu(GpuStrategy):
 
 # -- registry --------------------------------------------------------------
 
-_GPU_STRATEGIES : dict = {}
+_GPU_STRATEGIES : dict[str, GpuStrategy] = {}
 
 def register_gpu_mode(strategy : GpuStrategy) -> None:
     '''
@@ -200,7 +205,7 @@ def register_gpu_mode(strategy : GpuStrategy) -> None:
         raise ValueError(f'{type(strategy).__name__} must set a non-empty name')
     _GPU_STRATEGIES[strategy.name] = strategy
 
-def registered_gpu_modes() -> list:
+def registered_gpu_modes() -> list[str]:
     '''Registered GPU mode names, sorted. The CLI's ``--gpu-mode`` choices.'''
     return sorted(_GPU_STRATEGIES)
 

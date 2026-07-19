@@ -16,6 +16,7 @@ from videoflow.core.policies import (
     JoinPolicy,
 )
 from videoflow.messaging.grouping import (
+    EnvelopeEntry,
     TimeGroupAssembler,
     TraceGroupAssembler,
     make_assembler,
@@ -37,14 +38,14 @@ class FakeHandle:
 
 
 def entry(trace_id, seq, event_ts = None, message = 'm', metadata = None):
-    return {
-        'trace_id': trace_id,
-        'seq': seq,
-        'event_ts': event_ts,
-        'message': message,
-        'metadata': metadata,
-        'is_stop_signal': False,
-    }
+    return EnvelopeEntry(
+        trace_id = trace_id,
+        seq = seq,
+        event_ts = event_ts,
+        message = message,
+        metadata = metadata,
+        is_stop_signal = False,
+    )
 
 # -- JoinPolicy ------------------------------------------------------------
 
@@ -90,8 +91,8 @@ def test_trace_group_completes_on_matching_trace_id():
     assert ready is not None
     assert ready.trace_id == 't1'
     assert ready.seq == 3  # min over the group
-    assert ready.entries['a']['message'] == 'A'
-    assert ready.entries['b']['message'] == 'B'
+    assert ready.entries['a'].message == 'A'
+    assert ready.entries['b'].message == 'B'
     assert set(ready.handles) == {ha, hb}
     assert ha.state is None and hb.state is None  # emitted unresolved
     assert not asm.has_pending_from('a')
@@ -145,8 +146,8 @@ def test_time_group_joins_within_tolerance():
     asm.add('cam2', entry('cam2:9', 9, event_ts = t0 + 0.004, message = 'F2'), FakeHandle())
     ready = asm.pop_ready()
     assert ready is not None
-    assert ready.entries['cam1']['message'] == 'F1'
-    assert ready.entries['cam2']['message'] == 'F2'
+    assert ready.entries['cam1'].message == 'F1'
+    assert ready.entries['cam2'].message == 'F2'
     assert ready.event_ts == t0  # min over members
     assert ready.trace_id.startswith('tw-')
 
@@ -163,7 +164,7 @@ def test_time_group_picks_nearest_candidate():
     asm.add('cam1', entry('cam1:2', 2, event_ts = 1000.08, message = 'late'), FakeHandle())
     asm.add('cam2', entry('cam2:1', 1, event_ts = 1000.07, message = 'match'), FakeHandle())
     ready = asm.pop_ready()
-    assert ready.entries['cam1']['message'] == 'late'  # nearest in time wins
+    assert ready.entries['cam1'].message == 'late'  # nearest in time wins
 
 def test_time_quorum_emits_partial_after_timeout():
     asm = TimeGroupAssembler('n', ['cam1', 'cam2', 'cam3'],
@@ -175,8 +176,8 @@ def test_time_quorum_emits_partial_after_timeout():
     asm.sweep(now = time.monotonic() + 3)
     ready = asm.pop_ready()
     assert ready is not None
-    assert ready.entries['cam1']['message'] == 'F1'
-    assert ready.entries['cam2']['message'] == 'F2'
+    assert ready.entries['cam1'].message == 'F1'
+    assert ready.entries['cam2'].message == 'F2'
     assert ready.entries['cam3'] is None  # missing parent surfaced as None
     assert len(ready.handles) == 2
 
@@ -204,9 +205,9 @@ def test_time_collect_parent_delivers_window_as_list():
     assert asm.pop_ready(now = time.monotonic()) is None
     ready = asm.pop_ready(now = time.monotonic() + 1)
     assert ready is not None
-    assert ready.entries['cam1']['message'] == 'F1'
-    assert ready.entries['imu']['message'] == ['s1', 's2']  # sorted by event time
-    assert ready.entries['imu']['event_ts'] == [t0 - 0.020, t0 + 0.010]
+    assert ready.entries['cam1'].message == 'F1'
+    assert ready.entries['imu'].message == ['s1', 's2']  # sorted by event time
+    assert ready.entries['imu'].event_ts == [t0 - 0.020, t0 + 0.010]
     assert imu_handles[0] in ready.handles and imu_handles[1] in ready.handles
     assert imu_handles[2] not in ready.handles      # out-of-window sample kept buffered
     assert asm.has_pending_from('imu')

@@ -81,13 +81,16 @@ def test_every_resource_is_run_scoped_by_label():
 
 def test_split_provision_isolates_broker_from_workers():
     manifests, _ = _by_kind(BATCH)
-    phase1, phase2 = split_provision_manifests(manifests, 'demo')
-    p1 = {m['metadata']['name'] for m in phase1}
+    phases = split_provision_manifests(manifests, 'demo')
+    p1 = {m['metadata']['name'] for m in phases.provision}
     assert p1 == {'vf-demo-broker', 'vf-demo-specs', 'vf-demo-netpol', 'vf-demo-provision'}
     # No worker Job leaks into the provision phase.
     assert not any(m['kind'] == 'Job' and m['metadata']['name'] != 'vf-demo-provision'
-                   for m in phase1)
-    assert any(m['metadata']['name'] == 'vf-demo-work' for m in phase2)
+                   for m in phases.provision)
+    assert any(m['metadata']['name'] == 'vf-demo-work' for m in phases.worker)
+    # Still a plain 2-tuple underneath, so positional unpacking keeps working.
+    phase1, phase2 = split_provision_manifests(manifests, 'demo')
+    assert (phase1, phase2) == (phases.provision, phases.worker)
 
 
 def test_scaledobject_is_a_separate_crd_delete_kind():

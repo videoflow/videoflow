@@ -150,7 +150,32 @@ if you add another, it should be that kind.
 - Raise a domain error with an actionable message rather than returning a sentinel. Validation
   errors are `ValueError` and should name the fix, not just the problem — see the messages in
   `videoflow/deploy/images.py` and `videoflow/core/graph.py` for the house standard.
-- Use `@dataclass` for plain records instead of passing dicts around as structs.
+- Use `@dataclass` for plain records instead of passing dicts around as structs — but only for
+  records **we own**. The line that matters is who defines the shape:
+
+  | Stays a `dict` | Why |
+  |---|---|
+  | Kubernetes objects in `deploy/manifests.py` | External API schema. A typed mirror is a second source of truth that drifts, and still has to become a dict at the YAML boundary. |
+  | `decode_envelope()`'s return | Re-exported through the frozen `videoflow/serialization.py` shim; golden vectors subscript it. |
+  | `component.yaml` descriptors | Mirrors the jsonschema-validated file format. |
+  | `solution.py` template config | Arbitrary user YAML. |
+
+  Also leave it a dict when it is genuinely a **mapping** — arbitrary keys rather than fixed
+  fields. `gpu_demand()` returns cluster-defined extended-resource names (`nvidia.com/gpu`, MIG
+  profiles, vendor-specific), so `dict[str, int]` is the truthful type; a dataclass would have to
+  invent a field set that doesn't exist.
+
+  Current dataclasses: `NodeSpec` (`core/compiler.py`), `Mount` + `ProvisionSplit`
+  (`deploy/manifests.py`), `EnvelopeEntry` + `CollectEntry` (`messaging/grouping.py`),
+  `_MetricAggregate` (`runtime/health.py`).
+
+  Two things that bite:
+  - **Keep `to_dict()`/`from_dict()` explicit where a dict crosses a boundary.**
+    `dataclasses.asdict()` recurses and rebuilds nested values; `NodeSpec.to_dict()` passes
+    `params`/`descriptor` through by reference. Swapping in `asdict()` silently changes what
+    lands in `VF_FLOW_SPECS_JSON`.
+  - **A behaviour-identity check, not a green suite, is the acceptance test** for this kind of
+    refactor: byte-compare the rendered YAML / emitted JSON before and after.
 - Don't introduce an abstraction layer until there is a second caller.
 - When something *is* worth making pluggable, follow the established shape: a module-level
   registry seeded with the built-ins, an explicit `register_*()`, and a lookup that raises
