@@ -111,6 +111,22 @@ def test_gpu_node_resources():
     container = dep['spec']['template']['spec']['containers'][0]
     assert container['resources']['limits']['nvidia.com/gpu'] == 1
     assert dep['spec']['template']['spec']['nodeSelector'] == {'videoflow.io/gpu-pool': 'true'}
+    # No runtimeClassName unless asked for: on a cluster whose node default already is
+    # the NVIDIA runtime, naming a class that doesn't exist would fail the pod.
+    assert 'runtimeClassName' not in dep['spec']['template']['spec']
+
+
+def test_gpu_runtime_class_applies_only_to_gpu_pods():
+    producer = IntProducer(name = 'p')
+    gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
+    printer = CommandlineConsumer(name = 'c')(gpu)
+    flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, gpu_runtime_class = 'nvidia')
+    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
+    assert by_name['vf-g-g']['spec']['template']['spec']['runtimeClassName'] == 'nvidia'
+    # A CPU node must not get it — it would pin the pod to the GPU runtime for nothing.
+    assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
 
 def test_manifests_are_valid_yaml():
     specs = compile_flow(_demo_flow())

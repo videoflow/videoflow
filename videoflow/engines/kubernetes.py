@@ -46,12 +46,16 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - kubectl: kubectl binary name/path.
         - mounts: optional mount dicts (see ``manifests.parse_mounts``) — hostPath \
             volumes added to every node workload.
+        - gpu_runtime_class: ``runtimeClassName`` for GPU pods (``nvidia`` on k3s and \
+            other distros where the NVIDIA runtime is opt-in rather than the node \
+            default). Without it a GPU pod schedules but sees no device.
     '''
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str = None,
                 image_overrides : dict = None, blob_redis_url : str = None, specs = None,
                 kubectl : str = 'kubectl', envelope_version : int = None, allow_pickle : bool = False,
                 provision_image : str = None, autoscaling : bool = False, max_replicas : int = 10,
-                nats_monitoring_endpoint : str = None, mounts : list = None) -> None:
+                nats_monitoring_endpoint : str = None, mounts : list = None,
+                gpu_runtime_class : str = None) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -66,6 +70,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._max_replicas = max_replicas
         self._nats_monitoring_endpoint = nats_monitoring_endpoint
         self._mounts = mounts
+        self._gpu_runtime_class = gpu_runtime_class
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -81,6 +86,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             max_replicas = self._max_replicas, nats_monitoring_endpoint = self._nats_monitoring_endpoint,
             envelope_version = self._envelope_version, allow_pickle = self._allow_pickle,
             provision_image = self._provision_image, mounts = self._mounts,
+            gpu_runtime_class = self._gpu_runtime_class,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer

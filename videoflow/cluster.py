@@ -122,14 +122,22 @@ def hostpath_warning(cluster) -> Optional[str]:
                 'start minikube with --mount --mount-string=/path:/path.')
     return None
 
-def gpu_preflight(kubectl = 'kubectl') -> List[str]:
+def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None) -> List[str]:
     '''
-    Checks the two things a GPU node workload needs to schedule (see
-    ``manifests._pod_spec``): a node labeled ``videoflow.io/gpu-pool=true`` and a
-    node advertising allocatable ``nvidia.com/gpu``. Returns problem strings with
-    copy-pasteable fixes (empty list = OK).
+    Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
+    labeled ``videoflow.io/gpu-pool=true``, a node advertising allocatable
+    ``nvidia.com/gpu``, and — where the NVIDIA container runtime is an opt-in
+    RuntimeClass rather than the node default — a ``--gpu-runtime-class``, without
+    which the pod schedules and then runs with no device. Returns problem strings
+    with copy-pasteable fixes (empty list = OK).
     '''
     problems = []
+    # An unreachable cluster makes every check below come back empty, which would
+    # otherwise be reported as "no GPU nodes" and send the operator chasing a
+    # device-plugin install that was never the problem.
+    if _kubectl_out(kubectl, 'version', '-o', 'json') == '':
+        return ['cannot reach the cluster — check that it is running and that '
+                'kubectl is pointed at the right context (kubectl config current-context)']
     labeled = _kubectl_out(kubectl, 'get', 'nodes', '-l', 'videoflow.io/gpu-pool=true', '-o', 'name')
     if not labeled:
         nodes = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'name').splitlines()
@@ -142,4 +150,16 @@ def gpu_preflight(kubectl = 'kubectl') -> List[str]:
         problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device plugin: '
                         'kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/'
                         'v0.16.2/deployments/static/nvidia-device-plugin.yml')
+    # Scheduling is necessary but not sufficient: the device is injected by the NVIDIA
+    # container runtime, which some distros (k3s) register as an opt-in RuntimeClass
+    # and leave off the node default. The presence of such a handler is the signal.
+    if not gpu_runtime_class:
+        handlers = _kubectl_out(kubectl, 'get', 'runtimeclass', '-o',
+                                'jsonpath={.items[*].metadata.name}').split()
+        nvidia_rc = next((h for h in handlers if h == 'nvidia'), None)
+        if nvidia_rc:
+            problems.append(f'a {nvidia_rc!r} RuntimeClass exists but no --gpu-runtime-class was '
+                            f'given — if the NVIDIA runtime is not this node\'s containerd default, '
+                            f'GPU pods will start with no device. Fix: deploy with '
+                            f'--gpu-runtime-class {nvidia_rc}')
     return problems

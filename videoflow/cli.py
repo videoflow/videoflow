@@ -142,7 +142,7 @@ def _cmd_deploy(args) -> None:
         if warning:
             print(f'WARNING: {warning}', file = sys.stderr)
     if any(s.device_type == 'gpu' for s in specs):
-        for problem in gpu_preflight(args.kubectl):
+        for problem in gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class):
             print(f'WARNING: {problem}', file = sys.stderr)
 
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
@@ -275,6 +275,7 @@ def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
             envelope_version = args.envelope_version, allow_pickle = args.allow_pickle,
             provision_image = args.provision_image, mounts = mounts,
+            gpu_runtime_class = args.gpu_runtime_class,
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
@@ -587,6 +588,11 @@ def build_parser() -> argparse.ArgumentParser:
                                'containers), e.g. --mount /data/videos:ro. Absolute paths; the '
                                'single-path form mounts the same path on both sides. Repeatable. '
                                'Solution x-mounts are added automatically.')
+    deploy.add_argument('--gpu-runtime-class', default = None, metavar = 'NAME',
+                        help = 'runtimeClassName for GPU pods, e.g. --gpu-runtime-class nvidia. '
+                               'Needed where the NVIDIA container runtime is an opt-in RuntimeClass '
+                               'instead of the node default (k3s): without it a GPU pod schedules '
+                               'but starts with no device visible.')
     deploy.add_argument('--output', default = './manifests',
                         help = 'Directory for --render-only manifest files (default ./manifests).')
     deploy.add_argument('--image', default = None,

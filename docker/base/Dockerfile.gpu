@@ -1,5 +1,5 @@
 # The videoflow GPU base image: same as docker/base/Dockerfile, but on an NVIDIA CUDA
-# runtime (CUDA 12.4 + cuDNN 9) so downstream node images can run GPU inference
+# runtime (CUDA 12.6 + cuDNN 9) so downstream node images can run GPU inference
 # (TensorFlow, PyTorch, ...). Ubuntu 24.04 ships Python 3.12, the version the project
 # targets, so no PPA is needed.
 #
@@ -14,7 +14,12 @@
 # A -devel CUDA image (ships nvcc + headers) is used, not -runtime, so downstream node
 # images that compile CUDA kernels from source (e.g. detectron2) build correctly.
 # Override CUDA_IMAGE to match your cluster's CUDA/cuDNN if needed.
-ARG CUDA_IMAGE=nvidia/cuda:12.4.1-cudnn-devel-ubuntu24.04
+#
+# CUDA 12.6 is the earliest release NVIDIA publishes for Ubuntu 24.04 — the 12.4 tags
+# stop at ubuntu22.04, whose Python is 3.10. Pin no lower than this without also
+# revisiting the Python 3.12 requirement. Any CUDA 12.x runtime works on a driver from
+# the 12.x series (>= 525) under CUDA minor version compatibility.
+ARG CUDA_IMAGE=nvidia/cuda:12.6.3-cudnn-devel-ubuntu24.04
 FROM ${CUDA_IMAGE}
 
 ENV PYTHONUNBUFFERED=1

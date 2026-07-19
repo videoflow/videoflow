@@ -239,12 +239,53 @@ kubectl taint node <gpu-node> nvidia.com/gpu=present:NoSchedule
 ```bash
 kubectl get nodes -l videoflow.io/gpu-pool=true                                   # non-empty
 kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}'    # e.g. "1 4"
-kubectl run gpu-smoke --rm -it --restart=Never --image=nvidia/cuda:12.4.1-base-ubuntu24.04 \
-    --overrides='{"spec":{"nodeSelector":{"videoflow.io/gpu-pool":"true"},"tolerations":[{"key":"nvidia.com/gpu","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"gpu-smoke","image":"nvidia/cuda:12.4.1-base-ubuntu24.04","command":["nvidia-smi"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
+kubectl run gpu-smoke --rm -it --restart=Never --image=nvidia/cuda:12.4.1-base-ubuntu22.04 \
+    --overrides='{"spec":{"nodeSelector":{"videoflow.io/gpu-pool":"true"},"tolerations":[{"key":"nvidia.com/gpu","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"gpu-smoke","image":"nvidia/cuda:12.4.1-base-ubuntu22.04","command":["nvidia-smi"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
 ```
 
 If `nvidia-smi` prints the device table from inside that pod, the cluster is
-ready — a Videoflow GPU node schedules under identical constraints.
+ready — a Videoflow GPU node schedules under identical constraints. (CUDA 12.4
+images are published for Ubuntu 22.04, not 24.04; 24.04 variants start at CUDA
+12.6.)
+
+**The GPU must reach the container, not just the pod.** The device plugin only
+makes `nvidia.com/gpu` *schedulable*; injecting the device into a container is
+the job of the NVIDIA container runtime. That works out of the box only when the
+node's container runtime uses it **by default**. Distributions that instead
+register it as an opt-in `RuntimeClass` — k3s is the notable one, exposing
+handlers named `nvidia` and `nvidia-experimental` — will happily schedule a GPU
+pod that then finds no device. Name the class at deploy time:
+
+```bash
+videoflow deploy my_flow.py --gpu-runtime-class nvidia
+```
+
+`--gpu-runtime-class` puts `runtimeClassName` on GPU pods only; CPU nodes are left
+on the node's default runtime. Deploy's preflight warns when an `nvidia`
+RuntimeClass exists and the flag wasn't given, since that combination is the one
+that silently produces device-less GPU pods.
+
+Making the nvidia runtime the node's containerd *default* also works and needs no
+flag, but it routes every pod through the NVIDIA shim — and that has a sharp edge.
+Unless `accept-nvidia-visible-devices-envvar-when-unprivileged = false` is set in
+`/etc/nvidia-container-runtime/config.toml` (it defaults to **true**), any container
+whose image sets `NVIDIA_VISIBLE_DEVICES=all` receives every GPU on the node,
+without requesting `nvidia.com/gpu` and without the device plugin accounting for it.
+Every `nvidia/cuda:*` image sets that variable, `videoflow-base:py3.12-cuda`
+included — so a flow deployed with a single `--image` pointing at a CUDA image would
+hand full GPU access to its `device_type='cpu'` nodes. Prefer the per-deploy flag; if
+you do change the node default, set the hardening option at the same time.
+
+The leak is easy to observe: a pod with `runtimeClassName: nvidia` and **no**
+`nvidia.com/gpu` limit still sees every GPU on the node. What keeps Videoflow's pods
+honest is that the class is attached only to `device_type='gpu'` nodes, which always
+carry a limit — the device plugin's allocation then pins each replica to the GPU it
+was actually granted. Attaching the runtime to pods that request no GPU is precisely
+what you want to avoid, which is why `--gpu-runtime-class` never touches CPU nodes.
+
+The device plugin's own DaemonSet needs the same treatment: if its logs say
+`No devices found. Waiting indefinitely.`, it is running under the default runtime
+and needs `runtimeClassName: nvidia` patched onto its pod spec.
 
 **5. Build the node image on the CUDA base.** GPU scheduling only gets the device
 into the pod; the image still has to contain a CUDA-enabled stack. Videoflow ships
@@ -275,10 +316,12 @@ kubectl get pods -n videoflow -o wide                      # GPU pods land on th
 ```
 
 **Single-node dev clusters.** k3s works well for this: it uses containerd, so
-after step 1 it detects the NVIDIA runtime automatically; apply the device plugin
-and label the single node. minikube needs `minikube start --driver=docker
---container-runtime=docker --gpus all`. kind has no supported GPU passthrough —
-use k3s or a remote cluster instead.
+after step 1 it detects the NVIDIA runtime automatically and registers it as an
+`nvidia` RuntimeClass — but it does *not* make it the default, so deploy with
+`--gpu-runtime-class nvidia` or GPU pods will start without a device. Then
+apply the device plugin and label the single node. minikube needs `minikube start
+--driver=docker --container-runtime=docker --gpus all`. kind has no supported GPU
+passthrough — use k3s or a remote cluster instead.
 
 **When GPU pods stay `Pending`**, `kubectl describe pod <pod> -n videoflow` names
 the reason directly: `didn't match Pod's node affinity/selector` means the label

@@ -95,7 +95,8 @@ def test_hostpath_warning_only_for_vm_backed_clusters():
 
 
 def test_gpu_preflight_reports_both_problems_with_fixes(monkeypatch):
-    run, _ = _fake_run({'get nodes -l videoflow.io/gpu-pool=true': '',
+    run, _ = _fake_run({'version': '{}',
+                        'get nodes -l videoflow.io/gpu-pool=true': '',
                         'get nodes -o name': 'node/gpu-box\n'})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight()
@@ -105,6 +106,30 @@ def test_gpu_preflight_reports_both_problems_with_fixes(monkeypatch):
 
 
 def test_gpu_preflight_ok(monkeypatch):
-    run, _ = _fake_run({'gpu-pool=true': 'node/gpu-box', 'allocatable': '1'})
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box', 'allocatable': '1'})
     monkeypatch.setattr(subprocess, 'run', run)
     assert cluster.gpu_preflight() == []
+
+
+def test_gpu_preflight_unreachable_cluster_says_so(monkeypatch):
+    '''An unreachable cluster answers every query with '', which must not be
+    misreported as a missing label + missing device plugin.'''
+    run, _ = _fake_run({})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight()
+    assert len(problems) == 1
+    assert 'cannot reach the cluster' in problems[0]
+
+
+def test_gpu_preflight_flags_opt_in_nvidia_runtimeclass(monkeypatch):
+    '''k3s registers an 'nvidia' RuntimeClass but leaves runc the node default, so a
+    GPU pod without runtimeClassName schedules and then runs with no device.'''
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box', 'allocatable': '1',
+                        'get runtimeclass': 'crun nvidia nvidia-experimental'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight()
+    assert len(problems) == 1
+    assert '--gpu-runtime-class nvidia' in problems[0]
+    # ...and passing it silences the warning.
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia') == []

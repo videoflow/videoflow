@@ -126,7 +126,8 @@ def _labels(flow_id, node_name = None) -> dict:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None) -> dict:
+def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
+              gpu_runtime_class = None) -> dict:
     container = {
         'name': 'worker',
         'image': image,
@@ -161,12 +162,20 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None) ->
     resources = {}
     node_selector = None
     tolerations = None
+    runtime_class = None
     if spec.device_type == 'gpu':
         resources['limits'] = {'nvidia.com/gpu': 1}
         node_selector = {'videoflow.io/gpu-pool': 'true'}
         tolerations = [{
             'key': 'nvidia.com/gpu', 'operator': 'Exists', 'effect': 'NoSchedule',
         }]
+        # Requesting the resource only makes the pod *schedulable* onto a GPU node;
+        # injecting the device into the container is the NVIDIA container runtime's
+        # job. That is automatic only where it is the node's default runtime. On
+        # distros that register it as an opt-in RuntimeClass instead (k3s ships an
+        # 'nvidia' handler but leaves runc default), a pod without runtimeClassName
+        # starts with no device — so --gpu-runtime-class names the handler to use.
+        runtime_class = gpu_runtime_class
     if resources:
         container['resources'] = resources
 
@@ -201,6 +210,8 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None) ->
         pod_spec['nodeSelector'] = node_selector
     if tolerations:
         pod_spec['tolerations'] = tolerations
+    if runtime_class:
+        pod_spec['runtimeClassName'] = runtime_class
     return pod_spec
 
 def node_configmap(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
@@ -228,11 +239,13 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
         'data': data,
     }
 
-def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None) -> dict:
+def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None,
+             gpu_runtime_class = None) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
-        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts),
+        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts,
+                          gpu_runtime_class = gpu_runtime_class),
     }
 
     batch = (flow_type == BATCH)
@@ -443,7 +456,8 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
                     default_image = None, image_overrides = None, blob_redis_url = None,
                     autoscaling = False, max_replicas = 10,
                     nats_monitoring_endpoint = None, envelope_version = None,
-                    allow_pickle = False, provision_image = None, mounts = None) -> list:
+                    allow_pickle = False, provision_image = None, mounts = None,
+                    gpu_runtime_class = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -468,6 +482,10 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     - mounts: mount dicts from ``parse_mounts`` — each becomes a hostPath \
         volume + volumeMount on every node workload (not the provision Job, \
         which never touches node data).
+    - gpu_runtime_class: ``runtimeClassName`` to put on GPU pods (``--gpu-runtime-class``). \
+        Needed where the NVIDIA container runtime is registered as an opt-in \
+        RuntimeClass rather than the node default — on k3s, ``nvidia``. Without it \
+        such a pod schedules onto a GPU node and then runs with no device visible.
 
     - Raises:
         - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``), \
@@ -507,7 +525,7 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
-                                  mounts = mounts))
+                                  mounts = mounts, gpu_runtime_class = gpu_runtime_class))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 

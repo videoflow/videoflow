@@ -13,6 +13,7 @@ well under a second, and the result is cached so the cost is paid once per run.
 '''
 import functools
 import os
+import pathlib
 import socket
 from urllib.parse import urlparse
 
@@ -32,10 +33,19 @@ def nats_available(url = NATS_URL) -> bool:
         return False
 
 def pytest_collection_modifyitems(config, items):
-    '''Mark everything in this directory as integration; skip it when NATS is down.'''
+    '''
+    Mark everything in this directory as integration; skip it when NATS is down.
+
+    pytest hands this hook every collected item in the session, not just the ones
+    under the conftest that defines it — so the directory check is what keeps a
+    down broker from skipping the whole (unit) suite and passing vacuously.
+    '''
+    here = pathlib.Path(__file__).parent
     skip = pytest.mark.skip(reason = f'NATS not reachable at {NATS_URL}')
     available = nats_available()
     for item in items:
+        if here not in pathlib.Path(str(item.fspath)).parents:
+            continue
         item.add_marker(pytest.mark.integration)
         if not available:
             item.add_marker(skip)
