@@ -1,0 +1,49 @@
+{
+  "n": 150,
+  "fps": 50.0,
+  "drop_every": 3,
+  "results": [
+    {
+      "rep": 0,
+      "n": 150,
+      "drop_every": 3,
+      "groups": 150,
+      "both": 100,
+      "only_a": 50,
+      "only_b": 0,
+      "wall_s": 8.663130521774292,
+      "alloc_s": 0.03395700454711914,
+      "t_run_start": 1784466467.3641074,
+      "timed_out": false,
+      "failures": []
+    },
+    {
+      "rep": 1,
+      "n": 150,
+      "drop_every": 3,
+      "groups": 150,
+      "both": 100,
+      "only_a": 50,
+      "only_b": 0,
+      "wall_s": 8.678179740905762,
+      "alloc_s": 0.03141927719116211,
+      "t_run_start": 1784466476.0303276,
+      "timed_out": false,
+      "failures": []
+    },
+    {
+      "rep": 2,
+      "n": 150,
+      "drop_every": 3,
+      "groups": 150,
+      "both": 100,
+      "only_a": 50,
+      "only_b": 0,
+      "wall_s": 8.66487979888916,
+      "alloc_s": 0.04262542724609375,
+      "t_run_start": 1784466484.712202,
+      "timed_out": false,
+      "failures": []
+    }
+  ]
+}

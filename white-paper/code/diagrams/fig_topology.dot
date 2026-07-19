@@ -1,0 +1,68 @@
+// Routing semantics from durable naming: broadcast fan-out, competing
+// consumers, and partitioned ownership — all on per-node streams.
+digraph topology {
+    rankdir = TB;
+    ranksep = 0.28;
+    nodesep = 0.35;
+    bgcolor = "white";
+    fontname = "Helvetica";
+    node [fontname = "Helvetica", fontsize = 10, shape = box, style = "rounded,filled",
+          fillcolor = "white", color = "#c3c2b7", penwidth = 1.2];
+    edge [fontname = "Helvetica", fontsize = 9, color = "#52514e", arrowsize = 0.7];
+
+    producer [label = "producer", color = "#2a78d6", fillcolor = "#eaf2fc"];
+    stream_p [label = "stream vf-{flow}-{run}-producer\nsubject vf.{flow}.{run}.producer", shape = cylinder,
+              fillcolor = "#fdf3e0", color = "#eda100"];
+
+    producer -> stream_p [label = "publish"];
+
+    subgraph cluster_fanout {
+        label = "distinct durables → broadcast";
+        fontsize = 11;
+        fontcolor = "#52514e";
+        color = "#e1e0d9";
+        style = "rounded";
+        left [label = "left", color = "#008300"];
+        right [label = "right", color = "#008300"];
+    }
+
+    stream_p -> left [label = "durable left--from--producer"];
+    stream_p -> right [label = "durable right--from--producer"];
+
+    stream_l [label = "stream …-left", shape = cylinder, fillcolor = "#fdf3e0", color = "#eda100"];
+    stream_r [label = "stream …-right", shape = cylinder, fillcolor = "#fdf3e0", color = "#eda100"];
+    left -> stream_l;
+    right -> stream_r;
+
+    subgraph cluster_partitioned {
+        label = "per-replica durables (--p{n}) → partitioned join,\neach replica owns hash(trace_id) % N";
+        fontsize = 11;
+        fontcolor = "#52514e";
+        color = "#e1e0d9";
+        style = "rounded";
+        j0 [label = "joiner replica 0", color = "#008300"];
+        j1 [label = "joiner replica 1", color = "#008300"];
+    }
+
+    stream_l -> j0;
+    stream_l -> j1;
+    stream_r -> j0;
+    stream_r -> j1;
+
+    stream_j [label = "stream …-joiner", shape = cylinder, fillcolor = "#fdf3e0", color = "#eda100"];
+    j0 -> stream_j;
+    j1 -> stream_j;
+
+    subgraph cluster_competing {
+        label = "shared durable → competing consumers";
+        fontsize = 11;
+        fontcolor = "#52514e";
+        color = "#e1e0d9";
+        style = "rounded";
+        s0 [label = "sink replica 0", color = "#008300"];
+        s1 [label = "sink replica 1", color = "#008300"];
+    }
+
+    stream_j -> s0 [label = "durable sink--from--joiner\n(work is split)"];
+    stream_j -> s1;
+}

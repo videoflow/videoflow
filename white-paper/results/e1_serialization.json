@@ -1,0 +1,112 @@
+{
+  "results": [
+    {
+      "version": 3,
+      "payload": "scalar_dict",
+      "mode": "inline",
+      "size_bytes": 267,
+      "encode_ms_median": 0.0018899954739026725,
+      "decode_ms_median": 0.0020899897208437324,
+      "reps": 300
+    },
+    {
+      "version": 3,
+      "payload": "detections_20",
+      "mode": "inline",
+      "size_bytes": 1462,
+      "encode_ms_median": 0.004171000909991562,
+      "decode_ms_median": 0.005140500434208661,
+      "reps": 300
+    },
+    {
+      "version": 3,
+      "payload": "frame_640x480",
+      "mode": "inline",
+      "size_bytes": 921816,
+      "encode_ms_median": 0.13238350220490247,
+      "decode_ms_median": 0.048452500777784735,
+      "reps": 30
+    },
+    {
+      "version": 3,
+      "payload": "frame_1920x1080",
+      "mode": "inline",
+      "size_bytes": 6221016,
+      "encode_ms_median": 1.5130760075408034,
+      "decode_ms_median": 0.6998629978625104,
+      "reps": 30
+    },
+    {
+      "version": 4,
+      "payload": "scalar_dict",
+      "mode": "inline",
+      "size_bytes": 154,
+      "encode_ms_median": 0.005841000529471785,
+      "decode_ms_median": 0.004353503754828125,
+      "reps": 300
+    },
+    {
+      "version": 4,
+      "payload": "detections_20",
+      "mode": "inline",
+      "size_bytes": 2060,
+      "encode_ms_median": 0.10656450467649847,
+      "decode_ms_median": 0.059788500948343426,
+      "reps": 300
+    },
+    {
+      "version": 4,
+      "payload": "frame_640x480",
+      "mode": "inline",
+      "size_bytes": 921679,
+      "encode_ms_median": 0.16947699623415247,
+      "decode_ms_median": 0.09596550080459565,
+      "reps": 30
+    },
+    {
+      "version": 4,
+      "payload": "frame_1920x1080",
+      "mode": "inline",
+      "size_bytes": 6220881,
+      "encode_ms_median": 3.9854325077612884,
+      "decode_ms_median": 1.6435284924227744,
+      "reps": 30
+    },
+    {
+      "version": 3,
+      "payload": "frame_640x480",
+      "mode": "blob",
+      "size_bytes": 248,
+      "encode_ms_median": 0.39664749056100845,
+      "decode_ms_median": 0.2834589977283031,
+      "reps": 30
+    },
+    {
+      "version": 3,
+      "payload": "frame_1920x1080",
+      "mode": "blob",
+      "size_bytes": 248,
+      "encode_ms_median": 24.013951508095488,
+      "decode_ms_median": 38.27069049293641,
+      "reps": 30
+    },
+    {
+      "version": 4,
+      "payload": "frame_640x480",
+      "mode": "blob",
+      "size_bytes": 127,
+      "encode_ms_median": 0.80810250074137,
+      "decode_ms_median": 0.6970995091251098,
+      "reps": 30
+    },
+    {
+      "version": 4,
+      "payload": "frame_1920x1080",
+      "mode": "blob",
+      "size_bytes": 128,
+      "encode_ms_median": 8.49490499967942,
+      "decode_ms_median": 10.243315002298914,
+      "reps": 30
+    }
+  ]
+}

@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Videoflow: A Directed-Graph Framework for Distributed Video and Stream Processing</title>
+<style>
+  @page {
+    size: A4;
+    margin: 22mm 20mm 20mm 20mm;
+    @bottom-center {
+      content: counter(page);
+      font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+      font-size: 8.5pt;
+      color: #898781;
+    }
+    @top-right {
+      content: "Videoflow White Paper";
+      font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+      font-size: 8pt;
+      color: #898781;
+    }
+  }
+  @page :first {
+    @top-right { content: none; }
+  }
+  html { font-size: 10pt; }
+  body {
+    font-family: 'Liberation Serif', 'DejaVu Serif', serif;
+    color: #0b0b0b;
+    line-height: 1.45;
+    margin: 0;
+  }
+  h1, h2, h3, h4 {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    color: #0b0b0b;
+    line-height: 1.2;
+  }
+  h1.title {
+    font-size: 21pt;
+    margin: 30mm 0 4mm 0;
+  }
+  .subtitle {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-size: 12pt;
+    color: #52514e;
+    margin-bottom: 10mm;
+  }
+  .meta {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-size: 9.5pt;
+    color: #52514e;
+    margin-bottom: 12mm;
+  }
+  h2 {
+    font-size: 13.5pt;
+    margin: 9mm 0 3mm 0;
+    padding-bottom: 1.2mm;
+    border-bottom: 0.4pt solid #c3c2b7;
+  }
+  h3 { font-size: 11pt; margin: 6mm 0 2mm 0; }
+  p { margin: 0 0 2.8mm 0; text-align: justify; }
+  .abstract {
+    margin: 0 8mm 8mm 8mm;
+    padding: 4mm 5mm;
+    background: #f9f9f7;
+    border-left: 2pt solid #2a78d6;
+  }
+  .abstract .label {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-weight: bold;
+    font-size: 9pt;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #2a78d6;
+    display: block;
+    margin-bottom: 2mm;
+  }
+  code, pre {
+    font-family: 'Liberation Mono', 'DejaVu Sans Mono', monospace;
+    font-size: 8.4pt;
+  }
+  code { background: #f3f2ef; padding: 0 2px; border-radius: 2px; }
+  pre {
+    background: #f9f9f7;
+    border: 0.4pt solid #e1e0d9;
+    border-radius: 3px;
+    padding: 3mm 4mm;
+    overflow-x: auto;
+    line-height: 1.38;
+    margin: 3mm 0 4mm 0;
+  }
+  pre code { background: none; padding: 0; }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    margin: 3mm 0 4mm 0;
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-size: 8.6pt;
+  }
+  th {
+    text-align: left;
+    font-weight: bold;
+    color: #0b0b0b;
+    border-bottom: 0.9pt solid #0b0b0b;
+    padding: 1.4mm 2.5mm 1.4mm 0;
+  }
+  td {
+    border-bottom: 0.4pt solid #e1e0d9;
+    padding: 1.3mm 2.5mm 1.3mm 0;
+    vertical-align: top;
+    color: #0b0b0b;
+  }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .caption {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-size: 8.6pt;
+    color: #52514e;
+    margin: 1.5mm 0 5mm 0;
+    text-align: left;
+  }
+  .caption b { color: #0b0b0b; }
+  figure { margin: 4mm 0 2mm 0; page-break-inside: avoid; text-align: center; }
+  figure img { max-width: 100%; }
+  figure.w70 img { max-width: 74%; }
+  figure.w52 img { max-width: 46%; }
+  figure.w85 img { max-width: 88%; }
+  .tablewrap { page-break-inside: avoid; }
+  .keepline { page-break-inside: avoid; }
+  ul, ol { margin: 0 0 3mm 0; padding-left: 6mm; }
+  li { margin-bottom: 1.2mm; }
+  .toc {
+    font-family: 'Liberation Sans', 'DejaVu Sans', sans-serif;
+    font-size: 9.5pt;
+    column-count: 2;
+    column-gap: 10mm;
+    margin-bottom: 6mm;
+  }
+  .toc div { margin-bottom: 1.6mm; }
+  .footnote { font-size: 8.5pt; color: #52514e; }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+
+<h1 class="title">Videoflow</h1>
+<div class="subtitle">A directed-graph framework for distributed video and stream processing:
+build the pipeline once, run it as subprocesses or as Kubernetes workloads</div>
+<div class="meta">
+White paper · Videoflow $VERSION · July 2026<br>
+Repository: github.com/videoflow/videoflow
+</div>
+
+<div class="abstract">
+<span class="label">Abstract</span>
+<p>Videoflow is a Python framework for building video and stream processing applications as a
+directed acyclic graph of <i>producers</i>, <i>processors</i>, and <i>consumers</i>. Its central
+design decision is that <b>the graph is built on one machine and executed on many</b>: each node
+is serialized to a <code>(class&nbsp;path, params)</code> record and reconstructed inside its own
+worker — an OS subprocess during development, a Kubernetes workload in production — with all
+inter-node traffic carried by per-node NATS JetStream streams. One retention-policy switch turns
+the same graph from a loss-free, backpressured batch pipeline into a freshest-wins real-time
+pipeline. This paper describes the programming model, the compilation pipeline, the messaging
+topology that yields broadcast, competing-consumer, and partitioned routing purely through
+consumer naming, the dual wire format (msgpack and protobuf) that enables components written in
+any language, and the deployment tooling. We evaluate the runtime with six experiments on toy
+graphs: wire-format microbenchmarks, horizontal scaling of a stage to 8 replicas
+($E2_EFF8&nbsp;% of ideal), per-hop pipeline overhead (≈$E3_SLOPE&nbsp;ms per stage), delivery
+semantics under 2.5× overload (BATCH delivers 100&nbsp;% with growing latency; REALTIME delivers
+$E4_RT_PCT&nbsp;% with flat ≈$E4_RT_LAT&nbsp;ms latency), partitioned join scaling, and
+quorum-based fusion of unsynchronized sources.</p>
+</div>
+
+<h2>Contents</h2>
+<div class="toc">
+$TOC
+</div>
+
+<h2 id="s1">1&nbsp;&nbsp;Introduction</h2>
+<p>Video-analytics applications are naturally pipelines: decode a stream, detect objects, track
+them, aggregate events, and emit results. Writing such an application as a single process is
+easy; scaling it past one machine usually is not. The stage that runs a neural network needs a
+GPU and five replicas, the tracker is stateful and must see every frame in order, the sink calls
+an external API and must not double-apply effects on retry — and none of that should force a
+rewrite of the pipeline logic.</p>
+<p>Videoflow's answer is to make the pipeline description itself the deployment artifact. A user
+wires plain Python objects into a DAG and hands the leaves to a <code>Flow</code>. The framework
+validates the graph, compiles every node into a small JSON-serializable record, and starts one
+worker per node replica. Workers never share memory: every edge of the graph is a subject on a
+NATS JetStream broker, so the same graph runs unchanged as local subprocesses
+(<code>LocalProcessEngine</code>) or as one container per node on Kubernetes
+(<code>KubernetesExecutionEngine</code>). The claim this paper defends is that a small set of
+conventions — JSON-serializable constructor arguments, I/O-free constructors, name-scoped broker
+subjects, and ack-after-process delivery — is enough to make a laptop prototype and a
+multi-machine deployment literally the same program.</p>
+<p>Sections 2–8 describe the system: the programming model and its reconstruction contract, the
+compilation pipeline, the messaging topology and its delivery guarantees, join semantics, the
+wire format, and the deployment tooling. Section 9 reports six experiments run on the local
+engine against a real broker, measuring the overheads and semantics the design promises.</p>
+
+<h2 id="s2">2&nbsp;&nbsp;Programming model</h2>
+<p>A pipeline is expressed with three node roles, wired by call syntax:
+<code>child(parent_a, parent_b)</code>. Producers are not passed to the flow explicitly — they
+are discovered by walking parent links backwards from the consumers, and any parentless node
+that is not a producer is a build-time error.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Role</th><th>Base class</th><th>Implements</th><th>Notes</th></tr>
+<tr><td>Producer</td><td><code>ProducerNode</code></td><td><code>next()</code></td>
+<td>Creates data from an external source; raises <code>StopIteration</code> when finite.
+<code>is_finite=False</code> marks live sources (RTSP) and selects Deployment vs Job on
+Kubernetes.</td></tr>
+<tr><td>Processor</td><td><code>ProcessorNode</code></td><td><code>process(*inputs)</code></td>
+<td>One positional argument per parent, in call-site order. Scaling knobs:
+<code>nb_tasks</code>, <code>partition_by</code>, <code>device_type</code>,
+<code>gpu_count</code>.</td></tr>
+<tr><td>Stateful processor</td><td><code>OneTaskProcessorNode</code></td><td><code>process(*inputs)</code></td>
+<td>Forces <code>nb_tasks=1</code>; for trackers, aggregators, and other order-sensitive
+state.</td></tr>
+<tr><td>Consumer</td><td><code>ConsumerNode</code></td><td><code>consume(item)</code></td>
+<td>Terminal sink; may be declared <code>idempotent=True</code> to deduplicate side effects
+across redeliveries.</td></tr>
+</table>
+<div class="caption"><b>Table 1.</b> The node roles. Every node also has
+<code>open()</code>/<code>close()</code> lifecycle hooks and a stable <code>name</code> that is
+its identity in broker subjects, Kubernetes resources, and logs.</div>
+</div>
+
+<pre><code>from videoflow.core import Flow
+from videoflow.core.constants import BATCH
+from videoflow.core.node import ProcessorNode
+
+class Threshold(ProcessorNode):
+    def __init__(self, cutoff, **kwargs):    # args must be JSON-serializable
+        self._cutoff = cutoff                # stored verbatim: get_params() finds it
+        super().__init__(**kwargs)
+
+    def open(self):                          # heavy setup runs in the worker,
+        ...                                  # never on the machine building the graph
+
+    def process(self, value):
+        return value if value >= self._cutoff else 0
+
+def build_flow():
+    producer = FrameProducer('rtsp://...', name = 'camera')
+    detector = Detector(name = 'detector', nb_tasks = 4, device_type = 'gpu')(producer)
+    gate     = Threshold(0.5, name = 'gate')(detector)
+    sink     = ResultsWriter('out.jsonl', name = 'sink')(gate)
+    return Flow([sink], flow_type = BATCH)</code></pre>
+
+<h3>2.1&nbsp;&nbsp;The reconstruction contract</h3>
+<p>The rule that makes distribution work — and the one that breaks the most code written against
+a purely local mental model — is that a worker rebuilds its node from configuration alone, via
+<code>type(node)(**node.get_params())</code>. The default <code>get_params()</code> walks every
+class in the MRO that declares an <code>__init__</code>, reads the signature's parameter names,
+and looks up <code>self._&lt;name&gt;</code> (then <code>self.&lt;name&gt;</code>). The
+consequences are mechanical:</p>
+<ul>
+<li>Every constructor argument is stored verbatim under the same name; a missing attribute is an
+<code>AttributeError</code> at build time, not a runtime surprise in a pod.</li>
+<li>Every parameter is JSON-serializable — no node references, file handles, or models.</li>
+<li><code>__init__</code> performs no I/O. It runs on the operator's machine, which may lack the
+GPU, the weights, or the video file; resources are acquired in <code>open()</code> inside the
+worker and released in <code>close()</code>.</li>
+</ul>
+<p>Node methods may optionally declare a <code>ctx</code> parameter to receive a runtime context
+(<code>run_id</code>, <code>node_name</code>, <code>replica_id</code>, per-parent input
+metadata, <code>set_event_timestamp()</code>, <code>set_partition_key()</code>); the task layer
+injects it only when the signature asks. <code>async def</code> node methods are awaited on a
+task-owned event loop, keeping node work off the broker I/O loop.</p>
+
+<h2 id="s3">3&nbsp;&nbsp;Architecture: build once, run anywhere</h2>
+<figure class="w85">
+<img src="../figures/fig_architecture.png" alt="Build-to-run pipeline">
+</figure>
+<div class="caption"><b>Figure 1.</b> From <code>build_flow()</code> to running workers. The
+graph exists as live objects only on the operator's machine; workers receive
+<code>(class path, params, parent names)</code> through environment variables and communicate
+exclusively through per-node broker streams.</div>
+
+<p>Execution proceeds in four steps. (1)&nbsp;<code>Flow</code> discovers producers and
+validates the graph: acyclicity, consumer reachability, unique node names, and — for any
+replicated multi-parent node — a declared <code>partition_by</code>. (2)&nbsp;The compiler
+flattens the graph in topological order into one <code>NodeSpec</code> per node: name, class
+path, params, parent names, replica count, device requirements, image, join policy.
+(3)&nbsp;An execution engine provisions the broker topology up front (§4) and starts one worker
+per replica, passing the spec as <code>VF_*</code> environment variables. (4)&nbsp;Each worker
+(<code>videoflow.runtime.worker</code>) reconstructs its node, calls <code>open()</code>, and
+enters its task loop. The worker is byte-for-byte identical between a local subprocess and a
+Kubernetes pod; only the process launcher differs.</p>
+<p>The task loop encodes the delivery semantics. A processor blocks for a complete input group,
+reorders it to match the declared parent order, calls <code>process(*inputs)</code>, publishes
+the output, and only then acknowledges its inputs — so a crash mid-processing causes redelivery
+rather than loss. A raised exception fails the inputs (redelivery, then dead-letter in BATCH;
+drop in REALTIME) without killing the worker: a poison message cannot take down a pod.</p>
+
+<h2 id="s4">4&nbsp;&nbsp;Messaging topology and delivery semantics</h2>
+<p>All broker naming lives in a single module (<code>messaging/topology.py</code>), and every
+name is scoped by both <code>flow_id</code> and <code>run_id</code>, so re-deploying a flow gets
+fresh streams instead of colliding with a previous run's state.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Object</th><th>Name</th></tr>
+<tr><td>Data subject</td><td><code>vf.{flow_id}.{run_id}.{node_name}</code></td></tr>
+<tr><td>End-of-stream subject</td><td><code>vf.{flow_id}.{run_id}.{node_name}._eos</code></td></tr>
+<tr><td>Control (stop) subject</td><td><code>vf.{flow_id}.{run_id}._control.stop</code></td></tr>
+<tr><td>Stream (one per node)</td><td><code>vf-{flow_id}-{run_id}-{node_name}</code></td></tr>
+<tr><td>Durable consumer</td><td><code>{consumer_node}--from--{parent_node}</code>
+(per-replica suffix <code>--p{n}</code> when partitioned)</td></tr>
+<tr><td>Dead-letter subject</td><td><code>vf.{flow_id}.{run_id}._dlq.{node_name}</code></td></tr>
+</table>
+<div class="caption"><b>Table 2.</b> Broker naming. The durable-consumer naming alone produces
+the three routing behaviors in Figure&nbsp;2.</div>
+</div>
+
+<figure class="w52">
+<img src="../figures/fig_topology.png" alt="Topology and routing semantics">
+</figure>
+<div class="caption"><b>Figure 2.</b> Routing from naming, for a diamond graph with a
+partitioned join and a replicated sink. Distinct children of one parent get <i>distinct</i>
+durables and therefore each see every message (broadcast); replicas of one node <i>share</i> a
+durable and compete for work; partitioned replicas get per-replica durables and keep only the
+keys they own (<code>hash(key)&nbsp;%&nbsp;N</code>). End-of-stream rides a separate subject so
+data consumers never see it and every replica can observe it.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>Property</th><th>BATCH</th><th>REALTIME</th></tr>
+<tr><td>Retention</td><td>Interest-based; bounded backlog</td><td>Limits;
+<code>max_msgs=1</code> per node stream</td></tr>
+<tr><td>When full</td><td>Rejects publish → publisher blocks (backpressure)</td>
+<td>Evicts oldest (freshest wins; producer never blocks)</td></tr>
+<tr><td>On processing failure</td><td>Redeliver up to <code>VF_MAX_RETRIES</code> (3), then
+dead-letter with the error attached</td><td>Drop</td></tr>
+<tr><td>Delivery guarantee</td><td>At-least-once, loss-free</td><td>Best-effort,
+latency-bounded</td></tr>
+<tr><td>Default join policy</td><td>Wait indefinitely (bounded by
+<code>max_pending</code>)</td><td>10&nbsp;s timeout, then drop the group</td></tr>
+<tr><td>Kubernetes workload</td><td>Job per node</td><td>Deployment (StatefulSet when
+partitioned); finite producers are Jobs</td></tr>
+</table>
+<div class="caption"><b>Table 3.</b> One flow-type switch selects the retention/discard policy
+of every edge, and with it the pipeline's semantics. Section 9.5 measures both under
+overload.</div>
+</div>
+
+<p>Three mechanisms back the reliability claims. <b>Ack-after-process</b>: acknowledgment
+follows successful processing and publication, so a crash causes redelivery, not loss.
+<b>Content-derived message ids</b>: publish ids are derived from
+<code>(flow, run, producer, trace, seq)</code>, so the broker's publish-dedup window absorbs the
+duplicate emit that follows a crash-and-retry — at-least-once delivery without double emission.
+<b>Replica-safe end-of-stream</b>: EOS markers carry the emitting replica id on a dedicated
+subject; every replica of a downstream node observes them, drains its inputs, forwards its own
+marker, and exits — which is how the finite experiments in §9 terminate cleanly without any
+central coordinator.</p>
+
+<h2 id="s5">5&nbsp;&nbsp;Joins</h2>
+<p>A node with several parents needs its inputs grouped into one <code>process(*inputs)</code>
+call. The grouping rule is a per-node <code>JoinPolicy</code> with two modes:</p>
+<ul>
+<li><b><code>trace</code></b> (default) — group by lineage. Every message carries the
+<code>trace_id</code> of the producer message it descends from, so branches of a diamond that
+re-converge are matched exactly. This is the right join when inputs share an upstream
+producer, and it is what allows a join to <i>scale</i>: <code>partition_by='trace_id'</code>
+routes both halves of a group to the same replica by key hash (§9.6).</li>
+<li><b><code>time</code></b> — group by event time within <code>tolerance_ms</code>, for fusing
+streams from <i>independent</i> producers (multiple cameras, sensors) that share no lineage.
+Producers stamp <code>event_ts</code> via the runtime context; the stamp travels with every
+descendant message. <code>quorum=k</code> lets a timed-out group emit with at least k of N
+parents (missing ones passed as <code>None</code>), and <code>collect</code> windows deliver
+high-rate parents (e.g. a 500&nbsp;Hz IMU against 50&nbsp;fps cameras) as per-group lists
+rather than 1:1 partners (§9.7).</li>
+</ul>
+<p>Incomplete groups are governed by <code>timeout_seconds</code> and a <code>missing</code>
+policy — <code>drop</code>, <code>wait</code>, or <code>error</code> (fail the partial inputs so
+they redeliver and eventually dead-letter) — with a <code>max_pending</code> cap that bounds
+buffering. Defaults follow the flow type: BATCH waits (completeness), REALTIME times out and
+drops (a lost sibling frame must not stall the join).</p>
+
+<h2 id="s6">6&nbsp;&nbsp;The wire format</h2>
+<p>Bytes that cross a process boundary use a self-describing envelope carrying routing identity
+(producer, flow, run, trace, seq, replica), an event timestamp, tracing spans, metadata, and the
+payload. Two encodings coexist deliberately:</p>
+<ul>
+<li><b>v3 — msgpack</b> (default emit): compact and fast for Python-to-Python edges; ndarrays
+use a raw buffer codec, everything else falls back to pickle.</li>
+<li><b>v4 — protobuf</b>: a language-neutral <code>videoflow.v1.Envelope</code> whose payload is
+a typed message — <code>Tensor</code> for arrays and frames, <code>Value</code> for structured
+data, any vendor proto by fully-qualified name. This is the encoding non-Python components
+implement, and a graph containing one forces v4 for the whole run; a mixed flow that would
+need pickle on the wire is a compile error.</li>
+</ul>
+<p>The decoder auto-detects the version from the leading byte (a msgpack map and a protobuf
+field tag occupy disjoint ranges), so mixed-version tooling needs no out-of-band hint. Payloads
+above 512&nbsp;KiB spill to an external blob store (Redis by default, scheme-registered
+factories for others) and the envelope carries only a reference — NATS defaults to a 1&nbsp;MB
+message cap, and a 1080p RGB frame is ~6.2&nbsp;MB (§9.3). The normative contract — envelope
+fields, payload-type mappings, routing requirements, each with a stable requirement id — lives
+in <code>spec/PROTOCOL.md</code>, enforced by golden vectors replayed against every SDK; an
+observable wire change requires an RFC plus updated vectors.</p>
+
+<h2 id="s7">7&nbsp;&nbsp;Deployment</h2>
+<p>The <code>videoflow</code> CLI turns a graph module exposing <code>build_flow()</code> into a
+running system. <code>videoflow run-local</code> is the development twin of
+<code>deploy</code>: it resolves the solution's config template and prep hook, starts a dev
+NATS/Redis in Docker when none is listening (and tears down only what it started), and runs one
+subprocess per node. <code>videoflow deploy</code> compiles the graph — inside the solution
+image when the operator's machine lacks the graph's ML dependencies — builds and loads images
+for the detected cluster flavor (k3s, kind, minikube, Docker Desktop, generic remote),
+provisions broker streams up front, and renders plain-dict manifests: per-node workloads and
+ConfigMaps, a default-deny-except-broker NetworkPolicy, PodDisruptionBudgets, and optional KEDA
+scalers on broker lag. Every automated step has an explicit override
+(<code>--image</code>, <code>--nats</code>, <code>--namespace</code>, <code>--dry-run</code>,
+<code>--render-only</code>).</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Graph concept</th><th>Kubernetes realization</th></tr>
+<tr><td><code>nb_tasks=N</code></td><td>N replicas of the node's Deployment (competing
+consumers)</td></tr>
+<tr><td><code>nb_tasks=N, partition_by=k</code></td><td>StatefulSet — replicas need stable
+identities to own partitions</td></tr>
+<tr><td>Finite producer / BATCH node</td><td>Job</td></tr>
+<tr><td><code>device_type='gpu'</code></td><td><code>nvidia.com/gpu</code> resource limit +
+GPU-pool nodeSelector + taint toleration; <code>--gpu-runtime-class</code>,
+<code>--gpu-mode shared</code>, MIG/time-sliced resource names for shared cards</td></tr>
+<tr><td>Node <code>name</code></td><td>DNS-1123-checked resource names, labels, subjects,
+log fields</td></tr>
+<tr><td>Worker health</td><td><code>/readyz</code>, <code>/healthz</code>, startup probe,
+Prometheus <code>/metrics</code></td></tr>
+</table>
+<div class="caption"><b>Table 4.</b> How graph declarations map to cluster objects.</div>
+</div>
+
+<p><b>Language-agnostic components.</b> A node need not be Python. A <code>component.yaml</code>
+descriptor — schema-validated, distributed as an OCI artifact next to the images it references —
+declares a component's params, I/O, device support, and runtime. The
+<code>component('oci://ghcr.io/acme/sort-tracker:1.2.0', params=...)</code> factory returns a
+remote node that subclasses the normal bases, so wiring, validation, scaling, and manifest
+generation are unchanged, while the vendor image speaks the v4 wire protocol out-of-process.
+Descriptors can be inspected without pulling multi-gigabyte ML images, and
+<code>cosign</code>-verified on pull.</p>
+
+<h2 id="s8">8&nbsp;&nbsp;Extension seams</h2>
+<p>Variant behavior is added by registration, not modification. Each seam follows one shape: a
+module-level registry seeded with the built-ins, an explicit <code>register_*()</code>, and a
+lookup that raises <code>ValueError</code> naming the known values and the fix. Where nothing
+would import the providing package first, the registry consults an
+<code>importlib.metadata</code> entry-point group once on a miss — so a blob store named only in
+configuration still resolves.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Seam</th><th>Registration</th><th>Selected by</th></tr>
+<tr><td>Blob store</td><td><code>register_blob_store(scheme, factory)</code></td><td>Blob URL
+scheme</td></tr>
+<tr><td>Payload encoding (v4)</td><td><code>register_payload_encoder</code> /
+<code>register_payload_type</code></td><td>Python type / proto FQN</td></tr>
+<tr><td>Cluster flavor</td><td><code>register_cluster_flavor(handler)</code></td><td>Cluster
+detection</td></tr>
+<tr><td>GPU allocation mode</td><td><code>register_gpu_mode(strategy)</code></td>
+<td><code>--gpu-mode</code></td></tr>
+<tr><td>Config question type</td><td><code>register_question_type(qtype, coercer)</code></td>
+<td><code>x-questions</code> entry</td></tr>
+</table>
+<div class="caption"><b>Table 5.</b> Extension seams. Equally deliberate are the abstractions
+<i>not</i> built: a transport layer below <code>Messenger</code>/<code>BlobStore</code> is
+spec-fixed (a second broker starts as an RFC, not a refactor), and an execution-engine registry
+waits until a third engine forces the lifecycle into the ABC.</div>
+</div>
+
+<div class="pagebreak"></div>
+<h2 id="s9">9&nbsp;&nbsp;Experimental evaluation</h2>
+<p>The design above promises specific, measurable behavior: a compact wire format with an escape
+hatch for large frames, near-linear stage scaling from a one-line change, per-hop overhead small
+enough for deep pipelines, a semantic switch between loss-free and freshest-wins delivery,
+joins that scale by partitioning, and time-based fusion that degrades gracefully. This section
+tests each claim with deliberately minimal toy graphs, so the numbers measure the framework
+rather than any model.</p>
+
+<h3>9.1&nbsp;&nbsp;Method and setup</h3>
+<p>All experiments run on one machine (Table&nbsp;6) with the <b>local engine</b> — one OS
+subprocess per node replica, all traffic through a real NATS JetStream broker in Docker. This is
+the identical worker code path Kubernetes uses; what it does not measure is network latency
+between hosts, image pull, or scheduler behavior. Producers stamp each payload with a wall-clock
+<code>t0</code> at emission; the sink appends <code>(i, t0, t1)</code> records to a JSONL file.
+Since all processes share one clock, end-to-end latency is <code>t1&nbsp;−&nbsp;t0</code> with
+no cross-host skew. Broker-backed experiments use $REPS repetitions per configuration; reported
+values are medians unless noted. The harness (~$HARNESS_LOC lines,
+<code>white-paper/experiments/</code>) and all raw results ship in the repository.</p>
+
+<div class="tablewrap">
+<table>
+<tr><th>Component</th><th>Value</th></tr>
+<tr><td>CPU / RAM</td><td>$CPU, 32 hardware threads / 94&nbsp;GiB</td></tr>
+<tr><td>OS / kernel</td><td>Ubuntu Linux, $KERNEL</td></tr>
+<tr><td>Python / Videoflow</td><td>$PYVER / $VERSION</td></tr>
+<tr><td>Broker / blob store</td><td>NATS 2.10 (JetStream, Docker) / Redis 7 (Docker)</td></tr>
+<tr><td>Key libraries</td><td>$LIBS</td></tr>
+</table>
+<div class="caption"><b>Table 6.</b> Experimental environment.</div>
+</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>Exp</th><th>Question</th><th>Factors (levels)</th><th>Fixed</th><th>Responses</th></tr>
+<tr><td>E1</td><td>Wire-format cost</td><td>version (v3, v4) × payload (4 shapes) × placement
+(inline, blob)</td><td>—</td><td>size, encode/decode time</td></tr>
+<tr><td>E2</td><td>Stage scale-out</td><td><code>nb_tasks</code> (1, 2, 4, 8)</td>
+<td>240 msgs, 20&nbsp;ms/msg stage</td><td>sink throughput</td></tr>
+<tr><td>E3</td><td>Per-hop overhead</td><td>depth (1, 2, 4, 8)</td><td>250 msgs @
+50&nbsp;msg/s</td><td>median / p95 latency</td></tr>
+<tr><td>E4</td><td>Overload semantics</td><td>flow type (BATCH, REALTIME)</td><td>300 msgs @
+100&nbsp;msg/s into 40&nbsp;msg/s stage</td><td>delivered %, latency profile</td></tr>
+<tr><td>E5</td><td>Join scale-out</td><td>joiner <code>nb_tasks</code> (1, 2, 4)</td>
+<td>240 msgs, diamond, 20&nbsp;ms join</td><td>throughput, correctness</td></tr>
+<tr><td>E6</td><td>Quorum fusion</td><td>—</td><td>2×50&nbsp;fps cams, one drops ⅓;
+tol 12&nbsp;ms, quorum 1</td><td>group completeness</td></tr>
+</table>
+<div class="caption"><b>Table 7.</b> Design of experiments. Graph shapes are shown in
+Figure&nbsp;3.</div>
+</div>
+
+<figure>
+<img src="../figures/fig_expgraphs.png" alt="Experiment graph shapes">
+</figure>
+<div class="caption"><b>Figure 3.</b> The toy graphs. Blue = producer, green = processor,
+pink = consumer.</div>
+
+<h3>9.2&nbsp;&nbsp;E1 — wire-format microbenchmark</h3>
+<figure>
+<img src="../figures/fig_e1_wire.png" alt="Wire format size and speed">
+</figure>
+<div class="caption"><b>Figure 4.</b> Envelope size and median encode/decode time (log axes)
+for msgpack v3 vs protobuf v4, inline vs blob-offloaded. Full numbers in Table&nbsp;8.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>Payload</th><th>Placement</th><th class="num">v3 size (B)</th><th class="num">v4 size
+(B)</th><th class="num">v3 enc/dec (ms)</th><th class="num">v4 enc/dec (ms)</th></tr>
+$E1_ROWS
+</table>
+<div class="caption"><b>Table 8.</b> E1 results (medians of $E1_REPS_SMALL reps; frames
+$E1_REPS_FRAME reps). Envelope size includes all routing/tracing fields; blob rows show the
+on-wire envelope with the payload in Redis, and their times include the Redis round trip on
+this machine's loopback.</div>
+</div>
+
+<p><b>Findings.</b> For small structured payloads the v4 protobuf envelope is
+$E1_V4_SMALLER_PCT&nbsp;% smaller than v3 (msgpack's per-key field names dominate), while for
+detection-style nested dicts v4 is moderately larger and slower — its generic
+<code>Value</code> tree trades compactness for language neutrality, which is exactly the
+intended trade. Frames dominate everything: a raw 1080p frame is ~6.2&nbsp;MB — over NATS's
+1&nbsp;MB default cap — and the blob store collapses the on-wire envelope to
+$E1_BLOB_BYTES&nbsp;B regardless of frame size, at the cost of a store round trip
+($E1_BLOB_1080_MS&nbsp;ms encode for 1080p on loopback Redis). Both codecs move frames at
+memory-bandwidth speeds when inline (≤$E1_FRAME_MS&nbsp;ms encode for 1080p); none of these
+costs is remotely comparable to a model inference, so the wire is not the bottleneck the design
+should optimize further.</p>
+
+<h3>9.3&nbsp;&nbsp;E2 — horizontal scaling of a stage</h3>
+<figure class="w70">
+<img src="../figures/fig_e2_scaling.png" alt="Throughput vs replicas">
+</figure>
+<div class="caption"><b>Figure 5.</b> Sink throughput vs <code>nb_tasks</code> for a
+20&nbsp;ms/msg stage (240 messages, BATCH). Faint dots are individual repetitions; the dashed
+line is ideal linear scaling of the stage's 50&nbsp;msg/s single-replica capacity.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th class="num">nb_tasks</th><th class="num">Throughput (msg/s)</th>
+<th class="num">Speedup</th><th class="num">Efficiency vs ideal</th></tr>
+$E2_ROWS
+</table>
+<div class="caption"><b>Table 9.</b> E2 medians. Efficiency is measured against
+<code>k</code>&nbsp;×&nbsp;50&nbsp;msg/s.</div>
+</div>
+
+<p><b>Findings.</b> Changing one constructor argument (<code>nb_tasks</code>) scales a stage to
+$E2_SPEEDUP8× at 8 replicas with no code or topology changes — replicas share a durable and
+compete for work. Efficiency declines gently ($E2_EFF1&nbsp;% at k=1 to $E2_EFF8&nbsp;% at k=8):
+with 20&nbsp;ms of work per message, per-message broker overhead (~2&nbsp;ms, §9.4) is ~9&nbsp;%
+of service time, and the single producer and single sink add serialization points at the ends.
+The practical guidance follows directly: replicate stages whose per-item cost dominates the
+per-hop overhead — precisely the model-inference stages replication exists for.</p>
+
+<h3>9.4&nbsp;&nbsp;E3 — per-hop overhead</h3>
+<figure class="w70">
+<img src="../figures/fig_e3_depth.png" alt="Latency vs pipeline depth">
+</figure>
+<div class="caption"><b>Figure 6.</b> End-to-end latency vs pipeline depth for identity hops at
+50&nbsp;msg/s (no queueing). The fitted slope of the median is the marginal cost of one
+graph edge.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th class="num">Depth</th><th class="num">Median (ms)</th><th class="num">p95 (ms)</th></tr>
+$E3_ROWS
+</table>
+<div class="caption"><b>Table 10.</b> E3 latency medians across $REPS reps.</div>
+</div>
+
+<p><b>Findings.</b> Latency grows linearly with depth: ≈$E3_SLOPE&nbsp;ms median per hop
+(publish, JetStream persistence, durable fetch, decode — on loopback), with p95 tracking the
+median at a near-constant offset — the pipeline adds overhead but little jitter. A ten-stage
+pipeline therefore costs ~20&nbsp;ms of transport latency end-to-end, comfortably inside a
+33&nbsp;ms frame budget at 30&nbsp;fps, and the linearity means there is no superlinear
+penalty for factoring logic into more, smaller nodes.</p>
+
+<h3>9.5&nbsp;&nbsp;E4 — delivery semantics under overload</h3>
+<figure>
+<img src="../figures/fig_e4_overload.png" alt="BATCH vs REALTIME under overload">
+</figure>
+<div class="caption"><b>Figure 7.</b> The same overloaded graph (100&nbsp;msg/s into a
+40&nbsp;msg/s stage) run BATCH and REALTIME. Left: per-message latency. Right: fraction of the
+300 messages that reached the sink.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th>Flow type</th><th class="num">Delivered</th><th class="num">Median latency (ms)</th>
+<th class="num">Max latency (ms)</th><th class="num">Makespan (s)</th></tr>
+$E4_ROWS
+</table>
+<div class="caption"><b>Table 11.</b> E4 medians across $REPS reps. Makespan is sink-side
+(first to last delivery).</div>
+</div>
+
+<p><b>Findings.</b> The flow-type switch behaves exactly as specified. BATCH delivers
+100&nbsp;% under 2.5× overload — interest retention applies backpressure and the backlog drains
+at stage capacity — at the price of latency that grows linearly to ~$E4_BATCH_MAX_S&nbsp;s for
+the last message: correct for offline processing of recorded video, where completeness matters
+and latency does not. REALTIME's one-message stream buffer delivers the freshest
+$E4_RT_PCT&nbsp;% (≈stage capacity ÷ producer rate) with latency pinned at
+≈$E4_RT_LAT&nbsp;ms regardless of how long the overload lasts: correct for live monitoring,
+where a stale detection is worthless. The experiment also exercises graceful termination in
+both modes — EOS propagates through the overloaded stage and both flows exit cleanly without a
+coordinator.</p>
+
+<h3>9.6&nbsp;&nbsp;E5 — scaling a join by partitioning</h3>
+<figure class="w70">
+<img src="../figures/fig_e5_join.png" alt="Join throughput vs partitions">
+</figure>
+<div class="caption"><b>Figure 8.</b> Sink throughput of the diamond graph vs joiner
+<code>nb_tasks</code> with <code>partition_by='trace_id'</code> (240 messages, 20&nbsp;ms
+join).</div>
+
+<div class="tablewrap">
+<table>
+<tr><th class="num">nb_tasks</th><th class="num">Throughput (msg/s)</th>
+<th class="num">Speedup</th><th class="num">Groups correct</th></tr>
+$E5_ROWS
+</table>
+<div class="caption"><b>Table 12.</b> E5 medians. "Groups correct" counts sink records whose
+two halves carry the same message index — i.e. joins that matched the right partners.</div>
+</div>
+
+<p><b>Findings.</b> A join is normally a serialization point — every parent's half must reach
+the same worker. Partitioning by <code>trace_id</code> removes it: each replica sees every
+message (per-replica durables) but assembles only the groups it owns, and both halves of a
+lineage hash to the same owner by construction. Throughput scales to $E5_SPEEDUP4× at 4
+replicas with <b>every group correctly matched in every run</b> ($E5_TOTAL_GROUPS of $E5_TOTAL_GROUPS across all runs) — no misrouted or partial joins, which is the property that
+matters when the join carries per-object state.</p>
+
+<h3>9.7&nbsp;&nbsp;E6 — time-aligned fusion with a quorum</h3>
+<div class="tablewrap">
+<table>
+<tr><th class="num">Rep</th><th class="num">Groups emitted</th><th class="num">Both cameras</th>
+<th class="num">cam_a only</th><th class="num">cam_b only</th></tr>
+$E6_ROWS
+</table>
+<div class="caption"><b>Table 13.</b> E6: two independent 50&nbsp;fps producers (no shared
+lineage), cam_b dropping every third frame; time-mode join with 12&nbsp;ms tolerance,
+250&nbsp;ms timeout, quorum 1, REALTIME. Expected per rep: ~100 complete groups and ~50
+quorum groups.</div>
+</div>
+
+<p><b>Findings.</b> Trace-mode joins cannot fuse these streams at all — the producers share no
+lineage, so no group would ever complete. Time-mode grouping matches frames whose event
+timestamps fall within tolerance, and the quorum turns cam_b's dropped frames from a stall into
+a degraded-but-on-time emission with the missing side passed as <code>None</code>:
+$E6_BOTH_PCT&nbsp;% of groups fused both cameras (matching cam_b's ⅔ survival rate) and the
+rest emitted on timeout with cam_a alone. This is the designed failure mode for multi-camera
+rigs: a flaky source degrades its own contribution, never the pipeline's cadence.</p>
+
+<h3>9.8&nbsp;&nbsp;Threats to validity</h3>
+<ul>
+<li><b>Single machine, loopback broker.</b> Per-hop latency and blob-store round trips will be
+higher over a real network; the scaling and semantics results (which depend on routing and
+retention, not link speed) should transfer. The Kubernetes engine additionally pays scheduling
+and image-pull costs not measured here.</li>
+<li><b>Sleep-based service times.</b> Stages simulate work with <code>time.sleep</code>, which
+scales past physical cores without CPU contention. This isolates framework routing overhead —
+the quantity under test — but means E2/E5 efficiency numbers are upper bounds for genuinely
+CPU-bound stages at high replica counts on smaller machines (GPU-bound stages, the primary
+replication target, behave like sleeps from the scheduler's perspective).</li>
+<li><b>Toy payloads.</b> Broker-backed experiments carry ~100-byte dicts; E1 bounds the
+additional per-message cost of realistic frames (≤$E1_FRAME_MS&nbsp;ms encode, ~1&nbsp;ms
+blob write for 480p).</li>
+<li><b>Scale of repetition.</b> $REPS reps per cell with low dispersion (visible as the point
+spread in Figures 5 and 8); the trends are unambiguous, the third significant figure is
+not.</li>
+</ul>
+
+<h2 id="s10">10&nbsp;&nbsp;Conclusion</h2>
+<p>Videoflow demonstrates that a distributed video-processing system can keep a single-machine
+programming model — plain Python classes wired into a DAG — by pushing all distribution
+concerns into conventions checked at build time and topology derived from names. The
+experiments confirm the design's quantitative claims on real broker infrastructure: ~2&nbsp;ms
+per graph edge, near-linear stage and join scale-out from one-line changes, a delivery-semantics
+switch that trades completeness against bounded latency exactly as specified, and fusion
+policies that degrade gracefully under source failure. The protobuf wire contract and OCI
+component distribution extend the same model beyond Python, toward a marketplace of
+interoperable components with the Python worker as the executable reference implementation.</p>
+
+<h2>References</h2>
+<ul class="footnote" style="list-style: none; padding-left: 0;">
+<li>[1] Videoflow repository and documentation — <i>github.com/videoflow/videoflow</i>
+(<code>spec/PROTOCOL.md</code>: normative wire and routing contract;
+<code>.claude/docs/ARCHITECTURE.md</code>: build/run pipeline).</li>
+<li>[2] NATS JetStream documentation — <i>docs.nats.io/nats-concepts/jetstream</i> (streams,
+durable consumers, retention and discard policies, publish deduplication).</li>
+<li>[3] Experiment harness and raw results — <code>white-paper/experiments/</code> in the
+repository; figures regenerate via <code>white-paper/src/make_figures.py</code>.</li>
+<li>[4] de Armas, J. <i>Videoflow</i>, 2019 — original single-process release; the
+architecture described here is the distributed successor.</li>
+</ul>
+
+</body>
+</html>

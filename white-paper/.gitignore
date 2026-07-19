@@ -1,0 +1,5 @@
+# Build intermediates: the rendered HTML, generated .tex fragments, and TeX aux
+# files. All are reproducible from code/ + results/ via `make`.
+out/
+
+__pycache__/

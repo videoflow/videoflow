@@ -1,0 +1,63 @@
+// The toy graphs used by the white-paper experiments (E2–E6).
+digraph expgraphs {
+    rankdir = LR;
+    bgcolor = "white";
+    fontname = "Helvetica";
+    compound = true;
+    node [fontname = "Helvetica", fontsize = 10, shape = box, style = "rounded,filled",
+          fillcolor = "white", color = "#c3c2b7", penwidth = 1.2];
+    edge [fontname = "Helvetica", fontsize = 9, color = "#52514e", arrowsize = 0.7];
+
+    subgraph cluster_e6 {
+        label = "E6 — time-aligned quorum join";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e6a [label = "cam_a 50 fps", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e6b [label = "cam_b 50 fps\ndrops every 3rd", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e6f [label = "fuse\nmode=time, tol 12 ms\nquorum 1, timeout 250 ms", color = "#008300"];
+        e6s [label = "sink", color = "#e87ba4"];
+        e6a -> e6f;
+        e6b -> e6f;
+        e6f -> e6s;
+    }
+
+    subgraph cluster_e5 {
+        label = "E5 — partitioned join (diamond)";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e5p [label = "producer\n240 msgs", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e5l [label = "left 5 ms", color = "#008300"];
+        e5r [label = "right 5 ms", color = "#008300"];
+        e5j [label = "joiner 20 ms\nnb_tasks ∈ {1,2,4}\npartition_by = trace_id", color = "#008300"];
+        e5s [label = "sink", color = "#e87ba4"];
+        e5p -> e5l -> e5j;
+        e5p -> e5r -> e5j;
+        e5j -> e5s;
+    }
+
+    subgraph cluster_e4 {
+        label = "E4 — overload (BATCH vs REALTIME)";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e4p [label = "producer\n100 msg/s", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e4w [label = "stage 25 ms\n(40 msg/s capacity)", color = "#008300"];
+        e4s [label = "sink", color = "#e87ba4"];
+        e4p -> e4w -> e4s;
+    }
+
+    subgraph cluster_e3 {
+        label = "E3 — pipeline depth";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e3p [label = "producer\n50 msg/s", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e3h1 [label = "hop 1", color = "#008300"];
+        e3hd [label = "… hop D\nD ∈ {1,2,4,8}", color = "#008300"];
+        e3s [label = "sink", color = "#e87ba4"];
+        e3p -> e3h1 -> e3hd -> e3s;
+    }
+
+    subgraph cluster_e2 {
+        label = "E2 — horizontal scaling";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e2p [label = "producer\n240 msgs", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e2w [label = "stage 20 ms\nnb_tasks ∈ {1,2,4,8}", color = "#008300"];
+        e2s [label = "sink", color = "#e87ba4"];
+        e2p -> e2w -> e2s;
+    }
+}

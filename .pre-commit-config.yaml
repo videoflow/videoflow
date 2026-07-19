@@ -16,6 +16,10 @@ repos:
         args: [--allow-multiple-documents]
       - id: check-toml
       - id: check-added-large-files
+        # Default is 500kB, which the built white-paper PDF (~800kB, and growing
+        # with each figure added) exceeds. 2MB still catches the mistakes this
+        # hook is for — committed model weights, datasets, sample videos.
+        args: [--maxkb=2048]
       - id: check-merge-conflict
       - id: debug-statements
 

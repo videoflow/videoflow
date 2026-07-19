@@ -1,0 +1,50 @@
+// Build-once / run-anywhere: how a Flow becomes independent workers.
+digraph architecture {
+    rankdir = TB;
+    ranksep = 0.4;
+    bgcolor = "white";
+    fontname = "Helvetica";
+    node [fontname = "Helvetica", fontsize = 11, shape = box, style = "rounded,filled",
+          fillcolor = "white", color = "#c3c2b7", penwidth = 1.2];
+    edge [fontname = "Helvetica", fontsize = 9, color = "#52514e", arrowsize = 0.7];
+
+    subgraph cluster_build {
+        label = "Operator machine — build time";
+        labeljust = "l";
+        fontsize = 12;
+        fontcolor = "#0b0b0b";
+        color = "#e1e0d9";
+        style = "rounded";
+
+        flowdef [label = "build_flow()\nProducer → Processor → Consumer", fillcolor = "#eaf2fc", color = "#2a78d6"];
+        validate [label = "GraphEngine\nDAG · reachability · unique names\npartition_by on replicated joins", color = "#2a78d6"];
+        compile [label = "compile_flow()\nNodeSpec per node:\n(class FQN, params, parents,\nnb_tasks, device, image)", color = "#2a78d6"];
+
+        flowdef -> validate -> compile;
+    }
+
+    subgraph cluster_run {
+        label = "Execution — one worker per node replica";
+        labeljust = "l";
+        fontsize = 12;
+        fontcolor = "#0b0b0b";
+        color = "#e1e0d9";
+        style = "rounded";
+
+        w1 [label = "worker: producer\ntype(node)(**params)\nnext()", color = "#008300"];
+        w2 [label = "worker: processor ×N\nprocess(*inputs)", color = "#008300"];
+        w3 [label = "worker: consumer\nconsume(item)", color = "#008300"];
+    }
+
+    broker [label = "NATS JetStream\none stream per node\nsubjects scoped by flow_id + run_id", shape = cylinder,
+            fillcolor = "#fdf3e0", color = "#eda100", penwidth = 1.4];
+
+    compile -> w1 [style = dashed];
+    compile -> w2 [label = "  VF_* env (subprocess or pod)", style = dashed];
+    compile -> w3 [style = dashed];
+
+    w1 -> broker [dir = both, label = "publish  "];
+    w2 -> broker [dir = both, label = "consume / publish  "];
+    w3 -> broker [dir = both, label = "  consume / ack"];
+    {rank = same; w1; w2; w3;}
+}
