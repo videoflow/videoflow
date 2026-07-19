@@ -7,9 +7,9 @@ Pure/unit: only inspects rendered manifest dicts (no cluster, no broker).
 '''
 import pytest
 
-from videoflow.compiler import compile_flow
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.manifests import parse_mounts, render_manifests
 from videoflow.processors import IdentityProcessor

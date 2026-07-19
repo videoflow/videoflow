@@ -379,7 +379,7 @@ class TaskModuleNode(ProcessorNode):
 
     Note: because it wraps live references to other nodes, ``TaskModuleNode`` does \
         not support ``get_params()``-based reconstruction and is not yet supported \
-        by the distributed Kubernetes execution path (see ``videoflow.compiler``).
+        by the distributed Kubernetes execution path (see ``videoflow.core.compiler``).
     '''
     def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, name = None, **kwargs) -> None:
         super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, name = name, **kwargs)

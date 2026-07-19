@@ -20,7 +20,7 @@ from typing import List, Optional
 
 import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
 
-from ..compiler import NodeSpec, specs_from_tasks_data
+from ..core.compiler import NodeSpec, specs_from_tasks_data
 from ..core.engine import ExecutionEngine
 
 logger = logging.getLogger(__package__)
@@ -110,8 +110,8 @@ class LocalProcessEngine(ExecutionEngine):
 
         # Resolve the whole-run wire version: a flow with any remote component must
         # use the protobuf wire (v4+) so native and non-Python workers agree.
-        from ..compiler import has_native_components, validate_wire_compatibility
-        from ..serialization import DEFAULT_ENVELOPE_VERSION
+        from ..core.compiler import has_native_components, validate_wire_compatibility
+        from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
         base = DEFAULT_ENVELOPE_VERSION
         envelope_version = 4 if (has_native_components(specs) and base < 4) else base
         validate_wire_compatibility(specs, envelope_version, self._allow_pickle)

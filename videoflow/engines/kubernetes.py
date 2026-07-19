@@ -15,7 +15,7 @@ import sys
 import time
 from typing import List, Optional
 
-from ..compiler import specs_from_tasks_data
+from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
 from ..manifests import (
     LABEL_NODE,

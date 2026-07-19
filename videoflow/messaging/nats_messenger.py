@@ -27,7 +27,7 @@ import nats
 from ..core.constants import REALTIME
 from ..core.engine import Messenger
 from ..core.policies import JOIN_TIME, JoinPolicy
-from ..serialization import (
+from ..wire.serialization import (
     DEFAULT_ENVELOPE_VERSION,
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
@@ -132,7 +132,7 @@ class NATSMessenger(Messenger):
         - flow_type (str): ``videoflow.core.constants.REALTIME`` or ``BATCH`` — \
             controls the stream retention/discard policy used for ``node``'s own \
             output stream.
-        - blob_store: optional ``videoflow.serialization.BlobStore`` for payloads \
+        - blob_store: optional ``videoflow.wire.serialization.BlobStore`` for payloads \
             over the inline size threshold.
         - join_policy (dict): serialized ``videoflow.core.policies.JoinPolicy`` \
             controlling how multi-parent input groups are formed (by trace id or \

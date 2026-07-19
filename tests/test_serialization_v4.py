@@ -1,5 +1,5 @@
 '''
-Unit tests for the v4 (protobuf) wire codec in videoflow.serialization, alongside
+Unit tests for the v4 (protobuf) wire codec in videoflow.wire.serialization, alongside
 the untouched v2/v3 msgpack path (tests/test_serialization.py). Covers the codec
 behaviors an SDK must reproduce: tensor/value/proto/pickle payload selection,
 the int-vs-double distinction, EOS, event_ts presence, blob offload, opaque
@@ -10,8 +10,8 @@ from __future__ import absolute_import, division, print_function
 import numpy as np
 import pytest
 
-from videoflow import serialization as s
 from videoflow.v1 import payloads_pb2
+from videoflow.wire import serialization as s
 
 
 def _rt(payload, *, metadata = None, msg_type = None, event_ts = None,

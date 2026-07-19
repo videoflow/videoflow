@@ -7,9 +7,9 @@ import json
 import pytest
 import yaml
 
-from videoflow.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
 from videoflow.core.constants import GPU, REALTIME
 from videoflow.images import parse_override, resolve_image
 from videoflow.manifests import dump_manifests, render_manifests
@@ -186,7 +186,7 @@ def test_gpu_kwargs_are_validated():
 
 def test_gpu_fields_round_trip_through_spec_serialization():
     # The flow-spec ConfigMap round-trips specs as JSON; the GPU knobs must survive.
-    from videoflow.compiler import NodeSpec
+    from videoflow.core.compiler import NodeSpec
     spec = compile_flow(_gpu_flow(gpu_count = 4, gpu_resource_name = 'amd.com/gpu'))[1]
     clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
     assert clone.gpu_count == 4

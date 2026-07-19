@@ -6,9 +6,9 @@ labelling, provision/worker phase split, and the CRD-safe teardown kind list.
 
 Pure/unit: only inspects rendered manifest dicts (no cluster, no broker).
 '''
-from videoflow.compiler import compile_flow
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.manifests import (
     _CORE_DELETABLE_KINDS,

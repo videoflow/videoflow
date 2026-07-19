@@ -14,7 +14,7 @@ import os
 import numpy as np
 import pytest
 
-from videoflow import serialization as s
+from videoflow.wire import serialization as s
 
 VECTORS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'spec', 'vectors')
 

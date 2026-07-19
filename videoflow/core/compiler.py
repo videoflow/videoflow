@@ -9,7 +9,7 @@ from __future__ import absolute_import, division, print_function
 
 from typing import List, Optional
 
-from .core.node import ConsumerNode, ProcessorNode, ProducerNode
+from .node import ConsumerNode, ProcessorNode, ProducerNode
 
 NODE_KIND_PRODUCER = 'producer'
 NODE_KIND_PROCESSOR = 'processor'
@@ -126,7 +126,7 @@ def specs_from_tasks_data(tasks_data) -> list:
     Converts ``build_tasks_data`` output — tuples of
     ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
     '''
-    from .core.remote import RemoteNodeMixin
+    from .remote import RemoteNodeMixin
 
     specs = []
     for node, parent_names, is_last in tasks_data:

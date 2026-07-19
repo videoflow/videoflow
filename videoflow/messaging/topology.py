@@ -226,7 +226,7 @@ async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str
 
     - Arguments:
         - nc: a connected ``nats`` client.
-        - specs: list of ``videoflow.compiler.NodeSpec``.
+        - specs: list of ``videoflow.core.compiler.NodeSpec``.
     '''
     js = nc.jetstream()
     by_name = {spec.name: spec for spec in specs}

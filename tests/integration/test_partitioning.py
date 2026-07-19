@@ -10,9 +10,9 @@ import tempfile
 
 import pytest
 
-from videoflow.compiler import compile_flow
 from videoflow.consumers import CommandlineConsumer, FileAppenderConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.policies import MISSING_DROP, MISSING_WAIT, JoinPolicy
 from videoflow.manifests import render_manifests

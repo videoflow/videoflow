@@ -266,7 +266,7 @@ def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus)
     graph dir is mounted at the same absolute path, so config paths resolve
     identically).
     '''
-    from .compiler import compile_flow
+    from .core.compiler import compile_flow
 
     try:
         flow = _load_flow(graph_target)
@@ -516,7 +516,7 @@ def _warn_missing_solution_inputs(graph_dir, config_path) -> None:
             print(f'WARNING: solution input {path} does not exist.', file = sys.stderr)
 
 def _cmd_explain(args) -> None:
-    from .compiler import specs_from_tasks_data
+    from .core.compiler import specs_from_tasks_data
     from .messaging.topology import dlq_stream_name, subject_for
 
     flow = _load_flow(args.graph)
@@ -568,7 +568,7 @@ def _cmd_explain(args) -> None:
 def _cmd_provision(args) -> None:
     import uuid
 
-    from .compiler import specs_from_tasks_data
+    from .core.compiler import specs_from_tasks_data
     from .messaging.topology import provision_flow_sync
 
     flow = _load_flow(args.graph)
@@ -628,7 +628,7 @@ def _format_payload(message : Any) -> str:
     import numpy as np
     if isinstance(message, np.ndarray):
         return f'ndarray shape={tuple(message.shape)} dtype={message.dtype}'
-    from .serialization import RawPayload
+    from .wire.serialization import RawPayload
     if isinstance(message, RawPayload):
         return f'RawPayload type={message.payload_type} ({len(message.data)} bytes, opaque)'
     if hasattr(message, 'DESCRIPTOR'):
@@ -636,7 +636,7 @@ def _format_payload(message : Any) -> str:
     return repr(message)[:200]
 
 def _print_decoded(buf : bytes, headers : dict = None) -> None:
-    from .serialization import decode_envelope
+    from .wire.serialization import decode_envelope
     d = decode_envelope(buf)
     if headers:
         interesting = {k: v for k, v in headers.items() if k.startswith('VF-') or k == 'Nats-Msg-Id'}

@@ -97,7 +97,7 @@ def load_flow(target : str) -> Any:
     return factory()
 
 def compile_to_dict(target, envelope_version = None, allow_pickle = False) -> dict:
-    from .compiler import compile_flow
+    from .core.compiler import compile_flow
 
     flow = load_flow(target)
     specs = compile_flow(flow, envelope_version = envelope_version, allow_pickle = allow_pickle)
@@ -109,7 +109,7 @@ def compile_to_dict(target, envelope_version = None, allow_pickle = False) -> di
 
 def specs_from_document(document) -> tuple:
     '''``(flow_id, flow_type, specs)`` from a compile-JSON document (dict or JSON string).'''
-    from .compiler import NodeSpec
+    from .core.compiler import NodeSpec
 
     if isinstance(document, str):
         document = json.loads(document)

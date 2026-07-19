@@ -13,7 +13,7 @@ import pytest
 
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.messaging import topology
-from videoflow.serialization import MSG_TYPE_DATA, derive_message_id, encode_envelope
+from videoflow.wire.serialization import MSG_TYPE_DATA, derive_message_id, encode_envelope
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 

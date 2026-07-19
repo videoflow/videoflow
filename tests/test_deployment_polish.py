@@ -12,9 +12,9 @@ from contextlib import redirect_stdout
 
 import pytest
 
-from videoflow.compiler import compile_flow
 from videoflow.consumers import CommandlineConsumer, VoidConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import REALTIME
 from videoflow.core.engine import Messenger
 from videoflow.core.task import ConsumerTask

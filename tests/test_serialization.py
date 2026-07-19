@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from videoflow.serialization import (
+from videoflow.wire.serialization import (
     CODEC_EXTERNAL_REF,
     CODEC_PICKLE,
     CODEC_RAW_NDARRAY,

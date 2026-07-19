@@ -76,7 +76,7 @@ def build_node_from_env() -> Any:
     return node_class(**params)
 
 def run_from_env() -> None:
-    from .compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
+    from .core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
     from .core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
     from .messaging.nats_messenger import NATSMessenger
 
@@ -97,7 +97,7 @@ def run_from_env() -> None:
     join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
     join_policy = json.loads(join_policy_json) if join_policy_json else None
 
-    from .serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
+    from .wire.serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
     envelope_version = int(os.environ.get('VF_ENVELOPE_VERSION', str(DEFAULT_ENVELOPE_VERSION)))
     if envelope_version not in EMITTABLE_ENVELOPE_VERSIONS:
         raise ValueError(f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this '
@@ -107,7 +107,7 @@ def run_from_env() -> None:
     blob_store = None
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
-        from .serialization import RedisBlobStore
+        from .wire.serialization import RedisBlobStore
         blob_store = RedisBlobStore(blob_redis_url)
 
     node = build_node_from_env()

@@ -20,7 +20,7 @@ import json
 import logging
 import os
 
-from .compiler import NodeSpec
+from .core.compiler import NodeSpec
 from .messaging.topology import provision_flow_sync
 
 logger = logging.getLogger('videoflow.provision')

@@ -10,9 +10,9 @@ import signal
 import subprocess
 import sysconfig
 
-from videoflow.compiler import compile_flow
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH
 from videoflow.engines.local import LocalProcessEngine, _worker_env, inherited_python_path
 from videoflow.processors import IdentityProcessor

@@ -43,7 +43,7 @@ def build_tasks_data(graph_engine : GraphEngine) -> list:
     '''
     Turns a validated ``GraphEngine`` into the list of ``(node, parent_names, is_last)`` \
         tuples that both the local execution engine and the Kubernetes compiler \
-        (``videoflow.compiler``) use to allocate one task per node.
+        (``videoflow.core.compiler``) use to allocate one task per node.
 
     - Returns:
         - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``

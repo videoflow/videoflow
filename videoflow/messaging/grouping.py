@@ -12,7 +12,7 @@ so the two grouping strategies are testable without a broker:
   "collect" windows for high-rate sensor parents that join many-to-one.
 
 An assembler is fed decoded envelope entries (see
-``videoflow.serialization.decode_envelope``) paired with their broker ack
+``videoflow.wire.serialization.decode_envelope``) paired with their broker ack
 handles. It owns the pending buffers and resolves the handles of anything it
 *discards* (evicted, superseded, expired); handles of everything it *emits*
 travel out unresolved inside the ``ReadyGroup`` for the task loop to ack/fail
