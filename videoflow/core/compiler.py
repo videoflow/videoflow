@@ -138,8 +138,11 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
         gpu_count = node.gpu_count if isinstance(node, ProcessorNode) else 1
         gpu_resource_name = node.gpu_resource_name if isinstance(node, ProcessorNode) else None
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
-        partition_by = getattr(node, 'partition_by', None)
-        join_policy = node._join_policy if hasattr(node, '_join_policy') else None
+        # partition_by and _join_policy live on ProcessorNode/ConsumerNode; a producer
+        # has neither. isinstance (not getattr) so the checker verifies the families.
+        joinable = isinstance(node, (ProcessorNode, ConsumerNode))
+        partition_by = node.partition_by if joinable else None
+        join_policy = node._join_policy if joinable else None
         node_class: Optional[str]
         component_ref: Optional[str]
         descriptor: Optional[Dict[str, Any]]
@@ -170,7 +173,7 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             gpu_count = gpu_count,
             gpu_resource_name = gpu_resource_name,
             is_finite = is_finite,
-            image = getattr(node, 'image', None),
+            image = node.image,
             partition_by = partition_by,
             join_policy = join_policy,
             component_ref = component_ref,
@@ -188,9 +191,8 @@ def _validate_remote_node(node : RemoteNodeMixin, parent_names : List[str]) -> N
     (complements the parent-independent quorum check in ``core.remote.component``).
     '''
     desc = node.descriptor
-    # getattr, not attribute access: only ProcessorNode/ConsumerNode set _join_policy,
-    # so a RemoteProducer has none (same defensive read as specs_from_tasks_data above).
-    policy = getattr(node, '_join_policy', None)
+    # Only ProcessorNode/ConsumerNode carry a join policy — a RemoteProducer has none.
+    policy = node._join_policy if isinstance(node, (ProcessorNode, ConsumerNode)) else None
     if not policy or not desc.inputs:
         return
     collect = policy.get('collect') if isinstance(policy, dict) else None

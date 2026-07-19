@@ -23,6 +23,7 @@ from nats.aio.client import Client
 from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DiscardPolicy, RetentionPolicy, StreamConfig
 
+from ..core.compiler import NodeSpec
 from ..core.constants import REALTIME
 
 logger = logging.getLogger(__package__)
@@ -220,7 +221,7 @@ async def _ensure_consumer(js : JetStreamContext, stream_name : str, config : Co
     except Exception as e:  # noqa: BLE001
         logger.debug(f'add_consumer({stream_name}, {config.durable_name}) skipped: {e}')
 
-async def provision_flow(nc : Client, specs : list, flow_id : str, run_id : str, flow_type : str,
+async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run_id : str, flow_type : str,
                         max_retries : int = DEFAULT_MAX_RETRIES, ack_wait : int = 60,
                         max_ack_pending : int = 8) -> None:
     '''
@@ -244,7 +245,7 @@ async def provision_flow(nc : Client, specs : list, flow_id : str, run_id : str,
     #    discarded — leaving the child waiting for EOS forever (see eos_anchor_config).
     for spec in specs:
         await _ensure_stream(js, stream_config_for(flow_id, run_id, spec.name, flow_type))
-        if getattr(spec, 'has_children', True):
+        if spec.has_children:
             await _ensure_consumer(js, stream_name_for(flow_id, run_id, spec.name),
                                    eos_anchor_config(flow_id, run_id, spec.name))
 
@@ -255,8 +256,8 @@ async def provision_flow(nc : Client, specs : list, flow_id : str, run_id : str,
     #    partitioned child gets one durable *per replica* (broadcast + client-side
     #    ownership); everything else gets one shared durable (competing consumers).
     for spec in specs:
-        partition_by = getattr(spec, 'partition_by', None)
-        nb_tasks = getattr(spec, 'nb_tasks', 1)
+        partition_by = spec.partition_by
+        nb_tasks = spec.nb_tasks
         for parent_name in spec.parents:
             if parent_name not in by_name:
                 continue
@@ -273,7 +274,7 @@ async def provision_flow(nc : Client, specs : list, flow_id : str, run_id : str,
             else:
                 await _ensure_consumer(js, parent_stream, base)
 
-async def provision_flow_connect(nats_url : str, specs : list, flow_id : str, run_id : str,
+async def provision_flow_connect(nats_url : str, specs : list[NodeSpec], flow_id : str, run_id : str,
                                 flow_type : str, connect_options : dict[str, Any] | None = None,
                                 **kwargs : Any) -> None:
     '''
@@ -291,7 +292,7 @@ async def provision_flow_connect(nats_url : str, specs : list, flow_id : str, ru
     finally:
         await nc.drain()
 
-def provision_flow_sync(nats_url : str, specs : list, flow_id : str, run_id : str, flow_type : str,
+def provision_flow_sync(nats_url : str, specs : list[NodeSpec], flow_id : str, run_id : str, flow_type : str,
                         connect_options : dict[str, Any] | None = None, timeout : float | None = None,
                         **kwargs : Any) -> None:
     '''

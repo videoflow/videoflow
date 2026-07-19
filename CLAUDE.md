@@ -116,6 +116,31 @@ Two things that audit learned, worth knowing before you defer or hoist anything:
   `from ..utils import plugins` at module scope and call `plugins.load_plugin_group(...)`; that
   satisfies this rule and keeps the patch seam. See `wire/serialization.py` and `deploy/gpu.py`.
 
+**Don't use `getattr`/`hasattr` to dodge a type.** `getattr(node, 'partition_by', None)` and
+`node._join_policy if hasattr(node, '_join_policy') else None` read as defensive, but they say
+"I don't know what this object is" in a codebase where the checker does. They silently return the
+default when an attribute is *renamed*, turning a refactor into a wrong answer at runtime instead
+of an error at check time. Use the type system:
+
+- The attribute lives on a subclass → `isinstance`. `partition_by`/`_join_policy` are on
+  `ProcessorNode`/`ConsumerNode` but not `ProducerNode`, so
+  `node.partition_by if isinstance(node, (ProcessorNode, ConsumerNode)) else None` — which is
+  what the surrounding lines in `core/compiler.py` already do.
+- The attribute is always there → just read it. `image` is a property on `Node`, so
+  `getattr(node, 'image', None)` was pure noise. Same for every field of a `NodeSpec` dataclass.
+- Duck-typing a foreign object → `isinstance` against the real base, or a `Protocol` /
+  `TypeGuard` if there's no importable base. `_is_proto_message` went from probing for
+  `DESCRIPTOR`/`SerializeToString` to `TypeGuard[Message]`, which also narrows for callers.
+- A loosely-typed parameter → fix the parameter. `topology.provision_flow(specs : list)` used
+  `getattr` defaults for `has_children`/`nb_tasks`; every caller passes `list[NodeSpec]`, so
+  typing it removed all three.
+
+`getattr`/`hasattr` are correct only for **genuine reflection**, where the attribute name is a
+variable rather than a literal: `Node.get_params()` walking `'_' + pname`, importing a class named
+by `VF_NODE_CLASS`, a log field named by config, or an object that legitimately may not have the
+attribute at all (a module without `__file__`). Those are the only ones left in `videoflow/` —
+if you add another, it should be that kind.
+
 **Abstraction practices.**
 - Prefer small pure functions taking explicit arguments over methods that reach into `self._*`.
   The graph-validation and topology-naming code is written this way and is the easiest code in

@@ -188,7 +188,7 @@ def run_from_env() -> None:
     elif kind == NODE_KIND_CONSUMER:
         consumer = require_node_kind(node, ConsumerNode, kind)
         idem_store = None
-        if getattr(consumer, 'idempotent', False) and blob_redis_url:
+        if consumer.idempotent and blob_redis_url:
             idem_store = RedisIdempotencyStore(blob_redis_url)
         task = ConsumerTask(consumer, messenger, has_children, parent_names, ctx = ctx,
                             idempotency_store = idem_store)

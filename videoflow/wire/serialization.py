@@ -27,7 +27,7 @@ import hashlib
 import os
 import pickle
 import uuid
-from typing import Any, Callable, Optional, Tuple
+from typing import Any, Callable, Optional, Tuple, TypeGuard
 
 import msgpack
 import numpy as np
@@ -451,10 +451,11 @@ def _ndarray_to_tensor(arr : np.ndarray) -> payloads_pb2.Tensor:
 def _tensor_to_ndarray(t : payloads_pb2.Tensor) -> np.ndarray:
     return np.frombuffer(t.data, dtype = np.dtype(t.dtype)).reshape(list(t.shape))
 
-# Protobuf message classes are recognized structurally (they expose SerializeToString
-# and a DESCRIPTOR) so any generated message — well-known or vendor — can be a payload.
-def _is_proto_message(obj : object) -> bool:
-    return hasattr(obj, 'DESCRIPTOR') and hasattr(obj, 'SerializeToString')
+# Any generated message — well-known or vendor — can be a payload: they all derive from
+# the protobuf runtime's Message base, so isinstance covers what the old structural
+# DESCRIPTOR/SerializeToString probe did, and narrows the type for callers.
+def _is_proto_message(obj : object) -> TypeGuard[Message]:
+    return isinstance(obj, Message)
 
 def _encode_payload_v4(payload : Any, allow_pickle : bool) -> Tuple[str, bytes]:
     '''Encodes a payload to ``(payload_type, bytes)`` without blob offload (§4.4).'''

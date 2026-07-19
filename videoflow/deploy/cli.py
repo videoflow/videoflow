@@ -641,7 +641,7 @@ def _cmd_explain(args : argparse.Namespace) -> None:
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
         from .manifests import gpu_demand  # optional dep: manifests imports yaml at module scope
-        default_resource = getattr(args, 'gpu_resource_name', None)
+        default_resource = args.gpu_resource_name
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')
         for s in gpu_specs:
@@ -731,7 +731,9 @@ def _format_payload(message : Any) -> str:
     from ..wire.serialization import RawPayload
     if isinstance(message, RawPayload):
         return f'RawPayload type={message.payload_type} ({len(message.data)} bytes, opaque)'
-    if hasattr(message, 'DESCRIPTOR'):
+    # optional dep: protobuf ships with the same extras as the serialization module above
+    from google.protobuf.message import Message
+    if isinstance(message, Message):
         return f'{message.DESCRIPTOR.full_name}: ' + str(message).replace('\n', ' ').strip()[:200]
     return repr(message)[:200]
 

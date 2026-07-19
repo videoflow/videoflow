@@ -137,7 +137,7 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
     return env
 
 def _is_partitioned(spec : NodeSpec) -> bool:
-    return bool(getattr(spec, 'partition_by', None)) and spec.nb_tasks > 1
+    return bool(spec.partition_by) and spec.nb_tasks > 1
 
 def _labels(flow_id : str, node_name : Optional[str] = None) -> dict:
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
@@ -175,9 +175,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     }
     # A remote component may override the container command; native nodes and
     # vendor images with a videoflow entrypoint leave it to the image.
-    command = getattr(spec, 'command', None)
-    if command:
-        container['command'] = list(command)
+    if spec.command:
+        container['command'] = list(spec.command)
     if _is_partitioned(spec):
         if flow_type == BATCH:
             # Partitioned BATCH node runs as an Indexed Job; the completion index is

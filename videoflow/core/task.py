@@ -231,7 +231,7 @@ class ConsumerTask(NodeTask):
         self._consumer = consumer
         self._parent_names = list(parent_names)
         # Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).
-        self._idem_store = idempotency_store if getattr(consumer, 'idempotent', False) else None
+        self._idem_store = idempotency_store if consumer.idempotent else None
         super(ConsumerTask, self).__init__(consumer, messenger, has_children, ctx)
 
     def _run(self) -> None:
