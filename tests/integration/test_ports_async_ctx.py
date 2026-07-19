@@ -8,7 +8,7 @@ import tempfile
 
 import pytest
 
-TESTS_DIR = os.path.dirname(os.path.abspath(__file__))
+TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, TESTS_DIR)  # so this process can import support_nodes as the workers will
 
 from support_nodes import AsyncDoubler, CtxPartitionTagger  # noqa: E402
@@ -19,25 +19,6 @@ from videoflow.core.constants import BATCH
 from videoflow.producers import IntProducer
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
-
-def _nats_available():
-    import asyncio
-    try:
-        import nats
-    except ImportError:
-        return False
-
-    async def _try():
-        nc = await nats.connect(NATS_URL, connect_timeout = 2)
-        await nc.drain()
-
-    try:
-        asyncio.run(_try())
-        return True
-    except Exception:
-        return False
-
-pytestmark = pytest.mark.skipif(not _nats_available(), reason = f'NATS not reachable at {NATS_URL}')
 
 def _run(flow):
     from videoflow.engines.local import LocalProcessEngine

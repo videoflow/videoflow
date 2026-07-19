@@ -39,8 +39,10 @@ repos:
         pass_filenames: false
 
       - id: pytest
-        name: pytest (full suite)
-        entry: uv run pytest
+        name: pytest (unit suite)
+        # tests/integration/ needs a live NATS JetStream server, so it is excluded
+        # here — run it explicitly with `uv run pytest tests/integration`.
+        entry: uv run pytest --ignore=tests/integration
         language: system
         pass_filenames: false
         always_run: true

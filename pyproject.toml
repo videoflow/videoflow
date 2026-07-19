@@ -117,6 +117,11 @@ include = [
 [tool.pytest.ini_options]
 markers = [
     "timeout: mark a test with a maximum run time (pytest-timeout).",
+    # Applied automatically to everything under tests/integration/ by that
+    # directory's conftest. These need a live NATS JetStream server; the pre-push
+    # hook excludes them, so run them with `pytest tests/integration` (or
+    # `pytest -m integration`) once a server is up.
+    "integration: requires a reachable NATS JetStream server.",
 ]
 filterwarnings = [
     # nats-py schedules a background flusher task that, in the short-lived

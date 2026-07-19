@@ -15,22 +15,6 @@ from videoflow.messaging import topology
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
-def _nats_available():
-    try:
-        import nats
-    except ImportError:
-        return False
-
-    async def _try():
-        nc = await nats.connect(NATS_URL, connect_timeout = 2)
-        await nc.drain()
-
-    try:
-        asyncio.run(_try())
-        return True
-    except Exception:
-        return False
-
 # -- pure naming / config --------------------------------------------------
 
 def test_names_are_run_scoped():
@@ -63,8 +47,6 @@ def test_names_sanitize_illegal_chars():
     assert '.' not in topology.subject_for('f', 'r', 'a.b').split('vf.f.r.')[1]
 
 # -- provisioning (needs NATS) ---------------------------------------------
-
-pytestmark = pytest.mark.skipif(not _nats_available(), reason = f'NATS not reachable at {NATS_URL}')
 
 class _Spec:
     def __init__(self, name, parents):

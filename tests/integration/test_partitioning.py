@@ -71,24 +71,6 @@ def test_partitioned_node_renders_statefulset_and_headless_service():
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
-def _nats_available():
-    import asyncio
-    try:
-        import nats
-    except ImportError:
-        return False
-
-    async def _try():
-        nc = await nats.connect(NATS_URL, connect_timeout = 2)
-        await nc.drain()
-
-    try:
-        asyncio.run(_try())
-        return True
-    except Exception:
-        return False
-
-@pytest.mark.skipif(not _nats_available(), reason = f'NATS not reachable at {NATS_URL}')
 def test_partitioned_processor_delivers_each_message_once():
     '''
     A partitioned processor (nb_tasks=2, partition_by='trace_id') must deliver every

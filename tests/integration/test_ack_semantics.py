@@ -20,24 +20,6 @@ from videoflow.serialization import MSG_TYPE_DATA, derive_message_id, encode_env
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
-def _nats_available():
-    try:
-        import nats
-    except ImportError:
-        return False
-
-    async def _try():
-        nc = await nats.connect(NATS_URL, connect_timeout = 2)
-        await nc.drain()
-
-    try:
-        asyncio.run(_try())
-        return True
-    except Exception:
-        return False
-
-pytestmark = pytest.mark.skipif(not _nats_available(), reason = f'NATS not reachable at {NATS_URL}')
-
 class _StubNode:
     def __init__(self, name):
         self._name = name
