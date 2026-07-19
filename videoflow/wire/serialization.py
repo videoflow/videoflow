@@ -202,8 +202,12 @@ def make_blob_store(url : str) -> BlobStore:
         )
     return _BLOB_STORE_SCHEMES[scheme](url)
 
+# Every scheme redis-py's from_url accepts. The worker used to hand VF_BLOB_REDIS_URL
+# straight to RedisBlobStore whatever its scheme, so all three must stay registered
+# or scheme dispatch would silently drop support for a URL that used to work.
 register_blob_store('redis', RedisBlobStore)
 register_blob_store('rediss', RedisBlobStore)   # TLS
+register_blob_store('unix', RedisBlobStore)     # Unix domain socket
 
 # ==========================================================================
 # v2 / v3 — msgpack payload codec (legacy, unchanged behavior)

@@ -37,8 +37,15 @@ def registry_sandbox(monkeypatch):
 
 
 def test_redis_schemes_are_registered_by_default():
-    assert 'redis' in s.registered_blob_store_schemes()
-    assert 'rediss' in s.registered_blob_store_schemes()
+    '''
+    All three schemes redis-py's from_url accepts. The worker used to pass
+    VF_BLOB_REDIS_URL straight to RedisBlobStore whatever its scheme, so dispatching
+    on the scheme must not drop one — `unix://` in particular is easy to forget and
+    would fail only for the deployments that use a socket.
+    '''
+    assert set(s.registered_blob_store_schemes()) >= {'redis', 'rediss', 'unix'}
+    for scheme in ('redis', 'rediss', 'unix'):
+        assert s._BLOB_STORE_SCHEMES[scheme] is s.RedisBlobStore
 
 
 def test_dispatches_on_scheme_and_passes_the_full_url(registry_sandbox):
