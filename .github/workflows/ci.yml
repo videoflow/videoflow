@@ -15,7 +15,7 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       - name: Set up Python
-        run: uv python install 3.9
+        run: uv python install 3.12
 
       - name: Install NATS JetStream server
         run: |

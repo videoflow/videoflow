@@ -154,7 +154,7 @@ check_untyped_defs = false
 disable_error_code = ["override"]
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py312"
 line-length = 120
 # videoflow/v1 is generated protobuf code (see spec/proto + scripts/gen-proto.sh):
 # never lint or auto-fix it — ruff's F401 would strip the cross-proto imports that
@@ -171,6 +171,9 @@ select = ["E9", "F", "B", "C4", "I"]
 ignore = [
     "B008",  # function call in default arg — used intentionally in a few places
     "E741",  # ambiguous var names (l/I) in existing math code
+    "B905",  # zip() without strict= — the zipped sequences are known-equal-length
+             # (usually asserted on the preceding line); matches videoflow-contrib's
+             # ruff.toml. Only fires since target-version moved to py312.
 ]
 
 [tool.ruff.lint.per-file-ignores]
