@@ -26,7 +26,7 @@ from __future__ import absolute_import, division, print_function
 import hashlib
 import os
 import pickle
-from typing import Any, Callable, Tuple
+from typing import Any, Callable, Optional, Tuple
 
 import msgpack
 import numpy as np
@@ -333,6 +333,54 @@ for _m in (payloads_pb2.Tensor, payloads_pb2.Frame, payloads_pb2.Detections,
         payloads_pb2.Tracks, payloads_pb2.BlobRef, value_pb2.Value):
     register_payload_type(_m)
 
+#: Entry-point group for third-party payload codecs. Registration normally happens
+#: as a side effect of importing the component module (the worker imports it via
+#: ``VF_NODE_CLASS`` anyway); the group covers host-side tools such as
+#: ``videoflow debug decode``, which must understand a vendor payload without
+#: knowing which package defines it.
+PAYLOAD_ENTRY_POINT_GROUP = 'videoflow.payload_types'
+
+#: Encode rules, consulted in registration order by ``isinstance``. The encode-side
+#: complement of ``_PAYLOAD_REGISTRY``: that one makes a *received* FQN decode to a
+#: class, this one gives an *outgoing* Python object a wire type.
+_PAYLOAD_ENCODERS : list = []
+
+def register_payload_encoder(python_type : type,
+                            encoder : Callable[[Any], Tuple[str, bytes]]) -> None:
+    '''
+    Registers an encode rule mapping instances of ``python_type`` to a
+    ``(payload_type, serialized_bytes)`` pair on the v4 wire — the encode-side
+    complement of ``register_payload_type``.
+
+    Rules are checked in registration order, and only *after* every built-in
+    check (ndarray, ``RawPayload``, protobuf message, and the JSON-like types that
+    become ``Value``) but *before* the pickle fallback. That ordering is
+    deliberate and worth preserving: it lets a vendor type get a real wire type
+    instead of pickle-or-``TypeError``, while making it impossible for any
+    registration — even one matching ``object`` — to change how a built-in
+    payload encodes. Those mappings are fixed by ``spec/PROTOCOL.md`` §4.4 and
+    proven by the golden vectors, so they are not an extension point.
+
+    The corollary: a type that is *already* encodable (a ``dict`` subclass, say)
+    is encoded as the built-in it resembles, and its registered rule never runs.
+
+    Pair this with ``register_payload_type`` (or a decoder that understands the
+    ``payload_type`` string) so the receiving side can decode what you emit.
+
+    - Arguments:
+        - python_type: the type to match with ``isinstance``.
+        - encoder: callable taking the payload and returning \
+            ``(payload_type, serialized_bytes)``.
+    '''
+    _PAYLOAD_ENCODERS.append((python_type, encoder))
+
+def _encode_registered_payload(payload) -> Optional[Tuple[str, bytes]]:
+    '''The first registered encode rule matching ``payload``, or None.'''
+    for python_type, encoder in _PAYLOAD_ENCODERS:
+        if isinstance(payload, python_type):
+            return encoder(payload)
+    return None
+
 def _value_to_proto(v : Any) -> value_pb2.Value:
     out = value_pb2.Value()
     if v is None:
@@ -402,12 +450,19 @@ def _encode_payload_v4(payload, allow_pickle : bool) -> Tuple[str, bytes]:
         return payload.DESCRIPTOR.full_name, payload.SerializeToString()
     if isinstance(payload, (bool, int, float, str, bytes, bytearray, list, tuple, dict, np.generic)) or payload is None:
         return PAYLOAD_VALUE, _value_to_proto(payload).SerializeToString()
+    # Vendor encode rules sit after *every* built-in check, so registering one can
+    # never change how a built-in payload encodes, and before the pickle fallback,
+    # so a vendor type gets a real wire type instead of a Python-only one.
+    registered = _encode_registered_payload(payload)
+    if registered is not None:
+        return registered
     if allow_pickle:
         return PAYLOAD_PICKLE, pickle.dumps(payload, protocol = 5)
     raise TypeError(
         f'Cannot encode payload of type {type(payload).__name__} for the v4 wire. '
         'Use a numpy ndarray, a registered videoflow.v1 payload, a protobuf message, '
-        'a JSON-like scalar/list/dict (videoflow.v1.Value), or enable the legacy '
+        'a JSON-like scalar/list/dict (videoflow.v1.Value), register an encoder with '
+        'videoflow.wire.serialization.register_payload_encoder, or enable the legacy '
         'pickle codec (VF_ALLOW_PICKLE=1, Python-only flows).'
     )
 
@@ -429,6 +484,14 @@ def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore =
     if payload_type == PAYLOAD_PICKLE:
         return pickle.loads(buf)
     cls = _PAYLOAD_REGISTRY.get(payload_type)
+    if cls is None:
+        # An unregistered FQN may belong to an installed-but-unimported package.
+        # A worker normally imports the component that registers it, but host-side
+        # tools (``videoflow debug decode``) have no such import; consult entry
+        # points once before falling back to opaque bytes.
+        from ..utils.plugins import load_plugin_group
+        load_plugin_group(PAYLOAD_ENTRY_POINT_GROUP)
+        cls = _PAYLOAD_REGISTRY.get(payload_type)
     if cls is not None:
         msg = cls()
         msg.ParseFromString(buf)
