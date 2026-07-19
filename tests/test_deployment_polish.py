@@ -19,9 +19,9 @@ from videoflow.core.constants import REALTIME
 from videoflow.core.engine import Messenger
 from videoflow.core.task import ConsumerTask
 from videoflow.deploy.manifests import render_manifests
-from videoflow.idempotency import IdempotencyStore, idempotency_key
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
+from videoflow.runtime.idempotency import IdempotencyStore, idempotency_key
 
 
 def _demo_flow():
@@ -94,7 +94,7 @@ def test_explain_prints_nodes_and_dlq():
 def test_json_formatter_includes_context_fields():
     import logging
 
-    from videoflow.logging_config import JsonFormatter
+    from videoflow.runtime.logging_config import JsonFormatter
     rec = logging.LogRecord('n', logging.INFO, __file__, 1, 'hello', None, None)
     rec.flow_id = 'f'
     rec.node_name = 'detector'

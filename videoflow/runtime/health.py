@@ -18,7 +18,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Optional
 
-from .core.engine import Messenger
+from ..core.engine import Messenger
 
 logger = logging.getLogger(__package__)
 
