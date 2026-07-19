@@ -53,9 +53,6 @@ class GpuStrategy:
     #: Mode name, as used by ``--gpu-mode``.
     name : str = ''
 
-    #: One-line help, shown in the CLI's ``--gpu-mode`` help text.
-    description : str = ''
-
     def pod_resources(self, spec, gpu_resource_name : Optional[str] = None) -> dict:
         '''
         The container ``resources`` fragment for one GPU pod — ``{}`` for a
@@ -102,7 +99,6 @@ class GpuStrategy:
 class ExclusiveGpu(GpuStrategy):
     '''Whole-device claims through an integer extended resource (the default).'''
     name = 'exclusive'
-    description = 'each GPU replica claims whole devices via the extended resource'
 
     def pod_resources(self, spec, gpu_resource_name = None) -> dict:
         # nvidia.com/gpu (or a MIG profile / renamed time-sliced resource via
@@ -113,6 +109,9 @@ class ExclusiveGpu(GpuStrategy):
 
     def preflight_problems(self, kubectl = 'kubectl', demand = None,
                         gpu_runtime_class = None) -> List[str]:
+        # Function-level: cluster.py imports this module at module scope (for
+        # SHARED_NEEDS_RUNTIME_CLASS and get_gpu_mode), so importing it back at
+        # module scope here would be a cycle.
         from .cluster import allocatable_gpus, nvidia_runtimeclass
 
         problems = []
@@ -150,7 +149,6 @@ SHARED_NEEDS_RUNTIME_CLASS = '--gpu-mode shared without --gpu-runtime-class'
 class SharedGpu(GpuStrategy):
     '''No resource limit: pods co-schedule on the pool and share devices via the NVIDIA runtime.'''
     name = 'shared'
-    description = 'GPU pods co-schedule and share devices (dev clusters only)'
 
     def pod_resources(self, spec, gpu_resource_name = None) -> dict:
         # No limit at all: every GPU pod is scheduled onto the pool by the selector
@@ -163,6 +161,7 @@ class SharedGpu(GpuStrategy):
 
     def preflight_problems(self, kubectl = 'kubectl', demand = None,
                         gpu_runtime_class = None) -> List[str]:
+        # Function-level to break the same cycle as in ExclusiveGpu above.
         from .cluster import nvidia_runtimeclass
 
         # Capacity math and the device plugin are irrelevant without a resource
@@ -224,9 +223,3 @@ def get_gpu_mode(name : str) -> GpuStrategy:
 
 register_gpu_mode(ExclusiveGpu())
 register_gpu_mode(SharedGpu())
-
-#: Backwards-compatible alias. Was a module-level tuple in ``manifests``; kept as a
-#: function-shaped view so a registered third mode is included automatically.
-def gpu_modes() -> tuple:
-    '''The valid ``--gpu-mode`` values, as a tuple.'''
-    return tuple(registered_gpu_modes())

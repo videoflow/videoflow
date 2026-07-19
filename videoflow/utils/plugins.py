@@ -19,6 +19,7 @@ a worse trade than the ``if/elif`` it replaces.
 from __future__ import absolute_import, division, print_function
 
 import logging
+from importlib.metadata import entry_points
 
 logger = logging.getLogger(__package__)
 
@@ -45,8 +46,6 @@ def load_plugin_group(group : str) -> None:
         return
     _loaded.add(group)
 
-    from importlib.metadata import entry_points
-
     for ep in entry_points(group = group):
         try:
             loaded = ep.load()
@@ -55,7 +54,3 @@ def load_plugin_group(group : str) -> None:
         except Exception as e:                        # noqa: BLE001 — see docstring
             logger.warning(f'Failed to load videoflow plugin {ep.name!r} '
                            f'from group {group!r}: {type(e).__name__}: {e}')
-
-def reset_loaded_groups() -> None:
-    '''Forgets which groups were scanned. For tests that register entry points mid-run.'''
-    _loaded.clear()

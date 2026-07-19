@@ -144,9 +144,13 @@ class _GenericRemoteFlavor(ClusterFlavorHandler):
     def matches(self, context_name, node_labels) -> bool:
         return True
 
-#: Handlers in detection order. The context-name checks come before the
-#: node-label ones so the common cases need no extra kubectl call, and
-#: GENERIC_REMOTE stays last as the terminal fallback.
+#: Handlers in detection order. Flavors that can be recognized from the context
+#: name alone (kind, docker-desktop, minikube) are registered before the label-only
+#: one (k3s), so a cluster identifiable by its context name is detected without any
+#: `kubectl get nodes` call — and GENERIC_REMOTE stays last as the terminal
+#: fallback. Registering k3s ahead of minikube would make a context-named minikube
+#: cluster pay for k3s's label probe first, which is the regression this order
+#: avoids.
 _FLAVORS : List[ClusterFlavorHandler] = []
 
 def register_cluster_flavor(handler : ClusterFlavorHandler,
@@ -173,8 +177,8 @@ def register_cluster_flavor(handler : ClusterFlavorHandler,
     raise ValueError(f'no registered cluster flavor named {before!r}; '
                      f'known: {", ".join(f.name for f in _FLAVORS)}')
 
-for _flavor in (_KindFlavor(), _DockerDesktopFlavor(), _K3sFlavor(),
-                _MinikubeFlavor(), _GenericRemoteFlavor()):
+for _flavor in (_KindFlavor(), _DockerDesktopFlavor(), _MinikubeFlavor(),
+                _K3sFlavor(), _GenericRemoteFlavor()):
     register_cluster_flavor(_flavor, before = None)
 
 def get_cluster_flavor(cluster : str) -> ClusterFlavorHandler:

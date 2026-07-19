@@ -108,17 +108,17 @@ def registered_question_types() -> list:
     '''The ``x-questions`` type names currently registered, sorted.'''
     return sorted(_QUESTION_COERCERS)
 
-def _coerce_choice(question, answer, base_dir):
+def _coerce_choice(question : dict, answer : str, base_dir : str) -> Any:
     choices = [str(c) for c in question['choices']]
     if str(answer) not in choices:
         raise ValueError(f'must be one of: {", ".join(choices)}')
     return answer
 
-def _coerce_path(question, answer, base_dir):
+def _coerce_path(question : dict, answer : str, base_dir : str) -> str:
     '''A single filesystem path, validated and absolutized (scalar config key).'''
     return _abs_existing(answer, base_dir)
 
-def _coerce_paths(question, answer, base_dir):
+def _coerce_paths(question : dict, answer : str, base_dir : str) -> dict:
     '''Several paths, expanded into a mapping via ``item_key``/``item_value``.'''
     paths = [p.strip() for p in str(answer).replace(',', ' ').split() if p.strip()]
     if not paths:
@@ -138,7 +138,7 @@ register_question_type('choice', _coerce_choice)
 register_question_type('path', _coerce_path)
 register_question_type('paths', _coerce_paths)
 
-def _coerce(question, answer, base_dir):
+def _coerce(question : dict, answer : str, base_dir : str) -> Any:
     '''
     Coerces one raw answer per its question ``type``.
 
@@ -162,7 +162,7 @@ def _fill_paths(template_value, path):
         return template_value.format(path = path)
     return template_value
 
-def validate_question_types(questions) -> None:
+def validate_question_types(questions : Optional[list]) -> None:
     '''
     Checks every question's ``type`` is registered, before any prompting starts.
 

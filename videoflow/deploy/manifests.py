@@ -26,14 +26,14 @@ import yaml
 from ..core.compiler import NODE_KIND_PRODUCER
 from ..core.constants import BATCH
 
-# GPU allocation lives in .gpu. Re-exported here because these were manifests'
-# public names before the strategies were extracted out of it.
-from .gpu import (  # noqa: F401
-    DEFAULT_GPU_RESOURCE,
+# GPU allocation lives in .gpu; these four are used below.
+# Re-export only: DEFAULT_GPU_RESOURCE was a public name of this module before the
+# GPU strategies were extracted, so external callers may still import it from here.
+from .gpu import (
+    DEFAULT_GPU_RESOURCE,  # noqa: F401
     GPU_POOL_LABEL,
     GPU_TAINT_KEY,
     get_gpu_mode,
-    registered_gpu_modes,
     resolve_gpu_resource,
 )
 

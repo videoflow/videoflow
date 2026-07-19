@@ -204,11 +204,22 @@ def test_detect_reuses_one_node_label_query(monkeypatch):
     assert len(label_queries) == 1
 
 
-def test_context_named_flavors_need_no_node_query(monkeypatch):
-    '''kind/minikube/docker-desktop are decided from the context name alone.'''
-    run, calls = _fake_run({'current-context': 'kind-dev'})
+@pytest.mark.parametrize('ctx,expected', [
+    ('kind-dev', cluster.KIND),
+    ('minikube', cluster.MINIKUBE),
+    ('docker-desktop', cluster.DOCKER_DESKTOP),
+])
+def test_context_named_flavors_need_no_node_query(monkeypatch, ctx, expected):
+    '''
+    kind/minikube/docker-desktop are decided from the context name alone. This is
+    why they are registered ahead of the label-only k3s handler: put k3s first and
+    a context-named minikube pays for k3s's node-label probe before its own check
+    ever runs. Parametrized over all three, since testing only kind would pass
+    while minikube regressed.
+    '''
+    run, calls = _fake_run({'current-context': ctx})
     monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.detect_cluster() == cluster.KIND
+    assert cluster.detect_cluster() == expected
     assert not any('instance-type' in ' '.join(c) for c in calls)
 
 

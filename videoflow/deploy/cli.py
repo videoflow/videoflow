@@ -593,7 +593,8 @@ def _cmd_explain(args) -> None:
     # what explain prints is exactly what deploy will request.
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
-        from .manifests import gpu_demand, resolve_gpu_resource
+        from .gpu import resolve_gpu_resource
+        from .manifests import gpu_demand
         default_resource = getattr(args, 'gpu_resource_name', None)
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')

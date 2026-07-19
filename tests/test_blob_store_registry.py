@@ -118,8 +118,10 @@ def test_plugin_group_is_scanned_at_most_once(monkeypatch):
         seen.append(group)
         return []
 
+    # Patch the name bound in plugins, not importlib.metadata: plugins imports
+    # entry_points at module scope, so the module-level binding is what runs.
     monkeypatch.setattr(plugins, '_loaded', set())
-    monkeypatch.setattr('importlib.metadata.entry_points', fake_entry_points)
+    monkeypatch.setattr(plugins, 'entry_points', fake_entry_points)
     plugins.load_plugin_group('videoflow.test_group')
     plugins.load_plugin_group('videoflow.test_group')
     assert seen == ['videoflow.test_group']
@@ -134,8 +136,7 @@ def test_broken_plugin_is_logged_not_raised(monkeypatch):
             raise RuntimeError('boom')
 
     monkeypatch.setattr(plugins, '_loaded', set())
-    monkeypatch.setattr('importlib.metadata.entry_points',
-                        lambda group = None: [_BadEntryPoint()])
+    monkeypatch.setattr(plugins, 'entry_points', lambda group = None: [_BadEntryPoint()])
     plugins.load_plugin_group('videoflow.test_group')   # must not raise
 
 
