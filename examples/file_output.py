@@ -6,7 +6,7 @@ to show what landed there.
 
 The custom SquareLineProcessor lives in examples/example_nodes.py (see the note
 there on why custom nodes must be in an importable module); this script puts that
-directory on PYTHONPATH so the spawned workers can import it.
+directory on sys.path, which the local engine re-exports to the spawned workers.
 
     python examples/file_output.py
 '''
@@ -16,7 +16,6 @@ import tempfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-os.environ['PYTHONPATH'] = _HERE + os.pathsep + os.environ.get('PYTHONPATH', '')
 
 from example_nodes import SquareLineProcessor  # noqa: E402
 

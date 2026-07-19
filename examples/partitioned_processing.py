@@ -13,7 +13,7 @@ a given input integer is always handled by the same replica.
 
 The ReplicaTagProcessor lives in examples/example_nodes.py (custom nodes must be
 in an importable module so each worker can reconstruct them); this script puts
-that directory on PYTHONPATH so the spawned workers can import it.
+that directory on sys.path, which the local engine re-exports to the spawned workers.
 
     python examples/partitioned_processing.py
 '''
@@ -22,7 +22,6 @@ import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-os.environ['PYTHONPATH'] = _HERE + os.pathsep + os.environ.get('PYTHONPATH', '')
 
 from example_nodes import ReplicaTagProcessor  # noqa: E402
 

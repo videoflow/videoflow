@@ -35,6 +35,7 @@ X_QUESTIONS = 'x-questions'
 X_MOUNTS = 'x-mounts'
 TEMPLATE_NAME = 'config.template.yaml'
 CONFIG_NAME = 'config.yaml'
+PREPARE_NAME = 'prepare.py'
 
 def find_template(graph_dir) -> Optional[str]:
     path = os.path.join(graph_dir, TEMPLATE_NAME)
@@ -210,3 +211,33 @@ def resolve_mounts(template, config, graph_dir) -> List[str]:
             seen.add(spec)
             unique.append(spec)
     return unique
+
+def find_prepare(graph_dir) -> Optional[str]:
+    '''The solution's ``prepare.py`` hook, or None when it ships none.'''
+    path = os.path.join(graph_dir, PREPARE_NAME)
+    return path if os.path.isfile(path) else None
+
+def prepare_command(config_path = None, python_exe = 'python') -> List[str]:
+    '''The argv for the prepare hook, run with the solution directory as cwd.'''
+    return [python_exe, PREPARE_NAME] + (['--config', config_path] if config_path else [])
+
+def run_prepare_local(graph_dir, config_path = None) -> bool:
+    '''
+    Runs the solution's ``prepare.py`` on this host, with the solution directory as
+    the working directory so its ``import common`` resolves. Used by ``run-local``
+    (whose workers are local anyway) and as ``deploy``'s fallback when there is no
+    image to run it in.
+
+    - Returns:
+        - False when the solution ships no hook (nothing was run).
+
+    - Raises:
+        - ``subprocess.CalledProcessError`` when the hook exits non-zero.
+    '''
+    import subprocess
+    import sys
+
+    if find_prepare(graph_dir) is None:
+        return False
+    subprocess.run(prepare_command(config_path, sys.executable), cwd = graph_dir, check = True)
+    return True

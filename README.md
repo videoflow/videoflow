@@ -62,8 +62,10 @@ pip install "videoflow[all]"           # everything
 From a clone with [uv](https://docs.astral.sh/uv/): `uv sync` (creates `.venv`
 with all dependencies). Or with pip: `pip install ".[all]"`.
 
-Start a local broker for development (a `docker-compose.yml` with NATS + Redis is
-included):
+You do **not** need to start a broker by hand: `videoflow run-local` starts a dev
+NATS + Redis in Docker when none is already running, and stops them when the flow
+ends. To run one yourself instead (it will be detected and reused), either use the
+included `docker-compose.yml` or a local binary:
 
 ```bash
 docker compose up -d          # NATS JetStream on :4222, Redis on :6379
@@ -101,12 +103,23 @@ if __name__ == '__main__':
     flow.join()
 ```
 
-Run it (with the broker up):
+Run it:
+
+```bash
+videoflow run-local my_flow.py
+```
+
+That is the local twin of `deploy`: it generates the solution config if the graph
+ships a `config.template.yaml`, runs its `prepare.py` hook, starts a dev broker if
+none is listening, spawns one worker subprocess per node, waits for the flow to
+finish, reports any node that exited non-zero, and stops only the containers it
+started. Overrides: `--nats`, `--config`, `--no-prepare`, `--no-infra`,
+`--keep-infra`, `--blob-redis-url`, `--run-id`.
+
+Running the script directly still works when you have a broker up:
 
 ```bash
 python my_flow.py
-# or via the CLI:
-videoflow run-local my_flow.py:build_flow --nats nats://localhost:4222
 ```
 
 ---

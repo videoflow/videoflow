@@ -8,7 +8,8 @@ fully-qualified path (module + class name). Classes defined in a script's
 ``__main__`` have the path ``__main__.<Class>``, which no *other* process can
 import. So any custom node has to live in a real, importable module -- exactly
 how you would ship nodes in your own package. The example scripts put this
-module's directory on PYTHONPATH so the spawned workers can import it.
+module's directory on ``sys.path``; the local engine re-exports those additions
+to each worker's PYTHONPATH, so the subprocesses can import it.
 '''
 import os
 

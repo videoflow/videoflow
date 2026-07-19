@@ -97,15 +97,14 @@ def _cmd_deploy(args) -> None:
 
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
     # baked into the compiled specs).
-    prepare_path = os.path.join(graph_dir, 'prepare.py')
-    if os.path.isfile(prepare_path) and not args.no_prepare:
-        prepare_cmd = ['python', 'prepare.py'] + (['--config', config_path] if config_path else [])
+    from .solution import find_prepare, prepare_command, run_prepare_local
+    if find_prepare(graph_dir) is not None and not args.no_prepare:
         try:
             if image is not None:
-                run_in_image(image, prepare_cmd, mounts = container_mounts,
+                run_in_image(image, prepare_command(config_path), mounts = container_mounts,
                              workdir = graph_dir, gpus = gpus, interactive = interactive)
             else:
-                subprocess.run([sys.executable] + prepare_cmd[1:], cwd = graph_dir, check = True)
+                run_prepare_local(graph_dir, config_path)
         except (RuntimeError, subprocess.CalledProcessError) as e:
             raise SystemExit(str(e)) from e
 
@@ -361,18 +360,109 @@ def _cmd_component_inspect(args) -> None:
         print(f'  params: {", ".join(sorted(d.params_schema["properties"]))}')
 
 def _cmd_run_local(args) -> None:
-    from .engines.local import LocalProcessEngine
+    import subprocess
 
-    flow = _load_flow(args.graph)
-    engine = LocalProcessEngine(nats_url = args.nats, blob_redis_url = args.blob_redis_url,
+    graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
+    if not os.path.isfile(graph_path):
+        raise SystemExit(f'Graph module not found: {graph_path}')
+    graph_dir = os.path.dirname(os.path.abspath(graph_path))
+    graph_target = os.path.abspath(graph_path) + \
+        (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
+
+    # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
+    # config.template.yaml when none exists).
+    from .solution import ensure_config
+    interactive = not args.non_interactive and sys.stdin.isatty()
+    config_path = ensure_config(graph_dir, args.config, interactive)
+
+    # 1. Prepare hook, on this host (the workers are local processes too). Runs
+    # before the graph is loaded, because the factory reads the hook's outputs.
+    if not args.no_prepare:
+        from .solution import run_prepare_local
+        try:
+            run_prepare_local(graph_dir, config_path)
+        except subprocess.CalledProcessError as e:
+            raise SystemExit(f'prepare.py failed: {e}') from e
+
+    # 2. Warn about solution inputs that don't exist yet (nothing is mounted
+    # locally, but a bad path is worth catching before spawning N processes).
+    _warn_missing_solution_inputs(graph_dir, config_path)
+
+    # 3. Broker: bring-your-own via --nats, else reuse whatever already listens on
+    # localhost and start dev containers for whatever doesn't.
+    from .localinfra import DEFAULT_NATS_URL, ensure_local_infra, teardown_local_infra, wait_local_infra_ready
+    nats_url = args.nats
+    blob_redis_url = args.blob_redis_url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL')
+    created: list[str] = []
+    if nats_url is None:
+        if args.no_infra:
+            nats_url = DEFAULT_NATS_URL
+        else:
+            try:
+                urls, created = ensure_local_infra(
+                    need_redis = blob_redis_url is None and not args.no_redis)
+                wait_local_infra_ready(created, urls)
+            except RuntimeError as e:
+                raise SystemExit(str(e)) from e
+            nats_url = urls['nats']
+            blob_redis_url = blob_redis_url or urls['redis']
+            if created:
+                print(f'Started dev {" + ".join(created)} (docker).')
+
+    # 4. Load + run. load_flow puts the graph dir on sys.path, which the engine
+    # re-exports as PYTHONPATH so the workers can import its sibling modules.
+    flow = _load_flow(graph_target)
+    from .engines.local import LocalProcessEngine
+    engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
                                 allow_pickle = args.allow_pickle,
                                 local_docker_nats_url = args.local_docker_nats_url)
-    flow.run(engine)
-    print(f'Flow {flow.flow_id} running locally against {args.nats}. Ctrl-C to stop.')
     try:
-        flow.join()
-    except KeyboardInterrupt:
-        flow.stop()
+        try:
+            flow.run(engine, run_id = args.run_id)
+        except (RuntimeError, ValueError) as e:
+            # Broker unreachable / incompatible wire settings: report the message,
+            # not a traceback through the engine internals.
+            raise SystemExit(str(e)) from e
+        print(f'Flow {flow.flow_id} run {flow.run_id} running locally against {nats_url}. '
+              f'Ctrl-C to stop.')
+        try:
+            flow.join()
+        except KeyboardInterrupt:
+            print('\nInterrupted; stopping...', file = sys.stderr)
+            flow.stop()
+    finally:
+        if created and not args.keep_infra:
+            teardown_local_infra(created)
+        elif created:
+            names = ' '.join(f'videoflow-{c}' for c in created)
+            print(f'--keep-infra set: left {" + ".join(created)} running (reused next run; '
+                  f'remove with `docker rm -f {names}`).')
+
+    failed = sorted({name for name, _replica, _code in engine.failures()})
+    if failed:
+        engine.report_failures()
+        raise SystemExit(f'Flow failed: {", ".join(failed)}')
+    print(f'Flow {flow.flow_id} completed.')
+
+def _warn_missing_solution_inputs(graph_dir, config_path) -> None:
+    '''
+    Warns when a path the solution declares in ``x-mounts`` doesn't exist. Locally
+    nothing is mounted, so this is purely an early check — and only a warning,
+    since an output directory legitimately may not exist yet.
+    '''
+    from .solution import find_template, load_template, resolve_mounts
+
+    template_path = find_template(graph_dir)
+    if not (template_path and config_path):
+        return
+    import yaml
+    with open(config_path) as f:
+        config = yaml.safe_load(f)
+    for spec in resolve_mounts(load_template(template_path), config, graph_dir):
+        read_only = spec.endswith(':ro')
+        path = (spec[:-3] if read_only else spec).split(':', 1)[0]
+        if read_only and not os.path.exists(path):
+            print(f'WARNING: solution input {path} does not exist.', file = sys.stderr)
 
 def _cmd_explain(args) -> None:
     from .compiler import specs_from_tasks_data
@@ -618,10 +708,42 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument('--dry-run', action = 'store_true', help = 'Print manifests to stdout, write nothing.')
     deploy.set_defaults(func = _cmd_deploy)
 
-    run = sub.add_parser('run-local', help = 'Run a graph as local subprocesses against a NATS server.')
+    run = sub.add_parser(
+        'run-local',
+        help = 'Run a graph as local subprocesses: config Q&A, prepare, broker provisioning, '
+               'run to completion — the local twin of `deploy`.',
+        description = 'One-stop local run: generates the solution config (interactive Q&A over '
+                      'its config.template.yaml when none exists), runs its prepare.py hook on '
+                      'this host, starts a dev NATS (and Redis for the blob store) in docker when '
+                      '--nats is omitted and nothing is already listening, spawns one worker '
+                      'subprocess per node replica, waits for the flow to finish, reports any node '
+                      'that exited non-zero, and stops only the containers it started. Every '
+                      'automatic step has an explicit override flag.')
     run.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
-    run.add_argument('--nats', default = 'nats://localhost:4222')
-    run.add_argument('--blob-redis-url', default = None)
+    run.add_argument('--nats', default = None,
+                    help = 'NATS URL to use. Omit to reuse a broker already listening on '
+                           'localhost:4222, or else start a dev NATS (and Redis) in docker and '
+                           'stop it again when the flow ends.')
+    run.add_argument('--blob-redis-url', default = None,
+                    help = 'Redis URL for the large-payload blob store (default: '
+                           '$VIDEOFLOW_BLOB_REDIS_URL, else auto-provisioned alongside NATS).')
+    run.add_argument('--run-id', default = None,
+                    help = 'Per-run id that scopes this run\'s broker streams (auto-generated if omitted).')
+    run.add_argument('--config', default = None,
+                    help = 'Solution config file (default: config.yaml next to the graph; when '
+                           'absent and the solution ships config.template.yaml, run-local asks its '
+                           'questions and writes config.yaml).')
+    run.add_argument('--non-interactive', action = 'store_true',
+                    help = 'Never prompt; fail with the list of missing config inputs instead.')
+    run.add_argument('--no-prepare', action = 'store_true',
+                    help = 'Skip the solution\'s prepare.py hook.')
+    run.add_argument('--no-infra', action = 'store_true',
+                    help = 'Never start broker containers; assume a broker is already running.')
+    run.add_argument('--no-redis', action = 'store_true',
+                    help = 'Do not auto-provision Redis for the large-payload blob store.')
+    run.add_argument('--keep-infra', action = 'store_true',
+                    help = 'Leave auto-started NATS/Redis containers running afterwards (faster '
+                           'reruns; they are reused when present).')
     run.add_argument('--allow-pickle', action = 'store_true',
                     help = 'Permit the legacy Python-only pickle payload codec.')
     run.add_argument('--local-docker-nats-url', default = None,

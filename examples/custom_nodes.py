@@ -14,8 +14,8 @@ are where you set up and tear down resources (files, sockets, model sessions).
 The node classes live in examples/example_nodes.py rather than in this script,
 because each node is reconstructed inside its own worker process by importing
 its class -- which only works for classes in a real, importable module (see the
-note in example_nodes.py). This script puts that module's directory on PYTHONPATH
-so the spawned workers can import it.
+note in example_nodes.py). This script puts that module's directory on sys.path,
+which the local engine re-exports to the spawned workers.
 
     python examples/custom_nodes.py
 '''
@@ -25,7 +25,6 @@ import sys
 # Make examples/ importable by the worker subprocesses (they inherit os.environ).
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
-os.environ['PYTHONPATH'] = _HERE + os.pathsep + os.environ.get('PYTHONPATH', '')
 
 from example_nodes import PrefixConsumer, SentenceProducer, TitleCaseProcessor  # noqa: E402
 

@@ -16,10 +16,45 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import importlib.util
 import json
+import keyword
 import os
 import sys
 from typing import Any
 
+FALLBACK_MODULE_NAME = '_videoflow_user_graph'
+
+def _graph_module_name(path) -> str:
+    '''
+    The module name to load a graph file under: its own basename, so that a node
+    class defined *in* the graph module records a ``__module__`` a worker can
+    actually import (workers reconstruct nodes by ``<module>.<Class>`` path, and
+    the graph's directory is on their PYTHONPATH).
+
+    Falls back to a private synthetic name when the basename isn't a usable
+    identifier or is already taken in ``sys.modules`` — importing a graph must
+    never shadow an installed module (a graph literally named ``json.py`` or
+    ``common.py``). Node classes defined in such a module stay unreconstructable,
+    which is the pre-existing behavior and is why the documented convention is to
+    put them in a sibling ``*_nodes.py``.
+    '''
+    resolved = os.path.abspath(path)
+    name = os.path.splitext(os.path.basename(path))[0]
+    if not name.isidentifier() or keyword.iskeyword(name):
+        return FALLBACK_MODULE_NAME
+    existing = sys.modules.get(name)
+    if existing is not None:
+        # Re-loading the same file (a second load_flow call in one process) is fine;
+        # anything else would be shadowing an already-imported module.
+        return name if getattr(existing, '__file__', None) == resolved else FALLBACK_MODULE_NAME
+    try:
+        spec = importlib.util.find_spec(name)
+    except (ImportError, ValueError):
+        return FALLBACK_MODULE_NAME
+    # find_spec resolves the graph's own directory (already on sys.path), so a hit
+    # on this very file is not a collision — only a hit on a *different* one is.
+    if spec is not None and spec.origin and os.path.abspath(spec.origin) != resolved:
+        return FALLBACK_MODULE_NAME
+    return name
 
 def load_flow(target : str) -> Any:
     '''
@@ -44,10 +79,15 @@ def load_flow(target : str) -> Any:
     if graph_dir not in sys.path:
         sys.path.insert(0, graph_dir)
 
-    spec = importlib.util.spec_from_file_location('_videoflow_user_graph', path)
+    module_name = _graph_module_name(path)
+    spec = importlib.util.spec_from_file_location(module_name, path)
     if spec is None or spec.loader is None:
         raise SystemExit(f'Could not load graph module: {path}')
     module = importlib.util.module_from_spec(spec)
+    # Register before exec so a node class defined in the graph module gets a
+    # __module__ that actually resolves — see _graph_module_name.
+    if module_name != FALLBACK_MODULE_NAME:
+        sys.modules[module_name] = module
     spec.loader.exec_module(module)
 
     if not hasattr(module, factory_name):

@@ -13,9 +13,10 @@ from __future__ import absolute_import, division, print_function
 import json
 import logging
 import os
+import signal
 import subprocess
 import sys
-from typing import Optional
+from typing import List, Optional
 
 import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
 
@@ -26,6 +27,50 @@ logger = logging.getLogger(__package__)
 
 DEFAULT_NATS_URL = 'nats://localhost:4222'
 
+# Bound on the up-front stream provisioning. Locally an unreachable broker is a
+# setup mistake worth reporting, not a transient worth blocking on indefinitely.
+PROVISION_TIMEOUT_SECONDS = 15
+
+async def _quiet_error_cb(_e) -> None:
+    '''Swallows the NATS client's per-retry error logging; we report the failure ourselves.'''
+    pass
+
+def inherited_python_path() -> list:
+    '''
+    The ``sys.path`` entries this process added beyond the interpreter's own
+    defaults — typically the graph/solution directory (inserted by
+    ``videoflow.compile.load_flow``), an editable checkout, or a test support dir.
+
+    Worker subprocesses inherit the environment but *not* ``sys.path``, so without
+    re-exporting these as ``PYTHONPATH`` every node class living next to the graph
+    fails to import in its worker.
+    '''
+    import site
+    import sysconfig
+
+    builtin = set()
+    for path in sysconfig.get_paths().values():
+        if path:
+            builtin.add(os.path.abspath(path))
+    for getter in ('getsitepackages', 'getusersitepackages'):
+        try:
+            value = getattr(site, getter)()
+        except Exception:                       # pragma: no cover - venv built without site
+            continue
+        for path in ([value] if isinstance(value, str) else value):
+            builtin.add(os.path.abspath(path))
+
+    entries, seen = [], set()
+    for entry in sys.path:
+        if not entry:                           # '' means cwd; already implicit for the child
+            continue
+        resolved = os.path.abspath(entry)
+        if resolved in builtin or resolved in seen or not os.path.isdir(resolved):
+            continue
+        seen.add(resolved)
+        entries.append(resolved)
+    return entries
+
 class LocalProcessEngine(ExecutionEngine):
     '''
     - Arguments:
@@ -33,9 +78,14 @@ class LocalProcessEngine(ExecutionEngine):
         - blob_redis_url: optional Redis URL for the large-payload blob store.
         - specs: optional precompiled list of ``NodeSpec``. If not given, they are \
             compiled from the flow's ``tasks_data`` at ``allocate_and_run_tasks`` time.
+        - python_path: extra directories prepended to each worker's ``PYTHONPATH``.
+        - inherit_python_path: also re-export this process's own ``sys.path`` \
+            additions (default True) — what makes node classes defined next to the \
+            graph importable in the workers. Set False for a hermetic child env.
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None,
-                allow_pickle : bool = False, local_docker_nats_url : str = None) -> None:
+                allow_pickle : bool = False, local_docker_nats_url : str = None,
+                python_path : list = None, inherit_python_path : bool = True) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
@@ -43,7 +93,12 @@ class LocalProcessEngine(ExecutionEngine):
         # NATS URL a docker-run remote component connects to (containers can't reach a
         # host 'localhost'); on macOS/Windows this is typically host.docker.internal.
         self._local_docker_nats_url = local_docker_nats_url
+        extra = list(python_path or [])
+        if inherit_python_path:
+            extra += [p for p in inherited_python_path() if p not in extra]
+        self._python_path = extra
         self._procs: list = []
+        self._failures: list = []
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(LocalProcessEngine, self).__init__()
@@ -63,17 +118,31 @@ class LocalProcessEngine(ExecutionEngine):
 
         # Provision streams + durable consumers up front. Required for BATCH: under
         # interest retention, a message published before its consumer exists is lost.
+        # Fail fast rather than retrying forever: locally, an unreachable broker is a
+        # setup mistake to report, not a transient the run should wait out.
         from ..messaging.topology import provision_flow_sync
-        provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type)
+        try:
+            provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type,
+                                connect_options = {'allow_reconnect': False,
+                                                   'connect_timeout': 5,
+                                                   'max_reconnect_attempts': 0,
+                                                   'error_cb': _quiet_error_cb},
+                                timeout = PROVISION_TIMEOUT_SECONDS)
+        except Exception as e:
+            raise RuntimeError(
+                f'could not reach NATS at {self._nats_url} ({type(e).__name__}: {e}). '
+                f'Start one with `videoflow run-local` (it provisions a dev broker), '
+                f'`docker compose up -d`, or `nats-server -js` — or point --nats at a '
+                f'running server.') from e
 
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
-                                self._allow_pickle)
+                                self._allow_pickle, self._python_path)
                 cmd, run_env = self._launch_command(spec, env)
                 proc = subprocess.Popen(cmd, env = run_env)
-                self._procs.append(proc)
+                self._procs.append((spec.name, replica_idx, proc))
                 logger.info(
                     f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx} '
                     f'({"remote" if spec.is_remote else "python"})'
@@ -112,13 +181,51 @@ class LocalProcessEngine(ExecutionEngine):
     def signal_flow_termination(self) -> None:
         _publish_stop(self._nats_url, self._flow_id, self._run_id)
 
-    def join_task_processes(self) -> None:
-        try:
-            for proc in self._procs:
+    def wait_for_completion(self) -> List[str]:
+        '''
+        Blocks until every worker process exits. Returns the names of nodes that had
+        at least one replica exit non-zero (empty when the flow ran cleanly) — the
+        same contract as ``KubernetesExecutionEngine.wait_for_completion``.
+
+        A worker killed by SIGINT/SIGTERM is not counted: that is Ctrl-C or
+        ``flow.stop()`` propagating, not a failure.
+        '''
+        stopped = {-signal.SIGINT, -signal.SIGTERM}
+        self._failures = []
+        for name, replica_idx, proc in self._procs:
+            while True:
                 try:
                     proc.wait()
+                    break
                 except KeyboardInterrupt:
-                    proc.wait()
+                    # The children got the same SIGINT; keep reaping rather than
+                    # abandoning them (a second Ctrl-C used to escape here).
+                    continue
+            if proc.returncode and proc.returncode not in stopped:
+                self._failures.append((name, replica_idx, proc.returncode))
+        failed, seen = [], set()
+        for name, _replica, _code in self._failures:
+            if name not in seen:
+                seen.add(name)
+                failed.append(name)
+        return failed
+
+    def failures(self) -> List[tuple]:
+        '''``(node_name, replica_idx, returncode)`` for each worker that failed.'''
+        return list(self._failures)
+
+    def report_failures(self) -> None:
+        '''
+        Prints one line per failed worker. Local workers inherit stdout/stderr, so
+        their tracebacks are already on the terminal — this is the index, not a dump.
+        '''
+        for name, replica_idx, code in self._failures:
+            print(f'--- node {name} replica {replica_idx} exited with code {code}',
+                  file = sys.stderr)
+
+    def join_task_processes(self) -> None:
+        try:
+            self.wait_for_completion()
         finally:
             self._teardown_streams()
 
@@ -143,8 +250,13 @@ class LocalProcessEngine(ExecutionEngine):
             logger.debug('stream teardown failed', exc_info = True)
 
 def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url,
-                replica_id, envelope_version, allow_pickle = False) -> dict:
+                replica_id, envelope_version, allow_pickle = False, python_path = None) -> dict:
     env = dict(os.environ)
+    if python_path:
+        # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
+        # same way sys.path order works in the parent.
+        existing = env.get('PYTHONPATH')
+        env['PYTHONPATH'] = os.pathsep.join(list(python_path) + ([existing] if existing else []))
     env.update({
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
         'VF_NODE_KIND': spec.kind,

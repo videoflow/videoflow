@@ -78,16 +78,50 @@ development and testing; it exercises the exact same worker code Kubernetes uses
     flow.run(LocalProcessEngine(nats_url='nats://localhost:4222'))
     flow.join()
 
-The only prerequisite is a running broker::
+Used as a library like this, the one prerequisite is a running broker::
 
     docker compose up -d       # NATS on :4222 (and Redis for large payloads)
     # or
     nats-server -js
 
-You can also run a graph module directly from the CLI without writing a
-``__main__`` block::
+Because each worker is a separate process that reconstructs its node by importing
+the node's class, node classes must live in an importable module. The engine
+re-exports this process's own ``sys.path`` additions as each worker's
+``PYTHONPATH``, so a class defined next to your graph is importable in the worker
+without any manual environment handling. Two knobs control it: ``python_path``
+(extra directories to prepend) and ``inherit_python_path`` (default ``True``; set
+``False`` for a hermetic child environment). ``PYTHONPATH`` is deliberately not
+passed to remote components launched with ``docker run`` — those bring their own
+image.
 
-    videoflow run-local my_flow.py:build_flow --nats nats://localhost:4222
+After ``flow.join()`` returns, ``engine.failures()`` lists
+``(node_name, replica_idx, returncode)`` for every worker that exited non-zero and
+``engine.report_failures()`` prints them; ``engine.wait_for_completion()`` returns
+the failed node names, the same contract ``KubernetesExecutionEngine`` offers.
+Without checking one of these, a worker that died on startup is indistinguishable
+from a clean run.
+
+``videoflow run-local``
+^^^^^^^^^^^^^^^^^^^^^^^^
+
+The CLI runs a graph module without writing a ``__main__`` block, and is the local
+twin of ``videoflow deploy`` — no broker setup required::
+
+    videoflow run-local my_flow.py
+
+It generates the solution config (interactive Q&A over a ``config.template.yaml``
+when the graph ships one and no ``config.yaml`` exists), runs the solution's
+``prepare.py`` hook on this host, starts a dev NATS + Redis in Docker **when
+nothing is already listening**, runs the flow, reports any node that exited
+non-zero (exiting non-zero itself), and stops only the containers it started.
+
+A broker you started yourself — ``docker compose up -d``, ``nats-server -js``, or a
+previous ``--keep-infra`` run — is detected, reused, and never torn down.
+
+Overrides: ``--nats`` / ``--blob-redis-url`` (bring your own broker; also read from
+``$VIDEOFLOW_BLOB_REDIS_URL``), ``--config`` / ``--non-interactive``,
+``--no-prepare``, ``--no-infra`` (never start containers), ``--no-redis``,
+``--keep-infra`` (leave the containers up for faster reruns), ``--run-id``.
 
 ``KubernetesExecutionEngine``
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -116,5 +150,8 @@ Uncompressed video frames can exceed a broker's per-message size limit. Videoflo
 serializes NumPy arrays efficiently and, for payloads above a configurable
 threshold, offloads the bytes to an external blob store (Redis by default) and sends
 only a small reference over the broker. This is transparent to your node code; you
-enable it by pointing workers at a Redis instance (the ``docker-compose.yml``
-includes one, and ``videoflow deploy`` accepts ``--blob-redis-url``).
+enable it by pointing workers at a Redis instance. Both ``videoflow deploy`` and
+``videoflow run-local`` provision one automatically (in-cluster and in Docker
+respectively) unless you pass ``--blob-redis-url``; the ``docker-compose.yml``
+also includes one, and ``run-local`` additionally honors
+``$VIDEOFLOW_BLOB_REDIS_URL``.

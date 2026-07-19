@@ -22,8 +22,9 @@ NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
 def _run(flow):
     from videoflow.engines.local import LocalProcessEngine
-    # Workers (subprocesses) must be able to import support_nodes too.
-    os.environ['PYTHONPATH'] = TESTS_DIR + os.pathsep + os.environ.get('PYTHONPATH', '')
+    # The engine re-exports this process's sys.path additions (TESTS_DIR, inserted
+    # at the top of this module) as the workers' PYTHONPATH, so the subprocesses
+    # can import support_nodes without any manual env handling here.
     flow.run(LocalProcessEngine(nats_url = NATS_URL))
     flow.join()
 

@@ -269,19 +269,49 @@ async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str
                 await _ensure_consumer(js, parent_stream, base)
 
 async def provision_flow_connect(nats_url : str, specs, flow_id : str, run_id : str,
-                                flow_type : str, **kwargs) -> None:
-    '''Connects to NATS, provisions, and drains — a self-contained entrypoint.'''
+                                flow_type : str, connect_options : dict = None, **kwargs) -> None:
+    '''
+    Connects to NATS, provisions, and drains — a self-contained entrypoint.
+
+    - Arguments:
+        - connect_options: extra kwargs for ``nats.connect``. The default (retry \
+            forever) is right for the in-cluster provision Job, whose broker may \
+            still be starting; a local run passes fail-fast options instead so an \
+            unreachable broker reports itself rather than hanging.
+    '''
     import nats
-    nc = await nats.connect(nats_url)
+    nc = await nats.connect(nats_url, **(connect_options or {}))
     try:
         await provision_flow(nc, specs, flow_id, run_id, flow_type, **kwargs)
     finally:
         await nc.drain()
 
-def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow_type : str, **kwargs) -> None:
-    '''Synchronous wrapper for callers outside an event loop (the local engine, the init entrypoint).'''
+def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow_type : str,
+                        connect_options : dict = None, timeout : float = None, **kwargs) -> None:
+    '''
+    Synchronous wrapper for callers outside an event loop (the local engine, the
+    init entrypoint).
+
+    - Arguments:
+        - timeout: overall bound in seconds, or None (the default) to wait \
+            indefinitely. ``nats.connect`` retries an unreachable server forever — \
+            ``allow_reconnect``/``max_reconnect_attempts`` only govern reconnects \
+            *after* a successful connect — so a caller that would rather report the \
+            problem than block must set this.
+
+    - Raises:
+        - ``TimeoutError`` when ``timeout`` elapses first.
+    '''
     import asyncio
-    asyncio.run(provision_flow_connect(nats_url, specs, flow_id, run_id, flow_type, **kwargs))
+
+    async def _go() -> None:
+        await provision_flow_connect(nats_url, specs, flow_id, run_id, flow_type,
+                                     connect_options = connect_options, **kwargs)
+
+    async def _bounded() -> None:
+        await asyncio.wait_for(_go(), timeout = timeout)
+
+    asyncio.run(_bounded() if timeout is not None else _go())
 
 async def delete_run_streams(nc, flow_id : str, run_id : str) -> None:
     '''Best-effort teardown: delete every stream belonging to this run.'''
