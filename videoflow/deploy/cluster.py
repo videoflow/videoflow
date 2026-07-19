@@ -191,7 +191,12 @@ def get_cluster_flavor(cluster : str) -> ClusterFlavorHandler:
     for handler in _FLAVORS:
         if handler.name == cluster:
             return handler
-    raise RuntimeError(f'unknown cluster flavor: {cluster}')
+    # RuntimeError, not the ValueError the other registries raise: load_images has
+    # always raised RuntimeError for this and callers catch that type. The message
+    # still names the known values and the fix, as the seam convention requires.
+    raise RuntimeError(f'unknown cluster flavor: {cluster}. Known flavors: '
+                       f'{", ".join(f.name for f in _FLAVORS)}. Register another with '
+                       f'videoflow.deploy.cluster.register_cluster_flavor.')
 
 def detect_cluster(kubectl = 'kubectl') -> str:
     '''

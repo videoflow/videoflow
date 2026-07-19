@@ -123,9 +123,11 @@ change to the wire needs an RFC under `spec/rfcs/` and updated vectors.
 
 Places where adding a variant is a registration rather than an edit. All follow the same
 shape — a module-level registry seeded with the built-ins, an explicit `register_*()`, and a
-`get_*()`/`make_*()` that raises a `ValueError` naming the known values and the fix. Registries
-are pre-seeded with exactly today's behavior, so with nothing registered the observable output
-is unchanged.
+`get_*()`/`make_*()` that raises on an unknown name with a message naming the known values and
+the fix. That error is a `ValueError` everywhere except `get_cluster_flavor`, which raises
+`RuntimeError` because `load_images` always has and callers catch that type. Registries are
+pre-seeded with exactly today's behavior, so with nothing registered the observable output is
+unchanged.
 
 | Seam | Where | Add a variant by |
 |---|---|---|

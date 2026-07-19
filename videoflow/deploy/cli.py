@@ -55,6 +55,29 @@ def _gpu_cleanup(gpu_strategy, kubectl) -> None:
     except Exception as e:                            # noqa: BLE001 — see docstring
         print(f'WARNING: GPU mode {gpu_strategy.name!r} cleanup failed: {e}', file = sys.stderr)
 
+def _gpu_prepare(gpu_strategy, demand, kubectl) -> None:
+    '''
+    Runs a GPU strategy's ``prepare()``, rolling back if it does not complete.
+
+    A prepare that fails partway may already have changed the cluster, and
+    ``cleanup()`` is documented to tolerate exactly that. The rollback covers
+    ``BaseException`` rather than the usual pair, so a Ctrl-C mid-prepare is
+    undone too.
+
+    - Raises:
+        - SystemExit: prepare failed with a RuntimeError/ValueError (the message \
+            names the mode). Any other exception propagates unchanged, after \
+            rollback.
+    '''
+    try:
+        gpu_strategy.prepare(demand = demand, kubectl = kubectl)
+    except BaseException as e:
+        _gpu_cleanup(gpu_strategy, kubectl)
+        if isinstance(e, (RuntimeError, ValueError)):
+            raise SystemExit(f'GPU mode {gpu_strategy.name!r} could not prepare '
+                             f'the cluster: {e}') from e
+        raise
+
 def _cmd_deploy(args) -> None:
     import subprocess
     import uuid
@@ -238,19 +261,18 @@ def _cmd_deploy(args) -> None:
     if gpu_specs:
         from .gpu import get_gpu_mode
         gpu_strategy = get_gpu_mode(args.gpu_mode)
-        try:
-            gpu_strategy.prepare(demand = demand, kubectl = args.kubectl)
-        except (RuntimeError, ValueError) as e:
-            # cleanup() is documented to tolerate a prepare() that only partly
-            # succeeded, and this is precisely that case — a strategy that changed
-            # half the cluster before failing must get its chance to undo it.
-            _gpu_cleanup(gpu_strategy, args.kubectl)
-            raise SystemExit(f'GPU mode {args.gpu_mode!r} could not prepare the cluster: {e}') from e
+        _gpu_prepare(gpu_strategy, demand, args.kubectl)
     try:
         engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
-    except (RuntimeError, ValueError) as e:
+    except BaseException as e:
+        # BaseException, not (RuntimeError, ValueError): the flow never got
+        # established, so prepare()'s reconfiguration has no user and must be
+        # undone — including on a Ctrl-C during the provision wait, which can
+        # block for minutes and is the likeliest interruption point.
         _gpu_cleanup(gpu_strategy, args.kubectl)
-        raise SystemExit(str(e)) from e
+        if isinstance(e, (RuntimeError, ValueError)):
+            raise SystemExit(str(e)) from e
+        raise
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
     if flow_type != BATCH:
@@ -290,9 +312,11 @@ def _cmd_deploy(args) -> None:
             if created and not keep_infra:
                 teardown_infra(args.kubectl, args.namespace, created)
             print('Cleaned up all resources.')
-        # Restore whatever the GPU mode changed, whether the run succeeded,
-        # failed, stalled or was interrupted. Runs even under --keep: the
-        # workloads may be worth keeping, a retuned cluster is not.
+        # Restore whatever the GPU mode changed once the run reaches here —
+        # succeeded, failed, stalled or interrupted. Runs even under --keep: the
+        # workloads may be worth keeping, a retuned cluster is not. Failures
+        # *before* this try block are covered by the rollbacks around
+        # _gpu_prepare and allocate_and_run_tasks above.
         _gpu_cleanup(gpu_strategy, args.kubectl)
     if stall:
         raise SystemExit(f'Flow aborted: {stall}')
@@ -667,7 +691,16 @@ def _cmd_teardown(args) -> None:
     # so is never cleaned up there. Built-in modes have a no-op cleanup().
     if args.gpu_mode:
         from .gpu import get_gpu_mode
-        _gpu_cleanup(get_gpu_mode(args.gpu_mode), args.kubectl)
+        try:
+            strategy = get_gpu_mode(args.gpu_mode)
+        except ValueError as e:
+            # An unresolvable mode must not fail a teardown whose real work
+            # already succeeded — the operator would read the traceback as
+            # "teardown failed" and run it again. Typically the plugin that
+            # registered the mode is not installed in *this* shell.
+            print(f'WARNING: skipping GPU cleanup: {e}', file = sys.stderr)
+            strategy = None
+        _gpu_cleanup(strategy, args.kubectl)
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
@@ -803,8 +836,14 @@ def build_parser() -> argparse.ArgumentParser:
                                'instead of the node default (k3s): without it a GPU pod schedules '
                                'but starts with no device visible.')
     # Choices come from the strategy registry, so a registered third mode is
-    # selectable without touching this file.
-    from .gpu import registered_gpu_modes
+    # selectable without touching this file. The entry-point group is loaded
+    # first: argparse fixes `choices` at parser-construction time, so a plugin
+    # mode would otherwise be rejected here before get_gpu_mode's lazy load ever
+    # got the chance to register it. load_plugin_group is idempotent and logs
+    # (rather than raises) for a broken plugin.
+    from ..utils.plugins import load_plugin_group
+    from .gpu import GPU_STRATEGY_ENTRY_POINT_GROUP, registered_gpu_modes
+    load_plugin_group(GPU_STRATEGY_ENTRY_POINT_GROUP)
     deploy.add_argument('--gpu-mode', choices = registered_gpu_modes(), default = 'exclusive',
                         help = 'exclusive (default): each GPU replica claims whole devices via the '
                                'extended resource — a flow needs as many allocatable units as it has '
