@@ -16,6 +16,10 @@ from __future__ import absolute_import, division, print_function
 import subprocess
 from typing import Callable, List, Optional
 
+# SHARED_NEEDS_RUNTIME_CLASS lived here before the GPU strategies were extracted;
+# cli.py still imports it from this module to detect the fatal shared-mode problem.
+from .gpu import SHARED_NEEDS_RUNTIME_CLASS, get_gpu_mode  # noqa: F401
+
 K3S = 'k3s'
 KIND = 'kind'
 MINIKUBE = 'minikube'
@@ -265,11 +269,6 @@ def allocatable_gpus(kubectl = 'kubectl', resource = 'nvidia.com/gpu') -> int:
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return sum(int(v) for v in out.split() if v.isdigit())
 
-# The one preflight problem that is fatal in shared mode (cli hard-errors on it):
-# shared pods carry no GPU resource limit, so the RuntimeClass is their only path
-# to the device. A shared constant so the check never depends on message prose.
-SHARED_NEEDS_RUNTIME_CLASS = '--gpu-mode shared without --gpu-runtime-class'
-
 def nvidia_runtimeclass(kubectl = 'kubectl') -> Optional[str]:
     '''
     The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers
@@ -317,37 +316,9 @@ def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None, demand = None,
         example = nodes[0].removeprefix('node/') if nodes else '<node-name>'
         problems.append(f'no node labeled videoflow.io/gpu-pool=true — GPU pods will stay '
                         f'Pending. Fix: kubectl label node {example} videoflow.io/gpu-pool=true')
-    if gpu_mode == 'exclusive':
-        for resource in sorted(demand) if demand else ['nvidia.com/gpu']:
-            capacity = allocatable_gpus(kubectl, resource)
-            if capacity == 0:
-                if resource == 'nvidia.com/gpu':
-                    problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device '
-                                    'plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/'
-                                    'k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml')
-                else:
-                    problems.append(f'no node advertises {resource} — the flow requests it '
-                                    f'(gpu_resource_name) but the cluster does not expose it')
-            elif demand and demand[resource] > capacity:
-                problems.append(
-                    f'flow demands {demand[resource]} x {resource} but the cluster has only '
-                    f'{capacity} allocatable — {demand[resource] - capacity} pod(s) will stay '
-                    f'Pending and the flow will stall. Reduce GPU nodes/replicas, enable '
-                    f'device-plugin time-slicing, or deploy with --gpu-mode shared '
-                    f'(dev clusters; see the GPU sharing docs)')
-    # Scheduling is necessary but not sufficient: the device is injected by the NVIDIA
-    # container runtime, which some distros (k3s) register as an opt-in RuntimeClass
-    # and leave off the node default. The presence of such a handler is the signal.
-    if not gpu_runtime_class:
-        nvidia_rc = nvidia_runtimeclass(kubectl)
-        if nvidia_rc and gpu_mode == 'shared':
-            problems.append(f'{SHARED_NEEDS_RUNTIME_CLASS}: shared pods carry no '
-                            f'GPU resource limit, so the RuntimeClass is the only thing that '
-                            f'injects the device — without it every GPU pod runs device-less. '
-                            f'Fix: deploy with --gpu-runtime-class {nvidia_rc}')
-        elif nvidia_rc:
-            problems.append(f'a {nvidia_rc!r} RuntimeClass exists but no --gpu-runtime-class was '
-                            f'given — if the NVIDIA runtime is not this node\'s containerd default, '
-                            f'GPU pods will start with no device. Fix: deploy with '
-                            f'--gpu-runtime-class {nvidia_rc}')
+    # Everything past this point depends on how the mode claims devices — capacity
+    # math only means something with a resource limit, and the RuntimeClass check is
+    # merely advisory in exclusive mode but fatal in shared. The strategy owns both.
+    problems.extend(get_gpu_mode(gpu_mode).preflight_problems(
+        kubectl = kubectl, demand = demand, gpu_runtime_class = gpu_runtime_class))
     return problems

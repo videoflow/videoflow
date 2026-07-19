@@ -26,6 +26,17 @@ import yaml
 from ..core.compiler import NODE_KIND_PRODUCER
 from ..core.constants import BATCH
 
+# GPU allocation lives in .gpu. Re-exported here because these were manifests'
+# public names before the strategies were extracted out of it.
+from .gpu import (  # noqa: F401
+    DEFAULT_GPU_RESOURCE,
+    GPU_POOL_LABEL,
+    GPU_TAINT_KEY,
+    get_gpu_mode,
+    registered_gpu_modes,
+    resolve_gpu_resource,
+)
+
 LABEL_FLOW_ID = 'videoflow.io/flow-id'
 LABEL_RUN_ID = 'videoflow.io/run-id'
 LABEL_NODE = 'videoflow.io/node'
@@ -126,14 +137,6 @@ def _labels(flow_id, node_name = None) -> dict:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-DEFAULT_GPU_RESOURCE = 'nvidia.com/gpu'
-GPU_MODES = ('exclusive', 'shared')
-
-def resolve_gpu_resource(spec, default = None) -> str:
-    '''The extended-resource name a GPU spec requests: the node's own, else the
-    deploy default (``--gpu-resource-name``), else ``nvidia.com/gpu``.'''
-    return spec.gpu_resource_name or default or DEFAULT_GPU_RESOURCE
-
 def gpu_demand(specs, default_resource = None) -> dict:
     '''
     Whole-flow GPU demand per extended-resource name: every replica of a GPU node
@@ -189,26 +192,13 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
     tolerations = None
     runtime_class = None
     if spec.device_type == 'gpu':
-        # Validated here, not only in render_manifests: a direct workload()/_pod_spec
+        # Resolved here, not only in render_manifests: a direct workload()/_pod_spec
         # caller with a typo'd mode must get an error, not a silent fall-through to
         # the no-limit shared branch.
-        if gpu_mode not in GPU_MODES:
-            raise ValueError(f'gpu_mode must be one of {GPU_MODES}, got {gpu_mode!r}')
-        if gpu_mode == 'exclusive':
-            # Whole-device claims: nvidia.com/gpu (or a MIG profile / renamed
-            # time-sliced resource via gpu_resource_name) is an integer extended
-            # resource the scheduler allocates exclusively — N GPU replicas need N
-            # allocatable units, and pods beyond capacity stay Pending.
-            resources['limits'] = {resolve_gpu_resource(spec, gpu_resource_name): spec.gpu_count}
-        # 'shared' emits no resource limit at all: every GPU pod is scheduled onto
-        # the pool by the selector alone and shares the physical devices through the
-        # NVIDIA runtime (the CUDA base images set NVIDIA_VISIBLE_DEVICES=all) —
-        # LocalProcessEngine semantics on Kubernetes, bounded only by VRAM. Dev-box
-        # tool: no scheduler accounting, no memory isolation, and on a multi-GPU
-        # node every shared pod sees every device.
-        node_selector = {'videoflow.io/gpu-pool': 'true'}
+        resources.update(get_gpu_mode(gpu_mode).pod_resources(spec, gpu_resource_name))
+        node_selector = {GPU_POOL_LABEL: 'true'}
         tolerations = [{
-            'key': 'nvidia.com/gpu', 'operator': 'Exists', 'effect': 'NoSchedule',
+            'key': GPU_TAINT_KEY, 'operator': 'Exists', 'effect': 'NoSchedule',
         }]
         # Requesting the resource only makes the pod *schedulable* onto a GPU node;
         # injecting the device into the container is the NVIDIA container runtime's
@@ -549,8 +539,8 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
     from .images import resolve_image
 
-    if gpu_mode not in GPU_MODES:
-        raise ValueError(f'gpu_mode must be one of {GPU_MODES}, got {gpu_mode!r}')
+    # Fail before any manifest is built, rather than at the first GPU node.
+    get_gpu_mode(gpu_mode)
 
     # Resolve the whole-run wire version: a flow with any native component must use
     # the protobuf wire (v4+) so every node — native or not — speaks it.

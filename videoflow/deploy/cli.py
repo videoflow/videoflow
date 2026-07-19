@@ -214,9 +214,22 @@ def _cmd_deploy(args) -> None:
         gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
         gpu_autoscaling = args.gpu_autoscaling,
     )
+    # Cluster setup the GPU mode needs for this run (no-op for the built-in modes;
+    # the hook exists for strategies that retune the device plugin per run). Paired
+    # with cleanup() in the teardown paths below.
+    gpu_strategy = None
+    if gpu_specs:
+        from .gpu import get_gpu_mode
+        gpu_strategy = get_gpu_mode(args.gpu_mode)
+        try:
+            gpu_strategy.prepare(demand = demand, kubectl = args.kubectl)
+        except (RuntimeError, ValueError) as e:
+            raise SystemExit(f'GPU mode {args.gpu_mode!r} could not prepare the cluster: {e}') from e
     try:
         engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
     except (RuntimeError, ValueError) as e:
+        if gpu_strategy is not None:
+            gpu_strategy.cleanup(kubectl = args.kubectl)
         raise SystemExit(str(e)) from e
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
@@ -253,6 +266,11 @@ def _cmd_deploy(args) -> None:
             if created and not keep_infra:
                 teardown_infra(args.kubectl, args.namespace, created)
             print('Cleaned up all resources.')
+        # Restore whatever the GPU mode changed, whether the run succeeded,
+        # failed, stalled or was interrupted. Runs even under --keep: the
+        # workloads may be worth keeping, a retuned cluster is not.
+        if gpu_strategy is not None:
+            gpu_strategy.cleanup(kubectl = args.kubectl)
     if stall:
         raise SystemExit(f'Flow aborted: {stall}')
     if failed:
@@ -754,7 +772,10 @@ def build_parser() -> argparse.ArgumentParser:
                                'Needed where the NVIDIA container runtime is an opt-in RuntimeClass '
                                'instead of the node default (k3s): without it a GPU pod schedules '
                                'but starts with no device visible.')
-    deploy.add_argument('--gpu-mode', choices = ['exclusive', 'shared'], default = 'exclusive',
+    # Choices come from the strategy registry, so a registered third mode is
+    # selectable without touching this file.
+    from .gpu import registered_gpu_modes
+    deploy.add_argument('--gpu-mode', choices = registered_gpu_modes(), default = 'exclusive',
                         help = 'exclusive (default): each GPU replica claims whole devices via the '
                                'extended resource — a flow needs as many allocatable units as it has '
                                'GPU replicas. shared: emit no GPU resource limit; all GPU pods '
