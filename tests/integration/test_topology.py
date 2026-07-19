@@ -10,6 +10,7 @@ import uuid
 import pytest
 from nats.js.api import DiscardPolicy, RetentionPolicy
 
+from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.messaging import topology
 
@@ -48,16 +49,18 @@ def test_names_sanitize_illegal_chars():
 
 # -- provisioning (needs NATS) ---------------------------------------------
 
-class _Spec:
-    def __init__(self, name, parents):
-        self.name = name
-        self.parents = parents
+def _spec(name, parents, kind, has_children):
+    '''A real NodeSpec — provisioning reads name/parents/has_children/nb_tasks/partition_by.'''
+    return NodeSpec(name = name, node_class = 'videoflow.processors.basic.IdentityProcessor',
+                    params = {}, parents = parents, kind = kind, has_children = has_children,
+                    nb_tasks = 1, device_type = 'cpu', is_finite = True)
 
 def test_provision_is_idempotent():
     import nats
     flow_id = 'topo'
     run_id = uuid.uuid4().hex[:8]
-    specs = [_Spec('producer', []), _Spec('proc', ['producer']), _Spec('sink', ['proc'])]
+    specs = [_spec('producer', [], 'producer', True), _spec('proc', ['producer'], 'processor', True),
+             _spec('sink', ['proc'], 'consumer', False)]
 
     async def _go():
         nc = await nats.connect(NATS_URL)

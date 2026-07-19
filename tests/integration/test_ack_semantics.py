@@ -12,6 +12,7 @@ import uuid
 
 import pytest
 
+from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.messaging import topology
 from videoflow.messaging.nats_messenger import NATSMessenger
@@ -34,10 +35,11 @@ class _StubNode:
     def close(self):
         pass
 
-class _Spec:
-    def __init__(self, name, parents):
-        self.name = name
-        self.parents = parents
+def _spec(name, parents, kind, has_children):
+    '''A real NodeSpec — provisioning reads name/parents/has_children/nb_tasks/partition_by.'''
+    return NodeSpec(name = name, node_class = 'videoflow.processors.basic.IdentityProcessor',
+                    params = {}, parents = parents, kind = kind, has_children = has_children,
+                    nb_tasks = 1, device_type = 'cpu', is_finite = True)
 
 def _ids():
     return 'ack', uuid.uuid4().hex[:8]
@@ -95,7 +97,7 @@ def test_dlq_on_exhausted_retries():
     with a VF-Error header, and the worker keeps running.
     '''
     flow_id, run_id = _ids()
-    specs = [_Spec('parent', []), _Spec('child', ['parent'])]
+    specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH, max_retries = 0)
     m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, BATCH, run_id, max_retries = 0)
     try:
@@ -116,7 +118,7 @@ def test_dlq_on_exhausted_retries():
 def test_realtime_failure_drops_without_dlq():
     '''REALTIME never redelivers or dead-letters: a failed message is terminated (dropped).'''
     flow_id, run_id = _ids()
-    specs = [_Spec('parent', []), _Spec('child', ['parent'])]
+    specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, REALTIME)
     m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, REALTIME, run_id)
     try:
@@ -138,7 +140,7 @@ def test_unacked_message_survives_restart():
     core at-least-once guarantee of ack-after-process.
     '''
     flow_id, run_id = _ids()
-    specs = [_Spec('parent', []), _Spec('child', ['parent'])]
+    specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH)
 
     _publish_parent_message(flow_id, run_id, 'parent', 't1', 1, {'value': 99})
