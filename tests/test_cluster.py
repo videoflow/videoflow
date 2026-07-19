@@ -188,3 +188,84 @@ def test_allocatable_gpus_sums_across_nodes(monkeypatch):
     run, _ = _fake_run({'version': '{}', 'allocatable': '1 4'})
     monkeypatch.setattr(subprocess, 'run', run)
     assert cluster.allocatable_gpus() == 5
+
+
+# -- flavor registry -------------------------------------------------------
+
+def test_detect_reuses_one_node_label_query(monkeypatch):
+    '''
+    Node labels are fetched lazily and at most once per detection, so adding
+    label-probing flavors does not multiply kubectl calls.
+    '''
+    run, calls = _fake_run({'current-context': 'default', 'jsonpath={range': 'k3s'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == cluster.K3S
+    label_queries = [c for c in calls if 'instance-type' in ' '.join(c)]
+    assert len(label_queries) == 1
+
+
+def test_context_named_flavors_need_no_node_query(monkeypatch):
+    '''kind/minikube/docker-desktop are decided from the context name alone.'''
+    run, calls = _fake_run({'current-context': 'kind-dev'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == cluster.KIND
+    assert not any('instance-type' in ' '.join(c) for c in calls)
+
+
+def test_registering_a_flavor_covers_all_three_behaviors(monkeypatch):
+    '''
+    The point of the registry: one class teaches detection, image loading and the
+    hostPath warning at once, instead of three separate ladder edits.
+    '''
+    loaded = []
+
+    class _Colima(cluster.ClusterFlavorHandler):
+        name = 'colima'
+
+        def matches(self, context_name, node_labels):
+            return context_name == 'colima'
+
+        def load_images(self, images, kubectl = 'kubectl'):
+            loaded.extend(images)
+
+        def hostpath_warning(self):
+            return 'colima runs in a VM'
+
+    monkeypatch.setattr(cluster, '_FLAVORS', list(cluster._FLAVORS))
+    cluster.register_cluster_flavor(_Colima())
+
+    run, _ = _fake_run({'current-context': 'colima'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == 'colima'
+    cluster.load_images('colima', ['img:1'])
+    assert loaded == ['img:1']
+    assert cluster.hostpath_warning('colima') == 'colima runs in a VM'
+
+
+def test_generic_remote_stays_the_terminal_fallback(monkeypatch):
+    '''A registered flavor must not shadow the catch-all that matches everything.'''
+    class _Never(cluster.ClusterFlavorHandler):
+        name = 'never'
+
+        def matches(self, context_name, node_labels):
+            return False
+
+    monkeypatch.setattr(cluster, '_FLAVORS', list(cluster._FLAVORS))
+    cluster.register_cluster_flavor(_Never())
+    assert cluster._FLAVORS[-1].name == cluster.GENERIC_REMOTE
+
+    run, _ = _fake_run({'current-context': 'some-eks-cluster'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.detect_cluster() == cluster.GENERIC_REMOTE
+
+
+def test_registering_before_an_unknown_flavor_is_rejected():
+    with pytest.raises(ValueError, match = 'no registered cluster flavor'):
+        cluster.register_cluster_flavor(cluster.ClusterFlavorHandler(), before = 'nope')
+
+
+def test_unknown_flavor_raises_on_load_but_not_on_warning():
+    with pytest.raises(RuntimeError, match = 'unknown cluster flavor'):
+        cluster.load_images('nope', ['img:1'])
+    # Advisory: a missing warning must not fail a deploy.
+    assert cluster.hostpath_warning('nope') is None

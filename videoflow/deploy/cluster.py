@@ -4,11 +4,17 @@ the cluster-flavor-specific mechanics that depend on it: how to load a locally
 built image into it, whether hostPath mounts see the local filesystem, and
 whether GPU pods are schedulable. Everything here is advisory — deploy still
 works with explicit flags when detection gets it wrong.
+
+Each flavor is one ``ClusterFlavorHandler`` registered at import. Supporting a
+new one (microk8s, colima, k0s) is a class plus a ``register_cluster_flavor``
+call rather than an edit to three parallel if-ladders, which is what this used to
+be — and what made it easy to teach detection about a flavor while forgetting to
+teach image loading about it.
 '''
 from __future__ import absolute_import, division, print_function
 
 import subprocess
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 K3S = 'k3s'
 KIND = 'kind'
@@ -27,26 +33,177 @@ def _kubectl_out(kubectl, *args) -> str:
 def current_context(kubectl = 'kubectl') -> str:
     return _kubectl_out(kubectl, 'config', 'current-context')
 
-def detect_cluster(kubectl = 'kubectl') -> str:
+def _node_labels(kubectl = 'kubectl') -> str:
     '''
-    Classifies the cluster kubectl currently points at. Context-name conventions
-    identify kind/minikube/docker-desktop; k3s installs use a generic context name
-    ('default'), so it is confirmed via node facts instead.
+    Node labels used to recognize flavors whose context name is generic (a k3s
+    install's context is just 'default').
     '''
-    ctx = current_context(kubectl)
-    if ctx.startswith('kind-'):
-        return KIND
-    if ctx == 'minikube':
-        return MINIKUBE
-    if ctx == 'docker-desktop':
-        return DOCKER_DESKTOP
-    labels = _kubectl_out(kubectl, 'get', 'nodes', '-o',
+    return _kubectl_out(kubectl, 'get', 'nodes', '-o',
         'jsonpath={range .items[*]}{.metadata.labels.node\\.kubernetes\\.io/instance-type}'
         '{" "}{.metadata.labels.minikube\\.k8s\\.io/name}{"\\n"}{end}')
-    if 'k3s' in labels:
-        return K3S
-    if 'minikube' in labels:
-        return MINIKUBE
+
+# -- flavor handlers -------------------------------------------------------
+
+class ClusterFlavorHandler:
+    '''
+    One local-cluster flavor: how to recognize it, how to get a locally built
+    image into it, and whether its hostPath mounts see the host filesystem.
+
+    Subclasses set ``name`` and implement ``matches``. ``load_images`` defaults to
+    refusing, which is the right answer for anything remote.
+    '''
+    #: Flavor identifier, returned by ``detect_cluster`` and passed back to
+    #: ``load_images``/``hostpath_warning``.
+    name : str = ''
+
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
+        '''
+        Whether the current cluster is this flavor. ``node_labels`` is a callable
+        so a handler that can decide from the context name alone costs no kubectl
+        call; the result is shared between handlers that do need it.
+        '''
+        raise NotImplementedError('ClusterFlavorHandler subclass must implement matches()')
+
+    def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
+        '''
+        Side-loads locally built images so pods can run them without a registry.
+
+        - Raises:
+            - ``RuntimeError`` when the images cannot be loaded (remote cluster, \
+                missing tool, failed command). The message must name the fix.
+        '''
+        refs = ' '.join(images)
+        raise RuntimeError(
+            f'cluster looks remote — pods there cannot see locally built images. '
+            f'Push them to a registry the cluster can reach and pass --image, e.g.:\n'
+            f'  docker tag <local> <registry>/<name>:<tag> && docker push <registry>/<name>:<tag>\n'
+            f'(locally built: {refs})')
+
+    def hostpath_warning(self) -> Optional[str]:
+        '''Message when hostPath will not resolve against the local filesystem, else None.'''
+        return None
+
+class _KindFlavor(ClusterFlavorHandler):
+    name = KIND
+
+    def matches(self, context_name, node_labels) -> bool:
+        return context_name.startswith('kind-')
+
+    def load_images(self, images, kubectl = 'kubectl') -> None:
+        name = current_context(kubectl).removeprefix('kind-') or 'kind'
+        _run_load(['kind', 'load', 'docker-image', *images, '--name', name])
+
+    def hostpath_warning(self) -> Optional[str]:
+        return ('this is a kind cluster: hostPath resolves inside the kind node '
+                'container, not on your host. Recreate the cluster with extraMounts '
+                'covering each mounted path (https://kind.sigs.k8s.io/docs/user/configuration/#extra-mounts).')
+
+class _MinikubeFlavor(ClusterFlavorHandler):
+    name = MINIKUBE
+
+    def matches(self, context_name, node_labels) -> bool:
+        return context_name == 'minikube' or 'minikube' in node_labels()
+
+    def load_images(self, images, kubectl = 'kubectl') -> None:
+        for image in images:
+            _run_load(['minikube', 'image', 'load', image])
+
+    def hostpath_warning(self) -> Optional[str]:
+        return ('this is a minikube cluster: hostPath resolves inside the minikube '
+                'VM. Expose each mounted path with `minikube mount /path:/path` or '
+                'start minikube with --mount --mount-string=/path:/path.')
+
+class _DockerDesktopFlavor(ClusterFlavorHandler):
+    name = DOCKER_DESKTOP
+
+    def matches(self, context_name, node_labels) -> bool:
+        return context_name == 'docker-desktop'
+
+    def load_images(self, images, kubectl = 'kubectl') -> None:
+        print('docker-desktop shares the local docker daemon; images need no loading.')
+
+class _K3sFlavor(ClusterFlavorHandler):
+    name = K3S
+
+    def matches(self, context_name, node_labels) -> bool:
+        # k3s uses a generic context name ('default'), so node facts decide.
+        return 'k3s' in node_labels()
+
+    def load_images(self, images, kubectl = 'kubectl') -> None:
+        for image in images:
+            _k3s_import(image)
+
+class _GenericRemoteFlavor(ClusterFlavorHandler):
+    '''Terminal fallback: inherits the base's refuse-to-load behavior.'''
+    name = GENERIC_REMOTE
+
+    def matches(self, context_name, node_labels) -> bool:
+        return True
+
+#: Handlers in detection order. The context-name checks come before the
+#: node-label ones so the common cases need no extra kubectl call, and
+#: GENERIC_REMOTE stays last as the terminal fallback.
+_FLAVORS : List[ClusterFlavorHandler] = []
+
+def register_cluster_flavor(handler : ClusterFlavorHandler,
+                            before : Optional[str] = GENERIC_REMOTE) -> None:
+    '''
+    Registers a cluster flavor. Detection tries handlers in registration order, so
+    a new handler is inserted before ``before`` (by default the generic-remote
+    fallback, which matches everything and must stay last).
+
+    - Arguments:
+        - handler: the flavor handler instance.
+        - before: name of the handler to insert ahead of, or None to append.
+
+    - Raises:
+        - ValueError: ``before`` names no registered flavor.
+    '''
+    if before is None:
+        _FLAVORS.append(handler)
+        return
+    for i, existing in enumerate(_FLAVORS):
+        if existing.name == before:
+            _FLAVORS.insert(i, handler)
+            return
+    raise ValueError(f'no registered cluster flavor named {before!r}; '
+                     f'known: {", ".join(f.name for f in _FLAVORS)}')
+
+for _flavor in (_KindFlavor(), _DockerDesktopFlavor(), _K3sFlavor(),
+                _MinikubeFlavor(), _GenericRemoteFlavor()):
+    register_cluster_flavor(_flavor, before = None)
+
+def get_cluster_flavor(cluster : str) -> ClusterFlavorHandler:
+    '''
+    The handler registered under ``cluster``.
+
+    - Raises:
+        - ``RuntimeError`` when no flavor is registered under that name.
+    '''
+    for handler in _FLAVORS:
+        if handler.name == cluster:
+            return handler
+    raise RuntimeError(f'unknown cluster flavor: {cluster}')
+
+def detect_cluster(kubectl = 'kubectl') -> str:
+    '''
+    Classifies the cluster kubectl currently points at, by asking each registered
+    flavor in order. Context-name conventions identify kind/minikube/docker-desktop;
+    k3s installs use a generic context name ('default'), so they are confirmed via
+    node facts instead — fetched at most once per call, and only if some handler
+    asks for them.
+    '''
+    ctx = current_context(kubectl)
+    cached : List[str] = []
+
+    def node_labels() -> str:
+        if not cached:
+            cached.append(_node_labels(kubectl))
+        return cached[0]
+
+    for handler in _FLAVORS:
+        if handler.matches(ctx, node_labels):
+            return handler.name
     return GENERIC_REMOTE
 
 def load_images(cluster, images, kubectl = 'kubectl') -> None:
@@ -58,29 +215,7 @@ def load_images(cluster, images, kubectl = 'kubectl') -> None:
         - ``RuntimeError`` when the cluster is remote (push to a registry instead), \
             when a required tool is missing, or when a load command fails.
     '''
-    if cluster == DOCKER_DESKTOP:
-        print('docker-desktop shares the local docker daemon; images need no loading.')
-        return
-    if cluster == GENERIC_REMOTE:
-        refs = ' '.join(images)
-        raise RuntimeError(
-            f'cluster looks remote — pods there cannot see locally built images. '
-            f'Push them to a registry the cluster can reach and pass --image, e.g.:\n'
-            f'  docker tag <local> <registry>/<name>:<tag> && docker push <registry>/<name>:<tag>\n'
-            f'(locally built: {refs})')
-    if cluster == KIND:
-        name = current_context(kubectl).removeprefix('kind-') or 'kind'
-        _run_load(['kind', 'load', 'docker-image', *images, '--name', name])
-        return
-    if cluster == MINIKUBE:
-        for image in images:
-            _run_load(['minikube', 'image', 'load', image])
-        return
-    if cluster == K3S:
-        for image in images:
-            _k3s_import(image)
-        return
-    raise RuntimeError(f'unknown cluster flavor: {cluster}')
+    get_cluster_flavor(cluster).load_images(images, kubectl)
 
 def _run_load(cmd) -> None:
     try:
@@ -111,16 +246,13 @@ def hostpath_warning(cluster) -> Optional[str]:
     '''
     A message when hostPath mounts will NOT resolve against the local filesystem
     (the cluster "node" is a VM/container with its own filesystem), else None.
+    An unregistered flavor warns nothing rather than raising: this is advisory,
+    and deploy should not fail over a missing warning.
     '''
-    if cluster == KIND:
-        return ('this is a kind cluster: hostPath resolves inside the kind node '
-                'container, not on your host. Recreate the cluster with extraMounts '
-                'covering each mounted path (https://kind.sigs.k8s.io/docs/user/configuration/#extra-mounts).')
-    if cluster == MINIKUBE:
-        return ('this is a minikube cluster: hostPath resolves inside the minikube '
-                'VM. Expose each mounted path with `minikube mount /path:/path` or '
-                'start minikube with --mount --mount-string=/path:/path.')
-    return None
+    try:
+        return get_cluster_flavor(cluster).hostpath_warning()
+    except RuntimeError:
+        return None
 
 def allocatable_gpus(kubectl = 'kubectl', resource = 'nvidia.com/gpu') -> int:
     '''
