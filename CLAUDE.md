@@ -13,13 +13,17 @@ convention below follows from that.
 
 | Path | What lives there |
 |---|---|
-| `videoflow/core/` | The abstractions: `node.py` (Node hierarchy), `flow.py` (Flow), `graph.py` (validation), `task.py` (per-node run loop), `engine.py` (Messenger/ExecutionEngine interfaces), `policies.py` (JoinPolicy), `remote.py`, `constants.py` |
+| `videoflow/core/` | The abstractions: `node.py` (Node hierarchy), `flow.py` (Flow), `graph.py` (validation), `task.py` (per-node run loop), `engine.py` (Messenger/ExecutionEngine interfaces), `policies.py` (JoinPolicy), `compiler.py` (Flow → `NodeSpec`s), `remote.py`, `constants.py` |
+| `videoflow/runtime/` | Runs **inside a worker container**: `worker.py` (the one-node entrypoint), `provision.py`, `health.py`, `idempotency.py`, `logging_config.py` |
+| `videoflow/deploy/` | Runs on the **operator's machine**: `cli.py`, `compile.py`, `manifests.py`, `images.py`, `build.py`, `cluster.py`, `solution.py`, `infra.py`, `localinfra.py` |
+| `videoflow/wire/` | `serialization.py` — the transport-independent envelope format (msgpack v2/v3, protobuf v4) |
+| `videoflow/components/` | `descriptor.py` (component.yaml loading/validation), `oci.py` (descriptors as OCI artifacts) |
 | `videoflow/engines/` | `local.py` (subprocess per node), `kubernetes.py` (pod per node) |
 | `videoflow/messaging/` | NATS JetStream transport. `topology.py` is the single source of truth for subject/stream/durable naming |
 | `videoflow/producers/`, `processors/`, `consumers/` | Built-in nodes |
 | `videoflow/v1/` | **Generated** protobuf modules — never hand-edit (see hard rules) |
 | `videoflow/utils/` | Graph algorithms, model downloader, parsers, transforms |
-| `videoflow/*.py` (top level) | Deploy machinery: `cli.py`, `compiler.py`, `manifests.py`, `solution.py`, `worker.py`, `serialization.py`, `images.py`, `infra.py`, … |
+| `videoflow/*.py` (root) | Only `version.py` and five frozen compatibility shims — see below |
 | `spec/` | Language-agnostic protocol contract: `PROTOCOL.md`, `proto/`, golden `vectors/`, `rfcs/` |
 | `docker/`, `k8s/` | Base images (CPU + CUDA) and dev broker manifests |
 | `docs/` | Sphinx site (`docs/source/`) |
@@ -79,7 +83,7 @@ old code passes. That is a compatibility shim, not permission to omit hints in n
 goes in a comment next to it. There are exactly two good reasons here:
 
 1. A genuinely optional dependency — `nats`, `cv2`, `redis`, `yaml`, `kubernetes` are installed
-   via extras, so the core must import cleanly without them. This is why `cli.py` defers so much.
+   via extras, so the core must import cleanly without them. This is why `deploy/cli.py` defers so much.
 2. Breaking a real circular import.
 
 "It's slow to import" and "it's only used in one branch" are not reasons. `TODO.md` item 7
@@ -93,11 +97,11 @@ tracks auditing the existing function-level imports; don't add to the pile.
   `close()`. `__init__` runs on the machine that builds the graph; `open()` runs in the worker.
 - Raise a domain error with an actionable message rather than returning a sentinel. Validation
   errors are `ValueError` and should name the fix, not just the problem — see the messages in
-  `videoflow/images.py` and `videoflow/core/graph.py` for the house standard.
+  `videoflow/deploy/images.py` and `videoflow/core/graph.py` for the house standard.
 - Use `@dataclass` for plain records instead of passing dicts around as structs.
 - Don't introduce an abstraction layer until there is a second caller.
 - One reason to change per module. The top-level deploy modules are deliberately narrow
-  (`images.py` only resolves images, `topology.py` only names things) — keep them that way.
+  (`deploy/images.py` only resolves images, `messaging/topology.py` only names things) — keep them that way.
 
 ### Existing house style — match it, don't "fix" it
 
@@ -119,6 +123,21 @@ up `self._<param>` (then `self.<param>`) so a worker can rebuild the node via
 `type(node)(**get_params())`. A missing attribute raises `AttributeError` at build time. If your
 argument names don't match stored attributes, override `get_params()`. All params must be
 JSON-serializable.
+
+**The five root shims are frozen public contract.** `videoflow/{worker,provision,compile,cli,
+serialization}.py` are thin re-export modules left behind by the package reorganization. Do not
+delete them, do not add code to them, and do not repoint the things that reference them:
+
+| Shim | Why it can't move |
+|---|---|
+| `videoflow.worker` | ENTRYPOINT of the published base images, inherited by every contrib component image |
+| `videoflow.provision` | Rendered into every flow's init Job, including manifests already applied in clusters |
+| `videoflow.compile` | Spawned inside solution images by the host CLI, which may be a different version |
+| `videoflow.cli` | Backs the `videoflow` console script; installed entry points outlive the source tree |
+| `videoflow.serialization` | The module path a pickled payload records for its class — a DLQ'd message must still decode |
+
+`tests/test_shims.py` enforces this. Edit the real modules under `runtime/`, `deploy/` and
+`wire/` instead.
 
 **Never hand-edit `videoflow/v1/`.** It is generated from `spec/proto/` by `scripts/gen-proto.sh`
 and excluded from both ruff and mypy — ruff's F401 would strip the cross-proto imports that

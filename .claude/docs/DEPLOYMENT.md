@@ -3,8 +3,8 @@
 The `videoflow` CLI, the solution conventions it expects, and how a graph becomes Kubernetes
 objects.
 
-> Keep this file in sync with [`videoflow/cli.py`](../../videoflow/cli.py),
-> [`solution.py`](../../videoflow/solution.py), and [`manifests.py`](../../videoflow/manifests.py).
+> Keep this file in sync with [`videoflow/deploy/cli.py`](../../videoflow/deploy/cli.py),
+> [`solution.py`](../../videoflow/deploy/solution.py), and [`manifests.py`](../../videoflow/deploy/manifests.py).
 > New CLI flags or solution conventions belong in `../../README.md` too, and solution-side changes
 > usually need a matching update in `../videoflow-contrib`.
 
@@ -20,14 +20,14 @@ objects.
 | `videoflow debug decode [--dlq]` | Decode wire envelopes, including from the dead-letter queue. |
 
 Entry point is `videoflow.cli:main`; handlers are `_cmd_<name>` in
-[`cli.py`](../../videoflow/cli.py).
+[`cli.py`](../../videoflow/deploy/cli.py).
 
 ## The graph module contract
 
 A deployable graph module exposes **`build_flow() -> Flow`** (override with `path.py:factory`),
 returning a *built* flow — it must **not** call `.run()`.
 
-`load_flow` ([compile.py](../../videoflow/compile.py)) inserts the graph's directory into
+`load_flow` ([compile.py](../../videoflow/deploy/compile.py)) inserts the graph's directory into
 `sys.path` and picks the module name carefully, because workers must be able to import the node
 classes by their fully-qualified path. This is why the convention is to **define node classes in a
 sibling `<name>_nodes.py`, not in the graph module itself** — a class defined in the graph module
@@ -36,7 +36,7 @@ gets a module path that may not resolve inside a worker.
 ## Solutions
 
 A "solution" is a graph module plus sibling files. See
-[`solution.py`](../../videoflow/solution.py) — its module docstring is the spec.
+[`solution.py`](../../videoflow/deploy/solution.py) — its module docstring is the spec.
 
 ```
 my_solution/
@@ -88,7 +88,7 @@ containers → `LocalProcessEngine` → report non-zero worker exits → tear do
 
 ## Manifests
 
-[`manifests.py`](../../videoflow/manifests.py) builds manifests as **plain dicts** and then
+[`manifests.py`](../../videoflow/deploy/manifests.py) builds manifests as **plain dicts** and then
 `yaml.dump`s them. Never introduce text templating here.
 
 - `BATCH`: every node is a `Job`.
@@ -102,7 +102,7 @@ containers → `LocalProcessEngine` → report non-zero worker exits → tear do
 
 ## Images
 
-[`images.py`](../../videoflow/images.py) resolves in strict order, and **raises rather than
+[`images.py`](../../videoflow/deploy/images.py) resolves in strict order, and **raises rather than
 guessing** if none apply:
 
 1. `--image-override <name>=<ref>` for that node
@@ -122,12 +122,12 @@ renamed time-sliced resources. The full cluster-preparation walkthrough is in
 
 ## Infrastructure ownership
 
-Both [`infra.py`](../../videoflow/infra.py) (in-cluster) and
-[`localinfra.py`](../../videoflow/localinfra.py) (Docker) follow one rule: **a pre-existing
+Both [`infra.py`](../../videoflow/deploy/infra.py) (in-cluster) and
+[`localinfra.py`](../../videoflow/deploy/localinfra.py) (Docker) follow one rule: **a pre-existing
 `nats`/`redis` service or container is reused and never torn down.** Only resources deploy created
 are deleted. Preserve this when touching either module — the alternative is deleting someone's
 shared broker.
 
-[`cluster.py`](../../videoflow/cluster.py) detects the cluster flavor (`k3s`, `kind`, `minikube`,
+[`cluster.py`](../../videoflow/deploy/cluster.py) detects the cluster flavor (`k3s`, `kind`, `minikube`,
 `docker-desktop`, `generic-remote`) to decide how to load images and whether hostPath mounts are
 viable.

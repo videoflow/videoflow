@@ -31,7 +31,7 @@ Flow([consumers])  →  producer discovery  →  GraphEngine validation
 
 ## Compilation
 
-`compiler.compile_flow(flow) -> [NodeSpec]` ([compiler.py](../../videoflow/compiler.py)) flattens
+`compiler.compile_flow(flow) -> [NodeSpec]` ([compiler.py](../../videoflow/core/compiler.py)) flattens
 the graph into JSON-serializable per-node deployment records: `name`, `node_class` (FQN),
 `params` (from `get_params()`), `parents`, `kind`, `has_children`, `nb_tasks`, `device_type`, GPU
 fields, `image`, `partition_by`, `join_policy`.
@@ -45,7 +45,7 @@ envelope v4.
 
 ## The worker
 
-[`videoflow/worker.py`](../../videoflow/worker.py) runs exactly **one** node, and is driven
+[`videoflow/runtime/worker.py`](../../videoflow/runtime/worker.py) runs exactly **one** node, and is driven
 entirely by `VF_*` environment variables — identical whether launched as a local subprocess or a
 Kubernetes pod. It never sees the graph-building script. The full variable list is the module
 docstring; the important ones are `VF_NODE_CLASS`, `VF_NODE_PARAMS_JSON`, `VF_PARENT_NAMES`,
@@ -107,7 +107,7 @@ Implemented by `TraceGroupAssembler` / `TimeGroupAssembler` in
 
 ## Wire format
 
-[`serialization.py`](../../videoflow/serialization.py). Envelope versions 2/3 are msgpack (with an
+[`serialization.py`](../../videoflow/wire/serialization.py). Envelope versions 2/3 are msgpack (with an
 opt-in, Python-only pickle payload codec behind `VF_ALLOW_PICKLE`); version 4 is protobuf
 (`videoflow.v1.Envelope`) and is language-neutral. `decode_envelope` auto-detects from the leading
 byte, so mixed-version runs decode correctly. Default emit version is 3
@@ -121,7 +121,7 @@ change to the wire needs an RFC under `spec/rfcs/` and updated vectors.
 
 ## Language-agnostic components
 
-`core/remote.py` + `component.py`: `component(ref, params = ...)` loads a `component.yaml`
+`core/remote.py` + `components/descriptor.py`: `component(ref, params = ...)` loads a `component.yaml`
 descriptor and returns a `RemoteProducer`/`RemoteProcessor`/`RemoteConsumer` that **subclasses the
 normal node bases**, so every `isinstance` check downstream keeps working. Descriptor validation
 (params schema, device, image, singleton vs partitionable, join capability) happens at

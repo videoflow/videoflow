@@ -42,20 +42,20 @@ the spec and the code can be cross-checked as either evolves.
 
 | Section | Reference source |
 |---|---|
-| §1 Environment contract | `videoflow/worker.py`, `videoflow/engines/local.py` (`_worker_env`), `videoflow/manifests.py` (`_env_pairs`) |
+| §1 Environment contract | `videoflow/runtime/worker.py`, `videoflow/engines/local.py` (`_worker_env`), `videoflow/deploy/manifests.py` (`_env_pairs`) |
 | §2 Naming | `videoflow/messaging/topology.py` |
 | §3 Streams & consumers | `videoflow/messaging/topology.py` |
-| §4 Envelope & wire format | `videoflow/serialization.py`, `spec/proto/` (Phase 1) |
-| §5 Message id & dedup | `videoflow/serialization.py` (`derive_message_id`) |
+| §4 Envelope & wire format | `videoflow/wire/serialization.py`, `spec/proto/` (Phase 1) |
+| §5 Message id & dedup | `videoflow/wire/serialization.py` (`derive_message_id`) |
 | §6 Node lifecycle & task loop | `videoflow/core/task.py`, `videoflow/core/engine.py` |
 | §7 Delivery, ack, retry, DLQ | `videoflow/messaging/nats_messenger.py` |
 | §8 Join / input-group assembly | `videoflow/core/policies.py`, `videoflow/messaging/grouping.py` |
 | §9 End-of-stream drain | `videoflow/messaging/nats_messenger.py` |
 | §10 Partitioning | `videoflow/messaging/nats_messenger.py` (`_owns`), `topology.py` |
 | §11 Control plane | `videoflow/messaging/topology.py`, `videoflow/engines/local.py` |
-| §12 Health & metrics | `videoflow/health.py` |
-| §13 Blob store | `videoflow/serialization.py` |
-| §14 Idempotency | `videoflow/idempotency.py` |
+| §12 Health & metrics | `videoflow/runtime/health.py` |
+| §13 Blob store | `videoflow/wire/serialization.py` |
+| §14 Idempotency | `videoflow/runtime/idempotency.py` |
 
 ---
 
@@ -111,7 +111,7 @@ depend on any other configuration channel for routing.
      (Kubernetes StatefulSet pod naming);
   3. else `0`.
 
-  This MUST match `videoflow/worker.py:_resolve_replica_id`.
+  This MUST match `videoflow/runtime/worker.py:_resolve_replica_id`.
 
 ---
 
@@ -198,7 +198,7 @@ the messenger's lazy `add_stream` is an idempotent fallback. Reference:
 ## 4. Envelope and wire format
 
 Every broker message is one **envelope**: routing/trace metadata plus a typed
-payload. Reference: `videoflow/serialization.py`; the versioned IDL lives in
+payload. Reference: `videoflow/wire/serialization.py`; the versioned IDL lives in
 `spec/proto/videoflow/v1/` (Phase 1).
 
 ### 4.1 Versioning
@@ -607,7 +607,7 @@ Reference: `nats_messenger.py` (`_owns`), `topology.py`.
 ## 12. Health and metrics
 
 A worker with `VF_HEALTH_PORT > 0` MUST serve a plain HTTP server on that port
-(`0.0.0.0`) with these endpoints. Reference: `videoflow/health.py`.
+(`0.0.0.0`) with these endpoints. Reference: `videoflow/runtime/health.py`.
 
 - **HEALTH-1** (`/readyz`): 200 `ready` once the node has begun processing (marked
   on first messenger activity — first publish or receive — which is **after**
@@ -630,7 +630,7 @@ A worker with `VF_HEALTH_PORT > 0` MUST serve a plain HTTP server on that port
 ## 13. Blob store (large payloads)
 
 NATS caps message size (~1MB default `max_payload`); large frames are offloaded.
-Reference: `videoflow/serialization.py`.
+Reference: `videoflow/wire/serialization.py`.
 
 - **BLOB-1** (threshold): if an encoded payload exceeds `MAX_INLINE_PAYLOAD_BYTES`
   (default 512KiB, override via `VIDEOFLOW_MAX_INLINE_PAYLOAD_BYTES`) **and** a blob
