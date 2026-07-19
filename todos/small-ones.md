@@ -1,1 +1,0 @@
-- Review the code for hasattr and getattr and remove them. Take advantage of the typing system for this. Add a note on CLAUDE.md that we shouldn't use these two functions as lazy ways of ignoring object types.
