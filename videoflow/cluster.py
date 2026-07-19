@@ -122,14 +122,55 @@ def hostpath_warning(cluster) -> Optional[str]:
                 'start minikube with --mount --mount-string=/path:/path.')
     return None
 
-def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None) -> List[str]:
+def allocatable_gpus(kubectl = 'kubectl', resource = 'nvidia.com/gpu') -> int:
+    '''
+    Total allocatable units of one GPU extended resource across all nodes
+    (0 when no node advertises it or the cluster is unreachable).
+    '''
+    # jsonpath needs the dots inside the key escaped: nvidia.com/gpu -> nvidia\.com/gpu
+    path = resource.replace('.', '\\.')
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-o',
+                       'jsonpath={.items[*].status.allocatable.' + path + '}')
+    return sum(int(v) for v in out.split() if v.isdigit())
+
+# The one preflight problem that is fatal in shared mode (cli hard-errors on it):
+# shared pods carry no GPU resource limit, so the RuntimeClass is their only path
+# to the device. A shared constant so the check never depends on message prose.
+SHARED_NEEDS_RUNTIME_CLASS = '--gpu-mode shared without --gpu-runtime-class'
+
+def nvidia_runtimeclass(kubectl = 'kubectl') -> Optional[str]:
+    '''
+    The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers
+    the conventional ``nvidia`` but also recognizes variant names (e.g. a distro
+    registering ``nvidia-container-runtime``) so the shared-mode escalation cannot
+    silently no-op on them.
+    '''
+    handlers = _kubectl_out(kubectl, 'get', 'runtimeclass', '-o',
+                            'jsonpath={.items[*].metadata.name}').split()
+    if 'nvidia' in handlers:
+        return 'nvidia'
+    return next((h for h in handlers if h.startswith('nvidia')), None)
+
+def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None, demand = None,
+                  gpu_mode = 'exclusive') -> List[str]:
     '''
     Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
-    labeled ``videoflow.io/gpu-pool=true``, a node advertising allocatable
-    ``nvidia.com/gpu``, and — where the NVIDIA container runtime is an opt-in
+    labeled ``videoflow.io/gpu-pool=true``; in exclusive mode, enough allocatable
+    units of each requested extended resource to satisfy the flow's whole demand
+    (an under-provisioned flow schedules partially and stalls with the rest of its
+    pods Pending); and — where the NVIDIA container runtime is an opt-in
     RuntimeClass rather than the node default — a ``--gpu-runtime-class``, without
     which the pod schedules and then runs with no device. Returns problem strings
     with copy-pasteable fixes (empty list = OK).
+
+    - Arguments:
+        - demand: dict of extended-resource name -> total units the flow requests \
+            (sum over GPU nodes of ``nb_tasks * gpu_count``), or None to skip the \
+            capacity comparison and only check that the resource exists.
+        - gpu_mode: ``'exclusive'`` or ``'shared'``. Shared pods carry no resource \
+            limit, so the capacity/device-plugin checks are skipped; the RuntimeClass \
+            check is escalated instead, because in shared mode the runtime class is \
+            the only thing granting device access at all.
     '''
     problems = []
     # An unreachable cluster makes every check below come back empty, which would
@@ -144,20 +185,35 @@ def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None) -> List[str]:
         example = nodes[0].removeprefix('node/') if nodes else '<node-name>'
         problems.append(f'no node labeled videoflow.io/gpu-pool=true — GPU pods will stay '
                         f'Pending. Fix: kubectl label node {example} videoflow.io/gpu-pool=true')
-    allocatable = _kubectl_out(kubectl, 'get', 'nodes', '-o',
-                               'jsonpath={.items[*].status.allocatable.nvidia\\.com/gpu}')
-    if not allocatable.strip():
-        problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device plugin: '
-                        'kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/'
-                        'v0.16.2/deployments/static/nvidia-device-plugin.yml')
+    if gpu_mode == 'exclusive':
+        for resource in sorted(demand) if demand else ['nvidia.com/gpu']:
+            capacity = allocatable_gpus(kubectl, resource)
+            if capacity == 0:
+                if resource == 'nvidia.com/gpu':
+                    problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device '
+                                    'plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/'
+                                    'k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml')
+                else:
+                    problems.append(f'no node advertises {resource} — the flow requests it '
+                                    f'(gpu_resource_name) but the cluster does not expose it')
+            elif demand and demand[resource] > capacity:
+                problems.append(
+                    f'flow demands {demand[resource]} x {resource} but the cluster has only '
+                    f'{capacity} allocatable — {demand[resource] - capacity} pod(s) will stay '
+                    f'Pending and the flow will stall. Reduce GPU nodes/replicas, enable '
+                    f'device-plugin time-slicing, or deploy with --gpu-mode shared '
+                    f'(dev clusters; see the GPU sharing docs)')
     # Scheduling is necessary but not sufficient: the device is injected by the NVIDIA
     # container runtime, which some distros (k3s) register as an opt-in RuntimeClass
     # and leave off the node default. The presence of such a handler is the signal.
     if not gpu_runtime_class:
-        handlers = _kubectl_out(kubectl, 'get', 'runtimeclass', '-o',
-                                'jsonpath={.items[*].metadata.name}').split()
-        nvidia_rc = next((h for h in handlers if h == 'nvidia'), None)
-        if nvidia_rc:
+        nvidia_rc = nvidia_runtimeclass(kubectl)
+        if nvidia_rc and gpu_mode == 'shared':
+            problems.append(f'{SHARED_NEEDS_RUNTIME_CLASS}: shared pods carry no '
+                            f'GPU resource limit, so the RuntimeClass is the only thing that '
+                            f'injects the device — without it every GPU pod runs device-less. '
+                            f'Fix: deploy with --gpu-runtime-class {nvidia_rc}')
+        elif nvidia_rc:
             problems.append(f'a {nvidia_rc!r} RuntimeClass exists but no --gpu-runtime-class was '
                             f'given — if the NVIDIA runtime is not this node\'s containerd default, '
                             f'GPU pods will start with no device. Fix: deploy with '

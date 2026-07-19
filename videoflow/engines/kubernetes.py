@@ -49,13 +49,21 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - gpu_runtime_class: ``runtimeClassName`` for GPU pods (``nvidia`` on k3s and \
             other distros where the NVIDIA runtime is opt-in rather than the node \
             default). Without it a GPU pod schedules but sees no device.
+        - gpu_mode: ``'exclusive'`` (whole-device claims, default) or ``'shared'`` \
+            (no resource limit — GPU pods co-schedule and share physical devices; \
+            dev clusters only, see ``manifests.render_manifests``).
+        - gpu_resource_name: deploy-level default extended-resource name for GPU \
+            claims; a node's own ``gpu_resource_name`` wins.
+        - gpu_autoscaling: include GPU nodes in KEDA autoscaling (off by default — \
+            each extra replica claims whole GPUs).
     '''
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str = None,
                 image_overrides : dict = None, blob_redis_url : str = None, specs = None,
                 kubectl : str = 'kubectl', envelope_version : int = None, allow_pickle : bool = False,
                 provision_image : str = None, autoscaling : bool = False, max_replicas : int = 10,
                 nats_monitoring_endpoint : str = None, mounts : list = None,
-                gpu_runtime_class : str = None) -> None:
+                gpu_runtime_class : str = None, gpu_mode : str = 'exclusive',
+                gpu_resource_name : str = None, gpu_autoscaling : bool = False) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -71,6 +79,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._nats_monitoring_endpoint = nats_monitoring_endpoint
         self._mounts = mounts
         self._gpu_runtime_class = gpu_runtime_class
+        self._gpu_mode = gpu_mode
+        self._gpu_resource_name = gpu_resource_name
+        self._gpu_autoscaling = gpu_autoscaling
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -86,7 +97,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
             max_replicas = self._max_replicas, nats_monitoring_endpoint = self._nats_monitoring_endpoint,
             envelope_version = self._envelope_version, allow_pickle = self._allow_pickle,
             provision_image = self._provision_image, mounts = self._mounts,
-            gpu_runtime_class = self._gpu_runtime_class,
+            gpu_runtime_class = self._gpu_runtime_class, gpu_mode = self._gpu_mode,
+            gpu_resource_name = self._gpu_resource_name,
+            gpu_autoscaling = self._gpu_autoscaling,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
@@ -130,10 +143,59 @@ class KubernetesExecutionEngine(ExecutionEngine):
     def _run_selector(self) -> str:
         return f'{LABEL_RUN_ID}={k8s_name(self._run_id)}'
 
+    def _pod_states(self, selector : str) -> List[tuple]:
+        '''
+        ``(pod_name, phase, scheduled_reason, scheduled_message)`` for each pod
+        matching selector. ``scheduled_reason`` is the PodScheduled condition's
+        reason — ``'Unschedulable'`` is the scheduler saying the pod fits nowhere
+        (its message names the cause, e.g. ``Insufficient nvidia.com/gpu``).
+        '''
+        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}{.status.phase}{"|"}'
+                    '{.status.conditions[?(@.type=="PodScheduled")].reason}{"|"}'
+                    '{.status.conditions[?(@.type=="PodScheduled")].message}{"\\n"}{end}')
+        proc = subprocess.run(
+            [self._kubectl, 'get', 'pods', '-n', self._namespace, '-l', selector,
+             '-o', f'jsonpath={jsonpath}'],
+            capture_output = True, text = True, check = False,
+        )
+        states = []
+        for line in proc.stdout.splitlines():
+            if not line:
+                continue
+            name, phase, reason, message = (line.split('|', 3) + ['', '', '', ''])[:4]
+            states.append((name, phase, reason, message))
+        return states
+
+    def _unschedulable_pods(self, selector : str) -> List[tuple]:
+        '''``(pod_name, message)`` for pods the scheduler has declared Unschedulable.'''
+        return [(name, message) for name, phase, reason, message in self._pod_states(selector)
+                if phase == 'Pending' and reason == 'Unschedulable']
+
+    def _scaleup_in_flight(self, pod_names : List[str]) -> bool:
+        '''
+        Whether a cluster-autoscaler scale-up is in progress *for these pods* (they
+        are then expected to schedule once the new node joins, so the unschedulable
+        watchdog must not abort). Scoped per pod via ``involvedObject.name`` — an
+        unscoped namespace query would let a stale TriggeredScaleUp event from any
+        prior workload (Events persist ~1h) mute the watchdog indefinitely.
+        '''
+        for name in pod_names[:8]:      # bounded: one kubectl call per stuck pod
+            proc = subprocess.run(
+                [self._kubectl, 'get', 'events', '-n', self._namespace,
+                 '--field-selector', f'reason=TriggeredScaleUp,involvedObject.name={name}',
+                 '-o', 'name'],
+                capture_output = True, text = True, check = False,
+            )
+            if proc.stdout.strip():
+                return True
+        return False
+
     def _wait_provision(self, flow_id : str, timeout_secs : int = 180) -> None:
-        '''Blocks until the provision Job completes; raises if it fails or times out.'''
+        '''Blocks until the provision Job completes; raises if it fails, cannot be
+        scheduled, or times out.'''
         name = k8s_name('vf', flow_id, 'provision')
         deadline = time.time() + timeout_secs
+        unschedulable_since = None
         while time.time() < deadline:
             for job_name, _node, ok, failed in self._job_states(self._run_selector()):
                 if job_name != name:
@@ -143,17 +205,35 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 if failed:
                     self.dump_failed_logs(['provision'], node_label = name)
                     raise RuntimeError('provision Job failed — broker streams were not created.')
+            # An unschedulable provision pod would otherwise burn the whole timeout.
+            stuck = self._unschedulable_pods(f'job-name={name}')
+            if stuck:
+                unschedulable_since = unschedulable_since or time.time()
+                if (time.time() - unschedulable_since >= 30
+                        and not self._scaleup_in_flight([n for n, _ in stuck])):
+                    raise RuntimeError(f'provision pod cannot be scheduled '
+                                       f'({stuck[0][1] or "Unschedulable"}) — broker streams '
+                                       f'were not created.')
+            else:
+                unschedulable_since = None
             time.sleep(2)
         raise RuntimeError(f'provision Job did not complete within {timeout_secs}s.')
 
-    def wait_for_completion(self, poll_secs : int = 3) -> List[str]:
+    def wait_for_completion(self, poll_secs : int = 3,
+                            unschedulable_grace_secs : int = 60) -> List[str]:
         '''
         Blocks until every node Job for this run has succeeded or failed. Returns the
         list of failed node names (empty when the whole flow completed cleanly). Fails
-        fast: returns the instant any node Job exhausts its ``backoffLimit`` rather
-        than hanging on the others.
+        fast two ways: returns the instant any node Job exhausts its ``backoffLimit``,
+        and raises ``RuntimeError`` when any pod has sat scheduler-Unschedulable
+        (e.g. ``Insufficient nvidia.com/gpu``) for ``unschedulable_grace_secs`` —
+        an unschedulable pod never runs, never consumes its backoffLimit, and would
+        otherwise leave this loop (and the whole flow, via backpressure) hanging
+        forever. The grace period tolerates scheduling churn, and the abort is
+        skipped while a cluster-autoscaler scale-up is in flight.
         '''
         provision = k8s_name('vf', self._flow_id, 'provision')
+        unschedulable_since : dict = {}
         while True:
             pending, failed = [], []
             for job_name, node, ok, job_failed in self._job_states(self._run_selector()):
@@ -167,7 +247,64 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 return failed
             if not pending:
                 return []
+            now = time.time()
+            stuck = self._unschedulable_pods(self._run_selector())
+            names = {name for name, _ in stuck}
+            unschedulable_since = {n: t for n, t in unschedulable_since.items() if n in names}
+            for name, _message in stuck:
+                unschedulable_since.setdefault(name, now)
+            overdue = [(name, message) for name, message in stuck
+                       if now - unschedulable_since[name] >= unschedulable_grace_secs]
+            if overdue and not self._scaleup_in_flight([name for name, _ in overdue]):
+                detail = '; '.join(f'{name}: {message or "Unschedulable"}' for name, message in overdue)
+                error = (f'{len(overdue)} pod(s) cannot be scheduled and the flow would stall '
+                         f'({detail}).')
+                # GPU-specific remedies only when the scheduler actually named a GPU
+                # resource — for a CPU/memory/affinity stall they would mislead.
+                if any('gpu' in (message or '') for _, message in overdue):
+                    error += (' The flow demands more GPUs than the cluster has allocatable — '
+                              'reduce GPU nodes/replicas, enable device-plugin time-slicing, '
+                              'or deploy with --gpu-mode shared.')
+                raise RuntimeError(error)
             time.sleep(poll_secs)
+
+    def schedulability_report(self, grace_secs : int = 30, poll_secs : int = 3) -> List[str]:
+        '''
+        Bounded post-apply check that every pod of this run found a node — the
+        REALTIME counterpart of the ``wait_for_completion`` watchdog (a REALTIME
+        deploy otherwise returns immediately, and an unschedulable node fails
+        silently: producers keep publishing, frames are evicted, downstream output
+        never appears). Returns problem strings, empty when everything scheduled
+        within the grace window.
+        '''
+        deadline = time.time() + grace_secs
+        stuck : List[tuple] = []
+        clean_polls = 0
+        saw_pods = False
+        while time.time() < deadline:
+            states = self._pod_states(self._run_selector())
+            saw_pods = saw_pods or bool(states)
+            stuck = [(name, message) for name, phase, reason, message in states
+                     if phase == 'Pending' and reason == 'Unschedulable']
+            # Success needs pods to exist AND two consecutive clean polls: right
+            # after apply the controllers may not have created the pods yet (or the
+            # scheduler may not have stamped PodScheduled), and a single empty
+            # snapshot would pass the check vacuously.
+            if states and not stuck:
+                clean_polls += 1
+                if clean_polls >= 2:
+                    return []
+            else:
+                clean_polls = 0
+            time.sleep(poll_secs)
+        if not saw_pods:
+            return [f'no pods appeared for this run within {grace_secs}s — check the '
+                    f'workloads with kubectl get pods -n {self._namespace}']
+        if stuck and self._scaleup_in_flight([name for name, _ in stuck]):
+            return [f'{len(stuck)} pod(s) Pending, but a cluster-autoscaler scale-up is '
+                    f'in flight — they should schedule once the new node joins.']
+        return [f'pod {name} cannot be scheduled: {message or "Unschedulable"}'
+                for name, message in stuck]
 
     def dump_failed_logs(self, nodes : List[str], node_label : str = None) -> None:
         '''Prints the recent pod logs of each failed node (before teardown removes them).'''
@@ -205,8 +342,17 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self.teardown()
 
     def join_task_processes(self) -> None:
-        '''Blocks until every node Job for this run reaches a terminal state.'''
-        self.wait_for_completion()
+        '''
+        Blocks until every node Job for this run reaches a terminal state. Keeps
+        ``Flow.join()``'s documented block-then-return contract: a watchdog abort
+        (unschedulable pods — the flow can never finish) is logged, not raised, so
+        programmatic callers are not crashed mid-join; the CLI's deploy path calls
+        ``wait_for_completion`` directly and does get the exception.
+        '''
+        try:
+            self.wait_for_completion()
+        except RuntimeError as e:
+            logger.error(f'flow will never complete: {e}')
 
 def _publish_stop(nats_url, flow_id, run_id) -> None:
     import asyncio

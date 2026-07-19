@@ -140,9 +140,44 @@ def _cmd_deploy(args) -> None:
         warning = hostpath_warning(flavor)
         if warning:
             print(f'WARNING: {warning}', file = sys.stderr)
-    if any(s.device_type == 'gpu' for s in specs):
-        for problem in gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class):
+    gpu_specs = [s for s in specs if s.device_type == 'gpu']
+    if gpu_specs:
+        from .manifests import _is_partitioned, gpu_demand
+        # Whole-flow demand per extended resource: every replica of a GPU node claims
+        # its own gpu_count devices, so a partially-schedulable flow deadlocks.
+        demand = gpu_demand(specs, default_resource = args.gpu_resource_name)
+        problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
+                                 demand = demand, gpu_mode = args.gpu_mode)
+        if args.gpu_mode == 'shared':
+            from .cluster import SHARED_NEEDS_RUNTIME_CLASS, allocatable_gpus
+            pods = sum(s.nb_tasks for s in gpu_specs)
+            physical = allocatable_gpus(args.kubectl)
+            shared_with = (f'{physical} schedulable GPU unit(s)' if physical
+                           else 'the GPU pool')
+            print(f'GPU mode shared: {pods} pod(s) will share {shared_with} '
+                  f'with no memory isolation — VRAM is the only limit.', file = sys.stderr)
+            # Without a runtime class, shared pods have no path to the device at all
+            # (they carry no resource limit for the device plugin to act on) — this
+            # is fatal regardless of --strict-preflight.
+            fatal = [p for p in problems if p.startswith(SHARED_NEEDS_RUNTIME_CLASS)]
+            if fatal:
+                raise SystemExit('ERROR: ' + fatal[0])
+        elif args.autoscaling and args.gpu_autoscaling:
+            # Partitioned nodes never autoscale (fixed scale), so they contribute
+            # their fixed replica count to the ceiling, not max_replicas.
+            ceiling = sum((s.nb_tasks if _is_partitioned(s) else max(s.nb_tasks, args.max_replicas))
+                          * s.gpu_count for s in gpu_specs)
+            print(f'NOTE: --gpu-autoscaling can scale GPU demand up to {ceiling} device(s); '
+                  f'replicas beyond allocatable capacity will wait Pending.', file = sys.stderr)
+        elif args.autoscaling:
+            print(f'NOTE: {len(gpu_specs)} GPU node(s) excluded from --autoscaling (each '
+                  f'extra replica claims whole GPUs); pass --gpu-autoscaling to include them.',
+                  file = sys.stderr)
+        for problem in problems:
             print(f'WARNING: {problem}', file = sys.stderr)
+        if problems and args.strict_preflight:
+            raise SystemExit('ERROR: --strict-preflight set and the GPU preflight found '
+                             'problems (above); nothing was applied.')
 
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
     # (+ Redis for the blob store) in the namespace, owning only what we created.
@@ -175,7 +210,9 @@ def _cmd_deploy(args) -> None:
         kubectl = args.kubectl, envelope_version = args.envelope_version,
         allow_pickle = args.allow_pickle, provision_image = args.provision_image,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
-        mounts = mounts,
+        mounts = mounts, gpu_runtime_class = args.gpu_runtime_class,
+        gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
+        gpu_autoscaling = args.gpu_autoscaling,
     )
     try:
         engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
@@ -184,17 +221,27 @@ def _cmd_deploy(args) -> None:
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
     if flow_type != BATCH:
+        # A REALTIME deploy returns immediately, so an unschedulable node would fail
+        # silently (producers keep publishing, frames evicted, downstream output never
+        # appears). One bounded check turns that into a visible warning.
+        for problem in engine.schedulability_report():
+            print(f'WARNING: {problem}', file = sys.stderr)
         print('REALTIME flow is running. Tear it down with:')
         print(teardown_cmd)
         return
 
-    # BATCH: run to completion, then clean everything up — on success, failure, or
-    # Ctrl-C (the finally block always runs unless --keep is set).
+    # BATCH: run to completion, then clean everything up — on success, failure,
+    # stall, or Ctrl-C (the finally block always runs unless --keep is set).
     failed = []
+    stall = None
     try:
         failed = engine.wait_for_completion()
     except KeyboardInterrupt:
         print('\nInterrupted; cleaning up...', file = sys.stderr)
+    except RuntimeError as e:
+        # The unschedulable-pod watchdog: the flow can never finish, so clean up
+        # instead of hanging (the historical behavior) — see wait_for_completion.
+        stall = str(e)
     finally:
         if failed:
             engine.dump_failed_logs(failed)
@@ -206,6 +253,8 @@ def _cmd_deploy(args) -> None:
             if created and not keep_infra:
                 teardown_infra(args.kubectl, args.namespace, created)
             print('Cleaned up all resources.')
+    if stall:
+        raise SystemExit(f'Flow aborted: {stall}')
     if failed:
         raise SystemExit(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow_id} completed.')
@@ -274,7 +323,9 @@ def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
             envelope_version = args.envelope_version, allow_pickle = args.allow_pickle,
             provision_image = args.provision_image, mounts = mounts,
-            gpu_runtime_class = args.gpu_runtime_class,
+            gpu_runtime_class = args.gpu_runtime_class, gpu_mode = args.gpu_mode,
+            gpu_resource_name = args.gpu_resource_name,
+            gpu_autoscaling = args.gpu_autoscaling,
         )
     except ValueError as e:
         raise SystemExit(str(e)) from e
@@ -479,6 +530,10 @@ def _cmd_explain(args) -> None:
         bits = [f'replicas={s.nb_tasks}']
         if s.device_type == 'gpu':
             bits.append('device=gpu')
+            if s.gpu_count != 1:
+                bits.append(f'gpu_count={s.gpu_count}')
+            if s.gpu_resource_name:
+                bits.append(f'gpu_resource={s.gpu_resource_name}')
         if s.partition_by:
             bits.append(f'partition_by={s.partition_by}')
         if s.join_policy:
@@ -491,6 +546,22 @@ def _cmd_explain(args) -> None:
         lines.append(f'      subject: {subject_for(flow.flow_id, run_id, s.name)}')
         if s.parents:
             lines.append(f'      from: {", ".join(s.parents)}')
+    # GPU demand summary: in the default exclusive mode every replica claims its own
+    # whole devices, so this is the allocatable capacity the cluster must have.
+    # Same helper as deploy's preflight (and the same --gpu-resource-name flag), so
+    # what explain prints is exactly what deploy will request.
+    gpu_specs = [s for s in specs if s.device_type == 'gpu']
+    if gpu_specs:
+        from .manifests import gpu_demand, resolve_gpu_resource
+        default_resource = getattr(args, 'gpu_resource_name', None)
+        demand = gpu_demand(specs, default_resource = default_resource)
+        lines.append('GPU demand (exclusive mode — whole devices per replica):')
+        for s in gpu_specs:
+            resource = resolve_gpu_resource(s, default_resource)
+            lines.append(f'  {s.name}: {s.nb_tasks} x {s.gpu_count} {resource}')
+        for resource, units in sorted(demand.items()):
+            lines.append(f'  total: {units} x {resource} — the cluster needs at least this '
+                         f'allocatable (or deploy with --gpu-mode shared / time-slicing)')
     lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
     print('\n'.join(lines))
 
@@ -683,6 +754,25 @@ def build_parser() -> argparse.ArgumentParser:
                                'Needed where the NVIDIA container runtime is an opt-in RuntimeClass '
                                'instead of the node default (k3s): without it a GPU pod schedules '
                                'but starts with no device visible.')
+    deploy.add_argument('--gpu-mode', choices = ['exclusive', 'shared'], default = 'exclusive',
+                        help = 'exclusive (default): each GPU replica claims whole devices via the '
+                               'extended resource — a flow needs as many allocatable units as it has '
+                               'GPU replicas. shared: emit no GPU resource limit; all GPU pods '
+                               'co-schedule onto the gpu-pool and share the physical GPUs (local-run '
+                               'semantics — dev clusters only, no memory isolation, requires '
+                               '--gpu-runtime-class on clusters where the NVIDIA runtime is opt-in).')
+    deploy.add_argument('--gpu-resource-name', default = None, metavar = 'RESOURCE',
+                        help = 'Default extended-resource name GPU nodes request (default '
+                               'nvidia.com/gpu). Use for MIG profiles (nvidia.com/mig-1g.10gb) or '
+                               'clusters that rename time-sliced resources (nvidia.com/gpu.shared). '
+                               'A node\'s own gpu_resource_name= wins.')
+    deploy.add_argument('--gpu-autoscaling', action = 'store_true',
+                        help = 'Include GPU nodes in --autoscaling (off by default: every autoscaled '
+                               'replica claims its own GPUs, so lag-driven scaling can demand more '
+                               'devices than the cluster has and strand pods Pending).')
+    deploy.add_argument('--strict-preflight', action = 'store_true',
+                        help = 'Exit non-zero (before applying anything) when the GPU preflight '
+                               'finds problems, instead of proceeding with warnings.')
     deploy.add_argument('--output', default = './manifests',
                         help = 'Directory for --render-only manifest files (default ./manifests).')
     deploy.add_argument('--image', default = None,
@@ -778,6 +868,9 @@ def build_parser() -> argparse.ArgumentParser:
     explain = sub.add_parser('explain', help = 'Print a human-readable summary of a compiled graph.')
     explain.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
     explain.add_argument('--run-id', default = None)
+    explain.add_argument('--gpu-resource-name', default = None, metavar = 'RESOURCE',
+                         help = 'Default GPU extended-resource name, as on deploy — pass the same '
+                                'value so the printed GPU demand matches what deploy will request.')
     explain.set_defaults(func = _cmd_explain)
 
     prov = sub.add_parser('provision', help = 'Create a flow\'s streams/durables on the broker (usually run automatically).')

@@ -70,6 +70,7 @@ Free and open source
 
     distributed/distributed-execution
     distributed/deploying-to-kubernetes
+    distributed/gpu-sharing
     distributed/language-agnostic-components
     user-documentation/debugging-flow-applications
 

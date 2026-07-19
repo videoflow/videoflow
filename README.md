@@ -328,6 +328,62 @@ videoflow deploy my_flow.py --namespace videoflow          # dev: builds gpu.Doc
 kubectl get pods -n videoflow -o wide                      # GPU pods land on the labeled nodes
 ```
 
+**7. Optional — time-slicing, to fit more GPU nodes than you have GPUs.** Steps
+1-6 are enough to run GPU flows; this step is what makes a graph with *several*
+GPU nodes schedulable on one card. The device plugin advertises each physical GPU
+as N schedulable units, so N pods co-schedule onto it. Nothing is partitioned:
+every one of those pods gets the same physical device and draws from the same
+VRAM pool — this is scheduler bookkeeping plus driver time-slicing, not isolation.
+
+```yaml
+# nvidia-plugin-configs.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata: {name: nvidia-plugin-configs, namespace: kube-system}
+data:
+  config.yaml: |
+    version: v1
+    sharing:
+      timeSlicing:
+        renameByDefault: false          # keep the name nvidia.com/gpu
+        failRequestsGreaterThanOne: true
+        resources:
+          - name: nvidia.com/gpu
+            replicas: 4                 # size this from measured VRAM (see below)
+```
+
+```bash
+kubectl apply -f nvidia-plugin-configs.yaml
+# Point the plugin at it with a *strategic* merge patch (the default — do NOT pass
+# --type=merge, which replaces the containers array wholesale and drops the image,
+# the existing env, and runtimeClassName: nvidia from step 4).
+kubectl -n kube-system patch ds nvidia-device-plugin-daemonset -p '{"spec":{"template":{"spec":{
+  "containers":[{"name":"nvidia-device-plugin-ctr","env":[{"name":"CONFIG_FILE","value":"/config/config.yaml"}],
+  "volumeMounts":[{"name":"plugin-config","mountPath":"/config"}]}],
+  "volumes":[{"name":"plugin-config","configMap":{"name":"nvidia-plugin-configs"}}]}}}}'
+kubectl -n kube-system rollout restart ds/nvidia-device-plugin-daemonset
+
+kubectl get node <gpu-node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}'   # 1 -> 4
+```
+
+`renameByDefault: false` keeps the resource named `nvidia.com/gpu`, so **no
+Videoflow change is needed** — the same manifests just schedule.
+`failRequestsGreaterThanOne: true` rejects `gpu_count > 1`, which is meaningless
+against slices of one card.
+
+**Size `replicas` from measured VRAM, not by guessing.** Time-slicing hands out
+scheduling slots, not memory: co-tenants share the whole 24 GB (or whatever the
+card has), and exceeding it is a runtime CUDA OOM inside a pod, not a clean
+`Pending` you can see coming. There is no fault isolation either, and the node now
+advertises more GPUs than it physically has — which will puzzle anyone reading
+`kubectl get node` cold. Measure a single-camera/single-stream run with
+`nvidia-smi --query-gpu=memory.used --format=csv -l 1` and divide.
+
+To revert: `kubectl -n kube-system delete cm nvidia-plugin-configs`, remove the
+`CONFIG_FILE` env and `plugin-config` volume/mount from the DaemonSet, then
+rollout restart. See [`docs/source/distributed/gpu-sharing.rst`](docs/source/distributed/gpu-sharing.rst)
+for MPS (hard per-client memory caps), MIG, and the full comparison.
+
 **Single-node dev clusters.** k3s works well for this: it uses containerd, so
 after step 1 it detects the NVIDIA runtime automatically and registers it as an
 `nvidia` RuntimeClass — but it does *not* make it the default, so deploy with
@@ -340,8 +396,25 @@ passthrough — use k3s or a remote cluster instead.
 the reason directly: `didn't match Pod's node affinity/selector` means the label
 from step 3 is missing, `Insufficient nvidia.com/gpu` means the device plugin
 (step 2) isn't running or every GPU is already claimed — a GPU is allocated
-exclusively, so `nb_tasks` above the number of physical GPUs leaves the extra
+exclusively, so `nb_tasks` above the node's allocatable count (physical GPUs, or
+the advertised units when time-slicing from step 7 is on) leaves the extra
 replicas unschedulable.
+
+**More GPU nodes than GPUs.** Locally all node subprocesses share the machine's
+GPU freely; on Kubernetes each GPU replica claims a whole exclusive device, so a
+graph with N GPU nodes needs N allocatable GPUs — the rest stay `Pending` and the
+flow stalls. Videoflow surfaces this instead of hanging: `videoflow explain`
+prints the flow's GPU demand, deploy's preflight compares it against the cluster
+(exit non-zero with `--strict-preflight`), and the BATCH wait loop aborts with an
+actionable error when a pod is unschedulable. To actually run such a flow on a
+small box: cut demand (run trackers/light stages on CPU), enable device-plugin
+**time-slicing** (step 7 — advertise each GPU as N units; no videoflow changes
+needed), or
+deploy with `--gpu-mode shared --gpu-runtime-class nvidia` — no GPU limits at all,
+every GPU pod co-schedules and shares the devices exactly like a local run (dev
+clusters only: no memory isolation). Per-node `gpu_count=` / `gpu_resource_name=`
+(e.g. a MIG profile) and `--gpu-resource-name` cover clusters with other resource
+shapes; see `docs/source/distributed/gpu-sharing.rst` for the full recipes.
 
 ### How graph concepts map onto the broker and Kubernetes
 
@@ -351,7 +424,7 @@ replicas unschedulable.
 | `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
 | `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas) |
 | `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
-| `device_type=GPU` | pod requests `nvidia.com/gpu` plus a GPU-pool nodeSelector/toleration |
+| `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `gpu_resource_name`) plus a GPU-pool nodeSelector/toleration — exclusive whole devices; `--gpu-mode shared` drops the request so pods share GPUs (dev) |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
 | observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag |

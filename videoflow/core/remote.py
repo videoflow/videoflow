@@ -85,17 +85,22 @@ class RemoteProducer(RemoteNodeMixin, ProducerNode):
 
 class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
     def __init__(self, component_ref, descriptor, params, nb_tasks = 1, device_type = 'cpu',
-                partition_by = None, join_policy = None, name = None, image = None) -> None:
+                partition_by = None, join_policy = None, name = None, image = None,
+                gpu_count = 1, gpu_resource_name = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
         super().__init__(nb_tasks = nb_tasks, device_type = device_type, name = name,
-                        partition_by = partition_by, join_policy = join_policy, image = image)
+                        partition_by = partition_by, join_policy = join_policy, image = image,
+                        gpu_count = gpu_count, gpu_resource_name = gpu_resource_name)
 
     def _python_node_params(self) -> dict:
         # A Python processor is reconstructed as pythonClass(**params); it needs its
-        # device/replica settings (e.g. to place a model on CPU vs GPU in open()).
-        return {'nb_tasks': self._nb_tasks, 'device_type': self._device_type}
+        # device/replica settings (e.g. to place a model on CPU vs GPU in open(),
+        # or to size data-parallel work off self.gpu_count) — mirroring what a
+        # native node's get_params() auto-captures.
+        return {'nb_tasks': self._nb_tasks, 'device_type': self._device_type,
+                'gpu_count': self._gpu_count, 'gpu_resource_name': self._gpu_resource_name}
 
     def process(self, *inputs):
         raise NotImplementedError('RemoteProcessor runs out-of-process in its own image; '
@@ -124,7 +129,7 @@ def _resolve_join_policy(join_policy):
 
 def component(ref, params = None, name = None, nb_tasks = 1, device_type = 'cpu',
             partition_by = None, join_policy = None, image = None, is_finite = None,
-            metadata = False, idempotent = False):
+            metadata = False, idempotent = False, gpu_count = 1, gpu_resource_name = None):
     '''
     Create a graph node backed by a language-agnostic component described by ``ref``
     (a path to a ``component.yaml`` or, later, an ``oci://`` ref). Returns a
@@ -148,6 +153,7 @@ def component(ref, params = None, name = None, nb_tasks = 1, device_type = 'cpu'
         - image: explicit image ref override (else the descriptor's image for the device).
         - is_finite: producers only; defaults to the descriptor's ``finite``.
         - nb_tasks/partition_by/join_policy/metadata/idempotent: as on the native nodes.
+        - gpu_count/gpu_resource_name: processors only; as on ``ProcessorNode``.
     '''
     descriptor = ref if isinstance(ref, ComponentDescriptor) else load_descriptor(ref)
     component_ref = descriptor.source or (ref if isinstance(ref, str) else descriptor.name)
@@ -186,7 +192,8 @@ def component(ref, params = None, name = None, nb_tasks = 1, device_type = 'cpu'
         return RemoteProcessor(component_ref, descriptor, validated_params,
                             nb_tasks = nb_tasks, device_type = device_type,
                             partition_by = partition_by, join_policy = policy,
-                            name = name, image = resolved_image)
+                            name = name, image = resolved_image,
+                            gpu_count = gpu_count, gpu_resource_name = gpu_resource_name)
     if role == 'consumer':
         return RemoteConsumer(component_ref, descriptor, validated_params,
                             metadata = metadata, idempotent = idempotent,

@@ -258,14 +258,30 @@ class ProcessorNode(Node):
         - join_policy (JoinPolicy | dict): for multi-parent nodes, how to handle a \
             join group that never completes (timeout + missing policy). Defaults per \
             flow type when unset.
+        - gpu_count (int): GPUs each replica requests on Kubernetes (``device_type=GPU`` \
+            only; ignored locally). Whole devices — the resource is not overcommittable.
+        - gpu_resource_name (str): Kubernetes extended-resource name each replica \
+            requests, when the cluster does not expose plain ``nvidia.com/gpu`` — e.g. \
+            a MIG profile (``nvidia.com/mig-1g.10gb``) or a renamed time-sliced \
+            resource (``nvidia.com/gpu.shared``). None defers to the deploy-time \
+            default (``--gpu-resource-name``, else ``nvidia.com/gpu``).
         - name (str): see ``Node``.
     '''
     def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None,
-                partition_by = None, join_policy = None, **kwargs) -> None:
+                partition_by = None, join_policy = None,
+                gpu_count : int = 1, gpu_resource_name = None, **kwargs) -> None:
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
+        if not isinstance(gpu_count, int) or isinstance(gpu_count, bool) or gpu_count < 1:
+            raise ValueError(f'gpu_count must be a positive integer, got {gpu_count!r}')
+        self._gpu_count = gpu_count
+        if gpu_resource_name is not None and (not isinstance(gpu_resource_name, str)
+                                              or not gpu_resource_name.strip()):
+            raise ValueError(f'gpu_resource_name must be a non-empty string or None, '
+                             f'got {gpu_resource_name!r}')
+        self._gpu_resource_name = gpu_resource_name
         self._partition_by = partition_by
         # Stored as a plain dict so get_params() stays JSON-serializable.
         from .policies import JoinPolicy
@@ -287,6 +303,16 @@ class ProcessorNode(Node):
         Returns the preferred device type to use to run the processor's code
         '''
         return self._device_type
+
+    @property
+    def gpu_count(self) -> int:
+        '''GPUs each replica requests on Kubernetes (meaningful only when ``device_type`` is GPU).'''
+        return self._gpu_count
+
+    @property
+    def gpu_resource_name(self) -> Optional[str]:
+        '''Extended-resource name each replica requests, or None for the deploy default.'''
+        return self._gpu_resource_name
 
     @property
     def partition_by(self) -> Optional[str]:

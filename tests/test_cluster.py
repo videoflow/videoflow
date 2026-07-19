@@ -133,3 +133,58 @@ def test_gpu_preflight_flags_opt_in_nvidia_runtimeclass(monkeypatch):
     # ...and passing it silences the warning.
     monkeypatch.setattr(subprocess, 'run', run)
     assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia') == []
+
+
+def test_gpu_preflight_reports_demand_over_capacity(monkeypatch):
+    '''The offside case: 9 exclusive GPU claims against 1 allocatable device. The
+    scheduler would bind one pod and strand the rest Pending — preflight must say
+    so with the exact numbers, before anything is applied.'''
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
+                        'allocatable': '1'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                     demand = {'nvidia.com/gpu': 9})
+    assert len(problems) == 1
+    assert 'demands 9 x nvidia.com/gpu' in problems[0]
+    assert 'only 1 allocatable' in problems[0]
+    assert '8 pod(s) will stay Pending' in problems[0]
+    # Demand within capacity is clean.
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                 demand = {'nvidia.com/gpu': 1}) == []
+
+
+def test_gpu_preflight_checks_each_requested_resource(monkeypatch):
+    '''A node that requests a MIG profile the cluster does not expose must be
+    reported against that resource name, not nvidia.com/gpu.'''
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
+                        'nvidia\\.com/gpu}': '2'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                     demand = {'nvidia.com/gpu': 2,
+                                               'nvidia.com/mig-1g.10gb': 1})
+    assert len(problems) == 1
+    assert 'nvidia.com/mig-1g.10gb' in problems[0]
+    assert 'does not expose it' in problems[0]
+
+
+def test_gpu_preflight_shared_mode(monkeypatch):
+    '''Shared pods carry no resource limit, so capacity math and the device plugin
+    are irrelevant — but without a runtime class on an opt-in cluster the pods
+    would run device-less, which is the one shared-mode blocker.'''
+    run, calls = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
+                            'get runtimeclass': 'nvidia'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'shared')
+    assert len(problems) == 1
+    assert '--gpu-mode shared without --gpu-runtime-class' in problems[0]
+    assert not any('allocatable' in ' '.join(c) for c in calls)  # no capacity query
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                 demand = {'nvidia.com/gpu': 9}, gpu_mode = 'shared') == []
+
+
+def test_allocatable_gpus_sums_across_nodes(monkeypatch):
+    run, _ = _fake_run({'version': '{}', 'allocatable': '1 4'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.allocatable_gpus() == 5

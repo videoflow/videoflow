@@ -50,14 +50,28 @@ Instantiate a processor with ``device_type='gpu'`` to request GPU scheduling::
 
     detector = ObjectDetector(name='detector', device_type='gpu')
 
-On Kubernetes this makes the node's pod request one ``nvidia.com/gpu`` and adds a
-GPU-pool ``nodeSelector`` and toleration, so the pod lands on a GPU node. The NVIDIA
-device plugin then exposes the GPU to the container through
-``CUDA_VISIBLE_DEVICES``; your node code is responsible for actually placing its
-model/computation on the GPU.
+On Kubernetes this makes the node's pod request ``nvidia.com/gpu`` (``gpu_count``
+per replica, default 1) and adds a GPU-pool ``nodeSelector`` and toleration, so the
+pod lands on a GPU node. The NVIDIA device plugin then exposes the GPU to the
+container through ``CUDA_VISIBLE_DEVICES``; your node code is responsible for
+actually placing its model/computation on the GPU. On clusters that expose a
+different extended resource (a MIG profile, a renamed time-sliced resource), set
+``gpu_resource_name='nvidia.com/mig-1g.10gb'`` on the node or pass a deploy-wide
+default with ``--gpu-resource-name``.
 
 You can combine GPU scheduling with ``nb_tasks`` to run several GPU replicas — each
-replica pod requests its own GPU.
+replica pod requests its own GPUs.
+
+.. warning::
+
+    GPU resources are allocated **exclusively** and cannot be overcommitted: a flow
+    with N GPU replicas needs N allocatable devices, or the excess pods sit
+    ``Pending`` and the flow stalls. This is different from local runs, where every
+    node subprocess shares the machine's GPUs freely. ``videoflow explain`` prints a
+    flow's total GPU demand, deploy's preflight compares it against the cluster
+    before applying anything, and the wait loop aborts (instead of hanging) when a
+    pod is unschedulable. To reproduce local-style sharing on a dev cluster, see
+    :doc:`/distributed/gpu-sharing`.
 
 Autoscaling
 -----------

@@ -68,10 +68,15 @@ What ``videoflow deploy`` does, step by step
    - warns when hostPath mounts will not see your local filesystem (kind and
      minikube nodes are VMs/containers with their own filesystem) and what to
      do about it.
-   - for flows with GPU nodes, preflights the two things the generated GPU
-     manifests need — a node labeled ``videoflow.io/gpu-pool=true`` and
-     allocatable ``nvidia.com/gpu`` (the NVIDIA device plugin) — and prints
-     copy-pasteable fix commands when missing. These are warnings, not errors.
+   - for flows with GPU nodes, preflights what the generated GPU manifests need —
+     a node labeled ``videoflow.io/gpu-pool=true``, **enough allocatable units of
+     each requested GPU resource to cover the whole flow's demand** (every replica
+     claims its own devices exclusively; a partially-schedulable flow stalls), and
+     a ``--gpu-runtime-class`` where the NVIDIA runtime is an opt-in RuntimeClass —
+     and prints copy-pasteable fix commands. These are warnings by default;
+     ``--strict-preflight`` turns them into a non-zero exit before anything is
+     applied. See :doc:`gpu-sharing` for running more GPU nodes than you have
+     GPUs.
 
 7. **Broker infra** — with no ``--nats``, deploy creates the namespace if
    needed and applies a dev NATS JetStream (and, when ``--blob-redis-url`` is
@@ -212,7 +217,10 @@ How graph concepts map onto Kubernetes
 | ``ProcessorNode(..., partition_by=)`` | N StatefulSet replicas, partitioned by key (scales joins);  |
 |                                       | not autoscaled                                              |
 +---------------------------------------+-------------------------------------------------------------+
-| ``device_type='gpu'``                 | pod requests ``nvidia.com/gpu`` + GPU-pool nodeSelector     |
+| ``device_type='gpu'``                 | pod requests ``gpu_count`` x ``nvidia.com/gpu`` (or         |
+|                                       | ``gpu_resource_name``) + GPU-pool nodeSelector; exclusive — |
+|                                       | see :doc:`gpu-sharing` (``--gpu-mode shared`` omits the     |
+|                                       | request so pods share the physical GPUs)                    |
 +---------------------------------------+-------------------------------------------------------------+
 | finite producer (``is_finite=True``)  | a Kubernetes **Job**                                        |
 +---------------------------------------+-------------------------------------------------------------+

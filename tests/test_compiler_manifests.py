@@ -128,6 +128,91 @@ def test_gpu_runtime_class_applies_only_to_gpu_pods():
     # A CPU node must not get it — it would pin the pod to the GPU runtime for nothing.
     assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
 
+def _gpu_flow(**gpu_kwargs):
+    producer = IntProducer(name = 'p')
+    gpu = IdentityProcessor(name = 'g', device_type = GPU, **gpu_kwargs)(producer)
+    printer = CommandlineConsumer(name = 'c')(gpu)
+    return Flow([printer], flow_type = REALTIME, flow_id = 'g')
+
+def test_gpu_count_and_resource_name_reach_the_pod_spec():
+    flow = _gpu_flow(gpu_count = 2, gpu_resource_name = 'nvidia.com/mig-1g.10gb')
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG)
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
+    assert limits == {'nvidia.com/mig-1g.10gb': 2}
+
+def test_deploy_level_gpu_resource_name_is_a_default_not_an_override():
+    # The deploy default fills in for nodes that declared nothing; a node's own
+    # gpu_resource_name= wins over it.
+    flow = _gpu_flow(gpu_resource_name = 'nvidia.com/mig-1g.10gb')
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, gpu_resource_name = 'nvidia.com/gpu.shared')
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
+    assert limits == {'nvidia.com/mig-1g.10gb': 1}
+    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, gpu_resource_name = 'nvidia.com/gpu.shared')
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
+    assert limits == {'nvidia.com/gpu.shared': 1}
+
+def test_gpu_shared_mode_omits_the_resource_limit_but_keeps_placement():
+    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, gpu_mode = 'shared',
+                                gpu_runtime_class = 'nvidia')
+    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
+    spec = by_name['vf-g-g']['spec']['template']['spec']
+    # No scheduler claim: the pod shares the physical GPUs through the runtime...
+    assert 'resources' not in spec['containers'][0]
+    # ...but placement and device injection stay: pool selector, toleration, runtime class.
+    assert spec['nodeSelector'] == {'videoflow.io/gpu-pool': 'true'}
+    assert spec['tolerations'][0]['key'] == 'nvidia.com/gpu'
+    assert spec['runtimeClassName'] == 'nvidia'
+    # CPU nodes are untouched by shared mode.
+    assert 'nodeSelector' not in by_name['vf-g-c']['spec']['template']['spec']
+    assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
+
+def test_invalid_gpu_mode_is_rejected():
+    with pytest.raises(ValueError, match = 'gpu_mode'):
+        render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
+                        default_image = IMG, gpu_mode = 'fractional')
+
+def test_gpu_kwargs_are_validated():
+    with pytest.raises(ValueError, match = 'gpu_count'):
+        IdentityProcessor(name = 'g', device_type = GPU, gpu_count = 0)
+    with pytest.raises(ValueError, match = 'gpu_resource_name'):
+        IdentityProcessor(name = 'g', device_type = GPU, gpu_resource_name = '')
+
+def test_gpu_fields_round_trip_through_spec_serialization():
+    # The flow-spec ConfigMap round-trips specs as JSON; the GPU knobs must survive.
+    from videoflow.compiler import NodeSpec
+    spec = compile_flow(_gpu_flow(gpu_count = 4, gpu_resource_name = 'amd.com/gpu'))[1]
+    clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+    assert clone.gpu_count == 4
+    assert clone.gpu_resource_name == 'amd.com/gpu'
+    # Old serialized specs (no GPU fields) load with the defaults.
+    old = {k: v for k, v in spec.to_dict().items() if not k.startswith('gpu_')}
+    assert NodeSpec.from_dict(old).gpu_count == 1
+    assert NodeSpec.from_dict(old).gpu_resource_name is None
+
+def test_autoscaling_skips_gpu_nodes_by_default():
+    producer = IntProducer(name = 'p')
+    gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
+    cpu = IdentityProcessor(name = 'k')(gpu)
+    printer = CommandlineConsumer(name = 'c')(cpu)
+    flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, autoscaling = True)
+    scaled = {m['metadata']['name'] for m in manifests if m['kind'] == 'ScaledObject'}
+    # The CPU processor autoscales; the GPU one does not (each extra replica would
+    # claim its own whole GPU and can strand the flow Pending).
+    assert scaled == {'vf-g-k-scaler'}
+    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, autoscaling = True, gpu_autoscaling = True)
+    scaled = {m['metadata']['name'] for m in manifests if m['kind'] == 'ScaledObject'}
+    assert scaled == {'vf-g-g-scaler', 'vf-g-k-scaler'}
+
 def test_manifests_are_valid_yaml():
     specs = compile_flow(_demo_flow())
     manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',

@@ -126,8 +126,33 @@ def _labels(flow_id, node_name = None) -> dict:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
+DEFAULT_GPU_RESOURCE = 'nvidia.com/gpu'
+GPU_MODES = ('exclusive', 'shared')
+
+def resolve_gpu_resource(spec, default = None) -> str:
+    '''The extended-resource name a GPU spec requests: the node's own, else the
+    deploy default (``--gpu-resource-name``), else ``nvidia.com/gpu``.'''
+    return spec.gpu_resource_name or default or DEFAULT_GPU_RESOURCE
+
+def gpu_demand(specs, default_resource = None) -> dict:
+    '''
+    Whole-flow GPU demand per extended-resource name: every replica of a GPU node
+    claims its own ``gpu_count`` devices exclusively, so this is the allocatable
+    capacity the cluster must have for the flow to fully schedule. The single
+    source of truth for deploy's preflight and ``videoflow explain`` — the two
+    must never disagree.
+    '''
+    demand : dict = {}
+    for spec in specs:
+        if spec.device_type != 'gpu':
+            continue
+        resource = resolve_gpu_resource(spec, default_resource)
+        demand[resource] = demand.get(resource, 0) + spec.nb_tasks * spec.gpu_count
+    return demand
+
 def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
-              gpu_runtime_class = None) -> dict:
+              gpu_runtime_class = None, gpu_mode = 'exclusive',
+              gpu_resource_name = None) -> dict:
     container = {
         'name': 'worker',
         'image': image,
@@ -164,7 +189,23 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
     tolerations = None
     runtime_class = None
     if spec.device_type == 'gpu':
-        resources['limits'] = {'nvidia.com/gpu': 1}
+        # Validated here, not only in render_manifests: a direct workload()/_pod_spec
+        # caller with a typo'd mode must get an error, not a silent fall-through to
+        # the no-limit shared branch.
+        if gpu_mode not in GPU_MODES:
+            raise ValueError(f'gpu_mode must be one of {GPU_MODES}, got {gpu_mode!r}')
+        if gpu_mode == 'exclusive':
+            # Whole-device claims: nvidia.com/gpu (or a MIG profile / renamed
+            # time-sliced resource via gpu_resource_name) is an integer extended
+            # resource the scheduler allocates exclusively — N GPU replicas need N
+            # allocatable units, and pods beyond capacity stay Pending.
+            resources['limits'] = {resolve_gpu_resource(spec, gpu_resource_name): spec.gpu_count}
+        # 'shared' emits no resource limit at all: every GPU pod is scheduled onto
+        # the pool by the selector alone and shares the physical devices through the
+        # NVIDIA runtime (the CUDA base images set NVIDIA_VISIBLE_DEVICES=all) —
+        # LocalProcessEngine semantics on Kubernetes, bounded only by VRAM. Dev-box
+        # tool: no scheduler accounting, no memory isolation, and on a multi-GPU
+        # node every shared pod sees every device.
         node_selector = {'videoflow.io/gpu-pool': 'true'}
         tolerations = [{
             'key': 'nvidia.com/gpu', 'operator': 'Exists', 'effect': 'NoSchedule',
@@ -175,6 +216,7 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
         # distros that register it as an opt-in RuntimeClass instead (k3s ships an
         # 'nvidia' handler but leaves runc default), a pod without runtimeClassName
         # starts with no device — so --gpu-runtime-class names the handler to use.
+        # In shared mode it is the only thing that grants device access at all.
         runtime_class = gpu_runtime_class
     if resources:
         container['resources'] = resources
@@ -240,12 +282,13 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
     }
 
 def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None,
-             gpu_runtime_class = None) -> dict:
+             gpu_runtime_class = None, gpu_mode = 'exclusive', gpu_resource_name = None) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
         'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts,
-                          gpu_runtime_class = gpu_runtime_class),
+                          gpu_runtime_class = gpu_runtime_class, gpu_mode = gpu_mode,
+                          gpu_resource_name = gpu_resource_name),
     }
 
     batch = (flow_type == BATCH)
@@ -457,7 +500,8 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
                     autoscaling = False, max_replicas = 10,
                     nats_monitoring_endpoint = None, envelope_version = None,
                     allow_pickle = False, provision_image = None, mounts = None,
-                    gpu_runtime_class = None) -> list:
+                    gpu_runtime_class = None, gpu_mode = 'exclusive',
+                    gpu_resource_name = None, gpu_autoscaling = False) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -486,6 +530,16 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         Needed where the NVIDIA container runtime is registered as an opt-in \
         RuntimeClass rather than the node default — on k3s, ``nvidia``. Without it \
         such a pod schedules onto a GPU node and then runs with no device visible.
+    - gpu_mode: ``'exclusive'`` (default — each GPU replica claims whole devices \
+        via the extended resource) or ``'shared'`` (no resource limit; all GPU pods \
+        co-schedule onto the pool and share the physical GPUs through the NVIDIA \
+        runtime — LocalProcessEngine semantics, dev clusters only).
+    - gpu_resource_name: deploy-level default extended-resource name for GPU claims \
+        (``--gpu-resource-name``); a node's own ``gpu_resource_name`` wins. Defaults \
+        to ``nvidia.com/gpu``.
+    - gpu_autoscaling: emit KEDA ScaledObjects for GPU nodes too. Off by default: \
+        each autoscaled replica claims its own GPUs, so scaling to ``max_replicas`` \
+        can demand more devices than the cluster has and strand pods Pending.
 
     - Raises:
         - ``ValueError`` if a node has no resolvable image (see ``videoflow.images``), \
@@ -494,6 +548,9 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
     from .compiler import has_native_components, validate_wire_compatibility
     from .images import resolve_image
     from .serialization import DEFAULT_ENVELOPE_VERSION
+
+    if gpu_mode not in GPU_MODES:
+        raise ValueError(f'gpu_mode must be one of {GPU_MODES}, got {gpu_mode!r}')
 
     # Resolve the whole-run wire version: a flow with any native component must use
     # the protobuf wire (v4+) so every node — native or not — speaks it.
@@ -525,13 +582,20 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
-                                  mounts = mounts, gpu_runtime_class = gpu_runtime_class))
+                                  mounts = mounts, gpu_runtime_class = gpu_runtime_class,
+                                  gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 
     if autoscaling:
         endpoint = nats_monitoring_endpoint or f'nats.{namespace}.svc:8222'
         for spec in specs:
+            # GPU nodes are excluded from autoscaling unless explicitly opted in:
+            # every extra replica claims its own whole GPUs, so scaling on broker lag
+            # can demand max_replicas x gpu_count devices and strand pods Pending
+            # (and in shared mode it multiplies VRAM pressure instead).
+            if spec.device_type == 'gpu' and not gpu_autoscaling:
+                continue
             so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)
             if so is not None:
                 manifests.append(so)

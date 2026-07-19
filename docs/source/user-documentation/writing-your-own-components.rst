@@ -149,8 +149,10 @@ Instantiate a processor with ``device_type='gpu'`` to request GPU scheduling::
 On Kubernetes this makes the node's pod request an ``nvidia.com/gpu`` resource and
 be scheduled onto a GPU node pool; the container runtime exposes the GPU to your
 code via ``CUDA_VISIBLE_DEVICES``. Your ``process()``/``open()`` code is responsible
-for actually using the GPU (loading the model onto it, etc.). See
-:doc:`task-allocation`.
+for actually using the GPU (loading the model onto it, etc.). Keep in mind the
+resource is claimed exclusively per replica — a graph with more GPU nodes than the
+cluster has devices cannot fully schedule (see :doc:`task-allocation` and
+:doc:`/distributed/gpu-sharing`).
 
 Writing consumers
 -----------------

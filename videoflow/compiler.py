@@ -37,6 +37,9 @@ class NodeSpec:
         - has_children: whether anything downstream consumes this node's output.
         - nb_tasks: desired replica count (processors only; 1 otherwise).
         - device_type: 'cpu' or 'gpu' (processors only).
+        - gpu_count: GPUs each replica requests (GPU processors only; default 1).
+        - gpu_resource_name: extended-resource name each replica requests, or None \
+            to use the deploy-time default (``nvidia.com/gpu``).
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
             deploy-time default/override supplies it — see ``videoflow.images``).
@@ -45,7 +48,7 @@ class NodeSpec:
                 nb_tasks, device_type, is_finite, image = None,
                 partition_by = None, join_policy = None,
                 component_ref = None, descriptor = None, command = None,
-                protocol_version = None) -> None:
+                protocol_version = None, gpu_count = 1, gpu_resource_name = None) -> None:
         self.name = name
         # ``node_class`` is the Python import path for a native node, or None for a
         # remote (language-agnostic) component — those are identified by
@@ -58,6 +61,9 @@ class NodeSpec:
         self.has_children = has_children
         self.nb_tasks = nb_tasks
         self.device_type = device_type
+        # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
+        self.gpu_count = gpu_count
+        self.gpu_resource_name = gpu_resource_name
         self.is_finite = is_finite
         self.image = image
         # Routing-relevant fields lifted out of params so engines/manifests see
@@ -90,6 +96,8 @@ class NodeSpec:
             'has_children': self.has_children,
             'nb_tasks': self.nb_tasks,
             'device_type': self.device_type,
+            'gpu_count': self.gpu_count,
+            'gpu_resource_name': self.gpu_resource_name,
             'is_finite': self.is_finite,
             'image': self.image,
             'partition_by': self.partition_by,
@@ -110,6 +118,7 @@ class NodeSpec:
             partition_by = d.get('partition_by'), join_policy = d.get('join_policy'),
             component_ref = d.get('component_ref'), descriptor = d.get('descriptor'),
             command = d.get('command'), protocol_version = d.get('protocol_version'),
+            gpu_count = d.get('gpu_count', 1), gpu_resource_name = d.get('gpu_resource_name'),
         )
 
 def specs_from_tasks_data(tasks_data) -> list:
@@ -124,6 +133,8 @@ def specs_from_tasks_data(tasks_data) -> list:
         kind = _node_kind(node)
         nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
         device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
+        gpu_count = node.gpu_count if isinstance(node, ProcessorNode) else 1
+        gpu_resource_name = node.gpu_resource_name if isinstance(node, ProcessorNode) else None
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
         partition_by = getattr(node, 'partition_by', None)
         join_policy = node._join_policy if hasattr(node, '_join_policy') else None
@@ -154,6 +165,8 @@ def specs_from_tasks_data(tasks_data) -> list:
             has_children = not is_last,
             nb_tasks = nb_tasks,
             device_type = device_type,
+            gpu_count = gpu_count,
+            gpu_resource_name = gpu_resource_name,
             is_finite = is_finite,
             image = getattr(node, 'image', None),
             partition_by = partition_by,
