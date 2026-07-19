@@ -14,7 +14,8 @@ item_value}``. ``key`` is a dotted path into the config (digit segments index
 int-keyed maps). Types: ``str`` (default), ``int``, ``float``, ``choice`` (with
 ``choices``), ``path`` (one filesystem path, validated and absolutized), and
 ``paths`` (comma-separated paths expanded into a mapping via ``item_key``,
-e.g. ``'cam{i}'``, and ``item_value``, e.g. ``{video: '{path}'}``).
+e.g. ``'cam{i}'``, and ``item_value``, e.g. ``{video: '{path}'}``). That set is
+extensible: see ``register_question_type``.
 
 ``x-mounts`` entries are path templates: ``'{cameras.*.video}:ro'`` (dotted
 lookup into the resolved config, ``*`` fans out), ``'{work_dir}'``,
@@ -27,7 +28,7 @@ identically in the pods); a ``host:container`` pair maps them explicitly
 from __future__ import absolute_import, division, print_function
 
 import os
-from typing import List, Optional
+from typing import Any, Callable, List, Optional
 
 import yaml
 
@@ -78,32 +79,81 @@ def _abs_existing(path, base_dir):
         raise ValueError(f'no such file: {resolved}')
     return resolved
 
-def _coerce(question, answer, base_dir):
-    qtype = question.get('type', 'str')
-    if qtype == 'float':
-        return float(answer)
-    if qtype == 'int':
-        return int(answer)
-    if qtype == 'choice':
-        choices = [str(c) for c in question['choices']]
-        if str(answer) not in choices:
-            raise ValueError(f'must be one of: {", ".join(choices)}')
-        return answer
-    if qtype == 'path':
-        # A single filesystem path, validated and absolutized (scalar config key).
-        return _abs_existing(answer, base_dir)
-    if qtype == 'paths':
-        paths = [p.strip() for p in str(answer).replace(',', ' ').split() if p.strip()]
-        if not paths:
-            raise ValueError('at least one path is required')
-        resolved = [_abs_existing(p, base_dir) for p in paths]
-        item_key = question.get('item_key', '{i}')
-        item_value = question.get('item_value', '{path}')
-        result = {}
-        for i, p in enumerate(resolved):
-            result[item_key.format(i = i)] = _fill_paths(item_value, p)
-        return result
+# -- x-questions type coercion ---------------------------------------------
+#
+# One coercer per ``x-questions`` ``type``. A solution that needs a type videoflow
+# does not ship (a bool, a secret read from the environment, a validated URL) can
+# register one instead of patching this module.
+
+_QUESTION_COERCERS : dict = {}
+
+def register_question_type(qtype : str, coercer : Callable[[dict, str, str], Any]) -> None:
+    '''
+    Registers a coercer for an ``x-questions`` ``type``, called as
+    ``coercer(question, answer, base_dir)`` where ``question`` is the raw
+    x-questions entry (so a coercer can read its own extra keys, as ``choice``
+    reads ``choices``), ``answer`` is the operator's raw string, and ``base_dir``
+    is the solution directory that relative paths resolve against.
+
+    A coercer signals a bad answer by raising ``ValueError``; the prompt loop
+    catches it, shows the message, and re-asks.
+
+    - Arguments:
+        - qtype: the ``type`` string used in ``config.template.yaml``.
+        - coercer: callable returning the coerced config value.
+    '''
+    _QUESTION_COERCERS[qtype] = coercer
+
+def registered_question_types() -> list:
+    '''The ``x-questions`` type names currently registered, sorted.'''
+    return sorted(_QUESTION_COERCERS)
+
+def _coerce_choice(question, answer, base_dir):
+    choices = [str(c) for c in question['choices']]
+    if str(answer) not in choices:
+        raise ValueError(f'must be one of: {", ".join(choices)}')
     return answer
+
+def _coerce_path(question, answer, base_dir):
+    '''A single filesystem path, validated and absolutized (scalar config key).'''
+    return _abs_existing(answer, base_dir)
+
+def _coerce_paths(question, answer, base_dir):
+    '''Several paths, expanded into a mapping via ``item_key``/``item_value``.'''
+    paths = [p.strip() for p in str(answer).replace(',', ' ').split() if p.strip()]
+    if not paths:
+        raise ValueError('at least one path is required')
+    resolved = [_abs_existing(p, base_dir) for p in paths]
+    item_key = question.get('item_key', '{i}')
+    item_value = question.get('item_value', '{path}')
+    result = {}
+    for i, p in enumerate(resolved):
+        result[item_key.format(i = i)] = _fill_paths(item_value, p)
+    return result
+
+register_question_type('str', lambda question, answer, base_dir: answer)
+register_question_type('int', lambda question, answer, base_dir: int(answer))
+register_question_type('float', lambda question, answer, base_dir: float(answer))
+register_question_type('choice', _coerce_choice)
+register_question_type('path', _coerce_path)
+register_question_type('paths', _coerce_paths)
+
+def _coerce(question, answer, base_dir):
+    '''
+    Coerces one raw answer per its question ``type``.
+
+    - Raises:
+        - ValueError: the answer is invalid for its type, or the type is not \
+            registered. Either way the prompt loop re-asks with the message.
+    '''
+    qtype = question.get('type', 'str')
+    coercer = _QUESTION_COERCERS.get(qtype)
+    if coercer is None:
+        raise ValueError(
+            f'unknown x-questions type {qtype!r}. Known types: '
+            f'{", ".join(registered_question_types())}. Register another with '
+            f'videoflow.deploy.solution.register_question_type.')
+    return coercer(question, answer, base_dir)
 
 def _fill_paths(template_value, path):
     if isinstance(template_value, dict):
@@ -112,8 +162,35 @@ def _fill_paths(template_value, path):
         return template_value.format(path = path)
     return template_value
 
+def validate_question_types(questions) -> None:
+    '''
+    Checks every question's ``type`` is registered, before any prompting starts.
+
+    Done up front deliberately: the prompt loop treats ``ValueError`` as a bad
+    *answer* and re-asks, so an unregistered type discovered mid-loop would
+    re-prompt forever over something the operator cannot fix by typing.
+
+    - Raises:
+        - ValueError: a question names an unregistered type; the message names \
+            the offending key, the known types, and how to add one.
+    '''
+    for question in questions or []:
+        qtype = question.get('type', 'str')
+        if qtype not in _QUESTION_COERCERS:
+            raise ValueError(
+                f'x-questions entry {question.get("key", "<no key>")!r} has unknown '
+                f'type {qtype!r}. Known types: {", ".join(registered_question_types())}. '
+                f'Register another with videoflow.deploy.solution.register_question_type.')
+
 def ask_questions(questions, base_dir, input_fn = input) -> dict:
-    '''Prompts for each x-question on the terminal; returns {dotted_key: typed_value}.'''
+    '''
+    Prompts for each x-question on the terminal; returns {dotted_key: typed_value}.
+
+    - Raises:
+        - ValueError: a question names an unregistered type (checked before \
+            prompting — see ``validate_question_types``).
+    '''
+    validate_question_types(questions)
     answers = {}
     for question in questions:
         default = question.get('default')

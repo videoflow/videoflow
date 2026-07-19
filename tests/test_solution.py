@@ -143,3 +143,57 @@ def test_resolve_mounts_fans_out_and_dedupes(tmp_path):
     assert mounts == ['/data/a.mp4:ro', '/data/b.mp4:ro',
                       str(tmp_path / 'out'),
                       os.path.expanduser('~/.videoflow') + ':/root/.videoflow']
+
+
+# -- question-type registry ------------------------------------------------
+
+def test_builtin_question_types_are_registered():
+    assert set(solution.registered_question_types()) == {
+        'str', 'int', 'float', 'choice', 'path', 'paths'}
+
+
+def test_register_question_type_extends_the_prompt(monkeypatch):
+    '''A solution needing a type videoflow does not ship registers one.'''
+    monkeypatch.setattr(solution, '_QUESTION_COERCERS', dict(solution._QUESTION_COERCERS))
+    solution.register_question_type(
+        'bool', lambda question, answer, base_dir: str(answer).lower() in ('1', 'true', 'yes'))
+
+    questions = [{'key': 'debug', 'prompt': 'Debug?', 'type': 'bool'}]
+    answers = solution.ask_questions(questions, '.', input_fn = lambda _p: 'yes')
+    assert answers == {'debug': True}
+
+
+def test_coercer_receives_the_question_so_it_can_read_its_own_keys(monkeypatch):
+    monkeypatch.setattr(solution, '_QUESTION_COERCERS', dict(solution._QUESTION_COERCERS))
+    solution.register_question_type(
+        'suffixed', lambda question, answer, base_dir: f'{answer}{question["suffix"]}')
+
+    questions = [{'key': 'k', 'prompt': 'p', 'type': 'suffixed', 'suffix': '!'}]
+    answers = solution.ask_questions(questions, '.', input_fn = lambda _p: 'hi')
+    assert answers == {'k': 'hi!'}
+
+
+def test_unknown_type_fails_before_prompting_not_in_a_loop():
+    '''
+    The prompt loop retries on ValueError, so an unknown type must be caught up
+    front -- otherwise a template typo re-prompts forever over something the
+    operator cannot fix by typing.
+    '''
+    questions = [{'key': 'k', 'prompt': 'p', 'type': 'flaot'}]
+
+    def _never_called(_prompt):
+        raise AssertionError('must not prompt for an unregistered type')
+
+    with pytest.raises(ValueError) as excinfo:
+        solution.ask_questions(questions, '.', input_fn = _never_called)
+    msg = str(excinfo.value)
+    assert 'flaot' in msg and 'register_question_type' in msg
+
+
+def test_coercer_valueerror_still_reprompts(monkeypatch, capsys):
+    '''A bad *answer* (as opposed to a bad type) must keep re-asking.'''
+    answers_iter = iter(['nope', '3'])
+    questions = [{'key': 'n', 'prompt': 'A number', 'type': 'int'}]
+    result = solution.ask_questions(questions, '.', input_fn = lambda _p: next(answers_iter))
+    assert result == {'n': 3}
+    assert 'Invalid value' in capsys.readouterr().out
