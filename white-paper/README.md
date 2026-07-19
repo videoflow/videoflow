@@ -30,7 +30,7 @@ of the template. Page geometry uses CSS Paged Media (`@page`), which WeasyPrint 
 
 | Path | What it is |
 |---|---|
-| `videoflow-whitepaper.pdf` | The built paper (A4, 15 pages) |
+| `videoflow-whitepaper.pdf` | The built paper (A4, ~21 pages) |
 | `Makefile` | The build — see `make help` |
 | `paper/paper_template.html` | **Paper source.** Prose, tables, and styling |
 | `code/experiments/` | Experiment harness: instrumented toy nodes + the driver |
@@ -67,7 +67,10 @@ cd white-paper && make experiments && make
 
 Individual families can be run alone — `uv run python code/experiments/run_experiments.py e2 e4`
 — where `e1` is the wire-format microbenchmark, `e2` stage scale-out, `e3` per-hop overhead, `e4`
-overload semantics, `e5` partitioned join scaling, and `e6` the time-aligned quorum join.
+overload semantics, `e5` partitioned join scaling, `e6` the time-aligned quorum join, `e7` the
+payload-placement sweep (inline vs Redis blob store, locating the broker's max_payload breaking
+point), and `e8` fault injection (SIGKILL a replica mid-flow, verify zero loss / zero
+duplicates; ~2 min — recovery waits out the 60 s ack_wait).
 
 Table 6 of the paper records the machine the shipped results came from. Re-running elsewhere will
 shift absolute latencies but not the scaling or semantics findings.

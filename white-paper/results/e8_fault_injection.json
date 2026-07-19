@@ -1,0 +1,65 @@
+{
+  "n": 240,
+  "work_ms": 20.0,
+  "kill_after_s": 2.5,
+  "results": [
+    {
+      "rep": 0,
+      "n": 240,
+      "unique": 240,
+      "duplicates": 0,
+      "wall_s": 65.63754200935364,
+      "alloc_s": 0.014230966567993164,
+      "t_run_start": 1784469210.7775214,
+      "timed_out": false,
+      "failures": [
+        [
+          "stage",
+          0,
+          -9
+        ]
+      ],
+      "killed": {
+        "pid": 62320,
+        "at_s": 2.52
+      },
+      "delivered": 240,
+      "startup_s": 0.2891390323638916,
+      "sink_makespan_s": 62.24870419502258,
+      "throughput_msg_s": 3.8394373520005014,
+      "lat_ms_median": 1377.6391744613647,
+      "lat_ms_mean": 2145.4019447167716,
+      "lat_ms_p95": 2917.0305013656616,
+      "lat_ms_max": 62241.55306816101
+    },
+    {
+      "rep": 1,
+      "n": 240,
+      "unique": 240,
+      "duplicates": 0,
+      "wall_s": 65.67029571533203,
+      "alloc_s": 0.02915358543395996,
+      "t_run_start": 1784469276.4193587,
+      "timed_out": false,
+      "failures": [
+        [
+          "stage",
+          0,
+          -9
+        ]
+      ],
+      "killed": {
+        "pid": 67945,
+        "at_s": 2.53
+      },
+      "delivered": 240,
+      "startup_s": 0.34056901931762695,
+      "sink_makespan_s": 62.219645261764526,
+      "throughput_msg_s": 3.8412305148076964,
+      "lat_ms_median": 1320.604920387268,
+      "lat_ms_mean": 2594.6149468421936,
+      "lat_ms_p95": 2835.62548160553,
+      "lat_ms_max": 62139.75715637207
+    }
+  ]
+}

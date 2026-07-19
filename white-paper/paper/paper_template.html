@@ -162,12 +162,15 @@ the same graph from a loss-free, backpressured batch pipeline into a freshest-wi
 pipeline. This paper describes the programming model, the compilation pipeline, the messaging
 topology that yields broadcast, competing-consumer, and partitioned routing purely through
 consumer naming, the dual wire format (msgpack and protobuf) that enables components written in
-any language, and the deployment tooling. We evaluate the runtime with six experiments on toy
+any language, and the deployment tooling. We evaluate the runtime with eight experiments on toy
 graphs: wire-format microbenchmarks, horizontal scaling of a stage to 8 replicas
 ($E2_EFF8&nbsp;% of ideal), per-hop pipeline overhead (≈$E3_SLOPE&nbsp;ms per stage), delivery
 semantics under 2.5× overload (BATCH delivers 100&nbsp;% with growing latency; REALTIME delivers
-$E4_RT_PCT&nbsp;% with flat ≈$E4_RT_LAT&nbsp;ms latency), partitioned join scaling, and
-quorum-based fusion of unsynchronized sources.</p>
+$E4_RT_PCT&nbsp;% with flat ≈$E4_RT_LAT&nbsp;ms latency), partitioned join scaling, quorum-based
+fusion of unsynchronized sources, a payload-size sweep that locates the exact point where
+broker-inline transport fails and the Redis blob store becomes necessary
+($E7_PASS_B&nbsp;B passes, $E7_FAIL_B&nbsp;B is rejected), and a fault-injection run in which a
+SIGKILLed worker replica causes zero loss and zero duplicates.</p>
 </div>
 
 <h2>Contents</h2>
@@ -186,7 +189,7 @@ rewrite of the pipeline logic.</p>
 wires plain Python objects into a DAG and hands the leaves to a <code>Flow</code>. The framework
 validates the graph, compiles every node into a small JSON-serializable record, and starts one
 worker per node replica. Workers never share memory: every edge of the graph is a subject on a
-NATS JetStream broker, so the same graph runs unchanged as local subprocesses
+NATS JetStream broker [22], so the same graph runs unchanged as local subprocesses
 (<code>LocalProcessEngine</code>) or as one container per node on Kubernetes
 (<code>KubernetesExecutionEngine</code>). The claim this paper defends is that a small set of
 conventions — JSON-serializable constructor arguments, I/O-free constructors, name-scoped broker
@@ -353,7 +356,8 @@ duplicate emit that follows a crash-and-retry — at-least-once delivery without
 <b>Replica-safe end-of-stream</b>: EOS markers carry the emitting replica id on a dedicated
 subject; every replica of a downstream node observes them, drains its inputs, forwards its own
 marker, and exits — which is how the finite experiments in §9 terminate cleanly without any
-central coordinator.</p>
+central coordinator. §9.9 exercises all three mechanisms at once by SIGKILLing a worker replica
+mid-flow: the flow completes with zero loss and zero duplicates.</p>
 
 <h2 id="s5">5&nbsp;&nbsp;Joins</h2>
 <p>A node with several parents needs its inputs grouped into one <code>process(*inputs)</code>
@@ -383,9 +387,9 @@ drops (a lost sibling frame must not stall the join).</p>
 (producer, flow, run, trace, seq, replica), an event timestamp, tracing spans, metadata, and the
 payload. Two encodings coexist deliberately:</p>
 <ul>
-<li><b>v3 — msgpack</b> (default emit): compact and fast for Python-to-Python edges; ndarrays
-use a raw buffer codec, everything else falls back to pickle.</li>
-<li><b>v4 — protobuf</b>: a language-neutral <code>videoflow.v1.Envelope</code> whose payload is
+<li><b>v3 — msgpack</b> [30] (default emit): compact and fast for Python-to-Python edges;
+ndarrays use a raw buffer codec, everything else falls back to pickle.</li>
+<li><b>v4 — protobuf</b> [29]: a language-neutral <code>videoflow.v1.Envelope</code> whose payload is
 a typed message — <code>Tensor</code> for arrays and frames, <code>Value</code> for structured
 data, any vendor proto by fully-qualified name. This is the encoding non-Python components
 implement, and a graph containing one forces v4 for the whole run; a mixed flow that would
@@ -393,9 +397,11 @@ need pickle on the wire is a compile error.</li>
 </ul>
 <p>The decoder auto-detects the version from the leading byte (a msgpack map and a protobuf
 field tag occupy disjoint ranges), so mixed-version tooling needs no out-of-band hint. Payloads
-above 512&nbsp;KiB spill to an external blob store (Redis by default, scheme-registered
-factories for others) and the envelope carries only a reference — NATS defaults to a 1&nbsp;MB
-message cap, and a 1080p RGB frame is ~6.2&nbsp;MB (§9.3). The normative contract — envelope
+above 512&nbsp;KiB spill to an external blob store (Redis [26] by default, scheme-registered
+factories for others) and the envelope carries only a reference — the claim-check pattern from
+the enterprise-integration literature [27, 28]. NATS defaults to a 1&nbsp;MB message cap [23],
+and a 1080p RGB frame is ~6.2&nbsp;MB; §9.8 locates the exact payload size where inline
+transport stops working and quantifies what the spill costs. The normative contract — envelope
 fields, payload-type mappings, routing requirements, each with a stable requirement id — lives
 in <code>spec/PROTOCOL.md</code>, enforced by golden vectors replayed against every SDK; an
 observable wire change requires an RFC plus updated vectors.</p>
@@ -408,9 +414,9 @@ NATS/Redis in Docker when none is listening (and tears down only what it started
 subprocess per node. <code>videoflow deploy</code> compiles the graph — inside the solution
 image when the operator's machine lacks the graph's ML dependencies — builds and loads images
 for the detected cluster flavor (k3s, kind, minikube, Docker Desktop, generic remote),
-provisions broker streams up front, and renders plain-dict manifests: per-node workloads and
-ConfigMaps, a default-deny-except-broker NetworkPolicy, PodDisruptionBudgets, and optional KEDA
-scalers on broker lag. Every automated step has an explicit override
+provisions broker streams up front, and renders plain-dict manifests [31, 32]: per-node
+workloads and ConfigMaps, a default-deny-except-broker NetworkPolicy, PodDisruptionBudgets, and
+optional KEDA scalers on broker lag [33]. Every automated step has an explicit override
 (<code>--image</code>, <code>--nats</code>, <code>--namespace</code>, <code>--dry-run</code>,
 <code>--render-only</code>).</p>
 
@@ -428,7 +434,7 @@ GPU-pool nodeSelector + taint toleration; <code>--gpu-runtime-class</code>,
 <tr><td>Node <code>name</code></td><td>DNS-1123-checked resource names, labels, subjects,
 log fields</td></tr>
 <tr><td>Worker health</td><td><code>/readyz</code>, <code>/healthz</code>, startup probe,
-Prometheus <code>/metrics</code></td></tr>
+Prometheus [34] <code>/metrics</code></td></tr>
 </table>
 <div class="caption"><b>Table 4.</b> How graph declarations map to cluster objects.</div>
 </div>
@@ -475,9 +481,10 @@ waits until a third engine forces the lifecycle into the ABC.</div>
 <p>The design above promises specific, measurable behavior: a compact wire format with an escape
 hatch for large frames, near-linear stage scaling from a one-line change, per-hop overhead small
 enough for deep pipelines, a semantic switch between loss-free and freshest-wins delivery,
-joins that scale by partitioning, and time-based fusion that degrades gracefully. This section
-tests each claim with deliberately minimal toy graphs, so the numbers measure the framework
-rather than any model.</p>
+joins that scale by partitioning, time-based fusion that degrades gracefully, a payload-placement
+policy that keeps large frames deliverable, and crash recovery without loss or duplication. This
+section tests each claim with deliberately minimal toy graphs, so the numbers measure the
+framework rather than any model.</p>
 
 <h3>9.1&nbsp;&nbsp;Method and setup</h3>
 <p>All experiments run on one machine (Table&nbsp;6) with the <b>local engine</b> — one OS
@@ -486,8 +493,9 @@ the identical worker code path Kubernetes uses; what it does not measure is netw
 between hosts, image pull, or scheduler behavior. Producers stamp each payload with a wall-clock
 <code>t0</code> at emission; the sink appends <code>(i, t0, t1)</code> records to a JSONL file.
 Since all processes share one clock, end-to-end latency is <code>t1&nbsp;−&nbsp;t0</code> with
-no cross-host skew. Broker-backed experiments use $REPS repetitions per configuration; reported
-values are medians unless noted. The harness (~$HARNESS_LOC lines,
+no cross-host skew. Broker-backed experiments use $REPS repetitions per configuration
+(E7 sweeps 30 size×mode cells once each — it identifies regimes and a hard failure boundary, not
+fine differences); reported values are medians unless noted. The harness (~$HARNESS_LOC lines,
 <code>white-paper/experiments/</code>) and all raw results ship in the repository.</p>
 
 <div class="tablewrap">
@@ -517,6 +525,10 @@ values are medians unless noted. The harness (~$HARNESS_LOC lines,
 <td>240 msgs, diamond, 20&nbsp;ms join</td><td>throughput, correctness</td></tr>
 <tr><td>E6</td><td>Quorum fusion</td><td>—</td><td>2×50&nbsp;fps cams, one drops ⅓;
 tol 12&nbsp;ms, quorum 1</td><td>group completeness</td></tr>
+<tr><td>E7</td><td>Payload placement</td><td>size (1&nbsp;KiB–6&nbsp;MiB) × policy (inline,
+blob, auto)</td><td>producer → sink</td><td>delivered %, throughput</td></tr>
+<tr><td>E8</td><td>Crash recovery</td><td>—</td><td>E2 graph, 2 replicas, one SIGKILLed at
+t≈2.5&nbsp;s</td><td>loss, duplicates, recovery time</td></tr>
 </table>
 <div class="caption"><b>Table 7.</b> Design of experiments. Graph shapes are shown in
 Figure&nbsp;3.</div>
@@ -683,7 +695,75 @@ $E6_BOTH_PCT&nbsp;% of groups fused both cameras (matching cam_b's ⅔ survival 
 rest emitted on timeout with cam_a alone. This is the designed failure mode for multi-camera
 rigs: a flaky source degrades its own contribution, never the pipeline's cadence.</p>
 
-<h3>9.8&nbsp;&nbsp;Threats to validity</h3>
+<h3>9.8&nbsp;&nbsp;E7 — payload placement: when is the blob store needed?</h3>
+<figure>
+<img src="../figures/fig_e7_payload.png" alt="Payload size sweep: inline vs blob vs auto">
+</figure>
+<div class="caption"><b>Figure 9.</b> A producer→sink flow (BATCH) sweeping payload size under
+three placement policies. Left: sink throughput (log-log) over the sizes each policy completed.
+Right: the delivery cliff — inline transport goes from 100&nbsp;% to 0&nbsp;% between two
+adjacent sizes. The shaded region is where the envelope exceeds the broker's 1&nbsp;MiB
+<code>max_payload</code>.</div>
+
+<div class="tablewrap">
+<table>
+<tr><th class="num">Payload</th><th class="num">Inline delivered</th>
+<th class="num">Inline MB/s</th><th class="num">Blob MB/s</th><th class="num">Auto MB/s</th></tr>
+$E7_ROWS
+</table>
+<div class="caption"><b>Table 14.</b> E7 results. <i>Inline</i>: payload rides in the broker
+message, spill disabled. <i>Blob</i>: every payload takes the Redis round trip. <i>Auto</i>:
+the shipped policy — inline below the 512&nbsp;KiB threshold, blob above. Blob and auto
+delivered 100&nbsp;% at every size.</div>
+</div>
+
+<p><b>Findings.</b> The breaking point is exactly where the arithmetic says it must be, and it
+is a cliff, not a slope. A $E7_PASS_B&nbsp;B payload delivers 100&nbsp;%; a $E7_FAIL_B&nbsp;B
+payload delivers <i>zero</i> — the ~300&nbsp;B envelope pushes it past NATS's 1&nbsp;MiB
+<code>max_payload</code> [23], the broker rejects the publish (<code>MaxPayloadError</code>),
+and the producer worker dies mid-flow. An oversized payload is a hard runtime failure, which is
+why payload placement is a framework policy rather than a user responsibility. The cap itself is
+not a NATS quirk: Kafka ships the same ~1&nbsp;MB default limit [24, 25], and both ecosystems'
+guidance for larger payloads is exactly the claim-check pattern [27, 28] that the blob store
+implements — store the bytes externally, send a reference. Two quantitative
+surprises sharpen the picture. First, the blob path is not a tax at scale: above
+~$E7_CROSS_KB&nbsp;KiB it is <i>faster</i> than inline ($E7_BLOB_MAX_MBS vs
+$E7_INLINE_MAX_MBS&nbsp;MB/s at their respective maxima), because JetStream persists every
+inline message to its file-backed stream while the blob path moves bytes through in-memory
+Redis and gives the broker only a ~130-byte reference to store. Second, below ~64&nbsp;KiB the
+two paths are indistinguishable, so the shipped 512&nbsp;KiB threshold sits comfortably inside
+the regime where spilling costs nothing and safely below the size where not spilling is fatal.
+The practical rule for video: metadata and detections ride inline; any raw frame beyond
+~480p must go through the blob store — and <i>auto</i> makes that decision per message.</p>
+
+<h3>9.9&nbsp;&nbsp;E8 — crash recovery: SIGKILL a replica mid-flow</h3>
+<div class="tablewrap">
+<table>
+<tr><th class="num">Rep</th><th class="num">Delivered</th><th class="num">Unique</th>
+<th class="num">Duplicates</th><th class="num">Killed at (s)</th>
+<th class="num">Total wall (s)</th></tr>
+$E8_ROWS
+</table>
+<div class="caption"><b>Table 15.</b> E8: the E2 graph with two competing stage replicas;
+replica&nbsp;0 is SIGKILLed ~2.5&nbsp;s into the run — a hard crash with no chance to ack,
+publish EOS, or clean up. A clean two-replica run of the same graph completes in
+~10&nbsp;s.</div>
+</div>
+
+<p><b>Findings.</b> Every run delivered all $E8_N messages with $E8_DUPS duplicates. The three
+reliability mechanisms of §4 are each visible in the outcome. Messages the dead replica had
+fetched but not acked were <i>redelivered</i> to the surviving replica after the 60&nbsp;s
+<code>ack_wait</code> — ack-after-process turned the crash into a delay
+(~$E8_WALL&nbsp;s total wall clock), not a loss. Messages the dead replica had processed and
+published but not yet acked were reprocessed and republished by the survivor — and the sink
+still saw no duplicates, because the republish carries the same content-derived message id and
+JetStream's publish-dedup window absorbs it. And the flow still <i>terminated</i>: EOS
+completion needs only one surviving replica's marker per parent, so the killed replica's
+missing EOS did not hang the sink. The recovery bound is explicit and tunable — worst-case
+added latency after a crash is one <code>ack_wait</code>, traded against the risk of spurious
+redelivery to slow-but-alive workers.</p>
+
+<h3>9.10&nbsp;&nbsp;Threats to validity</h3>
 <ul>
 <li><b>Single machine, loopback broker.</b> Per-hop latency and blob-store round trips will be
 higher over a real network; the scaling and semantics results (which depend on routing and
@@ -698,32 +778,161 @@ replication target, behave like sleeps from the scheduler's perspective).</li>
 additional per-message cost of realistic frames (≤$E1_FRAME_MS&nbsp;ms encode, ~1&nbsp;ms
 blob write for 480p).</li>
 <li><b>Scale of repetition.</b> $REPS reps per cell with low dispersion (visible as the point
-spread in Figures 5 and 8); the trends are unambiguous, the third significant figure is
-not.</li>
+spread in Figures 5 and 8); the trends are unambiguous, the third significant figure is not.
+E7 runs each cell once — its findings are regime boundaries (a delivery cliff, a throughput
+crossover), which single runs identify reliably; its per-cell latency and throughput values
+carry run-to-run noise.</li>
+<li><b>One fault model.</b> E8 injects a hard worker crash (SIGKILL). It does not exercise
+broker failure, network partitions, or slow-worker gray failures; the recovery bound measured
+is specific to worker loss under a healthy broker.</li>
 </ul>
 
-<h2 id="s10">10&nbsp;&nbsp;Conclusion</h2>
+<h2 id="s10">10&nbsp;&nbsp;Related work</h2>
+
+<p><b>Video analytics systems.</b> A line of systems from the video-analytics literature sits
+<i>above</i> the layer Videoflow occupies: they assume a vision pipeline exists and optimize how
+it runs. VideoStorm [1] schedules thousands of concurrent queries across a cluster using offline
+resource–quality profiles, and explicitly distinguishes itself from general stream processors on
+the grounds that they allocate resources fairly rather than by output quality and lag — the same
+separation of concerns this paper draws from the other side. Chameleon [2] continuously re-picks
+pipeline knobs (resolution, frame rate, model) at runtime; Ekya [6] jointly schedules inference
+and continuous retraining on shared edge GPUs; VideoEdge [7] places pipeline stages across a
+camera–edge–cloud hierarchy. All are complementary controllers and schedulers: their pipelines
+need a substrate that runs DAG stages as scalable workers, which is precisely what Videoflow
+provides. NoScope [4] and Focus [3] accelerate <i>queries over recorded video</i> with cascades
+of cheap specialized models and approximate ingest-time indexes — a different design point from
+live dataflow. Scanner [5] is the closest video system in spirit: computations are dataflow
+graphs over compressed video tables, but it targets throughput-oriented batch analysis of stored
+video on tightly-coupled clusters, where Videoflow targets continuously running, independently
+scalable stream pipelines.</p>
+
+<p><b>General stream processors.</b> Videoflow's DAG-of-operators lineage runs through the
+scale-out stream engines — Storm [8], Spark Streaming's discretized streams [9], MillWheel [10],
+Samza [11], Naiad's timely dataflow [12], and Flink [13, 14]; the SIGMOD tutorial by Carbone et
+al. [15] surveys the family. The sharpest architectural contrast is with how these engines place
+computation. Flink parallelizes each operator into subtasks connected by partitioned in-process
+streams and achieves exactly-once state via asynchronous barrier snapshotting [13, 14];
+Hazelcast Jet [17] goes further and replicates the <i>entire</i> graph on every core precisely
+to avoid crossing machine boundaries between operators. Videoflow deliberately takes the
+opposite position — one worker (process, container) per node, with a persistent broker on every
+edge — accepting ~2&nbsp;ms per hop (§9.4) to gain properties the engine-internal designs lack:
+nodes deploy, scale, fail, and get GPU-scheduled independently as ordinary Kubernetes workloads;
+every edge has externally visible retention, replay, and a dead-letter queue; and consumer lag
+is a first-class autoscaling signal [33]. Its consistency stance also differs: rather than
+checkpoint-based exactly-once state [14], Videoflow composes at-least-once delivery,
+content-derived publish dedup, and opt-in idempotent sinks (§4, validated in §9.9) — a fit for
+vision pipelines, whose per-frame state is usually reconstructible while side effects need sink-level
+dedup anyway. Samza [11] is the closest relative in data plane — operators decoupled by a
+persistent log (Kafka) — while Ray [16] marks the opposite end of the scheduling spectrum, a
+dynamic task graph constructed at runtime versus Videoflow's compile-then-deploy static DAG.</p>
+
+<p><b>Media pipelines and serverless video.</b> GStreamer [18] popularized the
+graph-of-media-components model in a single process, and NVIDIA DeepStream [19] extends it with
+GPU-accelerated inference plugins on one machine; Videoflow lifts the same mental model across
+machines, and its language-agnostic OCI components (§7) play the role plugins play there.
+ExCamera [20] and Sprocket [21] burst-parallelize video work across thousands of short-lived
+serverless functions — the right shape for one-shot transformations of stored video, where
+Videoflow's long-running workers with warm models target continuous streams.</p>
+
+<h2 id="s11">11&nbsp;&nbsp;Conclusion</h2>
 <p>Videoflow demonstrates that a distributed video-processing system can keep a single-machine
 programming model — plain Python classes wired into a DAG — by pushing all distribution
 concerns into conventions checked at build time and topology derived from names. The
 experiments confirm the design's quantitative claims on real broker infrastructure: ~2&nbsp;ms
 per graph edge, near-linear stage and join scale-out from one-line changes, a delivery-semantics
-switch that trades completeness against bounded latency exactly as specified, and fusion
-policies that degrade gracefully under source failure. The protobuf wire contract and OCI
+switch that trades completeness against bounded latency exactly as specified, fusion policies
+that degrade gracefully under source failure, a payload-placement policy that steps over the
+broker's message-size cliff (and above ~256&nbsp;KiB outperforms inline transport), and crash
+recovery that turns a SIGKILLed worker into a bounded delay with zero loss and zero
+duplicates. The protobuf wire contract and OCI
 component distribution extend the same model beyond Python, toward a marketplace of
 interoperable components with the Python worker as the executable reference implementation.</p>
 
 <h2>References</h2>
 <ul class="footnote" style="list-style: none; padding-left: 0;">
-<li>[1] Videoflow repository and documentation — <i>github.com/videoflow/videoflow</i>
-(<code>spec/PROTOCOL.md</code>: normative wire and routing contract;
-<code>.claude/docs/ARCHITECTURE.md</code>: build/run pipeline).</li>
-<li>[2] NATS JetStream documentation — <i>docs.nats.io/nats-concepts/jetstream</i> (streams,
-durable consumers, retention and discard policies, publish deduplication).</li>
-<li>[3] Experiment harness and raw results — <code>white-paper/experiments/</code> in the
-repository; figures regenerate via <code>white-paper/src/make_figures.py</code>.</li>
-<li>[4] de Armas, J. <i>Videoflow</i>, 2019 — original single-process release; the
-architecture described here is the distributed successor.</li>
+<li>[1] H. Zhang, G. Ananthanarayanan, P. Bodik, M. Philipose, P. Bahl, and M. J. Freedman.
+Live Video Analytics at Scale with Approximation and Delay-Tolerance. In <i>14th USENIX
+Symposium on Networked Systems Design and Implementation (NSDI)</i>, pp. 377–392, 2017.</li>
+<li>[2] J. Jiang, G. Ananthanarayanan, P. Bodík, S. Sen, and I. Stoica. Chameleon: scalable
+adaptation of video analytics. In <i>ACM SIGCOMM</i>, pp. 253–266, 2018.</li>
+<li>[3] K. Hsieh, G. Ananthanarayanan, P. Bodík, S. Venkataraman, P. Bahl, M. Philipose,
+P. B. Gibbons, and O. Mutlu. Focus: Querying Large Video Datasets with Low Latency and Low
+Cost. In <i>13th USENIX Symposium on Operating Systems Design and Implementation (OSDI)</i>,
+pp. 269–286, 2018.</li>
+<li>[4] D. Kang, J. Emmons, F. Abuzaid, P. Bailis, and M. Zaharia. NoScope: Optimizing Neural
+Network Queries over Video at Scale. <i>Proceedings of the VLDB Endowment</i>, 10(11),
+pp. 1586–1597, 2017.</li>
+<li>[5] A. Poms, W. Crichton, P. Hanrahan, and K. Fatahalian. Scanner: Efficient Video
+Analysis at Scale. <i>ACM Transactions on Graphics</i>, 37(4) (SIGGRAPH), 2018.</li>
+<li>[6] R. Bhardwaj, Z. Xia, G. Ananthanarayanan, J. Jiang, N. Karianakis, Y. Shu, K. Hsieh,
+P. Bahl, and I. Stoica. Ekya: Continuous Learning of Video Analytics Models on Edge Compute
+Servers. In <i>19th USENIX NSDI</i>, pp. 119–135, 2022.</li>
+<li>[7] C.-C. Hung, G. Ananthanarayanan, P. Bodík, L. Golubchik, M. Yu, P. Bahl, and
+M. Philipose. VideoEdge: Processing Camera Streams using Hierarchical Clusters. In
+<i>IEEE/ACM Symposium on Edge Computing (SEC)</i>, pp. 115–131, 2018.</li>
+<li>[8] A. Toshniwal et al. Storm@twitter. In <i>ACM SIGMOD</i>, pp. 147–156, 2014.</li>
+<li>[9] M. Zaharia, T. Das, H. Li, T. Hunter, S. Shenker, and I. Stoica. Discretized Streams:
+Fault-Tolerant Streaming Computation at Scale. In <i>24th ACM Symposium on Operating Systems
+Principles (SOSP)</i>, pp. 423–438, 2013.</li>
+<li>[10] T. Akidau et al. MillWheel: Fault-Tolerant Stream Processing at Internet Scale.
+<i>Proceedings of the VLDB Endowment</i>, 6(11), pp. 1033–1044, 2013.</li>
+<li>[11] S. A. Noghabi et al. Samza: Stateful Scalable Stream Processing at LinkedIn.
+<i>Proceedings of the VLDB Endowment</i>, 10(12), pp. 1634–1645, 2017.</li>
+<li>[12] D. G. Murray, F. McSherry, R. Isaacs, M. Isard, P. Barham, and M. Abadi. Naiad: A
+Timely Dataflow System. In <i>24th ACM SOSP</i>, pp. 439–455, 2013.</li>
+<li>[13] P. Carbone, A. Katsifodimos, S. Ewen, V. Markl, S. Haridi, and K. Tzoumas. Apache
+Flink: Stream and Batch Processing in a Single Engine. <i>IEEE Data Engineering Bulletin</i>,
+38(4), pp. 28–38, 2015.</li>
+<li>[14] P. Carbone, S. Ewen, G. Fóra, S. Haridi, S. Richter, and K. Tzoumas. State Management
+in Apache Flink: Consistent Stateful Distributed Stream Processing. <i>Proceedings of the VLDB
+Endowment</i>, 10(12), pp. 1718–1729, 2017.</li>
+<li>[15] P. Carbone, M. Fragkoulis, V. Kalavri, and A. Katsifodimos. Beyond Analytics: The
+Evolution of Stream Processing Systems. In <i>ACM SIGMOD</i>, pp. 2651–2658, 2020.</li>
+<li>[16] P. Moritz, R. Nishihara, S. Wang, A. Tumanov, R. Liaw, E. Liang, M. Elibol, Z. Yang,
+W. Paul, M. I. Jordan, and I. Stoica. Ray: A Distributed Framework for Emerging AI
+Applications. In <i>13th USENIX OSDI</i>, 2018.</li>
+<li>[17] C. Gencer, M. Topolnik, V. Ďurina, et al. Hazelcast Jet: Low-latency Stream
+Processing at the 99.99th Percentile. <i>Proceedings of the VLDB Endowment</i>, 14(12),
+pp. 3110–3121, 2021.</li>
+<li>[18] GStreamer Team. GStreamer: open source multimedia framework.
+<i>gstreamer.freedesktop.org</i>.</li>
+<li>[19] NVIDIA. NVIDIA DeepStream SDK Developer Guide.
+<i>docs.nvidia.com/metropolis/deepstream/dev-guide/</i>.</li>
+<li>[20] S. Fouladi et al. Encoding, Fast and Slow: Low-Latency Video Processing Using
+Thousands of Tiny Threads. In <i>14th USENIX NSDI</i>, pp. 363–376, 2017.</li>
+<li>[21] L. Ao, L. Izhikevich, G. M. Voelker, and G. Porter. Sprocket: A Serverless Video
+Processing Framework. In <i>ACM Symposium on Cloud Computing (SoCC)</i>, pp. 263–274,
+2018.</li>
+<li>[22] NATS Authors. JetStream. <i>NATS Documentation</i>,
+docs.nats.io/nats-concepts/jetstream.</li>
+<li>[23] NATS Authors. Configuring NATS Server: <code>max_payload</code> (default 1&nbsp;MB;
+settable to 64&nbsp;MB, ≤8&nbsp;MB recommended). <i>NATS Documentation</i>,
+docs.nats.io/running-a-nats-service/configuration.</li>
+<li>[24] J. Kreps, N. Narkhede, and J. Rao. Kafka: a Distributed Messaging System for Log
+Processing. In <i>NetDB Workshop</i>, 2011.</li>
+<li>[25] Apache Kafka Documentation. Broker configs: <code>message.max.bytes</code> (default
+1,048,588&nbsp;B). <i>kafka.apache.org/documentation</i>; Confluent, Kafka Message Size Limit,
+<i>confluent.io/learn/kafka-message-size-limit</i>.</li>
+<li>[26] Redis. <i>redis.io</i>.</li>
+<li>[27] G. Hohpe and B. Woolf. <i>Enterprise Integration Patterns: Designing, Building, and
+Deploying Messaging Solutions</i>. Addison-Wesley, 2003. Pattern: Claim Check.</li>
+<li>[28] Microsoft. Claim-Check pattern. <i>Azure Architecture Center</i>,
+learn.microsoft.com/azure/architecture/patterns/claim-check.</li>
+<li>[29] Google LLC. Protocol Buffers Documentation. <i>protobuf.dev</i>.</li>
+<li>[30] S. Furuhashi et al. MessagePack Specification.
+<i>github.com/msgpack/msgpack</i> (msgpack.org).</li>
+<li>[31] A. Verma, L. Pedrosa, M. Korupolu, D. Oppenheimer, E. Tune, and J. Wilkes.
+Large-scale cluster management at Google with Borg. In <i>ACM EuroSys</i>, 2015.</li>
+<li>[32] B. Burns, B. Grant, D. Oppenheimer, E. Brewer, and J. Wilkes. Borg, Omega, and
+Kubernetes. <i>ACM Queue</i>, 14(1), pp. 70–93, 2016.</li>
+<li>[33] KEDA Authors. KEDA — Kubernetes Event-driven Autoscaling. <i>keda.sh</i> (CNCF
+Graduated project).</li>
+<li>[34] Prometheus Authors. Prometheus — Monitoring system and time series database.
+<i>prometheus.io</i> (CNCF Graduated project).</li>
+<li>[35] J. de Armas. Videoflow, 2019 — <i>github.com/videoflow/videoflow</i>. The original
+single-process release; this paper describes the distributed successor. The normative protocol
+contract is <code>spec/PROTOCOL.md</code>; the experiment harness and raw results are
+<code>white-paper/</code> in the same repository.</li>
 </ul>
 
 </body>

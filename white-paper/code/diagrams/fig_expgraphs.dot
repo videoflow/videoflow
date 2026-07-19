@@ -8,6 +8,23 @@ digraph expgraphs {
           fillcolor = "white", color = "#c3c2b7", penwidth = 1.2];
     edge [fontname = "Helvetica", fontsize = 9, color = "#52514e", arrowsize = 0.7];
 
+    subgraph cluster_e8 {
+        label = "E8 — fault injection";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e8p [label = "producer\n240 msgs", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e8w [label = "stage 20 ms\nnb_tasks = 2\n(one replica SIGKILLed at t≈2.5 s)", color = "#008300"];
+        e8s [label = "sink", color = "#e87ba4"];
+        e8p -> e8w -> e8s;
+    }
+
+    subgraph cluster_e7 {
+        label = "E7 — payload placement";
+        fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
+        e7p [label = "producer\npayload 1 KiB – 6 MiB\ninline / blob / auto", color = "#2a78d6", fillcolor = "#eaf2fc"];
+        e7s [label = "sink", color = "#e87ba4"];
+        e7p -> e7s;
+    }
+
     subgraph cluster_e6 {
         label = "E6 — time-aligned quorum join";
         fontsize = 11; fontcolor = "#0b0b0b"; color = "#e1e0d9"; style = "rounded";
