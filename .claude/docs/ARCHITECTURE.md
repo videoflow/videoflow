@@ -119,6 +119,60 @@ The normative contract, with stable requirement IDs, is [`spec/PROTOCOL.md`](../
 Golden vectors in `spec/vectors/` are replayed by `tests/test_golden_vectors.py` — an observable
 change to the wire needs an RFC under `spec/rfcs/` and updated vectors.
 
+## Extension seams
+
+Places where adding a variant is a registration rather than an edit. All follow the same
+shape — a module-level registry seeded with the built-ins, an explicit `register_*()`, and a
+`get_*()`/`make_*()` that raises a `ValueError` naming the known values and the fix. Registries
+are pre-seeded with exactly today's behavior, so with nothing registered the observable output
+is unchanged.
+
+| Seam | Where | Add a variant by |
+|---|---|---|
+| Blob store | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_blob_store(scheme, factory)` — selected by the blob URL's scheme |
+| Payload encoding (v4) | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_payload_encoder(type, encoder)`, paired with `register_payload_type` for decode |
+| Cluster flavor | [deploy/cluster.py](../../videoflow/deploy/cluster.py) | `register_cluster_flavor(handler)` — one class covers detection, image loading, hostPath warning |
+| GPU allocation | [deploy/gpu.py](../../videoflow/deploy/gpu.py) | `register_gpu_mode(strategy)` — pod resources, preflight, and per-run prepare/cleanup |
+| `x-questions` type | [deploy/solution.py](../../videoflow/deploy/solution.py) | `register_question_type(qtype, coercer)` |
+
+Registration normally happens on import of the package that provides it. Where nothing would
+import it first — a blob store named only in config, a vendor payload reaching host-side
+`videoflow debug decode` — the registry consults an `importlib.metadata` entry-point group once
+on a miss, via [utils/plugins.py](../../videoflow/utils/plugins.py). Groups:
+`videoflow.blob_stores`, `videoflow.payload_types`, `videoflow.gpu_strategies`.
+
+Two ordering rules are load-bearing and should survive refactoring:
+
+- **Payload encoders are consulted after every built-in check.** Registering one — even a rule
+  matching `object` — must not change how a built-in payload encodes. Those mappings are fixed
+  by `spec/PROTOCOL.md` §4.4 and proven by the golden vectors.
+- **`generic-remote` stays last in the cluster flavor list.** It matches everything, so anything
+  registered after it is unreachable; `register_cluster_flavor` inserts before it by default.
+
+### Deliberately not abstracted
+
+These were considered and rejected. The reasoning matters more than the verdict — if a premise
+changes, so should the decision.
+
+- **Execution engine registry.** Blocked on a real prerequisite, not on effort: the CLI-facing
+  lifecycle (`wait_for_completion`, `teardown`, `dump_failed_logs`, `schedulability_report`) is
+  not part of the `ExecutionEngine` ABC, and the two engines' constructors share no signature. A
+  registry over that is worthless. Unify the lifecycle into the ABC when a third engine actually
+  exists, and do both together.
+- **Transport abstraction.** `Messenger` and `BlobStore` are the preserved seams; everything
+  below them is spec-fixed — `topology.py` returns `nats.js.api` objects, KEDA triggers are NATS
+  triggers, `VF_NATS_URL` is in the worker's environment contract. A second transport starts as
+  an RFC under `spec/rfcs/`, not as a refactor.
+- **Flow-type semantics object.** A `FlowTypeSemantics` consolidating the REALTIME/BATCH string
+  comparisons across ~6 files is tempting, but a third flow type would change retention and
+  routing semantics — RFC territory by definition. The refactor should ride that RFC rather than
+  precede it.
+- **Join-mode registry.** `make_assembler` is already a clean factory, and a third mode must edit
+  `core/policies.py` validation anyway, so a registry removes nothing from the blast radius.
+- **Dev-infra service providers.** With exactly two hard-coded services (NATS, Redis) the
+  abstraction is speculative. Build it in the same change as the first third service.
+- **Container CLI (docker → podman).** Would add an env-var contract for zero current users.
+
 ## Language-agnostic components
 
 `core/remote.py` + `components/descriptor.py`: `component(ref, params = ...)` loads a `component.yaml`

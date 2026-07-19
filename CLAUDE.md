@@ -15,7 +15,7 @@ convention below follows from that.
 |---|---|
 | `videoflow/core/` | The abstractions: `node.py` (Node hierarchy), `flow.py` (Flow), `graph.py` (validation), `task.py` (per-node run loop), `engine.py` (Messenger/ExecutionEngine interfaces), `policies.py` (JoinPolicy), `compiler.py` (Flow → `NodeSpec`s), `remote.py`, `constants.py` |
 | `videoflow/runtime/` | Runs **inside a worker container**: `worker.py` (the one-node entrypoint), `provision.py`, `health.py`, `idempotency.py`, `logging_config.py` |
-| `videoflow/deploy/` | Runs on the **operator's machine**: `cli.py`, `compile.py`, `manifests.py`, `images.py`, `build.py`, `cluster.py`, `solution.py`, `infra.py`, `localinfra.py` |
+| `videoflow/deploy/` | Runs on the **operator's machine**: `cli.py`, `compile.py`, `manifests.py`, `images.py`, `build.py`, `cluster.py`, `gpu.py`, `solution.py`, `infra.py`, `localinfra.py` |
 | `videoflow/wire/` | `serialization.py` — the transport-independent envelope format (msgpack v2/v3, protobuf v4) |
 | `videoflow/components/` | `descriptor.py` (component.yaml loading/validation), `oci.py` (descriptors as OCI artifacts) |
 | `videoflow/engines/` | `local.py` (subprocess per node), `kubernetes.py` (pod per node) |
@@ -100,6 +100,12 @@ tracks auditing the existing function-level imports; don't add to the pile.
   `videoflow/deploy/images.py` and `videoflow/core/graph.py` for the house standard.
 - Use `@dataclass` for plain records instead of passing dicts around as structs.
 - Don't introduce an abstraction layer until there is a second caller.
+- When something *is* worth making pluggable, follow the established shape: a module-level
+  registry seeded with the built-ins, an explicit `register_*()`, and a lookup that raises
+  `ValueError` naming the known values and the fix. Stdlib only — entry-point discovery goes
+  through `utils/plugins.py`. See the extension-seam table in
+  [.claude/docs/ARCHITECTURE.md](.claude/docs/ARCHITECTURE.md), which also records what was
+  deliberately *not* abstracted and why.
 - One reason to change per module. The top-level deploy modules are deliberately narrow
   (`deploy/images.py` only resolves images, `messaging/topology.py` only names things) — keep them that way.
 
