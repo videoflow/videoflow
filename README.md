@@ -166,6 +166,127 @@ auto-provisioned NATS/Redis), `videoflow debug decode`
 `videoflow component validate|push|pull|inspect` family for
 [language-agnostic components](#language-agnostic-components).
 
+### Preparing a cluster with GPU access
+
+A node declared with `device_type='gpu'` compiles to a pod spec with three things
+in it — that's the whole contract the cluster has to satisfy:
+
+```yaml
+resources:
+  limits: { nvidia.com/gpu: 1 }         # one GPU per replica
+nodeSelector:
+  videoflow.io/gpu-pool: "true"         # where GPU pods are allowed to land
+tolerations:
+  - key: nvidia.com/gpu                 # so a tainted GPU pool still accepts them
+    operator: Exists
+    effect: NoSchedule
+```
+
+So a cluster is GPU-ready for Videoflow when some node **advertises allocatable
+`nvidia.com/gpu`** and **carries the `videoflow.io/gpu-pool=true` label**. Deploy
+preflights exactly those two conditions for any flow containing a GPU node and
+prints the fix for whichever is missing (as a warning — it does not block the
+deploy, so the pods will simply sit `Pending`).
+
+**1. Drivers and container runtime on the GPU hosts.** Each GPU node needs the
+NVIDIA driver plus the NVIDIA container toolkit wired into its container runtime,
+so containers can see the device. On managed clusters this is done for you by
+picking a GPU node pool / GPU-enabled AMI; on your own machines:
+
+```bash
+# Ubuntu host
+sudo apt-get install -y nvidia-driver-550 nvidia-container-toolkit
+sudo nvidia-ctk runtime configure --runtime=containerd   # or --runtime=docker
+sudo systemctl restart containerd
+nvidia-smi                                               # driver visible on the host
+```
+
+**2. Expose the GPUs to Kubernetes** with the NVIDIA device plugin, which is what
+turns a physical GPU into the schedulable `nvidia.com/gpu` resource:
+
+```bash
+kubectl apply -f https://raw.githubusercontent.com/NVIDIA/k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml
+```
+
+On GKE/EKS/AKS use the provider's path instead (GKE installs the plugin via its
+driver DaemonSet, EKS ships it in the GPU AMI, AKS via the GPU node pool). For a
+bare-metal fleet, the [NVIDIA GPU Operator](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/)
+installs drivers, toolkit, plugin and monitoring in one Helm release and replaces
+both step 1 and step 2:
+
+```bash
+helm repo add nvidia https://helm.ngc.nvidia.com/nvidia && helm repo update
+helm install --wait gpu-operator nvidia/gpu-operator -n gpu-operator --create-namespace
+```
+
+**3. Label the GPU nodes** so Videoflow's nodeSelector matches:
+
+```bash
+kubectl label node <gpu-node> videoflow.io/gpu-pool=true
+# or label a whole managed pool at once:
+kubectl label node -l cloud.google.com/gke-accelerator videoflow.io/gpu-pool=true
+```
+
+Optionally **taint** the pool so CPU-only workloads keep off the expensive
+machines — the generated pods already tolerate exactly this taint:
+
+```bash
+kubectl taint node <gpu-node> nvidia.com/gpu=present:NoSchedule
+```
+
+**4. Verify** before deploying anything:
+
+```bash
+kubectl get nodes -l videoflow.io/gpu-pool=true                                   # non-empty
+kubectl get nodes -o jsonpath='{.items[*].status.allocatable.nvidia\.com/gpu}'    # e.g. "1 4"
+kubectl run gpu-smoke --rm -it --restart=Never --image=nvidia/cuda:12.4.1-base-ubuntu24.04 \
+    --overrides='{"spec":{"nodeSelector":{"videoflow.io/gpu-pool":"true"},"tolerations":[{"key":"nvidia.com/gpu","operator":"Exists","effect":"NoSchedule"}],"containers":[{"name":"gpu-smoke","image":"nvidia/cuda:12.4.1-base-ubuntu24.04","command":["nvidia-smi"],"resources":{"limits":{"nvidia.com/gpu":1}}}]}}'
+```
+
+If `nvidia-smi` prints the device table from inside that pod, the cluster is
+ready — a Videoflow GPU node schedules under identical constraints.
+
+**5. Build the node image on the CUDA base.** GPU scheduling only gets the device
+into the pod; the image still has to contain a CUDA-enabled stack. Videoflow ships
+a CUDA variant of its base image, and `deploy` prefers a `gpu.Dockerfile` next to
+your graph whenever the flow has GPU nodes:
+
+```bash
+./docker/build-images.sh          # builds videoflow-base + videoflow-base:py3.12-cuda
+```
+
+```dockerfile
+# gpu.Dockerfile, next to my_flow.py
+FROM videoflow-base:py3.12-cuda
+RUN pip install torch --index-url https://download.pytorch.org/whl/cu124
+COPY . . && RUN pip install .
+```
+
+Keep the image's CUDA minor version compatible with the host driver — a driver
+too old for the image's CUDA runtime is the most common cause of a pod that
+schedules onto a GPU and then dies with a CUDA initialization error.
+
+**6. Deploy.** Nothing GPU-specific is needed on the command line; the device
+requests come from the graph:
+
+```bash
+videoflow deploy my_flow.py --namespace videoflow          # dev: builds gpu.Dockerfile, provisions NATS
+kubectl get pods -n videoflow -o wide                      # GPU pods land on the labeled nodes
+```
+
+**Single-node dev clusters.** k3s works well for this: it uses containerd, so
+after step 1 it detects the NVIDIA runtime automatically; apply the device plugin
+and label the single node. minikube needs `minikube start --driver=docker
+--container-runtime=docker --gpus all`. kind has no supported GPU passthrough —
+use k3s or a remote cluster instead.
+
+**When GPU pods stay `Pending`**, `kubectl describe pod <pod> -n videoflow` names
+the reason directly: `didn't match Pod's node affinity/selector` means the label
+from step 3 is missing, `Insufficient nvidia.com/gpu` means the device plugin
+(step 2) isn't running or every GPU is already claimed — a GPU is allocated
+exclusively, so `nb_tasks` above the number of physical GPUs leaves the extra
+replicas unschedulable.
+
 ### How graph concepts map onto the broker and Kubernetes
 
 | Concept | Behavior |
