@@ -358,7 +358,7 @@ def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides
     print(f'Flow id: {flow_id}   Run id: {run_id}')
 
 def _cmd_component_validate(args) -> None:
-    from .component import load_descriptor
+    from .components.descriptor import load_descriptor
 
     ok = True
     for path in args.path:
@@ -375,7 +375,7 @@ def _cmd_component_validate(args) -> None:
         raise SystemExit(1)
 
 def _cmd_component_push(args) -> None:
-    from .oci import push_component
+    from .components.oci import push_component
 
     try:
         target = push_component(args.path, args.ref)
@@ -384,7 +384,7 @@ def _cmd_component_push(args) -> None:
     print(f'Pushed component descriptor {args.path} -> oci://{target}')
 
 def _cmd_component_pull(args) -> None:
-    from .oci import pull_component
+    from .components.oci import pull_component
 
     try:
         path = pull_component(args.ref, force = args.force, verify = args.verify,
@@ -394,7 +394,7 @@ def _cmd_component_pull(args) -> None:
     print(f'Resolved {args.ref} -> {path}')
 
 def _cmd_component_inspect(args) -> None:
-    from .oci import inspect_component
+    from .components.oci import inspect_component
 
     try:
         d = inspect_component(args.ref, verify = args.verify)

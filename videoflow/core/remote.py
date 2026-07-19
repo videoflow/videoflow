@@ -18,7 +18,7 @@ from __future__ import absolute_import, division, print_function
 
 from typing import Optional
 
-from ..component import ComponentDescriptor, load_descriptor
+from ..components.descriptor import ComponentDescriptor, load_descriptor
 from .node import ConsumerNode, ProcessorNode, ProducerNode, _slugify
 
 # Per-base counter so an unnamed remote node gets a readable, component-derived

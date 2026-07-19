@@ -5,7 +5,7 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 
-from videoflow.component import ComponentDescriptor, load_descriptor
+from videoflow.components.descriptor import ComponentDescriptor, load_descriptor
 
 
 def _desc(**overrides):

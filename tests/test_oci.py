@@ -11,7 +11,7 @@ import os
 
 import pytest
 
-from videoflow import oci
+from videoflow.components import oci
 
 _VALID_DESCRIPTOR = '''\
 apiVersion: videoflow.io/v1
@@ -105,11 +105,11 @@ def test_pull_verify_requires_cosign(tmp_path, monkeypatch):
 
 
 def test_load_descriptor_resolves_oci(tmp_path, monkeypatch):
-    from videoflow import component as component_mod
+    from videoflow.components import descriptor as component_mod
 
     cached = tmp_path / 'component.yaml'
     cached.write_text(_VALID_DESCRIPTOR)
-    monkeypatch.setattr('videoflow.oci.pull_component', lambda ref, **kw: str(cached))
+    monkeypatch.setattr('videoflow.components.oci.pull_component', lambda ref, **kw: str(cached))
 
     desc = component_mod.load_descriptor('oci://ghcr.io/acme/sort:1.2.0')
     assert desc.name == 'acme/sort' and desc.python_class == 'acme.sort.Tracker'

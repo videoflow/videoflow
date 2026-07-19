@@ -7,7 +7,7 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 
-from videoflow.component import ComponentDescriptor
+from videoflow.components.descriptor import ComponentDescriptor
 from videoflow.core import Flow, component
 from videoflow.core.compiler import compile_flow, has_remote_components, validate_wire_compatibility
 from videoflow.core.node import ConsumerNode, ProducerNode

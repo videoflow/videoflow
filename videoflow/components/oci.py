@@ -63,7 +63,7 @@ def push_component(descriptor_path : str, ref : str, annotations : dict = None) 
     Push a ``component.yaml`` to ``ref`` as an OCI artifact. The descriptor is
     validated first (a broken descriptor is never published). Returns the target.
     '''
-    from .component import load_descriptor  # validates on load
+    from .descriptor import load_descriptor  # validates on load
     if os.path.isdir(descriptor_path):
         descriptor_path = os.path.join(descriptor_path, 'component.yaml')
     desc = load_descriptor(descriptor_path)
@@ -115,7 +115,7 @@ def pull_component(ref : str, cache_root : str = None, force : bool = False,
 
 def inspect_component(ref : str, **pull_kwargs):
     '''Pull (cached) and return the parsed ``ComponentDescriptor`` for ``ref``.'''
-    from .component import load_descriptor
+    from .descriptor import load_descriptor
     return load_descriptor(pull_component(ref, **pull_kwargs))
 
 def cosign_verify(target : str, extra_args : List[str] = None) -> None:
