@@ -3,17 +3,19 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import logging
 import re
-from typing import TYPE_CHECKING, Any, Optional
-
-if TYPE_CHECKING:
-    from .policies import JoinPolicy
+from typing import Any, Callable, Dict, List, NoReturn, Optional, Set, TypeAlias, Union, cast
 
 logger = logging.getLogger(__package__)
 
 from ..utils.graph import has_cycle, topological_sort
 from .constants import CPU, DEVICE_TYPES, GPU, LOGGING_LEVEL
+from .policies import JoinPolicy
 
 _SLUG_RE = re.compile(r'[^a-z0-9]+')
+
+#: What a node's ``join_policy=`` argument accepts: a policy object, the plain dict
+#: it serializes to (how it arrives when a worker reconstructs the node), or None.
+JoinPolicyArg : TypeAlias = Union[JoinPolicy, dict, None]
 
 def _slugify(value : str) -> str:
     return _SLUG_RE.sub('-', value.lower()).strip('-')
@@ -39,17 +41,17 @@ class Node:
             a deploy-time ``--image-override`` beats both. Ignored by the local \
             engine, which runs workers in the current Python environment.
     '''
-    _name_counters: dict = {}
+    _name_counters: Dict[str, int] = {}
 
-    def __init__(self, name = None, image = None) -> None:
+    def __init__(self, name : Optional[str] = None, image : Optional[str] = None) -> None:
         if name is None:
             cls_name = type(self).__name__
             Node._name_counters[cls_name] = Node._name_counters.get(cls_name, 0) + 1
             name = f'{_slugify(cls_name)}-{Node._name_counters[cls_name]}'
         self._name = name
         self._image = image
-        self._parents: Optional[list] = None
-        self._children: Optional[set] = set()
+        self._parents: Optional[List["Node"]] = None
+        self._children: Optional[Set["Node"]] = set()
         self._is_part_of_taskmodule_node = False
         self._logger = self._configure_logger()
         self._logger.debug(f'Created Node with name {self._name}')
@@ -100,7 +102,7 @@ class Node:
         '''The container image ref declared for this node (or None to use the deploy-time default).'''
         return self._image
 
-    def get_params(self) -> dict:
+    def get_params(self) -> Dict[str, Any]:
         '''
         Returns a JSON-serializable dict of keyword arguments sufficient to \
             reconstruct an equivalent node via ``type(node)(**node.get_params())``. \
@@ -120,7 +122,7 @@ class Node:
             references to other nodes, as ``TaskModuleNode`` does), must override \
             this method.
         '''
-        params = {}
+        params : Dict[str, Any] = {}
         for klass in reversed(type(self).__mro__):
             if '__init__' not in klass.__dict__:
                 continue
@@ -141,7 +143,7 @@ class Node:
                     )
         return params
 
-    def __call__(self, *parents) -> "Node":
+    def __call__(self, *parents : "Node") -> "Node":
         if self._parents is not None:
             raise RuntimeError('This method has already been called. It can only be called once.')
         if self._is_part_of_taskmodule_node:
@@ -160,7 +162,7 @@ class Node:
             parent.add_child(self)
         return self
 
-    def add_child(self, child) -> None:
+    def add_child(self, child : "Node") -> None:
         '''
         Adds child to the set of childs that depend on it.
         '''
@@ -169,12 +171,12 @@ class Node:
         assert self._children is not None
         self._children.add(child)
 
-    def remove_child(self, child) -> None:
+    def remove_child(self, child : "Node") -> None:
         assert self._children is not None
         self._children.remove(child)
 
     @property
-    def parents(self) -> Optional[list]:
+    def parents(self) -> Optional[List["Node"]]:
         '''
         Returns a list with the parent nodes
         '''
@@ -183,7 +185,7 @@ class Node:
         return list(self._parents)
 
     @property
-    def children(self) -> Optional[set]:
+    def children(self) -> Optional[Set["Node"]]:
         '''
         Returns a set of the child nodes
         '''
@@ -195,7 +197,7 @@ class Leaf(Node):
     '''
     Node with no children.
     '''
-    def __init__(self, *args, **kwargs) -> None:
+    def __init__(self, *args : Any, **kwargs : Any) -> None:
         self._children = None
         super(Leaf, self).__init__(*args, **kwargs)
 
@@ -206,10 +208,10 @@ class ConsumerNode(Leaf):
             output of parent nodes, receives metadata produced by parent nodes.
         - name (str): see ``Node``.
     '''
-    def __init__(self, metadata = False, name = None, join_policy = None, idempotent = False, **kwargs) -> None:
+    def __init__(self, metadata : bool = False, name : Optional[str] = None,
+                join_policy : JoinPolicyArg = None, idempotent : bool = False, **kwargs : Any) -> None:
         self._metadata = metadata
         self._idempotent = idempotent
-        from .policies import JoinPolicy
         if isinstance(join_policy, JoinPolicy):
             join_policy = join_policy.to_dict()
         self._join_policy = join_policy
@@ -231,10 +233,9 @@ class ConsumerNode(Leaf):
 
     @property
     def join_policy(self) -> Optional["JoinPolicy"]:
-        from .policies import JoinPolicy
         return JoinPolicy.from_dict(self._join_policy)
 
-    def consume(self, item) -> None:
+    def consume(self, item : Any) -> None:
         '''
         Method definition that needs to be implemented by subclasses.
 
@@ -267,9 +268,9 @@ class ProcessorNode(Node):
             default (``--gpu-resource-name``, else ``nvidia.com/gpu``).
         - name (str): see ``Node``.
     '''
-    def __init__(self, nb_tasks : int = 1, device_type = CPU, name = None,
-                partition_by = None, join_policy = None,
-                gpu_count : int = 1, gpu_resource_name = None, **kwargs) -> None:
+    def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
+                partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
+                gpu_count : int = 1, gpu_resource_name : Optional[str] = None, **kwargs : Any) -> None:
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
@@ -284,7 +285,6 @@ class ProcessorNode(Node):
         self._gpu_resource_name = gpu_resource_name
         self._partition_by = partition_by
         # Stored as a plain dict so get_params() stays JSON-serializable.
-        from .policies import JoinPolicy
         if isinstance(join_policy, JoinPolicy):
             join_policy = join_policy.to_dict()
         self._join_policy = join_policy
@@ -321,10 +321,9 @@ class ProcessorNode(Node):
     @property
     def join_policy(self) -> Optional["JoinPolicy"]:
         '''Returns the ``JoinPolicy`` object (or None), reconstructed from the stored dict.'''
-        from .policies import JoinPolicy
         return JoinPolicy.from_dict(self._join_policy)
 
-    def change_device(self, device_type) -> None:
+    def change_device(self, device_type : str) -> None:
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
@@ -349,7 +348,7 @@ class OneTaskProcessorNode(ProcessorNode):
     The main use of this class if for processes that can only run one
     task, such as trackers and aggregators.
     '''
-    def __init__(self, device_type = CPU, name = None, **kwargs) -> None:
+    def __init__(self, device_type : str = CPU, name : Optional[str] = None, **kwargs : Any) -> None:
         # nb_tasks is always 1 for this class; discard it if present (e.g. when
         # reconstructing from get_params(), which captures it from the ProcessorNode
         # level of the MRO) so it doesn't collide with the positional 1 below.
@@ -381,7 +380,8 @@ class TaskModuleNode(ProcessorNode):
         not support ``get_params()``-based reconstruction and is not yet supported \
         by the distributed Kubernetes execution path (see ``videoflow.core.compiler``).
     '''
-    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks = 1, name = None, **kwargs) -> None:
+    def __init__(self, entry_node : ProcessorNode, exit_node: ProcessorNode, nb_tasks : int = 1,
+                name : Optional[str] = None, **kwargs : Any) -> None:
         super(TaskModuleNode, self).__init__(nb_tasks = nb_tasks, device_type = CPU, name = name, **kwargs)
         self._entry_node = entry_node
         self._exit_node = exit_node
@@ -408,7 +408,9 @@ class TaskModuleNode(ProcessorNode):
         if has_cycle([entry_node]):
             logger.error('Cycle detected in module graph. Exiting now...')
             raise ValueError('Cycle found in module graph')
-        self._tsort = topological_sort([entry_node])
+        # Every member is checked to be a ProcessorNode a few lines below, which is
+        # what makes the narrower element type true for the rest of this class.
+        self._tsort = cast(List[ProcessorNode], topological_sort([entry_node]))
         for node in self._tsort:
             node._is_part_of_taskmodule_node = True
 
@@ -427,23 +429,24 @@ class TaskModuleNode(ProcessorNode):
         if len(self._tsort) < 1:
             raise ValueError('Must pass a list of at least one processor node')
         for node in self._tsort[1:]:
-            for p in node.parents:
+            # ``parents`` is declared Optional; normalize as elsewhere in the repo.
+            for p in (node.parents or []):
                 if p not in self._tsort:
                     raise ValueError('There is a node whose parents are not part'
                                         ' of the list of processor nodes')
 
 
-    def process(self, *inp) -> Any:
-        intermediate_results = {}
+    def process(self, *inp : Any) -> Any:
+        intermediate_results : Dict["Node", Any] = {}
         result = self._tsort[0].process(*inp)
         intermediate_results[self._tsort[0]] = result
         for p in self._tsort[1:]:
-            inp_values = [intermediate_results[a] for a in p.parents]
+            inp_values = [intermediate_results[a] for a in (p.parents or [])]
             result = p.process(*inp_values)
             intermediate_results[p] = result
         return result
 
-    def get_params(self) -> None:
+    def get_params(self) -> NoReturn:
         raise NotImplementedError(
             'TaskModuleNode wraps live node references and is not supported by the '
             'distributed execution path yet. Deploy the fused nodes as separate, '
@@ -451,14 +454,15 @@ class TaskModuleNode(ProcessorNode):
         )
 
 class FunctionProcessorNode(ProcessorNode):
-    def __init__(self, processor_function, nb_tasks : int = 1, device_type = CPU, name = None, **kwargs) -> None:
+    def __init__(self, processor_function : Callable[[Any], Any], nb_tasks : int = 1,
+                device_type : str = CPU, name : Optional[str] = None, **kwargs : Any) -> None:
         self._processor_function = processor_function
         super(FunctionProcessorNode, self).__init__(nb_tasks, device_type, name = name, **kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         return self._processor_function(inp)
 
-    def get_params(self) -> None:
+    def get_params(self) -> NoReturn:
         raise NotImplementedError(
             'FunctionProcessorNode wraps an arbitrary Python callable, which is not '
             'JSON-serializable. Define a ProcessorNode subclass instead if this node '
@@ -487,7 +491,7 @@ class ModuleNode(Node):
                 - There is a ModuleNode within the subgraph that does not have that flag set to true too.
                 - There is at least one node in the sequence that has device_type GPU
     '''
-    def __init__(self, entry_node : Node, exit_node : Node, *args, **kwargs) -> None:
+    def __init__(self, entry_node : Node, exit_node : Node, *args : Any, **kwargs : Any) -> None:
         self._entry_node = entry_node
         self._exit_node = exit_node
 
@@ -505,7 +509,7 @@ class ModuleNode(Node):
             raise ValueError('There is at least one node in the module graph that is not instance of ProcessorNode or of ModuleNode')
 
         # Create valid tsort here.
-        self._tsort = []
+        self._tsort : List[ProcessorNode] = []
         for n in temp_tsort:
             if isinstance(n, ProcessorNode):
                 self._tsort.append(n)
@@ -514,15 +518,18 @@ class ModuleNode(Node):
 
         super(ModuleNode, self).__init__(*args, **kwargs)
 
-    def __call__(self, *parents) -> None:
+    # override: unimplemented stub. Node.__call__ returns self for chaining; this
+    # returns None, so wiring a ModuleNode into a graph silently yields None. It has
+    # no callers anywhere in the repo — left as-is rather than implementing dead code.
+    def __call__(self, *parents : Node) -> None:   # type: ignore[override]
         #TODO
         pass
 
     @property
-    def nodes(self) -> list:
+    def nodes(self) -> List[ProcessorNode]:
         return list(self._tsort)
 
-    def get_params(self) -> None:
+    def get_params(self) -> NoReturn:
         raise NotImplementedError(
             'ModuleNode wraps live node references and is not supported by the '
             'distributed execution path.'
@@ -546,7 +553,7 @@ class ProducerNode(Node):
             a ``Deployment`` (infinite).
         - name (str): see ``Node``.
     '''
-    def __init__(self, is_finite : bool = True, name = None, **kwargs) -> None:
+    def __init__(self, is_finite : bool = True, name : Optional[str] = None, **kwargs : Any) -> None:
         self._is_finite = is_finite
         super(ProducerNode, self).__init__(name = name, **kwargs)
 

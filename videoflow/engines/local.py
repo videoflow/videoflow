@@ -10,18 +10,27 @@ Prerequisite: a running NATS JetStream server, e.g. ``nats-server -js`` or
 '''
 from __future__ import absolute_import, division, print_function
 
+import asyncio
 import json
 import logging
 import os
 import signal
+import site
 import subprocess
 import sys
+import sysconfig
 from typing import List, Optional
 
 import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
 
-from ..core.compiler import NodeSpec, specs_from_tasks_data
+from ..core.compiler import (
+    NodeSpec,
+    has_native_components,
+    specs_from_tasks_data,
+    validate_wire_compatibility,
+)
 from ..core.engine import ExecutionEngine
+from ..messaging.topology import control_subject_for, delete_run_streams, provision_flow_sync
 
 logger = logging.getLogger(__package__)
 
@@ -31,7 +40,7 @@ DEFAULT_NATS_URL = 'nats://localhost:4222'
 # setup mistake worth reporting, not a transient worth blocking on indefinitely.
 PROVISION_TIMEOUT_SECONDS = 15
 
-async def _quiet_error_cb(_e) -> None:
+async def _quiet_error_cb(_e : BaseException) -> None:
     '''Swallows the NATS client's per-retry error logging; we report the failure ourselves.'''
     pass
 
@@ -45,9 +54,6 @@ def inherited_python_path() -> list:
     re-exporting these as ``PYTHONPATH`` every node class living next to the graph
     fails to import in its worker.
     '''
-    import site
-    import sysconfig
-
     builtin = set()
     for path in sysconfig.get_paths().values():
         if path:
@@ -83,9 +89,10 @@ class LocalProcessEngine(ExecutionEngine):
             additions (default True) — what makes node classes defined next to the \
             graph importable in the workers. Set False for a hermetic child env.
     '''
-    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str = None, specs = None,
-                allow_pickle : bool = False, local_docker_nats_url : str = None,
-                python_path : list = None, inherit_python_path : bool = True) -> None:
+    def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
+                specs : List[NodeSpec] | None = None,
+                allow_pickle : bool = False, local_docker_nats_url : str | None = None,
+                python_path : list | None = None, inherit_python_path : bool = True) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
@@ -103,14 +110,24 @@ class LocalProcessEngine(ExecutionEngine):
         self._run_id: Optional[str] = None
         super(LocalProcessEngine, self).__init__()
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
+    def _al_create_and_start_processes(self, tasks_data : Optional[list], flow_id : str,
+                                       flow_type : str, run_id : str) -> None:
         self._flow_id = flow_id
         self._run_id = run_id
-        specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
+        # Exactly one source of specs: pre-compiled (the deploy CLI path, which has no
+        # in-process graph) or derived from the live tasks_data. Neither is a caller bug
+        # worth a traceback, so name the fix.
+        if self._specs is not None:
+            specs = self._specs
+        elif tasks_data is None:
+            raise ValueError('no specs to run: construct the engine with specs = ... or '
+                            'pass tasks_data from Flow.build_tasks_data()')
+        else:
+            specs = specs_from_tasks_data(tasks_data)
 
         # Resolve the whole-run wire version: a flow with any remote component must
         # use the protobuf wire (v4+) so native and non-Python workers agree.
-        from ..core.compiler import has_native_components, validate_wire_compatibility
+        # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
         from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
         base = DEFAULT_ENVELOPE_VERSION
         envelope_version = 4 if (has_native_components(specs) and base < 4) else base
@@ -120,7 +137,6 @@ class LocalProcessEngine(ExecutionEngine):
         # interest retention, a message published before its consumer exists is lost.
         # Fail fast rather than retrying forever: locally, an unreachable broker is a
         # setup mistake to report, not a transient the run should wait out.
-        from ..messaging.topology import provision_flow_sync
         try:
             provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type,
                                 connect_options = {'allow_reconnect': False,
@@ -148,7 +164,7 @@ class LocalProcessEngine(ExecutionEngine):
                     f'({"remote" if spec.is_remote else "python"})'
                 )
 
-    def _launch_command(self, spec, env : dict):
+    def _launch_command(self, spec : NodeSpec, env : dict) -> tuple:
         '''
         The command + environment to start one worker for ``spec``:
 
@@ -173,13 +189,20 @@ class LocalProcessEngine(ExecutionEngine):
         docker = ['docker', 'run', '--rm', '--network', 'host']
         for k, v in vf_env.items():
             docker += ['-e', f'{k}={v}']
+        if not spec.image:
+            raise ValueError(
+                f'remote component node {spec.name!r} has no image to run locally — give it an '
+                f'`image=` or a `runtime.localCommand` in its component descriptor.')
         docker.append(spec.image)
         if spec.command:
             docker += list(spec.command)
         return docker, dict(os.environ)
 
     def signal_flow_termination(self) -> None:
-        _publish_stop(self._nats_url, self._flow_id, self._run_id)
+        flow_id, run_id = self._flow_id, self._run_id
+        if flow_id is None or run_id is None:      # nothing was ever started
+            return
+        _publish_stop(self._nats_url, flow_id, run_id)
 
     def wait_for_completion(self) -> List[str]:
         '''
@@ -233,9 +256,6 @@ class LocalProcessEngine(ExecutionEngine):
         flow_id, run_id = self._flow_id, self._run_id
         if flow_id is None or run_id is None:
             return
-        import asyncio
-
-        from ..messaging.topology import delete_run_streams
 
         async def _go() -> None:
             nc = await nats.connect(self._nats_url)
@@ -249,8 +269,9 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
-def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redis_url,
-                replica_id, envelope_version, allow_pickle = False, python_path = None) -> dict:
+def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
+                blob_redis_url : str | None, replica_id : int, envelope_version : int,
+                allow_pickle : bool = False, python_path : list | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -287,11 +308,7 @@ def _worker_env(spec : NodeSpec, nats_url, flow_id, flow_type, run_id, blob_redi
         env['VF_ALLOW_PICKLE'] = '1'
     return env
 
-def _publish_stop(nats_url, flow_id, run_id) -> None:
-    import asyncio
-
-    from ..messaging.topology import control_subject_for
-
+def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:
     async def _go() -> None:
         nc = await nats.connect(nats_url)
         await nc.publish(control_subject_for(flow_id, run_id), b'stop')

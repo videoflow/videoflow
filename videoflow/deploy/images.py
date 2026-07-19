@@ -14,6 +14,8 @@ If none apply, resolution raises with an actionable message instead of guessing.
 '''
 from __future__ import absolute_import, division, print_function
 
+from typing import Optional
+
 
 def parse_override(spec : str) -> tuple:
     '''Parses a ``name=ref`` CLI override into a ``(name, ref)`` tuple.'''
@@ -24,8 +26,9 @@ def parse_override(spec : str) -> tuple:
         raise ValueError(f'--image-override must be name=image-ref, got: {spec!r}')
     return name, ref
 
-def resolve_image(node_name : str, node_image : str, default_image : str = None,
-                overrides : dict = None) -> str:
+def resolve_image(node_name : str, node_image : Optional[str],
+                default_image : Optional[str] = None,
+                overrides : Optional[dict] = None) -> str:
     '''
     - Arguments:
         - node_name: the node's stable name (matched against ``overrides``).

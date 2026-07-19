@@ -20,17 +20,21 @@ import logging
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Coroutine, Optional, TypeVar
 
 import nats
+from nats.aio.msg import Msg
+from nats.js import JetStreamContext
 
 from ..core.constants import REALTIME
 from ..core.engine import Messenger
+from ..core.node import Node
 from ..core.policies import JOIN_TIME, JoinPolicy
 from ..wire.serialization import (
     DEFAULT_ENVELOPE_VERSION,
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
+    BlobStore,
     decode_envelope,
     derive_message_id,
     encode_envelope,
@@ -61,6 +65,10 @@ _QUEUE_MAXSIZE = 4
 # doesn't wedge here forever.
 _PUBLISH_RETRY_BACKOFF = [0.05, 0.1, 0.2, 0.5, 1.0]
 
+#: Result type of a coroutine handed to ``_AckHandle._run`` — ties the value the
+#: caller gets back to the coroutine it passed in.
+_T = TypeVar('_T')
+
 class _AckHandle:
     '''
     Thread-safe wrapper over a JetStream ``Msg`` so the synchronous task loop (on
@@ -69,7 +77,7 @@ class _AckHandle:
     point of Phase-2 at-least-once delivery is that these are called only *after*
     the node has processed the message (and published its output), never before.
     '''
-    def __init__(self, msg, messenger) -> None:
+    def __init__(self, msg : Msg, messenger : 'NATSMessenger') -> None:
         self._msg = msg
         self._m = messenger
         self._resolved = False
@@ -88,7 +96,7 @@ class _AckHandle:
         except Exception:
             return None
 
-    def _run(self, coro) -> Any:
+    def _run(self, coro : Coroutine[Any, Any, _T]) -> _T:
         fut = asyncio.run_coroutine_threadsafe(coro, self._m._loop)
         return fut.result(timeout = 10)
 
@@ -102,7 +110,7 @@ class _AckHandle:
         except Exception:
             logger.debug('ack failed (message may have been redelivered/evicted)', exc_info = True)
 
-    def nak(self, delay = None) -> None:
+    def nak(self, delay : float | None = None) -> None:
         if self._resolved:
             return
         self._resolved = True
@@ -140,11 +148,12 @@ class NATSMessenger(Messenger):
             policy's ``max_pending`` bounds how many not-yet-complete groups are \
             held in memory before the oldest is evicted.
     '''
-    def __init__(self, node, parent_names, nats_url : str, flow_id : str, flow_type : str,
-                run_id : str, blob_store = None,
+    def __init__(self, node : Node, parent_names : list[str], nats_url : str, flow_id : str,
+                flow_type : str, run_id : str, blob_store : BlobStore | None = None,
                 replica_id : int = 0, ack_wait : int = 60, max_retries : int = 3,
-                eos_quiescence_ms : int = 500, nb_tasks : int = 1, partition_by = None,
-                join_policy = None, envelope_version : int = None, allow_pickle : bool = False) -> None:
+                eos_quiescence_ms : int = 500, nb_tasks : int = 1,
+                partition_by : str | None = None, join_policy : dict | None = None,
+                envelope_version : int | None = None, allow_pickle : bool = False) -> None:
         self._node = node
         # Wire version this node emits (msgpack v3 or protobuf v4) and whether the
         # legacy Python-only pickle payload codec is permitted (§4 of PROTOCOL.md).
@@ -187,20 +196,20 @@ class NATSMessenger(Messenger):
         # event time themselves); downstream nodes inherit the input group's values.
         self._last_seq = 0
         self._last_event_ts: Optional[float] = None
-        self._last_input_info: Optional[dict] = None
+        self._last_input_info: Optional[dict[str, Optional[dict]]] = None
         # Optional partition key / event timestamp set by the node (via
         # ctx.set_partition_key / ctx.set_event_timestamp) and attached to the
         # next published message.
         self._output_partition_key = None
         self._output_event_ts: Optional[float] = None
 
-        self._stopped_parents: set = set()
+        self._stopped_parents: set[str] = set()
         # EOS drain state: a parent is fully stopped only once its EOS has been
         # observed AND its data durable is quiescent (all data drained) — see
         # _is_parent_stopped. _eos_handles holds the EOS ack until drain completes.
-        self._eos_seen: set = set()
-        self._eos_handles: dict = {}
-        self._quiescent_since: dict = {}
+        self._eos_seen: set[str] = set()
+        self._eos_handles: dict[str, _AckHandle] = {}
+        self._quiescent_since: dict[str, float] = {}
         # Consecutive empty receive polls — drives the periodic EOS-drain stall log.
         self._idle_polls = 0
         # Ack handles: _inflight_handles are the handles of the group last returned
@@ -208,9 +217,9 @@ class NATSMessenger(Messenger):
         # (handles of still-pending groups live inside the assembler).
         # _live_handles is every unresolved handle (for the keepalive extender),
         # guarded by _live_lock.
-        self._inflight_handles: list = []
+        self._inflight_handles: list[_AckHandle] = []
         self._live_lock = threading.Lock()
-        self._live_handles: set = set()
+        self._live_handles: set[_AckHandle] = set()
 
         # _termination_event: control-channel "stop the whole flow" signal, read by
         #   producers (to stop early) and by receive_message (to stop waiting).
@@ -224,7 +233,7 @@ class NATSMessenger(Messenger):
         self._thread = threading.Thread(target = self._run_loop, daemon = True)
         self._thread.start()
 
-        self._parent_queues: dict = {}
+        self._parent_queues: dict[str, asyncio.Queue] = {}
 
         fut = asyncio.run_coroutine_threadsafe(self._setup(), self._loop)
         fut.result(timeout = 30)
@@ -284,7 +293,7 @@ class NATSMessenger(Messenger):
             return partitioned_durable_name_for(self._node.name, parent_name, self._replica_id)
         return durable_name_for(self._node.name, parent_name)
 
-    def _owns(self, entry) -> bool:
+    def _owns(self, entry : dict[str, Any]) -> bool:
         '''For a partitioned node, whether this replica owns the message (hash of the partition key modulo replica count).'''
         if not self._partition_by:
             return True
@@ -306,10 +315,10 @@ class NATSMessenger(Messenger):
             if 'already in use' not in str(e) and 'name already in use' not in str(e):
                 logger.debug(f'add_stream({config.name}) raised (likely already exists): {e}')
 
-    async def _on_control_message(self, msg) -> None:
+    async def _on_control_message(self, msg : Msg) -> None:
         self._termination_event.set()
 
-    async def _pull_loop(self, parent_name : str, sub) -> None:
+    async def _pull_loop(self, parent_name : str, sub : JetStreamContext.PullSubscription) -> None:
         while not self._closing.is_set():
             try:
                 msgs = await sub.fetch(batch = 1, timeout = _FETCH_TIMEOUT_SECONDS)
@@ -349,7 +358,7 @@ class NATSMessenger(Messenger):
                 self._register_handle(handle)
                 await self._parent_queues[parent_name].put((entry, handle))
 
-    async def _eos_pull_loop(self, parent_name : str, sub) -> None:
+    async def _eos_pull_loop(self, parent_name : str, sub : JetStreamContext.PullSubscription) -> None:
         # Observes end-of-stream for one parent. The EOS message is *not* acked
         # here — it's held (in _eos_handles) and acked only once the parent's data
         # is fully drained (see _is_parent_stopped), so a crash mid-drain leaves EOS
@@ -391,11 +400,11 @@ class NATSMessenger(Messenger):
                     except Exception:
                         pass
 
-    def _register_handle(self, handle) -> None:
+    def _register_handle(self, handle : _AckHandle) -> None:
         with self._live_lock:
             self._live_handles.add(handle)
 
-    def _forget_handle(self, handle) -> None:
+    def _forget_handle(self, handle : _AckHandle) -> None:
         with self._live_lock:
             self._live_handles.discard(handle)
 
@@ -440,13 +449,13 @@ class NATSMessenger(Messenger):
     def check_for_termination(self) -> bool:
         return self._termination_event.is_set()
 
-    def set_output_partition_key(self, value) -> None:
+    def set_output_partition_key(self, value : Any) -> None:
         self._output_partition_key = value
 
     def set_output_event_timestamp(self, value : float) -> None:
         self._output_event_ts = value
 
-    def last_input_info(self) -> Optional[dict]:
+    def last_input_info(self) -> Optional[dict[str, Optional[dict]]]:
         '''
         Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, ``seq``)
         for the input group last returned by ``receive_message``; ``None`` entries
@@ -465,7 +474,7 @@ class NATSMessenger(Messenger):
         return derive_message_id(self._flow_id, self._run_id, self._node.name,
                                 self._last_trace_id, self._last_seq, MSG_TYPE_DATA)
 
-    def publish_message(self, message, metadata = None) -> None:
+    def publish_message(self, message : Any, metadata : Optional[dict] = None) -> None:
         trace_id = self._last_trace_id
         seq = self._last_seq
         if trace_id is None:
@@ -499,7 +508,8 @@ class NATSMessenger(Messenger):
         eos_trace = f'eos-r{self._replica_id}'
         self._publish(None, None, eos_trace, self._last_seq, MSG_TYPE_EOS)
 
-    def _publish(self, message, metadata, trace_id, seq, msg_type, event_ts = None) -> None:
+    def _publish(self, message : Any, metadata : Optional[dict], trace_id : str, seq : int,
+                msg_type : str, event_ts : float | None = None) -> None:
         node_name = self._node.name
         buf = encode_envelope(
             node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
@@ -557,7 +567,7 @@ class NATSMessenger(Messenger):
             handle.ack()
         self._inflight_handles = []
 
-    def fail_inputs(self, exc) -> None:
+    def fail_inputs(self, exc : BaseException) -> None:
         '''
         The node raised while processing the last input group. REALTIME drops it
         (no redelivery — freshest wins). BATCH nak's it for redelivery until it
@@ -578,7 +588,7 @@ class NATSMessenger(Messenger):
                 handle.nak(delay = min(2 ** handle.num_delivered, 30))
         self._inflight_handles = []
 
-    def _dlq_publish(self, handle, exc) -> bool:
+    def _dlq_publish(self, handle : _AckHandle, exc : BaseException) -> bool:
         subject = dlq_subject_for(self._flow_id, self._run_id, self._node.name)
         seq = handle.stream_seq
         headers = {
@@ -591,7 +601,7 @@ class NATSMessenger(Messenger):
         }
         data = handle._msg.data
 
-        async def _go():
+        async def _go() -> bool:
             for attempt in range(3):
                 try:
                     await self._js.publish(subject, data, headers = headers)
@@ -751,11 +761,11 @@ class NATSMessenger(Messenger):
         if parts:
             logger.info(f'{self._node.name}: EOS drain waiting on ' + '; '.join(parts))
 
-    def _consumer_pending(self, parent : str) -> tuple:
+    def _consumer_pending(self, parent : str) -> tuple[int, int]:
         durable = self._data_durable_name(parent)
         stream = stream_name_for(self._flow_id, self._run_id, parent)
 
-        async def _go():
+        async def _go() -> tuple[int, int]:
             try:
                 info = await self._js.consumer_info(stream, durable)
                 return info.num_pending, info.num_ack_pending
@@ -773,7 +783,7 @@ class NATSMessenger(Messenger):
         if handle is not None:
             handle.ack()
 
-    def _recv_ready(self) -> list:
+    def _recv_ready(self) -> list[tuple[str, dict, _AckHandle]]:
         '''
         Waits up to a short timeout for at least one parent queue to have an item, \
             then returns every parent item that became ready within that wait as \
@@ -781,7 +791,7 @@ class NATSMessenger(Messenger):
             which lets ``receive_message`` loop back and re-check the termination \
             event instead of blocking forever when the flow is being torn down.
         '''
-        async def _wait_for_any_parent():
+        async def _wait_for_any_parent() -> list[tuple[str, dict, _AckHandle]]:
             get_tasks = {
                 asyncio.ensure_future(self._parent_queues[name].get()): name
                 for name in self._parent_names

@@ -227,5 +227,20 @@ def test_command_override_flows_to_pod():
     assert container['command'] == ['/bin/thing', '--serve']
 
 
+def test_compile_flow_with_remote_producer():
+    '''
+    A remote *producer* compiles. ``_validate_remote_node`` runs for every
+    RemoteNodeMixin, but ``_join_policy`` is only set by ProcessorNode/ConsumerNode
+    — never by ProducerNode — so reading it unguarded made a native producer
+    component impossible to deploy.
+    '''
+    prod = component(_descriptor('producer', io = {'outputs': [{'name': 'out', 'type': 'any'}]}))
+    cons = _NativeConsumer()(prod)
+    specs = compile_flow(Flow([cons]), envelope_version = 4)
+    remote = next(s for s in specs if s.is_remote)
+    assert remote.name == prod.name
+    assert remote.join_policy is None
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

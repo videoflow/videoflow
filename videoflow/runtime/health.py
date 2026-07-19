@@ -16,7 +16,7 @@ import logging
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Optional
+from typing import Any, Optional
 
 from ..core.engine import Messenger
 
@@ -48,7 +48,7 @@ class HealthState:
         with self._lock:
             self._last_beat = time.time()
 
-    def observe(self, metric : str, value : float) -> None:
+    def observe(self, metric : str, value : float | None) -> None:
         if value is None:
             return
         with self._lock:
@@ -82,10 +82,10 @@ class HealthState:
 
 def _make_handler(state : HealthState) -> type:
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args) -> None:
+        def log_message(self, *args : Any) -> None:
             pass  # silence per-request stderr logging
 
-        def _respond(self, code, body, content_type = 'text/plain') -> None:
+        def _respond(self, code : int, body : str, content_type : str = 'text/plain') -> None:
             payload = body.encode('utf-8')
             self.send_response(code)
             self.send_header('Content-Type', content_type)
@@ -131,7 +131,7 @@ class InstrumentedMessenger(Messenger):
         self._inner = inner
         self._state = state
 
-    def publish_message(self, message, metadata = None) -> None:
+    def publish_message(self, message : Any, metadata : dict | None = None) -> None:
         self._state.mark_ready()
         self._state.beat()
         if metadata:
@@ -157,11 +157,11 @@ class InstrumentedMessenger(Messenger):
         self._state.incr('messages_processed')
         return self._inner.ack_inputs()
 
-    def fail_inputs(self, exc) -> None:
+    def fail_inputs(self, exc : BaseException) -> None:
         self._state.incr('messages_failed')
         return self._inner.fail_inputs(exc)
 
-    def set_output_partition_key(self, value) -> None:
+    def set_output_partition_key(self, value : Any) -> None:
         return self._inner.set_output_partition_key(value)
 
     def set_output_event_timestamp(self, value : float) -> None:

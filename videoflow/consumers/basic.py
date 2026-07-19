@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import json
+from typing import Any
 
 import requests
 
@@ -15,13 +16,13 @@ class CommandlineConsumer(ConsumerNode):
         - sep: separator to use between tokens.
         - end: end of line character
     '''
-    def __init__(self, sep = ' ', end = '\n', **kwargs) -> None:
+    def __init__(self, sep : str = ' ', end : str = '\n', **kwargs) -> None:
 
         self._end = end
         self._sep = sep
         super(CommandlineConsumer, self).__init__(**kwargs)
 
-    def consume(self, item) -> None:
+    def consume(self, item : Any) -> None:
         '''
         Prints `item` to the command line, adding an end of line character after it.
 
@@ -38,7 +39,7 @@ class VoidConsumer(ConsumerNode):
     def __init__(self, **kwargs) -> None:
         super(VoidConsumer, self).__init__(**kwargs)
 
-    def consume(self, item) -> None:
+    def consume(self, item : Any) -> None:
         '''
         Does nothing with the item passed
         '''
@@ -46,13 +47,13 @@ class VoidConsumer(ConsumerNode):
 
 
 class WebhookConsumer(ConsumerNode):
-    def __init__(self, host, method = "post", **kwargs) -> None:
+    def __init__(self, host : str, method : str = "post", **kwargs) -> None:
         # TODO: Add other pertinent parameters to the init method.
         self.host = host
         self.method = method
         super(WebhookConsumer, self).__init__(**kwargs)
 
-    def consume(self, item) -> None:
+    def consume(self, item : Any) -> None:
         # convert item to json
         try:
             item = json.loads(item)
@@ -74,6 +75,6 @@ class FileAppenderConsumer(ConsumerNode):
         self._filepath = filepath
         super(FileAppenderConsumer, self).__init__(**kwargs)
 
-    def consume(self, item) -> None:
+    def consume(self, item : Any) -> None:
         with open(self._filepath, 'a') as f:
             f.write(f'{item}\n')

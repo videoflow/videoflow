@@ -18,7 +18,9 @@ import os
 import re
 import shutil
 import subprocess
-from typing import List, Optional
+from typing import Any, List, Optional
+
+from .descriptor import ComponentDescriptor, load_descriptor
 
 #: OCI media type for a videoflow component descriptor artifact.
 COMPONENT_MEDIA_TYPE = 'application/vnd.videoflow.component.v1+yaml'
@@ -43,14 +45,15 @@ def default_cache_root() -> str:
     return os.environ.get('VIDEOFLOW_COMPONENT_CACHE',
                         os.path.join(os.path.expanduser('~'), '.videoflow', 'components'))
 
-def cache_dir_for(ref : str, cache_root : str = None) -> str:
+def cache_dir_for(ref : str, cache_root : str | None = None) -> str:
     '''A stable per-ref cache directory (the ref sanitized into a filesystem-safe key).'''
     target = parse_oci_ref(ref)
     key = re.sub(r'[^A-Za-z0-9_.-]+', '_', target)
     return os.path.join(cache_root or default_cache_root(), key)
 
-def _client():
+def _client() -> Any:
     try:
+        # optional dependency (extra): only OCI push/pull needs oras
         from oras.client import OrasClient
     except ImportError as e:
         raise RuntimeError(
@@ -58,12 +61,11 @@ def _client():
             '(or install videoflow[deploy]).') from e
     return OrasClient()
 
-def push_component(descriptor_path : str, ref : str, annotations : dict = None) -> str:
+def push_component(descriptor_path : str, ref : str, annotations : dict | None = None) -> str:
     '''
     Push a ``component.yaml`` to ``ref`` as an OCI artifact. The descriptor is
     validated first (a broken descriptor is never published). Returns the target.
     '''
-    from .descriptor import load_descriptor  # validates on load
     if os.path.isdir(descriptor_path):
         descriptor_path = os.path.join(descriptor_path, 'component.yaml')
     desc = load_descriptor(descriptor_path)
@@ -86,8 +88,8 @@ def push_component(descriptor_path : str, ref : str, annotations : dict = None) 
     )
     return target
 
-def pull_component(ref : str, cache_root : str = None, force : bool = False,
-                verify : bool = False, cosign_args : List[str] = None) -> str:
+def pull_component(ref : str, cache_root : str | None = None, force : bool = False,
+                verify : bool = False, cosign_args : List[str] | None = None) -> str:
     '''
     Resolve ``ref`` to a local ``component.yaml`` path, pulling + caching it on first
     use. With ``verify``, the artifact's signature is checked via ``cosign`` before
@@ -113,12 +115,11 @@ def pull_component(ref : str, cache_root : str = None, force : bool = False,
         shutil.copyfile(yaml_path, cached)
     return cached
 
-def inspect_component(ref : str, **pull_kwargs):
+def inspect_component(ref : str, **pull_kwargs : Any) -> ComponentDescriptor:
     '''Pull (cached) and return the parsed ``ComponentDescriptor`` for ``ref``.'''
-    from .descriptor import load_descriptor
     return load_descriptor(pull_component(ref, **pull_kwargs))
 
-def cosign_verify(target : str, extra_args : List[str] = None) -> None:
+def cosign_verify(target : str, extra_args : List[str] | None = None) -> None:
     '''
     Verify an OCI artifact/image signature with cosign. ``extra_args`` carries the
     trust policy (e.g. ``--key cosign.pub`` or
@@ -132,7 +133,7 @@ def cosign_verify(target : str, extra_args : List[str] = None) -> None:
     if result.returncode != 0:
         raise RuntimeError(f'cosign verify failed for {target}:\n{result.stderr.strip()}')
 
-def _first_yaml(paths) -> Optional[str]:
+def _first_yaml(paths : Any) -> Optional[str]:
     for p in paths or []:
         if str(p).endswith(('.yaml', '.yml')):
             return p

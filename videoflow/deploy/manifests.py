@@ -19,11 +19,17 @@ from __future__ import absolute_import, division, print_function
 import json
 import re
 import subprocess
-from typing import Optional
+from typing import List, Optional
 
 import yaml
 
-from ..core.compiler import NODE_KIND_PRODUCER
+from ..core.compiler import (
+    NODE_KIND_PROCESSOR,
+    NODE_KIND_PRODUCER,
+    NodeSpec,
+    has_native_components,
+    validate_wire_compatibility,
+)
 from ..core.constants import BATCH
 
 # GPU allocation lives in .gpu; these four are used below.
@@ -36,6 +42,7 @@ from .gpu import (
     get_gpu_mode,
     resolve_gpu_resource,
 )
+from .images import resolve_image
 
 LABEL_FLOW_ID = 'videoflow.io/flow-id'
 LABEL_RUN_ID = 'videoflow.io/run-id'
@@ -58,13 +65,13 @@ _BATCH_JOB_TTL_SECONDS = 600
 
 _DNS1123_RE = re.compile(r'[^a-z0-9-]+')
 
-def k8s_name(*parts) -> str:
+def k8s_name(*parts : object) -> str:
     '''Joins parts into a DNS-1123-safe Kubernetes resource name.'''
     raw = '-'.join(str(p) for p in parts).lower()
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
 
-def parse_mounts(values) -> list:
+def parse_mounts(values : Optional[List[str]]) -> list:
     '''
     Parses repeatable ``--mount`` specs into mount dicts consumed by ``_pod_spec``.
 
@@ -93,7 +100,8 @@ def parse_mounts(values) -> list:
                        'container_path': parts[1], 'read_only': read_only})
     return mounts
 
-def _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
+def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
+               envelope_version : int, allow_pickle : bool = False) -> dict:
     env = {
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
         'VF_NODE_KIND': spec.kind,
@@ -128,16 +136,16 @@ def _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle 
         env['VF_ALLOW_PICKLE'] = '1'
     return env
 
-def _is_partitioned(spec) -> bool:
+def _is_partitioned(spec : NodeSpec) -> bool:
     return bool(getattr(spec, 'partition_by', None)) and spec.nb_tasks > 1
 
-def _labels(flow_id, node_name = None) -> dict:
+def _labels(flow_id : str, node_name : Optional[str] = None) -> dict:
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
     if node_name is not None:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
 
-def gpu_demand(specs, default_resource = None) -> dict:
+def gpu_demand(specs : List[NodeSpec], default_resource : Optional[str] = None) -> dict:
     '''
     Whole-flow GPU demand per extended-resource name: every replica of a GPU node
     claims its own ``gpu_count`` devices exclusively, so this is the allocatable
@@ -153,10 +161,11 @@ def gpu_demand(specs, default_resource = None) -> dict:
         demand[resource] = demand.get(resource, 0) + spec.nb_tasks * spec.gpu_count
     return demand
 
-def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
-              gpu_runtime_class = None, gpu_mode = 'exclusive',
-              gpu_resource_name = None) -> dict:
-    container = {
+def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
+              nats_configmap : str, mounts : Optional[List[dict]] = None,
+              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
+              gpu_resource_name : Optional[str] = None) -> dict:
+    container : dict = {
         'name': 'worker',
         'image': image,
         'envFrom': [
@@ -166,8 +175,9 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
     }
     # A remote component may override the container command; native nodes and
     # vendor images with a videoflow entrypoint leave it to the image.
-    if getattr(spec, 'command', None):
-        container['command'] = list(spec.command)
+    command = getattr(spec, 'command', None)
+    if command:
+        container['command'] = list(command)
     if _is_partitioned(spec):
         if flow_type == BATCH:
             # Partitioned BATCH node runs as an Indexed Job; the completion index is
@@ -246,7 +256,8 @@ def _pod_spec(spec, flow_id, flow_type, image, nats_configmap, mounts = None,
         pod_spec['runtimeClassName'] = runtime_class
     return pod_spec
 
-def node_configmap(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle = False) -> dict:
+def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
+                   envelope_version : int, allow_pickle : bool = False) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -257,7 +268,7 @@ def node_configmap(spec, flow_id, flow_type, run_id, envelope_version, allow_pic
         'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, allow_pickle),
     }
 
-def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
+def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str] = None) -> dict:
     data = {'VF_NATS_URL': nats_url}
     if blob_redis_url:
         data['VF_BLOB_REDIS_URL'] = blob_redis_url
@@ -271,8 +282,10 @@ def nats_configmap(flow_id, nats_url, blob_redis_url = None) -> dict:
         'data': data,
     }
 
-def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None,
-             gpu_runtime_class = None, gpu_mode = 'exclusive', gpu_resource_name = None) -> dict:
+def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
+             nats_cm_name : str, mounts : Optional[List[dict]] = None,
+             gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
+             gpu_resource_name : Optional[str] = None) -> dict:
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
@@ -348,7 +361,7 @@ def workload(spec, flow_id, flow_type, image, nats_cm_name, mounts = None,
         },
     }
 
-def headless_service(spec, flow_id) -> dict:
+def headless_service(spec : NodeSpec, flow_id : str) -> dict:
     '''Headless Service backing a partitioned node's StatefulSet (required for stable pod network identity/ordinals).'''
     labels = _labels(flow_id, spec.name)
     return {
@@ -362,7 +375,7 @@ def headless_service(spec, flow_id) -> dict:
         },
     }
 
-def pod_disruption_budget(spec, flow_id) -> dict:
+def pod_disruption_budget(spec : NodeSpec, flow_id : str) -> dict:
     '''Keeps at least one replica of a multi-replica node available during voluntary disruptions (node drains, upgrades).'''
     labels = _labels(flow_id, spec.name)
     return {
@@ -375,7 +388,7 @@ def pod_disruption_budget(spec, flow_id) -> dict:
         },
     }
 
-def flow_spec_configmap(specs, flow_id, run_id) -> dict:
+def flow_spec_configmap(specs : List[NodeSpec], flow_id : str, run_id : str) -> dict:
     '''ConfigMap holding the compiled specs as JSON, mounted by the provisioning init Job.'''
     return {
         'apiVersion': 'v1',
@@ -384,7 +397,8 @@ def flow_spec_configmap(specs, flow_id, run_id) -> dict:
         'data': {'specs.json': json.dumps([s.to_dict() for s in specs])},
     }
 
-def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name) -> dict:
+def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str,
+                       nats_cm_name : str) -> dict:
     '''
     A one-shot Job that runs ``videoflow.provision`` to create all streams/durables
     before workers start (required so BATCH interest-retention streams don't drop
@@ -423,7 +437,8 @@ def provision_init_job(flow_id, run_id, flow_type, image, nats_cm_name) -> dict:
         },
     }
 
-def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas) -> Optional[dict]:
+def scaled_object(spec : NodeSpec, flow_id : str, run_id : str,
+                  nats_monitoring_endpoint : str, max_replicas : int) -> Optional[dict]:
     '''
     A KEDA ScaledObject that scales a processor Deployment on NATS JetStream
     consumer lag. ``nb_tasks`` becomes the floor (minReplicaCount); KEDA scales up
@@ -433,8 +448,11 @@ def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas)
     Requires KEDA installed in the cluster and the NATS monitoring endpoint
     (port 8222) reachable at ``nats_monitoring_endpoint``.
     '''
-    from ..core.compiler import NODE_KIND_PROCESSOR
+    # Function-level: videoflow.messaging.topology imports the optional `nats`
+    # extra at module scope, and rendering manifests must work without a broker
+    # client installed.
     from ..messaging.topology import durable_name_for, stream_name_for
+
     if spec.kind != NODE_KIND_PROCESSOR or not spec.parents:
         return None
     if _is_partitioned(spec):
@@ -466,7 +484,7 @@ def scaled_object(spec, flow_id, run_id, nats_monitoring_endpoint, max_replicas)
         },
     }
 
-def network_policy(flow_id) -> dict:
+def network_policy(flow_id : str) -> dict:
     '''
     Allows worker pods to talk to each other and out to the broker/DNS, and denies
     everything else ingress by default. Kept intentionally permissive on egress
@@ -485,13 +503,17 @@ def network_policy(flow_id) -> dict:
         },
     }
 
-def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'default',
-                    default_image = None, image_overrides = None, blob_redis_url = None,
-                    autoscaling = False, max_replicas = 10,
-                    nats_monitoring_endpoint = None, envelope_version = None,
-                    allow_pickle = False, provision_image = None, mounts = None,
-                    gpu_runtime_class = None, gpu_mode = 'exclusive',
-                    gpu_resource_name = None, gpu_autoscaling = False) -> list:
+def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nats_url : str,
+                    run_id : str, namespace : str = 'default',
+                    default_image : Optional[str] = None, image_overrides : Optional[dict] = None,
+                    blob_redis_url : Optional[str] = None,
+                    autoscaling : bool = False, max_replicas : int = 10,
+                    nats_monitoring_endpoint : Optional[str] = None,
+                    envelope_version : Optional[int] = None,
+                    allow_pickle : bool = False, provision_image : Optional[str] = None,
+                    mounts : Optional[List[dict]] = None,
+                    gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
+                    gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -535,9 +557,9 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
         - ``ValueError`` if a node has no resolvable image (see ``videoflow.deploy.images``), \
             or if the wire settings are incompatible with the flow's components.
     '''
-    from ..core.compiler import has_native_components, validate_wire_compatibility
+    # Function-level: videoflow.wire.serialization imports the optional `msgpack`
+    # extra at module scope, and rendering manifests must work without it.
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
-    from .images import resolve_image
 
     # Fail before any manifest is built, rather than at the first GPU node.
     get_gpu_mode(gpu_mode)
@@ -603,7 +625,7 @@ def render_manifests(specs, flow_id, flow_type, nats_url, run_id, namespace = 'd
             template.setdefault('metadata', {}).setdefault('labels', {})[LABEL_RUN_ID] = run_label
     return manifests
 
-def split_provision_manifests(manifests, flow_id):
+def split_provision_manifests(manifests : List[dict], flow_id : str) -> tuple:
     '''
     Partitions rendered manifests into ``(provision_phase, worker_phase)`` so the
     caller can apply provisioning first and wait for it before starting workers.
@@ -619,12 +641,14 @@ def split_provision_manifests(manifests, flow_id):
         k8s_name('vf', flow_id, 'netpol'),
         k8s_name('vf', flow_id, 'provision'),
     }
-    phase1, phase2 = [], []
+    phase1 : list = []
+    phase2 : list = []
     for m in manifests:
         (phase1 if m['metadata']['name'] in provision_names else phase2).append(m)
     return phase1, phase2
 
-def delete_resources(kubectl, namespace, flow_id, run_id = None) -> None:
+def delete_resources(kubectl : str, namespace : str, flow_id : str,
+                     run_id : Optional[str] = None) -> None:
     '''
     Single source of truth for tearing down a flow's Kubernetes resources: deletes
     every kind in ``DELETABLE_KINDS`` matching the flow-id label, scoped to one run
@@ -646,6 +670,6 @@ def delete_resources(kubectl, namespace, flow_id, run_id = None) -> None:
             check = False, capture_output = True,
         )
 
-def dump_manifests(manifests) -> str:
+def dump_manifests(manifests : List[dict]) -> str:
     '''Serializes a list of manifest dicts to a single multi-document YAML string.'''
     return yaml.dump_all(manifests, default_flow_style = False, sort_keys = False)

@@ -79,6 +79,21 @@ functions. Prefer `X | None` over an unannotated `= None` default.
 `mypy` is configured leniently (`implicit_optional = true`, `check_untyped_defs = false`) so the
 old code passes. That is a compatibility shim, not permission to omit hints in new code.
 
+**Liskov/override checking is on** (`enable_error_code = ["override"]`). The framework has a
+handful of deliberate violations — a node's `process()`/`consume()` takes one positional arg per
+parent, so those subclasses can't match the base signature. Each carries a local
+`# type: ignore[override]` with a comment naming the reason. Add the local ignore; do not
+re-disable the code repo-wide. The blanket disable it replaced was also hiding unrelated real
+bugs (`get_params()` stubs typed `-> None` instead of `NoReturn`, and `ModuleNode.__call__`
+silently returning `None` where callers expect a `Node` for chaining).
+
+**Prefer `Any` over a wrong narrowing.** Arbitrary user data flows through the graph, so the
+payload surfaces — `process`/`consume`/`next`/`publish_message`/`encode_payload`, and
+`set_output_partition_key` — are `Any` *by contract*, not by neglect. Two traps when tightening
+types: narrowing a param that a subclass legitimately re-narrows breaks it (`Any` is
+bidirectionally compatible, `object` is not), and typing a value against a third-party or
+duck-typed object (`topology.specs`, `grouping.handle`) turns a working seam into a lie.
+
 **Import at module scope by default.** A function-level import needs a reason, and the reason
 goes in a comment next to it. There are exactly two good reasons here:
 
@@ -86,8 +101,20 @@ goes in a comment next to it. There are exactly two good reasons here:
    via extras, so the core must import cleanly without them. This is why `deploy/cli.py` defers so much.
 2. Breaking a real circular import.
 
-"It's slow to import" and "it's only used in one branch" are not reasons. `TODO.md` item 7
-tracks auditing the existing function-level imports; don't add to the pile.
+"It's slow to import" and "it's only used in one branch" are not reasons. The audit of existing
+function-level imports is **done** — every one of the 44 that remain is deliberate and carries a
+reason comment. Don't add an undocumented one.
+
+Two things that audit learned, worth knowing before you defer or hoist anything:
+
+- **Watch for transitive pulls.** `from .solution import ...` looks like a cheap intra-package
+  import, but `solution.py` imports `yaml` at module scope, so hoisting it breaks a bare install.
+  Most of the legitimate deferrals in `deploy/` and `engines/` are this shape, not direct
+  imports of an extra. Verify by importing the module with the extras blocked — don't eyeball it.
+- **To hoist a plugin-registry import, import the module, not the symbol.** Tests monkeypatch
+  `plugins.load_plugin_group`, which only works while the name resolves at call time. Use
+  `from ..utils import plugins` at module scope and call `plugins.load_plugin_group(...)`; that
+  satisfies this rule and keeps the patch seam. See `wire/serialization.py` and `deploy/gpu.py`.
 
 **Abstraction practices.**
 - Prefer small pure functions taking explicit arguments over methods that reach into `self._*`.

@@ -13,9 +13,14 @@ previous run's durables.
 '''
 from __future__ import absolute_import, division, print_function
 
+import asyncio
 import logging
 import re
+from typing import Any
 
+import nats
+from nats.aio.client import Client
+from nats.js import JetStreamContext
 from nats.js.api import ConsumerConfig, DiscardPolicy, RetentionPolicy, StreamConfig
 
 from ..core.constants import REALTIME
@@ -88,7 +93,7 @@ DEFAULT_BATCH_MAX_MSGS = 10_000
 DUPLICATE_WINDOW_SECONDS = 120
 
 def stream_config_for(flow_id : str, run_id : str, node_name : str, flow_type : str,
-                    subjects = None, realtime_buffer : int = DEFAULT_REALTIME_BUFFER,
+                    subjects : list[str] | None = None, realtime_buffer : int = DEFAULT_REALTIME_BUFFER,
                     batch_max_msgs : int = DEFAULT_BATCH_MAX_MSGS) -> StreamConfig:
     name = stream_name_for(flow_id, run_id, node_name)
     if subjects is None:
@@ -194,7 +199,7 @@ def eos_anchor_config(flow_id : str, run_id : str, node_name : str) -> ConsumerC
 
 # -- provisioning ----------------------------------------------------------
 
-async def _ensure_stream(js, config : StreamConfig) -> None:
+async def _ensure_stream(js : JetStreamContext, config : StreamConfig) -> None:
     try:
         await js.add_stream(config)
     except Exception as e:  # noqa: BLE001 — nats raises a generic error on conflict
@@ -209,13 +214,13 @@ async def _ensure_stream(js, config : StreamConfig) -> None:
         else:
             raise
 
-async def _ensure_consumer(js, stream_name : str, config : ConsumerConfig) -> None:
+async def _ensure_consumer(js : JetStreamContext, stream_name : str, config : ConsumerConfig) -> None:
     try:
         await js.add_consumer(stream_name, config)
     except Exception as e:  # noqa: BLE001
         logger.debug(f'add_consumer({stream_name}, {config.durable_name}) skipped: {e}')
 
-async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str,
+async def provision_flow(nc : Client, specs : list, flow_id : str, run_id : str, flow_type : str,
                         max_retries : int = DEFAULT_MAX_RETRIES, ack_wait : int = 60,
                         max_ack_pending : int = 8) -> None:
     '''
@@ -268,8 +273,9 @@ async def provision_flow(nc, specs, flow_id : str, run_id : str, flow_type : str
             else:
                 await _ensure_consumer(js, parent_stream, base)
 
-async def provision_flow_connect(nats_url : str, specs, flow_id : str, run_id : str,
-                                flow_type : str, connect_options : dict = None, **kwargs) -> None:
+async def provision_flow_connect(nats_url : str, specs : list, flow_id : str, run_id : str,
+                                flow_type : str, connect_options : dict[str, Any] | None = None,
+                                **kwargs : Any) -> None:
     '''
     Connects to NATS, provisions, and drains — a self-contained entrypoint.
 
@@ -279,15 +285,15 @@ async def provision_flow_connect(nats_url : str, specs, flow_id : str, run_id : 
             still be starting; a local run passes fail-fast options instead so an \
             unreachable broker reports itself rather than hanging.
     '''
-    import nats
     nc = await nats.connect(nats_url, **(connect_options or {}))
     try:
         await provision_flow(nc, specs, flow_id, run_id, flow_type, **kwargs)
     finally:
         await nc.drain()
 
-def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow_type : str,
-                        connect_options : dict = None, timeout : float = None, **kwargs) -> None:
+def provision_flow_sync(nats_url : str, specs : list, flow_id : str, run_id : str, flow_type : str,
+                        connect_options : dict[str, Any] | None = None, timeout : float | None = None,
+                        **kwargs : Any) -> None:
     '''
     Synchronous wrapper for callers outside an event loop (the local engine, the
     init entrypoint).
@@ -302,8 +308,6 @@ def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow
     - Raises:
         - ``TimeoutError`` when ``timeout`` elapses first.
     '''
-    import asyncio
-
     async def _go() -> None:
         await provision_flow_connect(nats_url, specs, flow_id, run_id, flow_type,
                                      connect_options = connect_options, **kwargs)
@@ -313,7 +317,7 @@ def provision_flow_sync(nats_url : str, specs, flow_id : str, run_id : str, flow
 
     asyncio.run(_bounded() if timeout is not None else _go())
 
-async def delete_run_streams(nc, flow_id : str, run_id : str) -> None:
+async def delete_run_streams(nc : Client, flow_id : str, run_id : str) -> None:
     '''Best-effort teardown: delete every stream belonging to this run.'''
     js = nc.jetstream()
     prefix = stream_label_selector(flow_id, run_id)

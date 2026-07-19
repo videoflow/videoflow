@@ -9,6 +9,7 @@ per-component images already built and pushed (see ``docker/``).
 '''
 from __future__ import absolute_import, division, print_function
 
+import asyncio
 import logging
 import subprocess
 import sys
@@ -57,13 +58,14 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - gpu_autoscaling: include GPU nodes in KEDA autoscaling (off by default — \
             each extra replica claims whole GPUs).
     '''
-    def __init__(self, nats_url : str, namespace : str = 'default', default_image : str = None,
-                image_overrides : dict = None, blob_redis_url : str = None, specs = None,
-                kubectl : str = 'kubectl', envelope_version : int = None, allow_pickle : bool = False,
-                provision_image : str = None, autoscaling : bool = False, max_replicas : int = 10,
-                nats_monitoring_endpoint : str = None, mounts : list = None,
-                gpu_runtime_class : str = None, gpu_mode : str = 'exclusive',
-                gpu_resource_name : str = None, gpu_autoscaling : bool = False) -> None:
+    def __init__(self, nats_url : str, namespace : str = 'default', default_image : str | None = None,
+                image_overrides : dict | None = None, blob_redis_url : str | None = None,
+                specs : list | None = None,
+                kubectl : str = 'kubectl', envelope_version : int | None = None, allow_pickle : bool = False,
+                provision_image : str | None = None, autoscaling : bool = False, max_replicas : int = 10,
+                nats_monitoring_endpoint : str | None = None, mounts : list | None = None,
+                gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
+                gpu_resource_name : str | None = None, gpu_autoscaling : bool = False) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -86,10 +88,20 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
+    def _al_create_and_start_processes(self, tasks_data : Optional[list], flow_id : str,
+                                       flow_type : str, run_id : str) -> None:
         self._flow_id = flow_id
         self._run_id = run_id
-        specs = self._specs if self._specs is not None else specs_from_tasks_data(tasks_data)
+        # Exactly one source of specs: pre-compiled (the deploy CLI path, which has no
+        # in-process graph) or derived from the live tasks_data. Neither is a caller bug
+        # worth a traceback, so name the fix.
+        if self._specs is not None:
+            specs = self._specs
+        elif tasks_data is None:
+            raise ValueError('no specs to deploy: construct the engine with specs = ... or '
+                            'pass tasks_data from Flow.build_tasks_data()')
+        else:
+            specs = specs_from_tasks_data(tasks_data)
         manifests = render_manifests(
             specs, flow_id, flow_type, self._nats_url, run_id, namespace = self._namespace,
             default_image = self._default_image, image_overrides = self._image_overrides,
@@ -306,7 +318,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         return [f'pod {name} cannot be scheduled: {message or "Unschedulable"}'
                 for name, message in stuck]
 
-    def dump_failed_logs(self, nodes : List[str], node_label : str = None) -> None:
+    def dump_failed_logs(self, nodes : List[str], node_label : str | None = None) -> None:
         '''Prints the recent pod logs of each failed node (before teardown removes them).'''
         for node in nodes:
             if node_label is not None:
@@ -328,14 +340,17 @@ class KubernetesExecutionEngine(ExecutionEngine):
         resource for this run by label. The k8s cleanup is the guarantee; the broker
         step is skipped with a warning if NATS is unreachable.
         '''
+        flow_id, run_id = self._flow_id, self._run_id
+        if flow_id is None or run_id is None:      # nothing was ever applied
+            return
         try:
-            _publish_stop(self._nats_url, self._flow_id, self._run_id)
+            _publish_stop(self._nats_url, flow_id, run_id)
         except Exception as e:
             logger.warning(f'Broker teardown skipped (could not reach NATS at '
                            f'{self._nats_url}): {e}. Delete the run streams later with '
                            f'`videoflow teardown --flow-id {self._flow_id} --run-id '
                            f'{self._run_id} --nats <reachable-url>`.')
-        delete_resources(self._kubectl, self._namespace, self._flow_id, self._run_id)
+        delete_resources(self._kubectl, self._namespace, flow_id, run_id)
 
     def signal_flow_termination(self) -> None:
         '''Stops the flow and removes its resources (used by ``Flow.stop``).'''
@@ -354,9 +369,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         except RuntimeError as e:
             logger.error(f'flow will never complete: {e}')
 
-def _publish_stop(nats_url, flow_id, run_id) -> None:
-    import asyncio
-
+def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:
+    # Deferred (both): the optional `nats` client, which topology also imports at module
+    # scope. Rendering/applying manifests must work without the broker client installed.
     import nats
 
     from ..messaging.topology import control_subject_for, delete_run_streams

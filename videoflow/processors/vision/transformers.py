@@ -79,7 +79,9 @@ class CropImageTransformer(ProcessorNode):
             result.append(im_cropped)
         return result
 
-    def process(self, im: np.ndarray, crop_dimensions: Optional[np.ndarray]) -> List[np.ndarray]:
+    # override: one positional arg per parent — the by-parent input contract,
+    # not LSP substitutability. See [tool.mypy] disable/enable notes in pyproject.
+    def process(self, im: np.ndarray, crop_dimensions: Optional[np.ndarray]) -> List[np.ndarray]:   # type: ignore[override]
         '''
         Crops image according to the coordinates in crop_dimensions.
         If those coordinates are out of bounds, it will raise errors
@@ -115,7 +117,9 @@ class MaskImageTransformer(ProcessorNode):
         masked = cv2.multiply(im, alpha)
         return masked.astype(np.uint8)
 
-    def process(self, im : np.ndarray, mask : np.ndarray) -> np.ndarray:
+    # override: one positional arg per parent — the by-parent input contract,
+    # not LSP substitutability. See [tool.mypy] disable/enable notes in pyproject.
+    def process(self, im : np.ndarray, mask : np.ndarray) -> np.ndarray:   # type: ignore[override]
         '''
         Masks an image according to given masks
 
@@ -135,11 +139,11 @@ class MaskImageTransformer(ProcessorNode):
 
 
 class ResizeImageTransformer(ProcessorNode):
-    def __init__(self, maintain_ratio = False, **kwargs) -> None:
+    def __init__(self, maintain_ratio : bool = False, **kwargs) -> None:
         self._maintain_ratio = maintain_ratio
         super(ResizeImageTransformer, self).__init__(**kwargs)
 
-    def _resize(self, im : np.ndarray, new_size) -> np.ndarray:
+    def _resize(self, im : np.ndarray, new_size : tuple[int, int]) -> np.ndarray:
         height, width = new_size
         if height < 0 or width < 0:
             raise ValueError("One of `width` or `height` is a negative value")
@@ -149,7 +153,9 @@ class ResizeImageTransformer(ProcessorNode):
             im = cv2.resize(im, (width, height))
         return im
 
-    def process(self, im : np.ndarray, new_size) -> np.ndarray:
+    # override: one positional arg per parent — the by-parent input contract,
+    # not LSP substitutability. See [tool.mypy] disable/enable notes in pyproject.
+    def process(self, im : np.ndarray, new_size : tuple[int, int]) -> np.ndarray:   # type: ignore[override]
         '''
         Resizes image according to coordinates in new_size
 

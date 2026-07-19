@@ -16,15 +16,16 @@ unchanged; ``RemoteNodeMixin`` marks them for the compiler, which records a
 '''
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional
+from typing import Any, Dict, List, Optional, Union
 
 from ..components.descriptor import ComponentDescriptor, load_descriptor
-from .node import ConsumerNode, ProcessorNode, ProducerNode, _slugify
+from .node import ConsumerNode, Node, ProcessorNode, ProducerNode, _slugify
+from .policies import JoinPolicy
 
 # Per-base counter so an unnamed remote node gets a readable, component-derived
 # default name (e.g. 'sort-tracker-1') instead of the Python class name; final
 # uniqueness within a flow is still enforced by GraphEngine at build time.
-_remote_name_counters : dict = {}
+_remote_name_counters : Dict[str, int] = {}
 
 def _default_remote_name(descriptor : ComponentDescriptor) -> str:
     base = _slugify(descriptor.name.split('/')[-1]) or 'component'
@@ -35,7 +36,7 @@ class RemoteNodeMixin:
     '''Shared state/identity for the three remote node kinds.'''
     _component_ref : str
     _descriptor : ComponentDescriptor
-    _component_params : dict
+    _component_params : Dict[str, Any]
 
     @property
     def component_ref(self) -> str:
@@ -46,14 +47,14 @@ class RemoteNodeMixin:
         return self._descriptor
 
     @property
-    def component_command(self) -> Optional[list]:
+    def component_command(self) -> Optional[List[str]]:
         return self._descriptor.command
 
     @property
-    def local_command(self) -> Optional[list]:
+    def local_command(self) -> Optional[List[str]]:
         return self._descriptor.local_command
 
-    def get_params(self) -> dict:
+    def get_params(self) -> Dict[str, Any]:
         '''
         The component's own params, delivered via VF_NODE_PARAMS_JSON. For a native
         component these are the only params (routing settings reach it via env); for
@@ -67,26 +68,30 @@ class RemoteNodeMixin:
             params.update(self._python_node_params())
         return params
 
-    def _python_node_params(self) -> dict:
+    def _python_node_params(self) -> Dict[str, Any]:
         '''Node-level params to merge for a Python component; overridden per role.'''
         return {}
 
 class RemoteProducer(RemoteNodeMixin, ProducerNode):
-    def __init__(self, component_ref, descriptor, params, is_finite = True,
-                name = None, image = None) -> None:
+    def __init__(self, component_ref : str, descriptor : ComponentDescriptor, params : Dict[str, Any],
+                is_finite : bool = True, name : Optional[str] = None,
+                image : Optional[str] = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
         super().__init__(is_finite = is_finite, name = name, image = image)
 
-    def next(self):
+    def next(self) -> Any:
         raise NotImplementedError('RemoteProducer runs out-of-process in its own image; '
                                 'next() is never called in the Python process.')
 
 class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
-    def __init__(self, component_ref, descriptor, params, nb_tasks = 1, device_type = 'cpu',
-                partition_by = None, join_policy = None, name = None, image = None,
-                gpu_count = 1, gpu_resource_name = None) -> None:
+    def __init__(self, component_ref : str, descriptor : ComponentDescriptor, params : Dict[str, Any],
+                nb_tasks : int = 1, device_type : str = 'cpu',
+                partition_by : Optional[str] = None,
+                join_policy : Union[JoinPolicy, dict, None] = None,
+                name : Optional[str] = None, image : Optional[str] = None,
+                gpu_count : int = 1, gpu_resource_name : Optional[str] = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
@@ -94,7 +99,7 @@ class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
                         partition_by = partition_by, join_policy = join_policy, image = image,
                         gpu_count = gpu_count, gpu_resource_name = gpu_resource_name)
 
-    def _python_node_params(self) -> dict:
+    def _python_node_params(self) -> Dict[str, Any]:
         # A Python processor is reconstructed as pythonClass(**params); it needs its
         # device/replica settings (e.g. to place a model on CPU vs GPU in open(),
         # or to size data-parallel work off self.gpu_count) — mirroring what a
@@ -102,34 +107,39 @@ class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
         return {'nb_tasks': self._nb_tasks, 'device_type': self._device_type,
                 'gpu_count': self._gpu_count, 'gpu_resource_name': self._gpu_resource_name}
 
-    def process(self, *inputs):
+    def process(self, *inputs : Any) -> Any:
         raise NotImplementedError('RemoteProcessor runs out-of-process in its own image; '
                                 'process() is never called in the Python process.')
 
 class RemoteConsumer(RemoteNodeMixin, ConsumerNode):
-    def __init__(self, component_ref, descriptor, params, metadata = False, idempotent = False,
-                join_policy = None, name = None, image = None) -> None:
+    def __init__(self, component_ref : str, descriptor : ComponentDescriptor, params : Dict[str, Any],
+                metadata : bool = False, idempotent : bool = False,
+                join_policy : Union[JoinPolicy, dict, None] = None,
+                name : Optional[str] = None, image : Optional[str] = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
         super().__init__(metadata = metadata, name = name, join_policy = join_policy,
                         idempotent = idempotent, image = image)
 
-    def consume(self, *inputs):
+    def consume(self, *inputs : Any) -> None:
         raise NotImplementedError('RemoteConsumer runs out-of-process in its own image; '
                                 'consume() is never called in the Python process.')
 
-def _resolve_join_policy(join_policy):
-    from .policies import JoinPolicy
+def _resolve_join_policy(join_policy : Union[JoinPolicy, dict, None]) -> Optional[JoinPolicy]:
     if isinstance(join_policy, JoinPolicy):
         return join_policy
     if isinstance(join_policy, dict):
         return JoinPolicy.from_dict(join_policy)
     return None
 
-def component(ref, params = None, name = None, nb_tasks = 1, device_type = 'cpu',
-            partition_by = None, join_policy = None, image = None, is_finite = None,
-            metadata = False, idempotent = False, gpu_count = 1, gpu_resource_name = None):
+def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str, Any]] = None,
+            name : Optional[str] = None, nb_tasks : int = 1, device_type : str = 'cpu',
+            partition_by : Optional[str] = None,
+            join_policy : Union[JoinPolicy, dict, None] = None,
+            image : Optional[str] = None, is_finite : Optional[bool] = None,
+            metadata : bool = False, idempotent : bool = False, gpu_count : int = 1,
+            gpu_resource_name : Optional[str] = None) -> Node:
     '''
     Create a graph node backed by a language-agnostic component described by ``ref``
     (a path to a ``component.yaml`` or, later, an ``oci://`` ref). Returns a

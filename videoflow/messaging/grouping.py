@@ -24,7 +24,7 @@ from __future__ import absolute_import, division, print_function
 
 import logging
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from ..core.policies import JOIN_TIME, MISSING_ERROR, JoinPolicy
 
@@ -51,33 +51,34 @@ class ReadyGroup:
         - handles: every unresolved ack handle backing this group, in no \
             particular order.
     '''
-    def __init__(self, trace_id, seq, event_ts, entries, handles) -> None:
+    def __init__(self, trace_id : str, seq : int, event_ts : float | None,
+                entries : dict[str, Any], handles : list) -> None:
         self.trace_id = trace_id
         self.seq = seq
         self.event_ts = event_ts
         self.entries = entries
         self.handles = handles
 
-def make_assembler(node_name : str, parent_names, policy : JoinPolicy) -> "GroupAssembler":
+def make_assembler(node_name : str, parent_names : list[str], policy : JoinPolicy) -> "GroupAssembler":
     if policy.mode == JOIN_TIME:
         return TimeGroupAssembler(node_name, parent_names, policy)
     return TraceGroupAssembler(node_name, parent_names, policy)
 
 class GroupAssembler:
     '''Base interface: feed entries with ``add``, expire with ``sweep``, drain with ``pop_ready``.'''
-    def __init__(self, node_name : str, parent_names, policy : JoinPolicy) -> None:
+    def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
         self._node_name = node_name
         self._parent_names = list(parent_names)
         self._policy = policy
 
-    def add(self, parent_name : str, entry : dict, handle) -> None:
+    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
         raise NotImplementedError
 
-    def sweep(self, now : float = None) -> None:
+    def sweep(self, now : float | None = None) -> None:
         '''Apply the policy's timeout to pending groups (evict or stage for quorum emission).'''
         raise NotImplementedError
 
-    def pop_ready(self, now : float = None) -> Optional[ReadyGroup]:
+    def pop_ready(self, now : float | None = None) -> Optional[ReadyGroup]:
         raise NotImplementedError
 
     def has_pending_from(self, parent_name : str) -> bool:
@@ -91,14 +92,14 @@ class TraceGroupAssembler(GroupAssembler):
     evicted per the missing policy, and the oldest group is evicted (as drop)
     beyond ``max_pending``.
     '''
-    def __init__(self, node_name : str, parent_names, policy : JoinPolicy) -> None:
+    def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
         super().__init__(node_name, parent_names, policy)
-        self._groups: dict = {}        # trace_id -> {parent: entry}
-        self._handles: dict = {}       # trace_id -> {parent: handle}
-        self._order: list = []
-        self._first_seen: dict = {}
+        self._groups: dict[str, dict[str, Any]] = {}    # trace_id -> {parent: entry}
+        self._handles: dict[str, dict[str, Any]] = {}   # trace_id -> {parent: handle}
+        self._order: list[str] = []
+        self._first_seen: dict[str, float] = {}
 
-    def add(self, parent_name : str, entry : dict, handle) -> None:
+    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
         trace_id = entry['trace_id']
         group = self._groups.setdefault(trace_id, {})
         handles = self._handles.setdefault(trace_id, {})
@@ -116,7 +117,7 @@ class TraceGroupAssembler(GroupAssembler):
         while len(self._order) > self._policy.max_pending:
             self._evict(self._order[0], missing = 'drop', reason = 'max_pending exceeded')
 
-    def sweep(self, now : float = None) -> None:
+    def sweep(self, now : float | None = None) -> None:
         timeout = self._policy.timeout_seconds
         if timeout is None or len(self._parent_names) < 2:
             return
@@ -126,7 +127,7 @@ class TraceGroupAssembler(GroupAssembler):
                 self._evict(trace_id, missing = self._policy.missing,
                             reason = f'join timeout ({timeout}s)')
 
-    def _evict(self, trace_id, missing, reason) -> None:
+    def _evict(self, trace_id : str, missing : str, reason : str) -> None:
         group = self._groups.pop(trace_id, None)
         if group is None:
             return
@@ -144,7 +145,7 @@ class TraceGroupAssembler(GroupAssembler):
             f'missing policy={missing}.'
         )
 
-    def pop_ready(self, now : float = None) -> Optional[ReadyGroup]:
+    def pop_ready(self, now : float | None = None) -> Optional[ReadyGroup]:
         for trace_id in self._order:
             if len(self._groups[trace_id]) == len(self._parent_names):
                 group = self._groups.pop(trace_id)
@@ -167,12 +168,12 @@ class TraceGroupAssembler(GroupAssembler):
 class _TimeGroup:
     __slots__ = ('gid', 'ts', 'first_seen', 'entries', 'handles')
 
-    def __init__(self, gid, ts, first_seen) -> None:
+    def __init__(self, gid : int, ts : float, first_seen : float) -> None:
         self.gid = gid
         self.ts = ts                 # min event_ts over members: the group's time
         self.first_seen = first_seen
-        self.entries: dict = {}      # sync parent -> entry
-        self.handles: dict = {}      # sync parent -> handle
+        self.entries: dict[str, Any] = {}   # sync parent -> entry
+        self.handles: dict[str, Any] = {}   # sync parent -> handle
 
 class TimeGroupAssembler(GroupAssembler):
     '''
@@ -193,7 +194,7 @@ class TimeGroupAssembler(GroupAssembler):
     arrival time — correct enough for co-located low-latency flows, but real
     deployments should stamp at the producer.
     '''
-    def __init__(self, node_name : str, parent_names, policy : JoinPolicy) -> None:
+    def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
         super().__init__(node_name, parent_names, policy)
         unknown = set(policy.collect) - set(parent_names)
         if unknown:
@@ -206,6 +207,9 @@ class TimeGroupAssembler(GroupAssembler):
         if policy.quorum is not None and policy.quorum > len(self._sync_parents):
             raise ValueError(f'{node_name}: quorum={policy.quorum} exceeds the number '
                             f'of synchronized parents ({len(self._sync_parents)})')
+        if policy.tolerance_ms is None:
+            raise ValueError(f"{node_name}: time-mode joins require a positive tolerance_ms; "
+                            "pass JoinPolicy(mode='time', tolerance_ms=...)")
         self._tolerance_s = policy.tolerance_ms / 1000.0
         self._collect_windows = {p: w / 1000.0 for p, w in policy.collect.items()}
         self._settle_s = max(self._collect_windows.values(), default = 0.0)
@@ -218,16 +222,16 @@ class TimeGroupAssembler(GroupAssembler):
         # while still holding several seconds of a high-rate sensor.
         self._collect_cap = max(1024, policy.max_pending * 16)
 
-        self._groups: dict = {}   # gid -> _TimeGroup
-        self._order: list = []    # gids, insertion order
+        self._groups: dict[int, _TimeGroup] = {}   # gid -> _TimeGroup
+        self._order: list[int] = []               # gids, insertion order
         self._gid_counter = 0
-        self._ready: list = []    # ReadyGroups staged by sweep (quorum/timeout emissions)
+        self._ready: list[ReadyGroup] = []        # ReadyGroups staged by sweep (quorum/timeout emissions)
         # collect parent -> list of [event_ts, arrival_monotonic, entry, handle]
-        self._collect_buffers: dict = {p: [] for p in self._collect_windows}
+        self._collect_buffers: dict[str, list] = {p: [] for p in self._collect_windows}
 
     # -- ingestion -----------------------------------------------------
 
-    def add(self, parent_name : str, entry : dict, handle) -> None:
+    def add(self, parent_name : str, entry : dict[str, Any], handle : Any) -> None:
         now = time.monotonic()
         ts = entry.get('event_ts')
         if ts is None:
@@ -276,7 +280,7 @@ class TimeGroupAssembler(GroupAssembler):
 
     # -- expiry --------------------------------------------------------
 
-    def sweep(self, now : float = None) -> None:
+    def sweep(self, now : float | None = None) -> None:
         now = time.monotonic() if now is None else now
         self._prune_collect_buffers(now)
         timeout = self._policy.timeout_seconds
@@ -311,7 +315,7 @@ class TimeGroupAssembler(GroupAssembler):
             if len(kept) != len(buf):
                 self._collect_buffers[parent] = kept
 
-    def _evict(self, gid, missing, reason) -> None:
+    def _evict(self, gid : int, missing : str, reason : str) -> None:
         group = self._groups.pop(gid, None)
         if group is None:
             return
@@ -329,7 +333,7 @@ class TimeGroupAssembler(GroupAssembler):
 
     # -- emission ------------------------------------------------------
 
-    def pop_ready(self, now : float = None) -> Optional[ReadyGroup]:
+    def pop_ready(self, now : float | None = None) -> Optional[ReadyGroup]:
         if self._ready:
             return self._ready.pop(0)
         now = time.monotonic() if now is None else now
@@ -344,10 +348,10 @@ class TimeGroupAssembler(GroupAssembler):
             return self._emit(gid)
         return None
 
-    def _emit(self, gid) -> ReadyGroup:
+    def _emit(self, gid : int) -> ReadyGroup:
         group = self._groups.pop(gid)
         self._order.remove(gid)
-        entries: dict = {}
+        entries: dict[str, Any] = {}
         handles = list(group.handles.values())
         for parent in self._sync_parents:
             entries[parent] = group.entries.get(parent)  # None if below-quorum missing

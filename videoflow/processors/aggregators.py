@@ -13,7 +13,7 @@ class SumAggregator(OneTaskProcessorNode):
         self._sum = 0
         super(SumAggregator, self).__init__(**kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         '''
         - Arguments:
             - inp: a number
@@ -32,7 +32,7 @@ class MultiplicationAggregator(OneTaskProcessorNode):
         self._mult = 1
         super(MultiplicationAggregator, self).__init__(**kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         '''
         - Arguments:
             - inp: a number
@@ -51,7 +51,7 @@ class CountAggregator(OneTaskProcessorNode):
         self._count = 0
         super(CountAggregator, self).__init__(**kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         '''
         - Arguments:
             - inp: a number
@@ -67,7 +67,7 @@ class MaxAggregator(OneTaskProcessorNode):
         self._max = float("-inf")
         super(MaxAggregator, self).__init__(**kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         '''
         - Arguments:
             - inp: a number
@@ -84,7 +84,7 @@ class MinAggregator(OneTaskProcessorNode):
         self._min = float("inf")
         super(MinAggregator, self).__init__(**kwargs)
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         '''
         - Arguments:
             - inp: a number

@@ -14,8 +14,9 @@ checker covering the common subset (type/required/enum/default), and uses
 '''
 from __future__ import absolute_import, division, print_function
 
+import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 #: Payload-type token meaning "any payload" in a descriptor's io section.
 IO_ANY = 'any'
@@ -25,7 +26,7 @@ class ComponentDescriptor:
     A parsed, validated component descriptor. Construct via ``load_descriptor`` (from
     a path) or ``ComponentDescriptor.from_dict`` (from an already-parsed mapping).
     '''
-    def __init__(self, raw : dict, source : str = None) -> None:
+    def __init__(self, raw : dict, source : str | None = None) -> None:
         self._raw = raw
         self.source = source
         meta = raw.get('metadata', {})
@@ -54,7 +55,7 @@ class ComponentDescriptor:
         self.singleton : bool = constraints.get('singleton', False)
 
     @classmethod
-    def from_dict(cls, raw : dict, source : str = None) -> 'ComponentDescriptor':
+    def from_dict(cls, raw : dict, source : str | None = None) -> 'ComponentDescriptor':
         _validate_descriptor_shape(raw, source)
         return cls(raw, source = source)
 
@@ -105,6 +106,8 @@ def load_descriptor(ref : str) -> ComponentDescriptor:
     '''
     if ref.startswith('oci://'):
         # Resolve (pull + cache) the descriptor artifact, then load the cached file.
+        # Deferred to break the descriptor <-> oci circular import (oci imports
+        # load_descriptor at module scope to validate what it pushes).
         from .oci import pull_component
         ref = pull_component(ref)
     path = ref
@@ -112,7 +115,7 @@ def load_descriptor(ref : str) -> ComponentDescriptor:
         path = os.path.join(path, 'component.yaml')
     if not os.path.isfile(path):
         raise FileNotFoundError(f'Component descriptor not found: {path}')
-    import yaml
+    import yaml  # optional dependency (extra): the core imports without PyYAML
     with open(path) as f:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
@@ -124,13 +127,11 @@ def load_descriptor(ref : str) -> ComponentDescriptor:
 _VALID_ROLES = ('producer', 'processor', 'consumer')
 _VALID_DEVICES = ('cpu', 'gpu')
 
-def _validate_descriptor_shape(raw : dict, source : str = None) -> None:
+def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     where = f' ({source})' if source else ''
     # Prefer full JSON Schema validation when jsonschema is available.
     try:
-        import json
-
-        import jsonschema
+        import jsonschema  # optional dependency (extra): full validation only when installed
         schema_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 'spec', 'descriptor', 'component-schema.json')
         if os.path.isfile(schema_path):
@@ -180,7 +181,7 @@ def _validate_params(schema : dict, params : dict) -> dict:
         return params
     # Full validation if jsonschema is installed.
     try:
-        import jsonschema
+        import jsonschema  # optional dependency (extra): full validation only when installed
         validator = jsonschema.Draft202012Validator(schema)
         validator.validate(params)
         return _fill_defaults(schema, params)
@@ -203,7 +204,7 @@ def _validate_params(schema : dict, params : dict) -> dict:
         _validate_value(props[key], value, key)
     return _fill_defaults(schema, params)
 
-def _validate_value(prop_schema : dict, value : Any, name : str) -> None:
+def _validate_value(prop_schema : dict, value : object, name : str) -> None:
     jtype = prop_schema.get('type')
     if jtype is not None:
         types = jtype if isinstance(jtype, list) else [jtype]

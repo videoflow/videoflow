@@ -18,13 +18,15 @@ class ImageAnnotator(ProcessorNode):
     metadata, and return as output a copy of the image with
     the drawings representing the metadata.
     '''
-    def __init__(self, nb_tasks = 1, **kwargs) -> None:
+    def __init__(self, nb_tasks : int = 1, **kwargs) -> None:
         super(ImageAnnotator, self).__init__(nb_tasks = nb_tasks, **kwargs)
 
     def _annotate(self, im : np.ndarray, annotations : Any) -> np.ndarray:
         raise NotImplementedError('Subclass must implement this method')
 
-    def process(self, im : np.ndarray, annotations : Any) -> np.ndarray:
+    # override: one positional arg per parent — the by-parent input contract,
+    # not LSP substitutability. See [tool.mypy] disable/enable notes in pyproject.
+    def process(self, im : np.ndarray, annotations : Any) -> np.ndarray:   # type: ignore[override]
         '''
         Returns a copy of ``im`` visually annotated with the annotations defined in `annotations`
         '''
@@ -52,8 +54,9 @@ class BoundingBoxAnnotator(ImageAnnotator):
         'faces'
     ]
 
-    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
-                box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 0), nb_tasks = 1,
+    def __init__(self, class_labels_path : str | None = None, class_labels_dataset : str | None = 'coco',
+                box_color : tuple = (255, 225, 0), box_thickness : int = 2,
+                text_color : tuple = (255, 255, 0), nb_tasks : int = 1,
                 **kwargs) -> None:
         self._box_color = box_color
         self._text_color = text_color
@@ -101,7 +104,8 @@ class TrackerAnnotator(ImageAnnotator):
     '''
     Draws bounding boxes on images with track id.
     '''
-    def __init__(self, box_color = (255, 225, 0), box_thickness = 2, text_color = (255, 255, 255), nb_tasks = 1,
+    def __init__(self, box_color : tuple = (255, 225, 0), box_thickness : int = 2,
+                text_color : tuple = (255, 255, 255), nb_tasks : int = 1,
                 **kwargs) -> None:
         self._box_color = box_color
         self._text_color = text_color
@@ -161,8 +165,8 @@ class SegmenterAnnotator(ImageAnnotator):
         (0, 127.5, 255)
     ]
 
-    def __init__(self, class_labels_path = None, class_labels_dataset = 'coco',
-                transparency = 0.5, nb_tasks = 1, **kwargs) -> None:
+    def __init__(self, class_labels_path : str | None = None, class_labels_dataset : str | None = 'coco',
+                transparency : float = 0.5, nb_tasks : int = 1, **kwargs) -> None:
 
         if class_labels_path is None and class_labels_dataset is None:
             raise ValueError('If class_labels_path is None, then class_labels_dataset cannot be None')

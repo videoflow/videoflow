@@ -25,7 +25,7 @@ logger = logging.getLogger(__package__)
 
 # Entry-point groups already loaded, so a miss on a repeatedly-consulted registry
 # does not re-scan installed distributions every time.
-_loaded : set = set()
+_loaded : set[str] = set()
 
 def load_plugin_group(group : str) -> None:
     '''

@@ -1,7 +1,5 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Any
-
 import cv2
 import numpy as np
 
@@ -26,7 +24,7 @@ class VideofileWriter(ConsumerNode):
         self._video_file = video_file
         self._swap_channels = swap_channels
         self._fps = fps
-        self._out: Any = None  # cv2.VideoWriter, created lazily on the first frame
+        self._out: cv2.VideoWriter | None = None  # created lazily on the first frame
         super(VideofileWriter, self).__init__(**kwargs)
 
     def open(self) -> None:

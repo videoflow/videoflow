@@ -1,12 +1,10 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Any
-
 import cv2
 import numpy as np
 
 
-def resize_add_padding(im, t_h, t_w) -> Any:
+def resize_add_padding(im : np.ndarray, t_h : int, t_w : int) -> np.ndarray:
     '''
     Resizes an image to a target size, adding padding if necessary to maintain
     the aspect ratio

@@ -2,11 +2,11 @@ from __future__ import absolute_import, division, print_function
 
 import logging
 import time
-from typing import Any
 
 import cv2
 import numpy as np
 
+from ..core.context import RuntimeContext
 from ..core.node import ProducerNode
 
 logger = logging.getLogger(__name__)
@@ -101,13 +101,14 @@ class VideostreamReader(ProducerNode):
             published message via ``ctx.set_event_timestamp`` so time-aligned \
             joins downstream can synchronize this stream with others.
     '''
-    def __init__(self, url_or_deviceid, swap_channels = True, nb_frames = -1, nb_retries = 0,
-                is_finite : bool = True, timestamp_source : str = TIMESTAMP_CLOCK, **kwargs) -> None:
+    def __init__(self, url_or_deviceid : int | str, swap_channels : bool = True, nb_frames : int = -1,
+                nb_retries : int = 0, is_finite : bool = True,
+                timestamp_source : str = TIMESTAMP_CLOCK, **kwargs) -> None:
         if timestamp_source not in TIMESTAMP_SOURCES:
             raise ValueError(f'timestamp_source must be one of {TIMESTAMP_SOURCES}, '
                             f'got {timestamp_source!r}')
         self._url_or_deviceid = url_or_deviceid
-        self._video: Any = None  # cv2.VideoCapture, opened lazily in open()
+        self._video : cv2.VideoCapture | None = None   # opened lazily in open()
         self._swap_channels = swap_channels
         self._nb_frames = nb_frames
         self._frame_count = 0
@@ -130,7 +131,7 @@ class VideostreamReader(ProducerNode):
         if self._video and self._video.isOpened():
             self._video.release()
 
-    def next(self, ctx = None) -> tuple:
+    def next(self, ctx : RuntimeContext | None = None) -> tuple[int, np.ndarray]:
         '''
         - Returns:
             - frame no / index  : integer value of the frame read
@@ -145,6 +146,11 @@ class VideostreamReader(ProducerNode):
                 process, or if it reaches the number of retries wihout \
                 success.
         '''
+        if self._video is None:
+            raise RuntimeError(
+                f'{type(self).__name__}.next() called before open(). The capture object is '
+                'created in open(), which the task runs in the worker — call open() first.')
+
         if self._frame_count == self._nb_frames:
             raise StopIteration()
 
@@ -180,7 +186,7 @@ class VideoUrlReader(VideostreamReader):
         - device_id: id of the video device connected to the computer
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, url : str, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs) -> None:
+    def __init__(self, url : str, nb_frames : int = -1, nb_retries : int = 0, is_finite : bool = False, **kwargs) -> None:
         super(VideoUrlReader, self).__init__(url, nb_frames = nb_frames, nb_retries = nb_retries,
                                             is_finite = is_finite, **kwargs)
 
@@ -207,7 +213,7 @@ class VideoDeviceReader(VideostreamReader):
         - device_id: id of the video device connected to the computer
         - nb_frames: number of frames to process. -1 means all of them
     '''
-    def __init__(self, device_id : int, nb_frames : int = -1, nb_retries = 0, is_finite : bool = False, **kwargs) -> None:
+    def __init__(self, device_id : int, nb_frames : int = -1, nb_retries : int = 0, is_finite : bool = False, **kwargs) -> None:
         super(VideoDeviceReader, self).__init__(device_id, nb_frames = nb_frames, nb_retries = nb_retries,
                                                 is_finite = is_finite, **kwargs)
 
@@ -234,7 +240,7 @@ class VideoFileReader(VideostreamReader):
         - timestamp_source: defaults to ``position`` (the file's own timeline), \
             which is what synchronized recordings replayed together should align on.
     '''
-    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames = -1,
+    def __init__(self, video_file : str, swap_channels : bool = False, nb_frames : int = -1,
                 timestamp_source : str = TIMESTAMP_POSITION, **kwargs) -> None:
         super(VideoFileReader, self).__init__(video_file, swap_channels = swap_channels, nb_frames = nb_frames,
                                             nb_retries = 0, is_finite = True,

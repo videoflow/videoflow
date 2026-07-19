@@ -19,11 +19,14 @@ import json
 import keyword
 import os
 import sys
-from typing import Any
+from typing import List, Optional
+
+from ..core.compiler import NodeSpec, compile_flow
+from ..core.flow import Flow
 
 FALLBACK_MODULE_NAME = '_videoflow_user_graph'
 
-def _graph_module_name(path) -> str:
+def _graph_module_name(path : str) -> str:
     '''
     The module name to load a graph file under: its own basename, so that a node
     class defined *in* the graph module records a ``__module__`` a worker can
@@ -56,7 +59,7 @@ def _graph_module_name(path) -> str:
         return FALLBACK_MODULE_NAME
     return name
 
-def load_flow(target : str) -> Any:
+def load_flow(target : str) -> Flow:
     '''
     - Arguments:
         - target: ``path/to/graph.py`` or ``path/to/graph.py:factory_name`` \
@@ -96,9 +99,8 @@ def load_flow(target : str) -> Any:
     factory = getattr(module, factory_name)
     return factory()
 
-def compile_to_dict(target, envelope_version = None, allow_pickle = False) -> dict:
-    from ..core.compiler import compile_flow
-
+def compile_to_dict(target : str, envelope_version : Optional[int] = None,
+                    allow_pickle : bool = False) -> dict:
     flow = load_flow(target)
     specs = compile_flow(flow, envelope_version = envelope_version, allow_pickle = allow_pickle)
     return {
@@ -107,16 +109,13 @@ def compile_to_dict(target, envelope_version = None, allow_pickle = False) -> di
         'specs': [s.to_dict() for s in specs],
     }
 
-def specs_from_document(document) -> tuple:
+def specs_from_document(document : dict | str) -> tuple[str, str, List[NodeSpec]]:
     '''``(flow_id, flow_type, specs)`` from a compile-JSON document (dict or JSON string).'''
-    from ..core.compiler import NodeSpec
+    parsed = json.loads(document) if isinstance(document, str) else document
+    specs = [NodeSpec.from_dict(d) for d in parsed['specs']]
+    return parsed['flow_id'], parsed['flow_type'], specs
 
-    if isinstance(document, str):
-        document = json.loads(document)
-    specs = [NodeSpec.from_dict(d) for d in document['specs']]
-    return document['flow_id'], document['flow_type'], specs
-
-def main(argv = None) -> None:
+def main(argv : Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog = 'python -m videoflow.compile',
                                  description = 'Compile a graph module to a JSON specs document on stdout.')
     ap.add_argument('graph', help = 'path/to/graph.py[:build_flow]')

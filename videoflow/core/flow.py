@@ -7,20 +7,20 @@ from typing import List, Optional
 from .constants import FLOW_TYPES, REALTIME
 from .engine import ExecutionEngine
 from .graph import GraphEngine
-from .node import ProducerNode
+from .node import ConsumerNode, Node, ProducerNode
 
 logger = logging.getLogger(__package__)
 
-def _discover_producers(consumers) -> list:
+def _discover_producers(consumers : List[ConsumerNode]) -> List[ProducerNode]:
     '''
     Walks the ``.parents`` chain backwards from each consumer to find the set of \
         root ``ProducerNode``s that feed it. A flow no longer needs producers to be \
         passed explicitly: they're always exactly the parentless ancestors of the \
         consumers.
     '''
-    producers = []
+    producers : List[ProducerNode] = []
     seen = set()
-    stack = list(consumers)
+    stack : List[Node] = list(consumers)
     while stack:
         node = stack.pop()
         if node in seen:
@@ -39,7 +39,7 @@ def _discover_producers(consumers) -> list:
             stack.extend(parents)
     return producers
 
-def build_tasks_data(graph_engine : GraphEngine) -> list:
+def build_tasks_data(graph_engine : GraphEngine) -> List[tuple]:
     '''
     Turns a validated ``GraphEngine`` into the list of ``(node, parent_names, is_last)`` \
         tuples that both the local execution engine and the Kubernetes compiler \
@@ -72,7 +72,8 @@ class Flow:
         - flow_id: a stable identifier for this flow, used to namespace broker \
             subjects and Kubernetes resources. Auto-generated if not given.
     '''
-    def __init__(self, consumers, flow_type = REALTIME, flow_id = None) -> None:
+    def __init__(self, consumers : List[ConsumerNode], flow_type : str = REALTIME,
+                flow_id : Optional[str] = None) -> None:
         producers = _discover_producers(consumers)
         self._graph_engine = GraphEngine(producers, consumers)
         if flow_type not in FLOW_TYPES:
@@ -106,7 +107,7 @@ class Flow:
     def tasks_data(self) -> List[tuple]:
         return build_tasks_data(self._graph_engine)
 
-    def run(self, execution_engine : ExecutionEngine, run_id = None) -> None:
+    def run(self, execution_engine : ExecutionEngine, run_id : Optional[str] = None) -> None:
         '''
         Starts the flow using the given ``ExecutionEngine`` (e.g. \
             ``videoflow.engines.local.LocalProcessEngine`` or \

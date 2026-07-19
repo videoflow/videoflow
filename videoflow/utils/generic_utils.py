@@ -4,6 +4,8 @@ import collections
 import signal
 import sys
 import time
+from collections.abc import Iterable
+from types import FrameType, TracebackType
 
 import numpy as np
 
@@ -22,8 +24,9 @@ class Progbar(object):
         - interval: Minimum visual progress update interval (in seconds).
     """
 
-    def __init__(self, target, width=30, verbose=1, interval=0.05,
-                 stateful_metrics=None) -> None:
+    def __init__(self, target : int | None, width : int = 30, verbose : int = 1,
+                 interval : float = 0.05,
+                 stateful_metrics : Iterable[str] | None = None) -> None:
         self.target = target
         self.width = width
         self.verbose = verbose
@@ -42,7 +45,7 @@ class Progbar(object):
         self._start = time.time()
         self._last_update: float = 0
 
-    def update(self, current, values=None) -> None:
+    def update(self, current : int, values : list | None = None) -> None:
         """Updates the progress bar.
 
         - Arguments
@@ -165,7 +168,7 @@ class Progbar(object):
 
         self._last_update = now
 
-    def add(self, n, values=None) -> None:
+    def add(self, n : int, values : list | None = None) -> None:
         self.update(self._seen_so_far + n, values)
 
 class DelayedInterrupt(object):
@@ -174,7 +177,7 @@ class DelayedInterrupt(object):
 
     It delays interrupts until the code exits the entered block
     '''
-    def __init__(self, signals) -> None:
+    def __init__(self, signals : int | list[int] | tuple[int, ...]) -> None:
         if not isinstance(signals, list) and not isinstance(signals, tuple):
             signals = [signals]
         self.sigs = signals
@@ -187,13 +190,14 @@ class DelayedInterrupt(object):
             self.old_handlers[sig] = signal.getsignal(sig)
             # Bind sig per-iteration (default arg) so each handler records against
             # its own signal, not whichever value sig holds after the loop ends.
-            def handler(s, frame, sig=sig) -> None:
+            def handler(s : int, frame : FrameType | None, sig : int = sig) -> None:
                 self.signal_received[sig] = (s, frame)
                 # Note: in Python 3.5, you can use signal.Signals(sig).name
             self.old_handlers[sig] = signal.getsignal(sig)
             signal.signal(sig, handler)
 
-    def __exit__(self, type, value, traceback) -> None:
+    def __exit__(self, type : type[BaseException] | None, value : BaseException | None,
+                 traceback : TracebackType | None) -> None:
         for sig in self.sigs:
             signal.signal(sig, self.old_handlers[sig])
             if self.signal_received[sig] and self.old_handlers[sig]:

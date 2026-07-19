@@ -18,7 +18,7 @@ class IdentityProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(self, fps = -1, **kwargs) -> None:
+    def __init__(self, fps : float = -1, **kwargs) -> None:
         super(IdentityProcessor, self).__init__(**kwargs)
         self._fps = fps
         if fps > 0:
@@ -26,7 +26,7 @@ class IdentityProcessor(ProcessorNode):
         else:
             self._wts = 0
 
-    def process(self, inp) -> Any:
+    def process(self, inp : Any) -> Any:
         if self._wts > 0:
             time.sleep(self._wts)
         return inp
@@ -41,7 +41,7 @@ class JoinerProcessor(ProcessorNode):
             than or equal to zero, it is ignored, and no delay \
             is introduced.
     '''
-    def __init__(self, fps = -1, **kwargs) -> None:
+    def __init__(self, fps : float = -1, **kwargs) -> None:
         super(JoinerProcessor, self).__init__(**kwargs)
         self._fps = fps
         if fps > 0:
@@ -49,7 +49,7 @@ class JoinerProcessor(ProcessorNode):
         else:
             self._wts = 0
 
-    def process(self, *inp) -> Any:
+    def process(self, *inp : Any) -> Any:
         if self._wts > 0:
             time.sleep(self._wts)
         return tuple(inp)

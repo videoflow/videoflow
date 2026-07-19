@@ -24,12 +24,42 @@ this machine, deploy compiles it inside the solution image instead.
 from __future__ import absolute_import, division, print_function
 
 import argparse
+import asyncio
 import os
+import subprocess
 import sys
+import uuid
 from typing import Any
 
+import numpy as np
 
-def _load_flow(target : str) -> Any:
+from ..components.descriptor import load_descriptor
+from ..components.oci import inspect_component, pull_component, push_component
+from ..core.compiler import compile_flow, specs_from_tasks_data
+from ..core.constants import BATCH
+from ..core.flow import Flow
+from ..utils.plugins import load_plugin_group
+from .build import autobuild, docker_gpus_available, image_exists, run_in_image
+from .cluster import (
+    SHARED_NEEDS_RUNTIME_CLASS,
+    allocatable_gpus,
+    detect_cluster,
+    gpu_preflight,
+    hostpath_warning,
+    load_images,
+)
+from .compile import load_flow, specs_from_document
+from .gpu import (
+    GPU_STRATEGY_ENTRY_POINT_GROUP,
+    GpuStrategy,
+    get_gpu_mode,
+    registered_gpu_modes,
+    resolve_gpu_resource,
+)
+from .images import parse_override, resolve_image
+
+
+def _load_flow(target : str) -> Flow:
     '''
     - Arguments:
         - target: ``path/to/graph.py`` or ``path/to/graph.py:factory_name`` \
@@ -38,10 +68,9 @@ def _load_flow(target : str) -> Any:
     - Returns:
         - a built ``Flow`` produced by calling the factory.
     '''
-    from .compile import load_flow
     return load_flow(target)
 
-def _gpu_cleanup(gpu_strategy, kubectl) -> None:
+def _gpu_cleanup(gpu_strategy : GpuStrategy | None, kubectl : str) -> None:
     '''
     Runs a GPU strategy's ``cleanup()``, best-effort. Called from error paths and
     teardown, so a failure to undo the reconfiguration must be reported but must
@@ -55,7 +84,7 @@ def _gpu_cleanup(gpu_strategy, kubectl) -> None:
     except Exception as e:                            # noqa: BLE001 — see docstring
         print(f'WARNING: GPU mode {gpu_strategy.name!r} cleanup failed: {e}', file = sys.stderr)
 
-def _gpu_prepare(gpu_strategy, demand, kubectl) -> None:
+def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str) -> None:
     '''
     Runs a GPU strategy's ``prepare()``, rolling back if it does not complete.
 
@@ -78,13 +107,8 @@ def _gpu_prepare(gpu_strategy, demand, kubectl) -> None:
                              f'the cluster: {e}') from e
         raise
 
-def _cmd_deploy(args) -> None:
-    import subprocess
-    import uuid
-
-    from ..core.constants import BATCH
-    from .images import parse_override, resolve_image
-    from .manifests import parse_mounts
+def _cmd_deploy(args : argparse.Namespace) -> None:
+    from .manifests import parse_mounts  # optional dep: manifests imports yaml at module scope
 
     overrides = {}
     for override in args.image_override or []:
@@ -103,13 +127,14 @@ def _cmd_deploy(args) -> None:
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists) and collect its x-mounts.
+    # optional dep: solution imports yaml at module scope
     from .solution import ensure_config, find_template, load_template, resolve_mounts
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
     template_path = find_template(graph_dir)
     template_mounts = []
     if template_path and config_path:
-        import yaml
+        import yaml  # optional dep (deploy extra)
         with open(config_path) as f:
             template_mounts = resolve_mounts(load_template(template_path), yaml.safe_load(f),
                                              graph_dir)
@@ -123,7 +148,6 @@ def _cmd_deploy(args) -> None:
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
     # (base image auto-built from a source checkout when missing).
-    from .build import autobuild, docker_gpus_available, image_exists, run_in_image
     gpus = docker_gpus_available()
     image = args.image
     if image is None and not args.no_build:
@@ -134,6 +158,7 @@ def _cmd_deploy(args) -> None:
 
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
     # baked into the compiled specs).
+    # optional dep: solution imports yaml at module scope
     from .solution import find_prepare, prepare_command, run_prepare_local
     if find_prepare(graph_dir) is not None and not args.no_prepare:
         try:
@@ -161,7 +186,6 @@ def _cmd_deploy(args) -> None:
 
     # 4. Cluster mechanics: detect the flavor, load locally built images into it,
     # and warn (with copy-pasteable fixes) on hostPath/GPU mismatches.
-    from .cluster import detect_cluster, gpu_preflight, hostpath_warning, load_images
     flavor = detect_cluster(args.kubectl)
     try:
         images = sorted({resolve_image(s.name, s.image, image, overrides) for s in specs})
@@ -179,6 +203,7 @@ def _cmd_deploy(args) -> None:
             print(f'WARNING: {warning}', file = sys.stderr)
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
+        # optional dep: manifests imports yaml at module scope
         from .manifests import _is_partitioned, gpu_demand
         # Whole-flow demand per extended resource: every replica of a GPU node claims
         # its own gpu_count devices, so a partially-schedulable flow deadlocks.
@@ -186,7 +211,6 @@ def _cmd_deploy(args) -> None:
         problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
                                  demand = demand, gpu_mode = args.gpu_mode)
         if args.gpu_mode == 'shared':
-            from .cluster import SHARED_NEEDS_RUNTIME_CLASS, allocatable_gpus
             pods = sum(s.nb_tasks for s in gpu_specs)
             physical = allocatable_gpus(args.kubectl)
             shared_with = (f'{physical} schedulable GPU unit(s)' if physical
@@ -218,6 +242,7 @@ def _cmd_deploy(args) -> None:
 
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
     # (+ Redis for the blob store) in the namespace, owning only what we created.
+    # optional dep: infra imports yaml at module scope
     from .infra import ensure_infra, ensure_namespace, teardown_infra, wait_infra_ready
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url
@@ -244,6 +269,7 @@ def _cmd_deploy(args) -> None:
                     # strategy's cleanup() and undo whatever prepare() set up.
                     + (f' --gpu-mode {args.gpu_mode}' if gpu_specs else ''))
 
+    # optional dep: the k8s engine pulls in yaml (via manifests) at module scope
     from ..engines.kubernetes import KubernetesExecutionEngine
     engine = KubernetesExecutionEngine(
         nats_url = nats_url, namespace = args.namespace, default_image = image,
@@ -259,7 +285,6 @@ def _cmd_deploy(args) -> None:
     # the hook exists for strategies that retune the device plugin per run).
     gpu_strategy = None
     if gpu_specs:
-        from .gpu import get_gpu_mode
         gpu_strategy = get_gpu_mode(args.gpu_mode)
         _gpu_prepare(gpu_strategy, demand, args.kubectl)
     try:
@@ -324,15 +349,14 @@ def _cmd_deploy(args) -> None:
         raise SystemExit(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow_id} completed.')
 
-def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus) -> tuple:
+def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : str,
+                   image : str | None, container_mounts : list, gpus : bool) -> tuple:
     '''
     ``(flow_id, flow_type, specs)`` — via a local import when the graph's deps are
     installed on the host (cheap), else compiled inside the solution image (the
     graph dir is mounted at the same absolute path, so config paths resolve
     identically).
     '''
-    from ..core.compiler import compile_flow
-
     try:
         flow = _load_flow(graph_target)
     except ImportError as e:
@@ -340,8 +364,6 @@ def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus)
             raise SystemExit(
                 f'Cannot import the graph on this machine ({e}) and there is no '
                 f'solution image to compile it in — pass --image or drop --no-build.') from e
-        from .build import run_in_image
-        from .compile import specs_from_document
         compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
         if args.envelope_version is not None:
             compile_cmd += ['--envelope-version', str(args.envelope_version)]
@@ -352,6 +374,12 @@ def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus)
                                workdir = graph_dir, gpus = gpus, capture = True)
         except RuntimeError as e2:
             raise SystemExit(str(e2)) from e2
+        if out is None:
+            # capture = True above, so stdout is always captured; a None here would
+            # mean run_in_image stopped capturing, and json.loads would fail with a
+            # traceback instead of a message the operator can act on.
+            raise SystemExit(f'Compiling the graph in {image} produced no output. '
+                            'Re-run with --no-build and an importable graph, or rebuild the image.') from e
         return specs_from_document(out)
 
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
@@ -362,8 +390,11 @@ def _compile_graph(args, graph_target, graph_dir, image, container_mounts, gpus)
         raise SystemExit(str(e)) from e
     return flow.flow_id, flow.flow_type, specs
 
-def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides, mounts) -> None:
+def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_type : str,
+                              specs : list, run_id : str, overrides : dict,
+                              mounts : list) -> None:
     '''--dry-run (stdout) / --render-only (files) — the manifest-generation escape hatch.'''
+    # optional dep: infra and manifests both import yaml at module scope
     from .infra import infra_urls, nats_manifests, redis_manifests
     from .manifests import dump_manifests, render_manifests
 
@@ -414,7 +445,7 @@ def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides
             f"{m['kind'].lower()}-{m['metadata']['name']}.yaml" for m in manifests
         ],
     }
-    import yaml
+    import yaml  # optional dep (deploy extra)
     with open(os.path.join(args.output, 'kustomization.yaml'), 'w') as f:
         f.write(yaml.dump(kustomization, default_flow_style = False, sort_keys = False))
 
@@ -422,9 +453,7 @@ def _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides
     print(f'Apply with:  kubectl apply -k {args.output}')
     print(f'Flow id: {flow_id}   Run id: {run_id}')
 
-def _cmd_component_validate(args) -> None:
-    from ..components.descriptor import load_descriptor
-
+def _cmd_component_validate(args : argparse.Namespace) -> None:
     ok = True
     for path in args.path:
         try:
@@ -439,18 +468,14 @@ def _cmd_component_validate(args) -> None:
     if not ok:
         raise SystemExit(1)
 
-def _cmd_component_push(args) -> None:
-    from ..components.oci import push_component
-
+def _cmd_component_push(args : argparse.Namespace) -> None:
     try:
         target = push_component(args.path, args.ref)
     except Exception as e:
         raise SystemExit(f'push failed: {e}') from e
     print(f'Pushed component descriptor {args.path} -> oci://{target}')
 
-def _cmd_component_pull(args) -> None:
-    from ..components.oci import pull_component
-
+def _cmd_component_pull(args : argparse.Namespace) -> None:
     try:
         path = pull_component(args.ref, force = args.force, verify = args.verify,
                             cosign_args = args.cosign_arg or None)
@@ -458,9 +483,7 @@ def _cmd_component_pull(args) -> None:
         raise SystemExit(f'pull failed: {e}') from e
     print(f'Resolved {args.ref} -> {path}')
 
-def _cmd_component_inspect(args) -> None:
-    from ..components.oci import inspect_component
-
+def _cmd_component_inspect(args : argparse.Namespace) -> None:
     try:
         d = inspect_component(args.ref, verify = args.verify)
     except Exception as e:
@@ -475,9 +498,7 @@ def _cmd_component_inspect(args) -> None:
     if d.params_schema.get('properties'):
         print(f'  params: {", ".join(sorted(d.params_schema["properties"]))}')
 
-def _cmd_run_local(args) -> None:
-    import subprocess
-
+def _cmd_run_local(args : argparse.Namespace) -> None:
     graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
     if not os.path.isfile(graph_path):
         raise SystemExit(f'Graph module not found: {graph_path}')
@@ -487,14 +508,14 @@ def _cmd_run_local(args) -> None:
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists).
-    from .solution import ensure_config
+    from .solution import ensure_config  # optional dep: solution imports yaml at module scope
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
 
     # 1. Prepare hook, on this host (the workers are local processes too). Runs
     # before the graph is loaded, because the factory reads the hook's outputs.
     if not args.no_prepare:
-        from .solution import run_prepare_local
+        from .solution import run_prepare_local  # optional dep: solution imports yaml
         try:
             run_prepare_local(graph_dir, config_path)
         except subprocess.CalledProcessError as e:
@@ -506,6 +527,7 @@ def _cmd_run_local(args) -> None:
 
     # 3. Broker: bring-your-own via --nats, else reuse whatever already listens on
     # localhost and start dev containers for whatever doesn't.
+    # optional dep: localinfra imports yaml at module scope
     from .localinfra import DEFAULT_NATS_URL, ensure_local_infra, teardown_local_infra, wait_local_infra_ready
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL')
@@ -528,7 +550,7 @@ def _cmd_run_local(args) -> None:
     # 4. Load + run. load_flow puts the graph dir on sys.path, which the engine
     # re-exports as PYTHONPATH so the workers can import its sibling modules.
     flow = _load_flow(graph_target)
-    from ..engines.local import LocalProcessEngine
+    from ..engines.local import LocalProcessEngine  # optional dep: the local engine imports nats
     engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
                                 allow_pickle = args.allow_pickle,
                                 local_docker_nats_url = args.local_docker_nats_url)
@@ -560,18 +582,19 @@ def _cmd_run_local(args) -> None:
         raise SystemExit(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow.flow_id} completed.')
 
-def _warn_missing_solution_inputs(graph_dir, config_path) -> None:
+def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> None:
     '''
     Warns when a path the solution declares in ``x-mounts`` doesn't exist. Locally
     nothing is mounted, so this is purely an early check — and only a warning,
     since an output directory legitimately may not exist yet.
     '''
+    # optional dep: solution imports yaml at module scope
     from .solution import find_template, load_template, resolve_mounts
 
     template_path = find_template(graph_dir)
     if not (template_path and config_path):
         return
-    import yaml
+    import yaml  # optional dep (deploy extra)
     with open(config_path) as f:
         config = yaml.safe_load(f)
     for spec in resolve_mounts(load_template(template_path), config, graph_dir):
@@ -580,8 +603,8 @@ def _warn_missing_solution_inputs(graph_dir, config_path) -> None:
         if read_only and not os.path.exists(path):
             print(f'WARNING: solution input {path} does not exist.', file = sys.stderr)
 
-def _cmd_explain(args) -> None:
-    from ..core.compiler import specs_from_tasks_data
+def _cmd_explain(args : argparse.Namespace) -> None:
+    # optional dep: topology imports nats at module scope
     from ..messaging.topology import dlq_stream_name, subject_for
 
     flow = _load_flow(args.graph)
@@ -617,8 +640,7 @@ def _cmd_explain(args) -> None:
     # what explain prints is exactly what deploy will request.
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
-        from .gpu import resolve_gpu_resource
-        from .manifests import gpu_demand
+        from .manifests import gpu_demand  # optional dep: manifests imports yaml at module scope
         default_resource = getattr(args, 'gpu_resource_name', None)
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')
@@ -631,10 +653,8 @@ def _cmd_explain(args) -> None:
     lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
     print('\n'.join(lines))
 
-def _cmd_provision(args) -> None:
-    import uuid
-
-    from ..core.compiler import specs_from_tasks_data
+def _cmd_provision(args : argparse.Namespace) -> None:
+    # optional dep: topology imports nats at module scope
     from ..messaging.topology import provision_flow_sync
 
     flow = _load_flow(args.graph)
@@ -644,14 +664,13 @@ def _cmd_provision(args) -> None:
     provision_flow_sync(args.nats, specs, flow.flow_id, run_id, flow.flow_type)
     print(f'Provisioned {len(specs)} node streams for flow {flow.flow_id} run {run_id}')
 
-def _cmd_teardown(args) -> None:
-    import asyncio
+def _cmd_teardown(args : argparse.Namespace) -> None:
+    import nats  # optional dep (distributed/deploy extras)
 
-    import nats
-
+    # optional dep: topology imports nats at module scope
     from ..messaging.topology import control_subject_for, delete_run_streams
 
-    async def _quiet(_e) -> None:
+    async def _quiet(_e : Exception) -> None:
         pass  # swallow the client's connect-retry error logging (we handle failure)
 
     async def _go() -> None:
@@ -675,7 +694,7 @@ def _cmd_teardown(args) -> None:
     except Exception as e:
         print(f'Broker teardown skipped (could not reach NATS at {args.nats}): {e}', file = sys.stderr)
     if args.namespace:
-        from .manifests import delete_resources
+        from .manifests import delete_resources  # optional dep: manifests imports yaml
         # Scope to this run (matches the run-id label the deploy stamps on every
         # resource); the broker phase above is already run-scoped.
         delete_resources(args.kubectl, args.namespace, args.flow_id, args.run_id)
@@ -683,14 +702,14 @@ def _cmd_teardown(args) -> None:
     if args.infra:
         if not args.namespace:
             raise SystemExit('--infra requires --namespace.')
-        from .infra import teardown_infra
+        from .infra import teardown_infra  # optional dep: infra imports yaml at module scope
         teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'])
         print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
     # Undo any per-run cluster reconfiguration the GPU mode applied at deploy time.
     # This is the terminal hook for a REALTIME run, which stays up past deploy and
     # so is never cleaned up there. Built-in modes have a no-op cleanup().
     if args.gpu_mode:
-        from .gpu import get_gpu_mode
+        strategy : GpuStrategy | None
         try:
             strategy = get_gpu_mode(args.gpu_mode)
         except ValueError as e:
@@ -706,9 +725,9 @@ def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
     if message is None:
         return 'None (EOS or empty)'
-    import numpy as np
     if isinstance(message, np.ndarray):
         return f'ndarray shape={tuple(message.shape)} dtype={message.dtype}'
+    # optional dep: serialization imports msgpack at module scope
     from ..wire.serialization import RawPayload
     if isinstance(message, RawPayload):
         return f'RawPayload type={message.payload_type} ({len(message.data)} bytes, opaque)'
@@ -716,7 +735,8 @@ def _format_payload(message : Any) -> str:
         return f'{message.DESCRIPTOR.full_name}: ' + str(message).replace('\n', ' ').strip()[:200]
     return repr(message)[:200]
 
-def _print_decoded(buf : bytes, headers : dict = None) -> None:
+def _print_decoded(buf : bytes, headers : dict | None = None) -> None:
+    # optional dep: serialization imports msgpack at module scope
     from ..wire.serialization import decode_envelope
     d = decode_envelope(buf)
     if headers:
@@ -729,7 +749,7 @@ def _print_decoded(buf : bytes, headers : dict = None) -> None:
         print(f"  metadata: {d['metadata']}")
     print(f"  payload: {_format_payload(d['message'])}")
 
-def _cmd_debug_decode(args) -> None:
+def _cmd_debug_decode(args : argparse.Namespace) -> None:
     if args.file:
         with open(args.file, 'rb') as f:
             buf = f.read()
@@ -741,10 +761,9 @@ def _cmd_debug_decode(args) -> None:
     if not (args.flow_id and args.run_id):
         raise SystemExit('--dlq requires --flow-id and --run-id.')
 
-    import asyncio
+    import nats  # optional dep (distributed/deploy extras)
 
-    import nats
-
+    # optional dep: topology imports nats at module scope
     from ..messaging.topology import dlq_stream_name
 
     async def _go() -> None:
@@ -841,8 +860,6 @@ def build_parser() -> argparse.ArgumentParser:
     # mode would otherwise be rejected here before get_gpu_mode's lazy load ever
     # got the chance to register it. load_plugin_group is idempotent and logs
     # (rather than raises) for a broken plugin.
-    from ..utils.plugins import load_plugin_group
-    from .gpu import GPU_STRATEGY_ENTRY_POINT_GROUP, registered_gpu_modes
     load_plugin_group(GPU_STRATEGY_ENTRY_POINT_GROUP)
     deploy.add_argument('--gpu-mode', choices = registered_gpu_modes(), default = 'exclusive',
                         help = 'exclusive (default): each GPU replica claims whole devices via the '
@@ -997,7 +1014,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
-def main(argv = None) -> None:
+def main(argv : list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
     args.func(args)

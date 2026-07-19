@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 
 class Messenger:
@@ -13,7 +13,7 @@ class Messenger:
         position in a topological sort, so it works correctly for arbitrary DAGs \
         (multi-parent joins, multi-producer graphs).
     '''
-    def publish_message(self, message, metadata = None) -> None:
+    def publish_message(self, message : Any, metadata : Optional[Dict[str, Any]] = None) -> None:
         '''
         Publishes this node's own output message. Depending on the flow's \
             configured retention policy (REALTIME vs BATCH), this may drop the \
@@ -47,7 +47,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def fail_inputs(self, exc) -> None:
+    def fail_inputs(self, exc : BaseException) -> None:
         '''
         Report that the node raised while processing the last input group. The \
             messenger decides whether to redeliver (BATCH, up to a retry limit, then \
@@ -55,7 +55,7 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
-    def set_output_partition_key(self, value) -> None:
+    def set_output_partition_key(self, value : Any) -> None:
         '''
         Set the partition key attached to this node's next published output (via \
             ``RuntimeContext.set_partition_key``), so a downstream partitioned node \
@@ -80,7 +80,7 @@ class Messenger:
         '''
         return None
 
-    def last_input_info(self) -> Optional[dict]:
+    def last_input_info(self) -> Optional[Dict[str, Any]]:
         '''
         Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, \
             ``seq``) for the input group last returned by ``receive_message`` \
@@ -92,7 +92,7 @@ class Messenger:
         '''Release any broker resources held by the messenger. Default: no-op.'''
         pass
 
-    def receive_message(self) -> dict:
+    def receive_message(self) -> Dict[str, Dict[str, Any]]:
         '''
         Blocks until this node has received a complete input: one message from \
             every real parent, all derived from the same upstream originating event \
@@ -114,11 +114,14 @@ class ExecutionEngine:
     def __init__(self) -> None:
         self._allocation_called = False
 
-    def _al_create_and_start_processes(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
+    def _al_create_and_start_processes(self, tasks_data : Optional[List[tuple]], flow_id : str,
+                                        flow_type : str, run_id : str) -> None:
         '''
         - Arguments:
             - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \
-                as produced by ``videoflow.core.flow.build_tasks_data``.
+                as produced by ``videoflow.core.flow.build_tasks_data``.  May be ``None`` \
+                when the engine was constructed with pre-compiled ``specs``, which is how \
+                the deploy CLI drives it — there is no in-process graph to derive them from.
             - flow_id: stable identifier for this flow (constant across runs).
             - flow_type: 'realtime' or 'batch' — the broker retention policy to use \
                 for every edge.
@@ -139,13 +142,15 @@ class ExecutionEngine:
         '''
         raise NotImplementedError('Subclass of ExecutionEngine must implement')
 
-    def allocate_and_run_tasks(self, tasks_data, flow_id : str, flow_type : str, run_id : str) -> None:
+    def allocate_and_run_tasks(self, tasks_data : Optional[List[tuple]], flow_id : str,
+                                flow_type : str, run_id : str) -> None:
         '''
         Defines a template with the order of methods that need to run in order to \
             allocate and run tasks.
 
         - Arguments:
-            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``.
+            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \
+                or ``None`` when the engine already holds pre-compiled ``specs``.
             - flow_id: stable identifier for this flow (constant across runs).
             - flow_type: 'realtime' or 'batch'.
             - run_id: per-run identifier that scopes this execution's broker streams.

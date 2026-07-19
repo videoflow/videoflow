@@ -26,7 +26,7 @@ MINIKUBE = 'minikube'
 DOCKER_DESKTOP = 'docker-desktop'
 GENERIC_REMOTE = 'generic-remote'
 
-def _kubectl_out(kubectl, *args) -> str:
+def _kubectl_out(kubectl : str, *args : str) -> str:
     '''Runs kubectl and returns stdout, or '' on any failure (detection is best-effort).'''
     try:
         proc = subprocess.run([kubectl, *args], capture_output = True, text = True, check = False)
@@ -34,10 +34,10 @@ def _kubectl_out(kubectl, *args) -> str:
         return ''
     return proc.stdout.strip() if proc.returncode == 0 else ''
 
-def current_context(kubectl = 'kubectl') -> str:
+def current_context(kubectl : str = 'kubectl') -> str:
     return _kubectl_out(kubectl, 'config', 'current-context')
 
-def _node_labels(kubectl = 'kubectl') -> str:
+def _node_labels(kubectl : str = 'kubectl') -> str:
     '''
     Node labels used to recognize flavors whose context name is generic (a k3s
     install's context is just 'default').
@@ -90,10 +90,10 @@ class ClusterFlavorHandler:
 class _KindFlavor(ClusterFlavorHandler):
     name = KIND
 
-    def matches(self, context_name, node_labels) -> bool:
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
         return context_name.startswith('kind-')
 
-    def load_images(self, images, kubectl = 'kubectl') -> None:
+    def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         name = current_context(kubectl).removeprefix('kind-') or 'kind'
         _run_load(['kind', 'load', 'docker-image', *images, '--name', name])
 
@@ -105,10 +105,10 @@ class _KindFlavor(ClusterFlavorHandler):
 class _MinikubeFlavor(ClusterFlavorHandler):
     name = MINIKUBE
 
-    def matches(self, context_name, node_labels) -> bool:
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
         return context_name == 'minikube' or 'minikube' in node_labels()
 
-    def load_images(self, images, kubectl = 'kubectl') -> None:
+    def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         for image in images:
             _run_load(['minikube', 'image', 'load', image])
 
@@ -120,20 +120,20 @@ class _MinikubeFlavor(ClusterFlavorHandler):
 class _DockerDesktopFlavor(ClusterFlavorHandler):
     name = DOCKER_DESKTOP
 
-    def matches(self, context_name, node_labels) -> bool:
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
         return context_name == 'docker-desktop'
 
-    def load_images(self, images, kubectl = 'kubectl') -> None:
+    def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         print('docker-desktop shares the local docker daemon; images need no loading.')
 
 class _K3sFlavor(ClusterFlavorHandler):
     name = K3S
 
-    def matches(self, context_name, node_labels) -> bool:
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
         # k3s uses a generic context name ('default'), so node facts decide.
         return 'k3s' in node_labels()
 
-    def load_images(self, images, kubectl = 'kubectl') -> None:
+    def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         for image in images:
             _k3s_import(image)
 
@@ -141,7 +141,7 @@ class _GenericRemoteFlavor(ClusterFlavorHandler):
     '''Terminal fallback: inherits the base's refuse-to-load behavior.'''
     name = GENERIC_REMOTE
 
-    def matches(self, context_name, node_labels) -> bool:
+    def matches(self, context_name : str, node_labels : Callable[[], str]) -> bool:
         return True
 
 #: Handlers in detection order. Flavors that can be recognized from the context
@@ -198,7 +198,7 @@ def get_cluster_flavor(cluster : str) -> ClusterFlavorHandler:
                        f'{", ".join(f.name for f in _FLAVORS)}. Register another with '
                        f'videoflow.deploy.cluster.register_cluster_flavor.')
 
-def detect_cluster(kubectl = 'kubectl') -> str:
+def detect_cluster(kubectl : str = 'kubectl') -> str:
     '''
     Classifies the cluster kubectl currently points at, by asking each registered
     flavor in order. Context-name conventions identify kind/minikube/docker-desktop;
@@ -219,7 +219,7 @@ def detect_cluster(kubectl = 'kubectl') -> str:
             return handler.name
     return GENERIC_REMOTE
 
-def load_images(cluster, images, kubectl = 'kubectl') -> None:
+def load_images(cluster : str, images : List[str], kubectl : str = 'kubectl') -> None:
     '''
     Loads locally built docker images into the detected cluster so pods can pull
     them without a registry.
@@ -230,7 +230,7 @@ def load_images(cluster, images, kubectl = 'kubectl') -> None:
     '''
     get_cluster_flavor(cluster).load_images(images, kubectl)
 
-def _run_load(cmd) -> None:
+def _run_load(cmd : List[str]) -> None:
     try:
         proc = subprocess.run(cmd, check = False)
     except FileNotFoundError as e:
@@ -239,7 +239,7 @@ def _run_load(cmd) -> None:
     if proc.returncode != 0:
         raise RuntimeError(f'image load failed: {" ".join(cmd)}')
 
-def _k3s_import(image) -> None:
+def _k3s_import(image : str) -> None:
     '''docker save | sudo k3s ctr images import - (k3s containerd socket is root-owned).'''
     pipeline = f'docker save {image} | sudo k3s ctr images import -'
     try:
@@ -255,7 +255,7 @@ def _k3s_import(image) -> None:
     if save.returncode != 0 or imp.returncode != 0:
         raise RuntimeError(f'image load into k3s failed — retry manually: {pipeline}')
 
-def hostpath_warning(cluster) -> Optional[str]:
+def hostpath_warning(cluster : str) -> Optional[str]:
     '''
     A message when hostPath mounts will NOT resolve against the local filesystem
     (the cluster "node" is a VM/container with its own filesystem), else None.
@@ -267,7 +267,7 @@ def hostpath_warning(cluster) -> Optional[str]:
     except RuntimeError:
         return None
 
-def allocatable_gpus(kubectl = 'kubectl', resource = 'nvidia.com/gpu') -> int:
+def allocatable_gpus(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu') -> int:
     '''
     Total allocatable units of one GPU extended resource across all nodes
     (0 when no node advertises it or the cluster is unreachable).
@@ -278,7 +278,7 @@ def allocatable_gpus(kubectl = 'kubectl', resource = 'nvidia.com/gpu') -> int:
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return sum(int(v) for v in out.split() if v.isdigit())
 
-def nvidia_runtimeclass(kubectl = 'kubectl') -> Optional[str]:
+def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
     '''
     The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers
     the conventional ``nvidia`` but also recognizes variant names (e.g. a distro
@@ -291,8 +291,9 @@ def nvidia_runtimeclass(kubectl = 'kubectl') -> Optional[str]:
         return 'nvidia'
     return next((h for h in handlers if h.startswith('nvidia')), None)
 
-def gpu_preflight(kubectl = 'kubectl', gpu_runtime_class = None, demand = None,
-                  gpu_mode = 'exclusive') -> List[str]:
+def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] = None,
+                  demand : Optional[dict] = None,
+                  gpu_mode : str = 'exclusive') -> List[str]:
     '''
     Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
     labeled ``videoflow.io/gpu-pool=true``; in exclusive mode, enough allocatable

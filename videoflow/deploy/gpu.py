@@ -23,6 +23,9 @@ from __future__ import absolute_import, division, print_function
 import logging
 from typing import List, Optional
 
+from ..core.compiler import NodeSpec
+from ..utils import plugins
+
 logger = logging.getLogger(__package__)
 
 #: Extended resource used when neither the node nor the deploy names one.
@@ -34,7 +37,7 @@ GPU_TAINT_KEY = 'nvidia.com/gpu'
 
 GPU_STRATEGY_ENTRY_POINT_GROUP = 'videoflow.gpu_strategies'
 
-def resolve_gpu_resource(spec, default : Optional[str] = None) -> str:
+def resolve_gpu_resource(spec : NodeSpec, default : Optional[str] = None) -> str:
     '''The extended-resource name a GPU spec requests: the node's own, else the
     deploy default (``--gpu-resource-name``), else ``nvidia.com/gpu``.'''
     return spec.gpu_resource_name or default or DEFAULT_GPU_RESOURCE
@@ -53,7 +56,7 @@ class GpuStrategy:
     #: Mode name, as used by ``--gpu-mode``.
     name : str = ''
 
-    def pod_resources(self, spec, gpu_resource_name : Optional[str] = None) -> dict:
+    def pod_resources(self, spec : NodeSpec, gpu_resource_name : Optional[str] = None) -> dict:
         '''
         The container ``resources`` fragment for one GPU pod — ``{}`` for a
         strategy that requests nothing.
@@ -100,15 +103,15 @@ class ExclusiveGpu(GpuStrategy):
     '''Whole-device claims through an integer extended resource (the default).'''
     name = 'exclusive'
 
-    def pod_resources(self, spec, gpu_resource_name = None) -> dict:
+    def pod_resources(self, spec : NodeSpec, gpu_resource_name : Optional[str] = None) -> dict:
         # nvidia.com/gpu (or a MIG profile / renamed time-sliced resource via
         # gpu_resource_name) is an integer extended resource the scheduler
         # allocates exclusively — N GPU replicas need N allocatable units, and
         # pods beyond capacity stay Pending.
         return {'limits': {resolve_gpu_resource(spec, gpu_resource_name): spec.gpu_count}}
 
-    def preflight_problems(self, kubectl = 'kubectl', demand = None,
-                        gpu_runtime_class = None) -> List[str]:
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict] = None,
+                        gpu_runtime_class : Optional[str] = None) -> List[str]:
         # Function-level: cluster.py imports this module at module scope (for
         # SHARED_NEEDS_RUNTIME_CLASS and get_gpu_mode), so importing it back at
         # module scope here would be a cycle.
@@ -150,7 +153,7 @@ class SharedGpu(GpuStrategy):
     '''No resource limit: pods co-schedule on the pool and share devices via the NVIDIA runtime.'''
     name = 'shared'
 
-    def pod_resources(self, spec, gpu_resource_name = None) -> dict:
+    def pod_resources(self, spec : NodeSpec, gpu_resource_name : Optional[str] = None) -> dict:
         # No limit at all: every GPU pod is scheduled onto the pool by the selector
         # alone and shares the physical devices through the NVIDIA runtime (the CUDA
         # base images set NVIDIA_VISIBLE_DEVICES=all) — LocalProcessEngine semantics
@@ -159,8 +162,8 @@ class SharedGpu(GpuStrategy):
         # device.
         return {}
 
-    def preflight_problems(self, kubectl = 'kubectl', demand = None,
-                        gpu_runtime_class = None) -> List[str]:
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict] = None,
+                        gpu_runtime_class : Optional[str] = None) -> List[str]:
         # Function-level to break the same cycle as in ExclusiveGpu above.
         from .cluster import nvidia_runtimeclass
 
@@ -211,9 +214,9 @@ def get_gpu_mode(name : str) -> GpuStrategy:
     '''
     strategy = _GPU_STRATEGIES.get(name)
     if strategy is None:
-        # May belong to an installed-but-unimported package.
-        from ..utils.plugins import load_plugin_group
-        load_plugin_group(GPU_STRATEGY_ENTRY_POINT_GROUP)
+        # May belong to an installed-but-unimported package. Called through the
+        # module object so the entry-point scan stays a patchable seam.
+        plugins.load_plugin_group(GPU_STRATEGY_ENTRY_POINT_GROUP)
         strategy = _GPU_STRATEGIES.get(name)
     if strategy is None:
         raise ValueError(

@@ -148,10 +148,13 @@ no_implicit_optional = false
 # the codebase has intentionally dynamic spots (get_params introspection, nats/cv2
 # interop) whose bodies aren't worth fighting the checker over.
 check_untyped_defs = false
-# A node's process()/consume() arity varies by parent count, so subclasses
-# deliberately don't match the base signature (it's a positional-args-by-parent
-# contract, not LSP substitutability). Don't flag those as override violations.
-disable_error_code = ["override"]
+# Liskov/override checking is ON. A node's process()/consume() arity varies by parent
+# count, so a handful of subclasses deliberately don't match the base signature (it's a
+# positional-args-by-parent contract, not LSP substitutability). Those carry a local
+# `# type: ignore[override]` with a comment naming the reason, rather than a blanket
+# disable — a repo-wide disable also hid unrelated real violations (get_params stubs
+# returning None, and ModuleNode.__call__ silently returning None instead of a Node).
+enable_error_code = ["override"]
 
 [tool.ruff]
 target-version = "py312"

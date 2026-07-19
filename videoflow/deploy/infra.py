@@ -16,6 +16,7 @@ as "created" and later torn down.
 from __future__ import absolute_import, division, print_function
 
 import subprocess
+from typing import List
 
 from .manifests import LABEL_MANAGED_BY, dump_manifests
 
@@ -32,10 +33,10 @@ jetstream {
 }
 '''
 
-def _infra_labels(component) -> dict:
+def _infra_labels(component : str) -> dict:
     return {'app': component, LABEL_INFRA: component, LABEL_MANAGED_BY: 'videoflow'}
 
-def nats_manifests(namespace) -> list:
+def nats_manifests(namespace : str) -> list:
     '''Single-replica NATS JetStream (port of k8s/nats.yaml) + infra labels.'''
     labels = _infra_labels('nats')
     return [
@@ -90,7 +91,7 @@ def nats_manifests(namespace) -> list:
         },
     ]
 
-def redis_manifests(namespace) -> list:
+def redis_manifests(namespace : str) -> list:
     '''Single-replica Redis for the large-payload blob store. Persistence off: it is transport, not storage.'''
     labels = _infra_labels('redis')
     return [
@@ -125,12 +126,12 @@ def redis_manifests(namespace) -> list:
         },
     ]
 
-def infra_urls(namespace) -> dict:
+def infra_urls(namespace : str) -> dict:
     '''The in-cluster URLs workers use once the dev infra is up.'''
     return {'nats': f'nats://nats.{namespace}.svc:4222',
             'redis': f'redis://redis.{namespace}.svc:6379/0'}
 
-def ensure_namespace(kubectl, namespace) -> None:
+def ensure_namespace(kubectl : str, namespace : str) -> None:
     proc = subprocess.run([kubectl, 'get', 'namespace', namespace],
                           capture_output = True, check = False)
     if proc.returncode == 0:
@@ -141,12 +142,12 @@ def ensure_namespace(kubectl, namespace) -> None:
         raise RuntimeError(f'could not create namespace {namespace}: '
                            f'{proc.stderr.decode("utf-8", "replace")}')
 
-def service_exists(kubectl, namespace, name) -> bool:
+def service_exists(kubectl : str, namespace : str, name : str) -> bool:
     proc = subprocess.run([kubectl, 'get', 'svc', name, '-n', namespace],
                           capture_output = True, check = False)
     return proc.returncode == 0
 
-def ensure_infra(kubectl, namespace, need_redis) -> tuple:
+def ensure_infra(kubectl : str, namespace : str, need_redis : bool) -> tuple:
     '''
     Applies the dev NATS (and, when ``need_redis``, Redis) unless a Service of the
     same name already exists in the namespace (bring-your-own is reused, not owned).
@@ -176,7 +177,8 @@ def ensure_infra(kubectl, namespace, need_redis) -> tuple:
                                f'{proc.stderr.decode("utf-8", "replace")}')
     return urls, created
 
-def wait_infra_ready(kubectl, namespace, created, timeout_secs = 120) -> None:
+def wait_infra_ready(kubectl : str, namespace : str, created : List[str],
+                     timeout_secs : int = 120) -> None:
     '''Blocks until each freshly created infra Deployment rolls out; raises on timeout.'''
     for component in created:
         proc = subprocess.run(
@@ -188,7 +190,7 @@ def wait_infra_ready(kubectl, namespace, created, timeout_secs = 120) -> None:
             raise RuntimeError(f'{component} did not become ready within {timeout_secs}s — '
                                f'check `kubectl get pods -n {namespace} -l app={component}`.')
 
-def teardown_infra(kubectl, namespace, components) -> None:
+def teardown_infra(kubectl : str, namespace : str, components : List[str]) -> None:
     '''Deletes the given auto-provisioned components by ownership label. Best-effort (never raises).'''
     if not components:
         return

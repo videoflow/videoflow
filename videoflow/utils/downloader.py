@@ -6,6 +6,7 @@ import shutil
 import sys
 import tarfile
 import zipfile
+from collections.abc import Callable
 from contextlib import closing
 from typing import Any
 
@@ -16,7 +17,7 @@ from six.moves.urllib.request import urlopen
 from ..utils.generic_utils import Progbar
 
 if sys.version_info[0] == 2:
-    def urlretrieve(url, filename, reporthook=None, data=None) -> None:
+    def urlretrieve(url : str, filename : str, reporthook : Any = None, data : Any = None) -> None:
         """Replacement for `urlretrive` for Python 2.
         Under Python 2, `urlretrieve` relies on `FancyURLopener` from legacy
         `urllib` module, known to have issues with proxy management.
@@ -32,7 +33,7 @@ if sys.version_info[0] == 2:
             data: `data` argument passed to `urlopen`.
         """
 
-        def chunk_read(response, chunk_size=8192, reporthook=None) -> Any:
+        def chunk_read(response : Any, chunk_size : int = 8192, reporthook : Any = None) -> Any:
             content_type = response.info().get('Content-Length')
             total_size = -1
             if content_type is not None:
@@ -54,16 +55,16 @@ if sys.version_info[0] == 2:
 else:
     from six.moves.urllib.request import urlretrieve
 
-def get_file(fname,
-             origin,
-             untar=False,
-             md5_hash=None,
-             file_hash=None,
-             cache_subdir='models',
-             hash_algorithm='auto',
-             extract=False,
-             archive_format='auto',
-             cache_dir=None) -> str:
+def get_file(fname : str,
+             origin : str | list,
+             untar : bool = False,
+             md5_hash : str | None = None,
+             file_hash : str | None = None,
+             cache_subdir : str = 'models',
+             hash_algorithm : str = 'auto',
+             extract : bool = False,
+             archive_format : str | list | None = 'auto',
+             cache_dir : str | None = None) -> str:
     """
     Copied from Keras repository.
 
@@ -106,7 +107,9 @@ def get_file(fname,
     """
     if cache_dir is None:
         if 'VIDEOFLOW_HOME' in os.environ:
-            cache_dir = os.environ.get('VIDEOFLOW_HOME')
+            # Indexed rather than .get(): the `in` guard above already proves the
+            # key is present, and this yields `str` instead of `str | None`.
+            cache_dir = os.environ['VIDEOFLOW_HOME']
         else:
             cache_dir = os.path.join(os.path.expanduser('~'), '.videoflow')
     if md5_hash is not None and file_hash is None:
@@ -147,9 +150,9 @@ def get_file(fname,
         class ProgressTracker(object):
             # Maintain progbar for the lifetime of download.
             # This design was chosen for Python 2.7 compatibility.
-            progbar: Any = None
+            progbar: Progbar | None = None
 
-        def dl_progress(count, block_size, total_size) -> None:
+        def dl_progress(count : int, block_size : int, total_size : int | None) -> None:
             if ProgressTracker.progbar is None:
                 if total_size == -1:
                     total_size = None
@@ -158,7 +161,7 @@ def get_file(fname,
                 ProgressTracker.progbar.update(count * block_size)
 
         error_msg = 'URL fetch failure on {} : {} -- {}'
-        last_error: Any = None
+        last_error: Exception | None = None
         try:
             for url in origins:
                 print('Downloading data from', url)
@@ -194,7 +197,7 @@ def get_file(fname,
 
     return fpath
 
-def _extract_archive(file_path, path='.', archive_format='auto') -> bool:
+def _extract_archive(file_path : str, path : str = '.', archive_format : str | list | None = 'auto') -> bool:
     """Extracts an archive if it matches tar, tar.gz, tar.bz, or zip formats.
 
     - Arguments
@@ -218,8 +221,10 @@ def _extract_archive(file_path, path='.', archive_format='auto') -> bool:
         archive_format = [archive_format]
 
     for archive_type in archive_format:
-        open_fn: Any
-        is_match_fn: Any
+        # tarfile.open and zipfile.ZipFile share no common protocol beyond being
+        # callable, so open_fn stays loose; the match predicates do agree on a shape.
+        open_fn: Callable[..., Any]
+        is_match_fn: Callable[[str], bool]
         if archive_type == 'tar':
             open_fn = tarfile.open
             is_match_fn = tarfile.is_tarfile
@@ -242,7 +247,7 @@ def _extract_archive(file_path, path='.', archive_format='auto') -> bool:
             return True
     return False
 
-def _hash_file(fpath, algorithm='sha256', chunk_size=65535) -> str:
+def _hash_file(fpath : str, algorithm : str = 'sha256', chunk_size : int = 65535) -> str:
     """Calculates a file sha256 or md5 hash.
 
     - Example
@@ -273,7 +278,7 @@ def _hash_file(fpath, algorithm='sha256', chunk_size=65535) -> str:
     return hasher.hexdigest()
 
 
-def validate_file(fpath, file_hash, algorithm='auto', chunk_size=65535) -> bool:
+def validate_file(fpath : str, file_hash : str, algorithm : str = 'auto', chunk_size : int = 65535) -> bool:
     """Validates a file against a sha256 or md5 hash.
 
     - Arguments:

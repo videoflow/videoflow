@@ -4,10 +4,18 @@ import asyncio
 import inspect
 import logging
 import time
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
 from ..utils.generic_utils import DelayedKeyboardInterrupt
+from .context import RuntimeContext
+from .engine import Messenger
 from .node import ConsumerNode, Node, ProcessorNode, ProducerNode
+
+if TYPE_CHECKING:
+    # Type-only: the store is constructed in the worker (videoflow.runtime) and
+    # handed down to the task, so a real import here would invert the
+    # core <- runtime dependency direction for nothing but an annotation.
+    from ..runtime.idempotency import IdempotencyStore
 
 logger = logging.getLogger(__package__)
 
@@ -33,7 +41,8 @@ class NodeTask(Task):
         - has_children (bool): True if this node has at least one downstream child \
             in the graph — used to skip publishing when nothing would ever consume it.
     '''
-    def __init__(self, computation_node : Node, messenger, has_children : bool, ctx = None) -> None:
+    def __init__(self, computation_node : Node, messenger : Messenger, has_children : bool,
+                ctx : Optional[RuntimeContext] = None) -> None:
         self._messenger = messenger
         self._computation_node = computation_node
         self._has_children = has_children
@@ -50,7 +59,7 @@ class NodeTask(Task):
     def _assert_messenger(self) -> None:
         assert self._messenger is not None, 'Task cannot run if messenger has not been set.'
 
-    def _ctx_kwarg(self, method) -> Optional[str]:
+    def _ctx_kwarg(self, method : Callable[..., Any]) -> Optional[str]:
         '''Returns 'ctx'/'context' if the method declares that parameter, else None.'''
         try:
             params = inspect.signature(method).parameters
@@ -62,7 +71,7 @@ class NodeTask(Task):
             return 'context'
         return None
 
-    def _call(self, method, *args) -> Any:
+    def _call(self, method : Callable[..., Any], *args : Any) -> Any:
         '''
         Invoke a node method, passing ``ctx`` only if it declares it, and awaiting
         the result if the method is a coroutine (async ``def``). Async node methods
@@ -102,7 +111,8 @@ class ProducerTask(NodeTask):
     At each iteration it checks for a termination signal, and if so it \
     sends a termination message to its child task and breaks the infinite loop.
     '''
-    def __init__(self, producer : ProducerNode, messenger, has_children : bool, ctx = None) -> None:
+    def __init__(self, producer : ProducerNode, messenger : Messenger, has_children : bool,
+                ctx : Optional[RuntimeContext] = None) -> None:
         self._producer = producer
         super(ProducerTask, self).__init__(producer, messenger, has_children, ctx)
 
@@ -143,7 +153,8 @@ class ProcessorTask(NodeTask):
     the flow. If every parent has signaled termination, it passes termination \
     message down the flow and breaks from infinite loop.
     '''
-    def __init__(self, processor : ProcessorNode, messenger, has_children : bool, parent_names, ctx = None) -> None:
+    def __init__(self, processor : ProcessorNode, messenger : Messenger, has_children : bool,
+                parent_names : List[str], ctx : Optional[RuntimeContext] = None) -> None:
         '''
         - Arguments:
             - parent_names ([str]): names of this node's real parents, in the exact \
@@ -214,8 +225,9 @@ class ConsumerTask(NodeTask):
     through the messenger. It consumes the message and does not publish anything \
     back down the pipe — consumers are the leaves of the graph.
     '''
-    def __init__(self, consumer : ConsumerNode, messenger, has_children : bool, parent_names,
-                ctx = None, idempotency_store = None) -> None:
+    def __init__(self, consumer : ConsumerNode, messenger : Messenger, has_children : bool,
+                parent_names : List[str], ctx : Optional[RuntimeContext] = None,
+                idempotency_store : Optional["IdempotencyStore"] = None) -> None:
         self._consumer = consumer
         self._parent_names = list(parent_names)
         # Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).

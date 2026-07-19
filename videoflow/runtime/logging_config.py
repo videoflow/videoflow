@@ -13,7 +13,7 @@ import os
 _CONTEXT_FIELDS = ('flow_id', 'run_id', 'node_name', 'replica_id', 'trace_id', 'span_id', 'edge_id')
 
 class JsonFormatter(logging.Formatter):
-    def format(self, record) -> str:
+    def format(self, record : logging.LogRecord) -> str:
         payload = {
             'ts': self.formatTime(record),
             'level': record.levelname,

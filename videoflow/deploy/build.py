@@ -15,11 +15,13 @@ import os
 import re
 import subprocess
 import sys
-from typing import Optional
+from typing import List, Optional
+
+import videoflow
 
 _BASE_ARG_RE = re.compile(r'^ARG\s+BASE_IMAGE\s*=\s*(\S+)\s*$', re.MULTILINE)
 
-def find_dockerfile(graph_dir, needs_gpu) -> Optional[str]:
+def find_dockerfile(graph_dir : str, needs_gpu : bool) -> Optional[str]:
     '''
     The Dockerfile deploy builds the node image from: ``gpu.Dockerfile`` when the
     flow has GPU nodes and one exists, else ``Dockerfile``. None when the solution
@@ -32,7 +34,7 @@ def find_dockerfile(graph_dir, needs_gpu) -> Optional[str]:
             return candidate
     return None
 
-def build_context_for(graph_dir, override = None) -> str:
+def build_context_for(graph_dir : str, override : Optional[str] = None) -> str:
     '''
     The docker build context: an explicit ``--build-context``, else the git root
     enclosing the graph (solution Dockerfiles COPY sibling packages from the repo
@@ -46,18 +48,18 @@ def build_context_for(graph_dir, override = None) -> str:
         return proc.stdout.strip()
     return graph_dir
 
-def base_image_for(dockerfile_path) -> Optional[str]:
+def base_image_for(dockerfile_path : str) -> Optional[str]:
     '''The default of the Dockerfile's ``ARG BASE_IMAGE=`` line, or None if it has none.'''
     with open(dockerfile_path) as f:
         match = _BASE_ARG_RE.search(f.read())
     return match.group(1) if match else None
 
-def image_exists(ref) -> bool:
+def image_exists(ref : str) -> bool:
     proc = subprocess.run(['docker', 'image', 'inspect', ref],
                           capture_output = True, check = False)
     return proc.returncode == 0
 
-def ensure_base_image(base_ref) -> None:
+def ensure_base_image(base_ref : str) -> None:
     '''
     Makes sure ``base_ref`` (a ``videoflow-base:*`` image) exists locally,
     building it from the videoflow source checkout if missing.
@@ -69,7 +71,6 @@ def ensure_base_image(base_ref) -> None:
     '''
     if image_exists(base_ref):
         return
-    import videoflow
     source_root = os.path.dirname(os.path.dirname(os.path.abspath(videoflow.__file__)))
     gpu = base_ref.endswith('-cuda')
     dockerfile = os.path.join(source_root, 'docker', 'base',
@@ -87,12 +88,12 @@ def ensure_base_image(base_ref) -> None:
     cmd.append(source_root)
     _docker_build(cmd)
 
-def build_image(dockerfile, context, tag) -> None:
+def build_image(dockerfile : str, context : str, tag : str) -> None:
     '''Builds the solution image, streaming docker output (layer cache makes unchanged rebuilds fast).'''
     print(f'Building {tag} from {dockerfile}...')
     _docker_build(['docker', 'build', '-f', dockerfile, '-t', tag, context])
 
-def _docker_build(cmd) -> None:
+def _docker_build(cmd : List[str]) -> None:
     try:
         proc = subprocess.run(cmd, check = False)
     except FileNotFoundError as e:
@@ -101,7 +102,7 @@ def _docker_build(cmd) -> None:
     if proc.returncode != 0:
         raise RuntimeError(f'docker build failed: {" ".join(cmd)}')
 
-def default_tag(graph_dir) -> str:
+def default_tag(graph_dir : str) -> str:
     '''Deterministic human-readable tag for the auto-built solution image, e.g. ``videoflow-offside:latest``.'''
     return f'videoflow-{os.path.basename(os.path.abspath(graph_dir))}:latest'
 
@@ -111,8 +112,9 @@ def docker_gpus_available() -> bool:
                           capture_output = True, text = True, check = False)
     return proc.returncode == 0 and 'nvidia' in proc.stdout
 
-def run_in_image(image, command, mounts = None, workdir = None, gpus = False,
-                 capture = False, interactive = False) -> Optional[str]:
+def run_in_image(image : str, command : List[str], mounts : Optional[List[dict]] = None,
+                 workdir : Optional[str] = None, gpus : bool = False,
+                 capture : bool = False, interactive : bool = False) -> Optional[str]:
     '''
     Runs a command in the solution image with the given hostPath-style mounts
     (dicts from ``manifests.parse_mounts``) — how deploy executes the prepare
@@ -146,7 +148,8 @@ def run_in_image(image, command, mounts = None, workdir = None, gpus = False,
         raise RuntimeError(f'command failed in {image}: {" ".join(command)}{detail}')
     return proc.stdout if capture else None
 
-def autobuild(graph_dir, needs_gpu, context_override = None) -> Optional[str]:
+def autobuild(graph_dir : str, needs_gpu : bool,
+              context_override : Optional[str] = None) -> Optional[str]:
     '''
     The whole auto-build path: find the Dockerfile, ensure its base image, build
     the solution image. Returns the built tag, or None when the solution ships no

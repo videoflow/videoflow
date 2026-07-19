@@ -21,6 +21,7 @@ class IdempotencyStore:
 
 class RedisIdempotencyStore(IdempotencyStore):
     def __init__(self, url : str, ttl_seconds : int = 86400) -> None:
+        # Deferred: `redis` is an optional dependency (the `blob` extra).
         import redis
         self._client = redis.Redis.from_url(url)
         self._ttl = ttl_seconds

@@ -12,14 +12,14 @@ def get_number_of_gpus() -> int:
     except FileNotFoundError:
         return 0
 
-def get_system_gpus() -> set:
+def get_system_gpus() -> set[int]:
     '''
     Returns the ids of gpus in the machine as a set of integers
     '''
     n = get_number_of_gpus()
     return set(range(n))
 
-def get_gpus_available_to_process() -> list:
+def get_gpus_available_to_process() -> list[int]:
     '''
     Returns the list of ids of the gpus available to the process calling the function.
     It first gets the set of ids of the gpus in the system.  Then it gets the set of ids marked as

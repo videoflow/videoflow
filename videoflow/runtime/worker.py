@@ -6,7 +6,9 @@ the original graph-building script.
 
     VF_NODE_CLASS       fully-qualified class, e.g. videoflow.processors.basic.IdentityProcessor
     VF_NODE_PARAMS_JSON JSON dict of constructor kwargs (from NodeSpec.params)
-    VF_NODE_KIND        producer | processor | consumer
+    VF_NODE_KIND        producer | processor | consumer. Must match the family of
+                        VF_NODE_CLASS; the compiler writes both together, and the
+                        worker rejects a disagreement up front (see require_node_kind).
     VF_NODE_NAME        this node's stable name
     VF_PARENT_NAMES     comma-separated parent node names ('' if none)
     VF_HAS_CHILDREN     '1' or '0'
@@ -34,7 +36,16 @@ import importlib
 import json
 import logging
 import os
-from typing import Any
+from typing import Type, TypeVar
+
+from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
+from ..core.context import RuntimeContext
+from ..core.engine import Messenger
+from ..core.node import ConsumerNode, Node, ProcessorNode, ProducerNode
+from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
+from .health import HealthServer, HealthState, InstrumentedMessenger
+from .idempotency import RedisIdempotencyStore
+from .logging_config import configure_logging
 
 logger = logging.getLogger('videoflow.worker')
 
@@ -63,7 +74,30 @@ def _resolve_replica_id() -> int:
                 return int(tail)
     return 0
 
-def build_node_from_env() -> Any:
+_N = TypeVar('_N', bound = Node)
+
+def require_node_kind(node : Node, expected : Type[_N], kind : str) -> _N:
+    '''
+    Check that the node built from ``VF_NODE_CLASS`` matches the node family declared
+    by ``VF_NODE_KIND``, and return it narrowed to that family.
+
+    The two env vars are written together by the compiler, so a mismatch means the
+    ConfigMap was hand-edited or the image is stale. Without this check the wrong
+    Task type is constructed and the disagreement only surfaces later, deep in the
+    run loop, as an opaque ``AttributeError`` (e.g. calling ``next()`` on a consumer).
+
+    - Raises:
+        - ValueError: if ``node`` is not an instance of ``expected``.
+    '''
+    if not isinstance(node, expected):
+        actual = f'{type(node).__module__}.{type(node).__name__}'
+        raise ValueError(
+            f'VF_NODE_KIND={kind!r} requires a {expected.__name__}, but VF_NODE_CLASS '
+            f'({actual}) is not one. These two are set together by the compiler — '
+            'redeploy the flow rather than editing the ConfigMap by hand.')
+    return node
+
+def build_node_from_env() -> Node:
     fq_class = os.environ.get('VF_NODE_CLASS')
     if not fq_class:
         # A remote (language-agnostic) component must run its own image's entrypoint,
@@ -79,8 +113,7 @@ def build_node_from_env() -> Any:
     return node_class(**params)
 
 def run_from_env() -> None:
-    from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
-    from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
+    # Deferred: nats_messenger imports the optional `nats` client at module scope.
     from ..messaging.nats_messenger import NATSMessenger
 
     node_name = os.environ['VF_NODE_NAME']
@@ -100,6 +133,7 @@ def run_from_env() -> None:
     join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
     join_policy = json.loads(join_policy_json) if join_policy_json else None
 
+    # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
     envelope_version = int(os.environ.get('VF_ENVELOPE_VERSION', str(DEFAULT_ENVELOPE_VERSION)))
     if envelope_version not in EMITTABLE_ENVELOPE_VERSIONS:
@@ -111,6 +145,7 @@ def run_from_env() -> None:
     # Env var name is historical: any registered URL scheme works, not just Redis.
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
+        # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
         from ..wire.serialization import make_blob_store
         blob_store = make_blob_store(blob_redis_url)
 
@@ -119,7 +154,6 @@ def run_from_env() -> None:
     # (they should match, but the env is authoritative for routing).
     node._name = node_name
 
-    from ..core.engine import Messenger
     messenger: Messenger = NATSMessenger(
         node, parent_names, nats_url, flow_id, flow_type, run_id,
         blob_store = blob_store, replica_id = replica_id,
@@ -131,7 +165,6 @@ def run_from_env() -> None:
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
     # engine where several workers share a host and would collide on the port).
-    from .health import HealthServer, HealthState, InstrumentedMessenger
     health_port = int(os.environ.get('VF_HEALTH_PORT', '0'))
     health_server = None
     if health_port > 0:
@@ -140,7 +173,6 @@ def run_from_env() -> None:
         health_server.start()
         messenger = InstrumentedMessenger(messenger, state)
 
-    from ..core.context import RuntimeContext
     ctx = RuntimeContext(
         flow_id, run_id, node_name, replica_id,
         logging.getLogger(f'videoflow.node.{node_name}'), messenger = messenger,
@@ -148,15 +180,17 @@ def run_from_env() -> None:
 
     task: Task
     if kind == NODE_KIND_PRODUCER:
-        task = ProducerTask(node, messenger, has_children, ctx = ctx)
+        task = ProducerTask(require_node_kind(node, ProducerNode, kind),
+                            messenger, has_children, ctx = ctx)
     elif kind == NODE_KIND_PROCESSOR:
-        task = ProcessorTask(node, messenger, has_children, parent_names, ctx = ctx)
+        task = ProcessorTask(require_node_kind(node, ProcessorNode, kind),
+                            messenger, has_children, parent_names, ctx = ctx)
     elif kind == NODE_KIND_CONSUMER:
+        consumer = require_node_kind(node, ConsumerNode, kind)
         idem_store = None
-        if getattr(node, 'idempotent', False) and blob_redis_url:
-            from .idempotency import RedisIdempotencyStore
+        if getattr(consumer, 'idempotent', False) and blob_redis_url:
             idem_store = RedisIdempotencyStore(blob_redis_url)
-        task = ConsumerTask(node, messenger, has_children, parent_names, ctx = ctx,
+        task = ConsumerTask(consumer, messenger, has_children, parent_names, ctx = ctx,
                             idempotency_store = idem_store)
     else:
         raise ValueError(f'Unknown VF_NODE_KIND: {kind}')
@@ -171,7 +205,6 @@ def run_from_env() -> None:
     logger.info(f'Worker finished: node={node_name}')
 
 def main() -> None:
-    from .logging_config import configure_logging
     configure_logging()
     run_from_env()
 

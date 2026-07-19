@@ -16,7 +16,7 @@ survives ``get_params()`` serialization into a worker). It decides two things:
 '''
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional
+from typing import Any, Dict, Optional
 
 from .constants import BATCH
 
@@ -64,8 +64,10 @@ class JoinPolicy:
             count toward ``quorum``; a group holds for the largest collect window \
             after completing so trailing samples can arrive.
     '''
-    def __init__(self, timeout_seconds = None, missing = MISSING_DROP, max_pending = 256,
-                mode = JOIN_TRACE, tolerance_ms = None, quorum = None, collect = None) -> None:
+    def __init__(self, timeout_seconds : Optional[float] = None, missing : str = MISSING_DROP,
+                max_pending : int = 256, mode : str = JOIN_TRACE,
+                tolerance_ms : Optional[float] = None, quorum : Optional[int] = None,
+                collect : Optional[dict] = None) -> None:
         if missing not in MISSING_POLICIES:
             raise ValueError(f'missing must be one of {MISSING_POLICIES}, got {missing!r}')
         if mode not in JOIN_MODES:
@@ -96,7 +98,7 @@ class JoinPolicy:
         self.quorum = quorum
         self.collect = dict(collect) if collect else {}
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             'timeout_seconds': self.timeout_seconds,
             'missing': self.missing,
@@ -108,7 +110,7 @@ class JoinPolicy:
         }
 
     @classmethod
-    def from_dict(cls, d) -> Optional["JoinPolicy"]:
+    def from_dict(cls, d : Optional[Dict[str, Any]]) -> Optional["JoinPolicy"]:
         if d is None:
             return None
         return cls(
@@ -122,7 +124,7 @@ class JoinPolicy:
         )
 
     @classmethod
-    def default_for(cls, flow_type) -> "JoinPolicy":
+    def default_for(cls, flow_type : str) -> "JoinPolicy":
         '''
         BATCH waits (completeness matters; bounded by max_pending). REALTIME times
         out and drops (a dropped sibling frame must not stall the join forever).

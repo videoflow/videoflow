@@ -9,6 +9,11 @@ called exactly as before, so this is fully backward compatible with existing nod
 '''
 from __future__ import absolute_import, division, print_function
 
+import logging
+from typing import Any, Dict, Optional
+
+from .engine import Messenger
+
 
 class RuntimeContext:
     '''
@@ -16,7 +21,8 @@ class RuntimeContext:
         - flow_id / run_id / node_name / replica_id: identity of this running node.
         - logger: a standard library logger scoped to the node.
     '''
-    def __init__(self, flow_id, run_id, node_name, replica_id, logger, messenger = None) -> None:
+    def __init__(self, flow_id : str, run_id : str, node_name : str, replica_id : int,
+                logger : logging.Logger, messenger : Optional[Messenger] = None) -> None:
         self.flow_id = flow_id
         self.run_id = run_id
         self.node_name = node_name
@@ -24,7 +30,7 @@ class RuntimeContext:
         self.logger = logger
         self._messenger = messenger
 
-    def set_partition_key(self, value) -> None:
+    def set_partition_key(self, value : Any) -> None:
         '''
         Set the partition key carried on this node's *next* published output, so a
         downstream partitioned node can route by a business key. Applied to the
@@ -46,7 +52,7 @@ class RuntimeContext:
             self._messenger.set_output_event_timestamp(value)
 
     @property
-    def input_info(self):
+    def input_info(self) -> Optional[Dict[str, Any]]:
         '''
         Per-parent envelope info for the input group currently being processed:
         ``{parent_name: {'event_ts': ..., 'metadata': ..., 'trace_id': ..., 'seq': ...}}``

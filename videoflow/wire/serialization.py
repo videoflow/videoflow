@@ -26,11 +26,14 @@ from __future__ import absolute_import, division, print_function
 import hashlib
 import os
 import pickle
+import uuid
 from typing import Any, Callable, Optional, Tuple
 
 import msgpack
 import numpy as np
+from google.protobuf.message import Message
 
+from ..utils import plugins
 from ..v1 import envelope_pb2, payloads_pb2, value_pb2
 
 # -- codecs / versions -----------------------------------------------------
@@ -111,12 +114,11 @@ class BlobStore:
 
 class RedisBlobStore(BlobStore):
     '''Uses a Redis server purely as a large-value TTL cache, independent of whether Redis is used for messaging.'''
-    def __init__(self, url : str = None) -> None:
-        import redis
+    def __init__(self, url : str | None = None) -> None:
+        import redis  # optional dependency (extra): only this store needs it
         self._client = redis.Redis.from_url(url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL', 'redis://localhost:6379/0'))
 
     def put(self, data : bytes, ttl_seconds : int = 3600) -> str:
-        import uuid
         key = f'vf-blob-{uuid.uuid4().hex}'
         self._client.set(key, data, ex = ttl_seconds)
         return key
@@ -136,7 +138,7 @@ class RedisBlobStore(BlobStore):
 
 BLOB_STORE_ENTRY_POINT_GROUP = 'videoflow.blob_stores'
 
-_BLOB_STORE_SCHEMES : dict = {}
+_BLOB_STORE_SCHEMES : dict[str, Callable[[str], BlobStore]] = {}
 
 def _normalize_scheme(scheme : str) -> str:
     '''
@@ -164,7 +166,7 @@ def register_blob_store(scheme : str, factory : Callable[[str], BlobStore]) -> N
     '''
     _BLOB_STORE_SCHEMES[_normalize_scheme(scheme)] = factory
 
-def registered_blob_store_schemes() -> list:
+def registered_blob_store_schemes() -> list[str]:
     '''The URL schemes a blob store is currently registered for, sorted.'''
     return sorted(_BLOB_STORE_SCHEMES)
 
@@ -190,8 +192,7 @@ def make_blob_store(url : str) -> BlobStore:
     if scheme not in _BLOB_STORE_SCHEMES:
         # A scheme we do not know may belong to an installed-but-unimported
         # plugin; consult entry points once before giving up.
-        from ..utils.plugins import load_plugin_group
-        load_plugin_group(BLOB_STORE_ENTRY_POINT_GROUP)
+        plugins.load_plugin_group(BLOB_STORE_ENTRY_POINT_GROUP)
     if scheme not in _BLOB_STORE_SCHEMES:
         raise ValueError(
             f'No blob store registered for URL scheme {scheme!r} (from {url!r}). '
@@ -223,7 +224,7 @@ def _decode_ndarray(buf : bytes) -> np.ndarray:
     d = msgpack.unpackb(buf, raw = False)
     return np.frombuffer(d['data'], dtype = np.dtype(d['dtype'])).reshape(d['shape'])
 
-def encode_payload(payload, blob_store : BlobStore = None) -> tuple:
+def encode_payload(payload : Any, blob_store : BlobStore | None = None) -> tuple:
     '''
     Encodes an arbitrary payload (numpy array, or any picklable Python object) into \
         ``(codec, bytes)``. If the encoded size exceeds ``MAX_INLINE_PAYLOAD_BYTES`` \
@@ -246,7 +247,7 @@ def encode_payload(payload, blob_store : BlobStore = None) -> tuple:
         return CODEC_EXTERNAL_REF, msgpack.packb({'ref': ref, 'inner_codec': codec}, use_bin_type = True)
     return codec, buf
 
-def decode_payload(codec : str, buf : bytes, blob_store : BlobStore = None) -> Any:
+def decode_payload(codec : str, buf : bytes, blob_store : BlobStore | None = None) -> Any:
     '''Inverse of ``encode_payload`` (v2/v3 msgpack codec).'''
     if codec == CODEC_EXTERNAL_REF:
         d = msgpack.unpackb(buf, raw = False)
@@ -260,9 +261,10 @@ def decode_payload(codec : str, buf : bytes, blob_store : BlobStore = None) -> A
         return pickle.loads(buf)
     raise ValueError(f'Unknown payload codec: {codec}')
 
-def _encode_envelope_v3(producer_name, flow_id, run_id, trace_id, seq, msg_type,
-                        metadata, payload, span_id, parent_span_id, replica_id,
-                        event_ts, blob_store) -> bytes:
+def _encode_envelope_v3(producer_name : str, flow_id : str, run_id : str, trace_id : str,
+                        seq : int, msg_type : str, metadata : dict | None, payload : Any,
+                        span_id : str | None, parent_span_id : str | None, replica_id : int,
+                        event_ts : float | None, blob_store : BlobStore | None) -> bytes:
     if msg_type == MSG_TYPE_EOS:
         payload_codec, payload_buf = CODEC_PICKLE, b''
     else:
@@ -285,7 +287,7 @@ def _encode_envelope_v3(producer_name, flow_id, run_id, trace_id, seq, msg_type,
     }
     return msgpack.packb(envelope, use_bin_type = True)
 
-def _decode_envelope_v3(buf : bytes, blob_store : BlobStore = None) -> dict:
+def _decode_envelope_v3(buf : bytes, blob_store : BlobStore | None = None) -> dict:
     envelope = msgpack.unpackb(buf, raw = False)
     version = envelope.get('v')
     if version not in (2, 3):
@@ -333,9 +335,9 @@ class RawPayload:
 #: FQN -> protobuf message class, for decoding registered well-known / vendor types.
 #: Tensor/Value/BlobRef are handled specially (converted to ndarray / python / a
 #: blob resolve); other registered types decode to their proto message instance.
-_PAYLOAD_REGISTRY : dict = {}
+_PAYLOAD_REGISTRY : dict[str, type[Message]] = {}
 
-def register_payload_type(message_cls) -> None:
+def register_payload_type(message_cls : type[Message]) -> None:
     '''
     Register a protobuf message class so envelopes carrying its FQN decode to an
     instance of it (rather than an opaque ``RawPayload``). The well-known videoflow
@@ -357,7 +359,7 @@ PAYLOAD_ENTRY_POINT_GROUP = 'videoflow.payload_types'
 #: Encode rules, consulted in registration order by ``isinstance``. The encode-side
 #: complement of ``_PAYLOAD_REGISTRY``: that one makes a *received* FQN decode to a
 #: class, this one gives an *outgoing* Python object a wire type.
-_PAYLOAD_ENCODERS : list = []
+_PAYLOAD_ENCODERS : list[Tuple[type, Callable[[Any], Tuple[str, bytes]]]] = []
 
 def register_payload_encoder(python_type : type,
                             encoder : Callable[[Any], Tuple[str, bytes]]) -> None:
@@ -388,7 +390,7 @@ def register_payload_encoder(python_type : type,
     '''
     _PAYLOAD_ENCODERS.append((python_type, encoder))
 
-def _encode_registered_payload(payload) -> Optional[Tuple[str, bytes]]:
+def _encode_registered_payload(payload : Any) -> Optional[Tuple[str, bytes]]:
     '''The first registered encode rule matching ``payload``, or None.'''
     for python_type, encoder in _PAYLOAD_ENCODERS:
         if isinstance(payload, python_type):
@@ -451,10 +453,10 @@ def _tensor_to_ndarray(t : payloads_pb2.Tensor) -> np.ndarray:
 
 # Protobuf message classes are recognized structurally (they expose SerializeToString
 # and a DESCRIPTOR) so any generated message — well-known or vendor — can be a payload.
-def _is_proto_message(obj) -> bool:
+def _is_proto_message(obj : object) -> bool:
     return hasattr(obj, 'DESCRIPTOR') and hasattr(obj, 'SerializeToString')
 
-def _encode_payload_v4(payload, allow_pickle : bool) -> Tuple[str, bytes]:
+def _encode_payload_v4(payload : Any, allow_pickle : bool) -> Tuple[str, bytes]:
     '''Encodes a payload to ``(payload_type, bytes)`` without blob offload (§4.4).'''
     if isinstance(payload, np.ndarray):
         return PAYLOAD_TENSOR, _ndarray_to_tensor(payload).SerializeToString()
@@ -480,7 +482,7 @@ def _encode_payload_v4(payload, allow_pickle : bool) -> Tuple[str, bytes]:
         'pickle codec (VF_ALLOW_PICKLE=1, Python-only flows).'
     )
 
-def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore = None) -> Any:
+def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore | None = None) -> Any:
     if payload_type == PAYLOAD_BLOBREF:
         ref = payloads_pb2.BlobRef()
         ref.ParseFromString(buf)
@@ -503,8 +505,7 @@ def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore =
         # A worker normally imports the component that registers it, but host-side
         # tools (``videoflow debug decode``) have no such import; consult entry
         # points once before falling back to opaque bytes.
-        from ..utils.plugins import load_plugin_group
-        load_plugin_group(PAYLOAD_ENTRY_POINT_GROUP)
+        plugins.load_plugin_group(PAYLOAD_ENTRY_POINT_GROUP)
         cls = _PAYLOAD_REGISTRY.get(payload_type)
     if cls is not None:
         msg = cls()
@@ -513,9 +514,11 @@ def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore =
     # Unknown type: hand back opaque bytes so a forwarding node can re-emit them.
     return RawPayload(payload_type, buf)
 
-def _encode_envelope_v4(producer_name, flow_id, run_id, trace_id, seq, msg_type,
-                        metadata, payload, span_id, parent_span_id, replica_id,
-                        event_ts, blob_store, allow_pickle) -> bytes:
+def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_id : str,
+                        seq : int, msg_type : str, metadata : dict | None, payload : Any,
+                        span_id : str | None, parent_span_id : str | None, replica_id : int,
+                        event_ts : float | None, blob_store : BlobStore | None,
+                        allow_pickle : bool) -> bytes:
     env = envelope_pb2.Envelope(
         v = 4,
         type = _PROTO_MSG_TYPE[msg_type],
@@ -553,7 +556,7 @@ def _encode_envelope_v4(producer_name, flow_id, run_id, trace_id, seq, msg_type,
         env.payload = payload_buf
     return env.SerializeToString()
 
-def _decode_envelope_v4(buf : bytes, blob_store : BlobStore = None) -> dict:
+def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> dict:
     env = envelope_pb2.Envelope()
     env.ParseFromString(buf)
     if env.v != 4:
@@ -584,10 +587,10 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore = None) -> dict:
 # ==========================================================================
 
 def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id : str,
-                    seq : int, msg_type : str, metadata : dict, payload,
+                    seq : int, msg_type : str, metadata : dict | None, payload : Any,
                     span_id : str = '', parent_span_id : str = '', replica_id : int = 0,
-                    event_ts : float = None, blob_store : BlobStore = None,
-                    version : int = None, allow_pickle : bool = False) -> bytes:
+                    event_ts : float | None = None, blob_store : BlobStore | None = None,
+                    version : int | None = None, allow_pickle : bool = False) -> bytes:
     '''
     Encodes a full wire message and returns the bytes to publish to a broker subject.
 
@@ -623,7 +626,7 @@ def _is_msgpack_map(first_byte : int) -> bool:
     # leading byte unambiguously selects the decoder without any out-of-band hint.
     return 0x80 <= first_byte <= 0x8f or first_byte in (0xde, 0xdf)
 
-def decode_envelope(buf : bytes, blob_store : BlobStore = None) -> dict:
+def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
     '''
     Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \
         ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` when absent), \
