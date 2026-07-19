@@ -54,6 +54,19 @@ def test_scheme_matching_is_case_insensitive(registry_sandbox):
     assert isinstance(registry_sandbox.make_blob_store('MEM://h'), _MemoryBlobStore)
 
 
+def test_registration_normalizes_the_scheme_key(registry_sandbox):
+    '''
+    A store registered under a non-lowercase scheme must still be reachable, or it
+    would be listed as known yet fail to resolve — the two sides must normalize the
+    same way.
+    '''
+    registry_sandbox.register_blob_store('S3', _MemoryBlobStore)
+    assert 's3' in registry_sandbox.registered_blob_store_schemes()
+    assert 'S3' not in registry_sandbox.registered_blob_store_schemes()
+    assert isinstance(registry_sandbox.make_blob_store('s3://bucket/key'), _MemoryBlobStore)
+    assert isinstance(registry_sandbox.make_blob_store('S3://bucket/key'), _MemoryBlobStore)
+
+
 def test_unknown_scheme_names_the_fix(registry_sandbox):
     with pytest.raises(ValueError) as excinfo:
         registry_sandbox.make_blob_store('s3://bucket/key')

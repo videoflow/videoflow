@@ -41,6 +41,20 @@ def _load_flow(target : str) -> Any:
     from .compile import load_flow
     return load_flow(target)
 
+def _gpu_cleanup(gpu_strategy, kubectl) -> None:
+    '''
+    Runs a GPU strategy's ``cleanup()``, best-effort. Called from error paths and
+    teardown, so a failure to undo the reconfiguration must be reported but must
+    not mask the original error or abort the rest of teardown. A ``None`` strategy
+    (no GPU nodes, or an unknown mode) is a no-op.
+    '''
+    if gpu_strategy is None:
+        return
+    try:
+        gpu_strategy.cleanup(kubectl = kubectl)
+    except Exception as e:                            # noqa: BLE001 — see docstring
+        print(f'WARNING: GPU mode {gpu_strategy.name!r} cleanup failed: {e}', file = sys.stderr)
+
 def _cmd_deploy(args) -> None:
     import subprocess
     import uuid
@@ -201,7 +215,11 @@ def _cmd_deploy(args) -> None:
     keep_infra = args.keep or args.keep_infra
     teardown_cmd = (f'  videoflow teardown --flow-id {flow_id} --run-id {run_id} '
                     f'--nats {nats_url} --namespace {args.namespace}'
-                    + (' --infra' if created and not keep_infra else ''))
+                    + (' --infra' if created and not keep_infra else '')
+                    # The run's GPU mode is not recoverable from the cluster, so the
+                    # printed command carries it: teardown needs it to call the
+                    # strategy's cleanup() and undo whatever prepare() set up.
+                    + (f' --gpu-mode {args.gpu_mode}' if gpu_specs else ''))
 
     from ..engines.kubernetes import KubernetesExecutionEngine
     engine = KubernetesExecutionEngine(
@@ -215,8 +233,7 @@ def _cmd_deploy(args) -> None:
         gpu_autoscaling = args.gpu_autoscaling,
     )
     # Cluster setup the GPU mode needs for this run (no-op for the built-in modes;
-    # the hook exists for strategies that retune the device plugin per run). Paired
-    # with cleanup() in the teardown paths below.
+    # the hook exists for strategies that retune the device plugin per run).
     gpu_strategy = None
     if gpu_specs:
         from .gpu import get_gpu_mode
@@ -224,12 +241,15 @@ def _cmd_deploy(args) -> None:
         try:
             gpu_strategy.prepare(demand = demand, kubectl = args.kubectl)
         except (RuntimeError, ValueError) as e:
+            # cleanup() is documented to tolerate a prepare() that only partly
+            # succeeded, and this is precisely that case — a strategy that changed
+            # half the cluster before failing must get its chance to undo it.
+            _gpu_cleanup(gpu_strategy, args.kubectl)
             raise SystemExit(f'GPU mode {args.gpu_mode!r} could not prepare the cluster: {e}') from e
     try:
         engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
     except (RuntimeError, ValueError) as e:
-        if gpu_strategy is not None:
-            gpu_strategy.cleanup(kubectl = args.kubectl)
+        _gpu_cleanup(gpu_strategy, args.kubectl)
         raise SystemExit(str(e)) from e
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
@@ -239,6 +259,10 @@ def _cmd_deploy(args) -> None:
         # appears). One bounded check turns that into a visible warning.
         for problem in engine.schedulability_report():
             print(f'WARNING: {problem}', file = sys.stderr)
+        # Deliberately no gpu_strategy.cleanup() here: the flow keeps running after
+        # this returns, so any cluster state prepare() set up must persist for the
+        # flow's lifetime. Teardown is the end of a REALTIME run, so the mode is
+        # carried in the printed command for `teardown` to undo it there.
         print('REALTIME flow is running. Tear it down with:')
         print(teardown_cmd)
         return
@@ -269,8 +293,7 @@ def _cmd_deploy(args) -> None:
         # Restore whatever the GPU mode changed, whether the run succeeded,
         # failed, stalled or was interrupted. Runs even under --keep: the
         # workloads may be worth keeping, a retuned cluster is not.
-        if gpu_strategy is not None:
-            gpu_strategy.cleanup(kubectl = args.kubectl)
+        _gpu_cleanup(gpu_strategy, args.kubectl)
     if stall:
         raise SystemExit(f'Flow aborted: {stall}')
     if failed:
@@ -638,6 +661,12 @@ def _cmd_teardown(args) -> None:
         from .infra import teardown_infra
         teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'])
         print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
+    # Undo any per-run cluster reconfiguration the GPU mode applied at deploy time.
+    # This is the terminal hook for a REALTIME run, which stays up past deploy and
+    # so is never cleaned up there. Built-in modes have a no-op cleanup().
+    if args.gpu_mode:
+        from .gpu import get_gpu_mode
+        _gpu_cleanup(get_gpu_mode(args.gpu_mode), args.kubectl)
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
@@ -909,6 +938,10 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--infra', action = 'store_true',
                           help = 'Also delete auto-provisioned dev NATS/Redis in --namespace '
                                  '(only resources labeled videoflow.io/infra).')
+    teardown.add_argument('--gpu-mode', default = None,
+                          help = 'The GPU mode the run was deployed with. Only needed when that '
+                                 'mode reconfigured the cluster in prepare() and must be undone; '
+                                 'deploy prints this flag in the teardown command when it applies.')
     teardown.set_defaults(func = _cmd_teardown)
 
     debug = sub.add_parser('debug', help = 'Inspect wire messages (envelopes, DLQ).')

@@ -138,6 +138,14 @@ BLOB_STORE_ENTRY_POINT_GROUP = 'videoflow.blob_stores'
 
 _BLOB_STORE_SCHEMES : dict = {}
 
+def _normalize_scheme(scheme : str) -> str:
+    '''
+    Canonical form of a URL scheme. Registration and lookup must agree on this,
+    or a store registered as ``'S3'`` is unreachable from ``s3://bucket/key``
+    while still being listed as known.
+    '''
+    return scheme.strip().lower()
+
 def register_blob_store(scheme : str, factory : Callable[[str], BlobStore]) -> None:
     '''
     Registers a ``BlobStore`` factory for a URL scheme. ``factory`` receives the
@@ -149,10 +157,12 @@ def register_blob_store(scheme : str, factory : Callable[[str], BlobStore]) -> N
     flow importing the package that provides it.
 
     - Arguments:
-        - scheme: URL scheme without the separator, e.g. ``'s3'``.
+        - scheme: URL scheme without the separator, e.g. ``'s3'``. Case-insensitive: \
+            normalized here to match how ``make_blob_store`` parses a URL, so \
+            ``register_blob_store('S3', ...)`` is reachable from ``s3://bucket/key``.
         - factory: callable taking the blob URL and returning a ``BlobStore``.
     '''
-    _BLOB_STORE_SCHEMES[scheme] = factory
+    _BLOB_STORE_SCHEMES[_normalize_scheme(scheme)] = factory
 
 def registered_blob_store_schemes() -> list:
     '''The URL schemes a blob store is currently registered for, sorted.'''
@@ -171,7 +181,7 @@ def make_blob_store(url : str) -> BlobStore:
         - ValueError: the URL has no scheme, or no store is registered for it. \
             The message names the known schemes and ``register_blob_store``.
     '''
-    scheme = url.split('://', 1)[0].strip().lower() if '://' in url else ''
+    scheme = _normalize_scheme(url.split('://', 1)[0]) if '://' in url else ''
     if not scheme:
         raise ValueError(
             f'Blob store URL must include a scheme, got {url!r}. '

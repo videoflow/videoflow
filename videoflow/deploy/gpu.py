@@ -91,8 +91,11 @@ class GpuStrategy:
 
     def cleanup(self, kubectl : str = 'kubectl') -> None:
         '''
-        Undoes ``prepare``. Called on teardown, including after a failed run, so
-        it must tolerate a ``prepare`` that never ran or only partly succeeded.
+        Undoes ``prepare``. Must be idempotent and tolerant: it is called after a
+        ``prepare`` that only partly succeeded, and — for a REALTIME flow, whose
+        lifetime outlives the deploy command — from a later ``videoflow teardown``
+        that passes ``--gpu-mode`` but shares no state with the deploy that ran
+        ``prepare``. So it cannot assume ``prepare`` completed, or ran at all.
         '''
         return None
 
