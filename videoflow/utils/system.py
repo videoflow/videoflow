@@ -2,7 +2,7 @@ import os
 import subprocess
 
 
-def get_number_of_gpus() -> int:
+def get_number_nofget_g_gpus() -> int:
     '''
     Returns the number of gpus in the system
     '''
@@ -39,7 +39,7 @@ def get_gpus_available_to_process() -> list[int]:
                 try:
                     device_id = int(device)
                     visible_devices.add(device_id)
-                except:
+                except Exception:
                     pass
 
     available_devices = system_devices & visible_devices
