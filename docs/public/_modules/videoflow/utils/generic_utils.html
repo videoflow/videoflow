@@ -1,0 +1,365 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.utils.generic_utils &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.utils.generic_utils</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.utils.generic_utils</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">collections</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">signal</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">sys</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">collections.abc</span><span class="w"> </span><span class="kn">import</span> <span class="n">Iterable</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">types</span><span class="w"> </span><span class="kn">import</span> <span class="n">FrameType</span><span class="p">,</span> <span class="n">TracebackType</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+
+<div class="viewcode-block" id="Progbar">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.generic_utils.Progbar">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Progbar</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&quot;&quot;&quot;Displays a progress bar.</span>
+
+<span class="sd">    - Arguments</span>
+<span class="sd">        - target: Total number of steps expected, None if unknown.</span>
+<span class="sd">        - width: Progress bar width on screen.</span>
+<span class="sd">        - verbose: Verbosity mode, 0 (silent), 1 (verbose), 2 (semi-verbose)</span>
+<span class="sd">        - stateful_metrics: Iterable of string names of metrics that\</span>
+<span class="sd">            should *not* be averaged over time. Metrics in this list\</span>
+<span class="sd">            will be displayed as-is. All others will be averaged\</span>
+<span class="sd">            by the progbar before display.</span>
+<span class="sd">        - interval: Minimum visual progress update interval (in seconds).</span>
+<span class="sd">    &quot;&quot;&quot;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">target</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">width</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span> <span class="n">verbose</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+                 <span class="n">interval</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.05</span><span class="p">,</span>
+                 <span class="n">stateful_metrics</span> <span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="o">=</span> <span class="n">target</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">width</span> <span class="o">=</span> <span class="n">width</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">verbose</span> <span class="o">=</span> <span class="n">verbose</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="o">=</span> <span class="n">interval</span>
+        <span class="k">if</span> <span class="n">stateful_metrics</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">stateful_metrics</span> <span class="o">=</span> <span class="nb">set</span><span class="p">(</span><span class="n">stateful_metrics</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">stateful_metrics</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_dynamic_display</span> <span class="o">=</span> <span class="p">((</span><span class="nb">hasattr</span><span class="p">(</span><span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="s1">&#39;isatty&#39;</span><span class="p">)</span> <span class="ow">and</span>
+                                  <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">isatty</span><span class="p">())</span> <span class="ow">or</span>
+                                 <span class="s1">&#39;ipykernel&#39;</span> <span class="ow">in</span> <span class="n">sys</span><span class="o">.</span><span class="n">modules</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="n">collections</span><span class="o">.</span><span class="n">OrderedDict</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_start</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_update</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mi">0</span>
+
+<div class="viewcode-block" id="Progbar.update">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.generic_utils.Progbar.update">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">current</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">values</span> <span class="p">:</span> <span class="nb">list</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&quot;&quot;&quot;Updates the progress bar.</span>
+
+<span class="sd">        - Arguments</span>
+<span class="sd">            - current: Index of current step.</span>
+<span class="sd">            - values: List of tuples:\</span>
+<span class="sd">                `(name, value_for_last_step)`.\</span>
+<span class="sd">                If `name` is in `stateful_metrics`,\</span>
+<span class="sd">                `value_for_last_step` will be displayed as-is.\</span>
+<span class="sd">                Else, an average of the metric over time will be displayed.</span>
+<span class="sd">        &quot;&quot;&quot;</span>
+        <span class="n">values</span> <span class="o">=</span> <span class="n">values</span> <span class="ow">or</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">values</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">stateful_metrics</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">k</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">v</span> <span class="o">*</span> <span class="p">(</span><span class="n">current</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span><span class="p">),</span>
+                                       <span class="n">current</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span><span class="p">]</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">+=</span> <span class="n">v</span> <span class="o">*</span> <span class="p">(</span><span class="n">current</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span><span class="p">)</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">1</span><span class="p">]</span> <span class="o">+=</span> <span class="p">(</span><span class="n">current</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Stateful metrics output a numeric value.  This representation</span>
+                <span class="c1"># means &quot;take an average from a single value&quot; but keeps the</span>
+                <span class="c1"># numeric formatting.</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">]</span> <span class="o">=</span> <span class="p">[</span><span class="n">v</span><span class="p">,</span> <span class="mi">1</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span> <span class="o">=</span> <span class="n">current</span>
+
+        <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="n">info</span> <span class="o">=</span> <span class="s1">&#39; - </span><span class="si">%.0f</span><span class="s1">s&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_start</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">verbose</span> <span class="o">==</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">if</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_update</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">interval</span> <span class="ow">and</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">current</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">):</span>
+                <span class="k">return</span>
+
+            <span class="n">prev_total_width</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dynamic_display</span><span class="p">:</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\b</span><span class="s1">&#39;</span> <span class="o">*</span> <span class="n">prev_total_width</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\r</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">numdigits</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">floor</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">log10</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">)))</span> <span class="o">+</span> <span class="mi">1</span>
+                <span class="n">barstr</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">%%%d</span><span class="s1">d/</span><span class="si">%d</span><span class="s1"> [&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">numdigits</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">)</span>
+                <span class="n">bar</span> <span class="o">=</span> <span class="n">barstr</span> <span class="o">%</span> <span class="n">current</span>
+                <span class="n">prog</span> <span class="o">=</span> <span class="nb">float</span><span class="p">(</span><span class="n">current</span><span class="p">)</span> <span class="o">/</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span>
+                <span class="n">prog_width</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">width</span> <span class="o">*</span> <span class="n">prog</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">prog_width</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="n">bar</span> <span class="o">+=</span> <span class="p">(</span><span class="s1">&#39;=&#39;</span> <span class="o">*</span> <span class="p">(</span><span class="n">prog_width</span> <span class="o">-</span> <span class="mi">1</span><span class="p">))</span>
+                    <span class="k">if</span> <span class="n">current</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">:</span>
+                        <span class="n">bar</span> <span class="o">+=</span> <span class="s1">&#39;&gt;&#39;</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">bar</span> <span class="o">+=</span> <span class="s1">&#39;=&#39;</span>
+                <span class="n">bar</span> <span class="o">+=</span> <span class="p">(</span><span class="s1">&#39;.&#39;</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">width</span> <span class="o">-</span> <span class="n">prog_width</span><span class="p">))</span>
+                <span class="n">bar</span> <span class="o">+=</span> <span class="s1">&#39;]&#39;</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">bar</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">%7d</span><span class="s1">/Unknown&#39;</span> <span class="o">%</span> <span class="n">current</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">bar</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">bar</span><span class="p">)</span>
+
+            <span class="k">if</span> <span class="n">current</span><span class="p">:</span>
+                <span class="n">time_per_unit</span> <span class="o">=</span> <span class="p">(</span><span class="n">now</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_start</span><span class="p">)</span> <span class="o">/</span> <span class="n">current</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">time_per_unit</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">current</span> <span class="o">&lt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">:</span>
+                <span class="n">eta</span> <span class="o">=</span> <span class="n">time_per_unit</span> <span class="o">*</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="o">-</span> <span class="n">current</span><span class="p">)</span>
+                <span class="k">if</span> <span class="n">eta</span> <span class="o">&gt;</span> <span class="mi">3600</span><span class="p">:</span>
+                    <span class="n">eta_format</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;</span><span class="si">%d</span><span class="s1">:</span><span class="si">%02d</span><span class="s1">:</span><span class="si">%02d</span><span class="s1">&#39;</span> <span class="o">%</span>
+                                  <span class="p">(</span><span class="n">eta</span> <span class="o">//</span> <span class="mi">3600</span><span class="p">,</span> <span class="p">(</span><span class="n">eta</span> <span class="o">%</span> <span class="mi">3600</span><span class="p">)</span> <span class="o">//</span> <span class="mi">60</span><span class="p">,</span> <span class="n">eta</span> <span class="o">%</span> <span class="mi">60</span><span class="p">))</span>
+                <span class="k">elif</span> <span class="n">eta</span> <span class="o">&gt;</span> <span class="mi">60</span><span class="p">:</span>
+                    <span class="n">eta_format</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">%d</span><span class="s1">:</span><span class="si">%02d</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">eta</span> <span class="o">//</span> <span class="mi">60</span><span class="p">,</span> <span class="n">eta</span> <span class="o">%</span> <span class="mi">60</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">eta_format</span> <span class="o">=</span> <span class="s1">&#39;</span><span class="si">%d</span><span class="s1">s&#39;</span> <span class="o">%</span> <span class="n">eta</span>
+
+                <span class="n">info</span> <span class="o">=</span> <span class="s1">&#39; - ETA: </span><span class="si">%s</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="n">eta_format</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">time_per_unit</span> <span class="o">&gt;=</span> <span class="mi">1</span><span class="p">:</span>
+                    <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.0f</span><span class="s1">s/step&#39;</span> <span class="o">%</span> <span class="n">time_per_unit</span>
+                <span class="k">elif</span> <span class="n">time_per_unit</span> <span class="o">&gt;=</span> <span class="mf">1e-3</span><span class="p">:</span>
+                    <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.0f</span><span class="s1">ms/step&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">time_per_unit</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.0f</span><span class="s1">us/step&#39;</span> <span class="o">%</span> <span class="p">(</span><span class="n">time_per_unit</span> <span class="o">*</span> <span class="mf">1e6</span><span class="p">)</span>
+
+            <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">:</span>
+                <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; - </span><span class="si">%s</span><span class="s1">:&#39;</span> <span class="o">%</span> <span class="n">k</span>
+                <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">],</span> <span class="nb">list</span><span class="p">):</span>
+                    <span class="n">avg</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">1</span><span class="p">]))</span>
+                    <span class="k">if</span> <span class="nb">abs</span><span class="p">(</span><span class="n">avg</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mf">1e-3</span><span class="p">:</span>
+                        <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.4f</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="n">avg</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.4e</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="n">avg</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%s</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">]</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span> <span class="o">+=</span> <span class="nb">len</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">prev_total_width</span> <span class="o">&gt;</span> <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span><span class="p">:</span>
+                <span class="n">info</span> <span class="o">+=</span> <span class="p">(</span><span class="s1">&#39; &#39;</span> <span class="o">*</span> <span class="p">(</span><span class="n">prev_total_width</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_total_width</span><span class="p">))</span>
+
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">current</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">:</span>
+                <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span>
+
+            <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>
+            <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">verbose</span> <span class="o">==</span> <span class="mi">2</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">current</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">target</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">k</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">:</span>
+                    <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; - </span><span class="si">%s</span><span class="s1">:&#39;</span> <span class="o">%</span> <span class="n">k</span>
+                    <span class="n">avg</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">mean</span><span class="p">(</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">0</span><span class="p">]</span> <span class="o">/</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_values</span><span class="p">[</span><span class="n">k</span><span class="p">][</span><span class="mi">1</span><span class="p">]))</span>
+                    <span class="k">if</span> <span class="n">avg</span> <span class="o">&gt;</span> <span class="mf">1e-3</span><span class="p">:</span>
+                        <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.4f</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="n">avg</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39; </span><span class="si">%.4e</span><span class="s1">&#39;</span> <span class="o">%</span> <span class="n">avg</span>
+                <span class="n">info</span> <span class="o">+=</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span>
+
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">info</span><span class="p">)</span>
+                <span class="n">sys</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_update</span> <span class="o">=</span> <span class="n">now</span></div>
+
+
+<div class="viewcode-block" id="Progbar.add">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.generic_utils.Progbar.add">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">n</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">values</span> <span class="p">:</span> <span class="nb">list</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_seen_so_far</span> <span class="o">+</span> <span class="n">n</span><span class="p">,</span> <span class="n">values</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="DelayedInterrupt">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.generic_utils.DelayedInterrupt">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DelayedInterrupt</span><span class="p">(</span><span class="nb">object</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    class based on: http://stackoverflow.com/a/21919644/487556</span>
+
+<span class="sd">    It delays interrupts until the code exits the entered block</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">signals</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">signals</span><span class="p">,</span> <span class="nb">list</span><span class="p">)</span> <span class="ow">and</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">signals</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">):</span>
+            <span class="n">signals</span> <span class="o">=</span> <span class="p">[</span><span class="n">signals</span><span class="p">]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">sigs</span> <span class="o">=</span> <span class="n">signals</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__enter__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">signal_received</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">sig</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">sigs</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">signal_received</span><span class="p">[</span><span class="n">sig</span><span class="p">]</span> <span class="o">=</span> <span class="kc">False</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">[</span><span class="n">sig</span><span class="p">]</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">getsignal</span><span class="p">(</span><span class="n">sig</span><span class="p">)</span>
+            <span class="c1"># Bind sig per-iteration (default arg) so each handler records against</span>
+            <span class="c1"># its own signal, not whichever value sig holds after the loop ends.</span>
+            <span class="k">def</span><span class="w"> </span><span class="nf">handler</span><span class="p">(</span><span class="n">s</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">frame</span> <span class="p">:</span> <span class="n">FrameType</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">sig</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">sig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">signal_received</span><span class="p">[</span><span class="n">sig</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span><span class="n">s</span><span class="p">,</span> <span class="n">frame</span><span class="p">)</span>
+                <span class="c1"># Note: in Python 3.5, you can use signal.Signals(sig).name</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">[</span><span class="n">sig</span><span class="p">]</span> <span class="o">=</span> <span class="n">signal</span><span class="o">.</span><span class="n">getsignal</span><span class="p">(</span><span class="n">sig</span><span class="p">)</span>
+            <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">sig</span><span class="p">,</span> <span class="n">handler</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__exit__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="nb">type</span> <span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="ne">BaseException</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="ne">BaseException</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+                 <span class="n">traceback</span> <span class="p">:</span> <span class="n">TracebackType</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">sig</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">sigs</span><span class="p">:</span>
+            <span class="n">signal</span><span class="o">.</span><span class="n">signal</span><span class="p">(</span><span class="n">sig</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">[</span><span class="n">sig</span><span class="p">])</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">signal_received</span><span class="p">[</span><span class="n">sig</span><span class="p">]</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">[</span><span class="n">sig</span><span class="p">]:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">old_handlers</span><span class="p">[</span><span class="n">sig</span><span class="p">](</span><span class="o">*</span><span class="bp">self</span><span class="o">.</span><span class="n">signal_received</span><span class="p">[</span><span class="n">sig</span><span class="p">])</span></div>
+
+
+<div class="viewcode-block" id="DelayedKeyboardInterrupt">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.generic_utils.DelayedKeyboardInterrupt">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">DelayedKeyboardInterrupt</span><span class="p">(</span><span class="n">DelayedInterrupt</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">DelayedKeyboardInterrupt</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">([</span><span class="n">signal</span><span class="o">.</span><span class="n">SIGINT</span><span class="p">])</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

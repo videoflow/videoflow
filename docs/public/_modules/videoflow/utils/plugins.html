@@ -1,0 +1,201 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.utils.plugins &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.utils.plugins</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.utils.plugins</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Third-party registration via ``importlib.metadata`` entry points.</span>
+
+<span class="sd">Videoflow&#39;s extension points are plain dict/list registries with an explicit</span>
+<span class="sd">``register_*()`` function, pre-seeded with the built-ins. That covers the common</span>
+<span class="sd">case, where the code doing the registering is imported anyway (a component</span>
+<span class="sd">module the worker loads via ``VF_NODE_CLASS`` registers its own payload codecs</span>
+<span class="sd">on import).</span>
+
+<span class="sd">It does not cover the case where nothing imports the extension first — a blob</span>
+<span class="sd">store selected by URL scheme in a config file, say, or a host-side</span>
+<span class="sd">``videoflow debug decode`` that must understand a vendor payload type without</span>
+<span class="sd">knowing which package defines it. For those, a package declares an entry point</span>
+<span class="sd">and videoflow imports it on demand.</span>
+
+<span class="sd">Stdlib only, by design: an extension mechanism that needs its own dependency is</span>
+<span class="sd">a worse trade than the ``if/elif`` it replaces.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">importlib.metadata</span><span class="w"> </span><span class="kn">import</span> <span class="n">entry_points</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="c1"># Entry-point groups already loaded, so a miss on a repeatedly-consulted registry</span>
+<span class="c1"># does not re-scan installed distributions every time.</span>
+<span class="n">_loaded</span> <span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+<div class="viewcode-block" id="load_plugin_group">
+<a class="viewcode-back" href="../../../apidocs/videoflow.utils.html#videoflow.utils.plugins.load_plugin_group">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_plugin_group</span><span class="p">(</span><span class="n">group</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Imports every extension registered in the ``importlib.metadata`` entry-point</span>
+<span class="sd">    group ``group``, so its ``register_*()`` side effects take hold. Idempotent:</span>
+<span class="sd">    a group is scanned at most once per process.</span>
+
+<span class="sd">    Each entry point may resolve to either a module (imported for its top-level</span>
+<span class="sd">    ``register_*()`` calls) or a callable (imported and then called). A plugin</span>
+<span class="sd">    that raises is logged and skipped rather than propagated — one broken</span>
+<span class="sd">    third-party package must not stop a worker from starting, since the</span>
+<span class="sd">    registration it was providing may not even be needed by this flow.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - group: entry-point group name, e.g. ``&#39;videoflow.blob_stores&#39;``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">group</span> <span class="ow">in</span> <span class="n">_loaded</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="n">_loaded</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">group</span><span class="p">)</span>
+
+    <span class="k">for</span> <span class="n">ep</span> <span class="ow">in</span> <span class="n">entry_points</span><span class="p">(</span><span class="n">group</span> <span class="o">=</span> <span class="n">group</span><span class="p">):</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">loaded</span> <span class="o">=</span> <span class="n">ep</span><span class="o">.</span><span class="n">load</span><span class="p">()</span>
+            <span class="k">if</span> <span class="nb">callable</span><span class="p">(</span><span class="n">loaded</span><span class="p">):</span>
+                <span class="n">loaded</span><span class="p">()</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>                        <span class="c1"># noqa: BLE001 — see docstring</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Failed to load videoflow plugin </span><span class="si">{</span><span class="n">ep</span><span class="o">.</span><span class="n">name</span><span class="si">!r}</span><span class="s1"> &#39;</span>
+                           <span class="sa">f</span><span class="s1">&#39;from group </span><span class="si">{</span><span class="n">group</span><span class="si">!r}</span><span class="s1">: </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1">: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

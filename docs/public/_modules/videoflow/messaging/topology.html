@@ -1,0 +1,544 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.messaging.topology &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.messaging.topology</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.messaging.topology</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Broker topology: naming, JetStream stream/consumer configuration, and up-front</span>
+<span class="sd">provisioning of a flow&#39;s streams and durable consumers.</span>
+
+<span class="sd">Everything that decides *how a message routes* — subject names, stream names,</span>
+<span class="sd">durable names, and the retention/discard policies that give REALTIME vs BATCH</span>
+<span class="sd">their semantics — lives here, so the messenger, the compiler, the manifests, and</span>
+<span class="sd">the provisioning entrypoint all agree on one source of truth.</span>
+
+<span class="sd">Naming is scoped by ``flow_id`` **and** ``run_id`` so that re-running or</span>
+<span class="sd">redeploying a flow gets a fresh set of streams instead of colliding with the</span>
+<span class="sd">previous run&#39;s durables.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">nats</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nats.aio.client</span><span class="w"> </span><span class="kn">import</span> <span class="n">Client</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nats.js</span><span class="w"> </span><span class="kn">import</span> <span class="n">JetStreamContext</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nats.js.api</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConsumerConfig</span><span class="p">,</span> <span class="n">DiscardPolicy</span><span class="p">,</span> <span class="n">RetentionPolicy</span><span class="p">,</span> <span class="n">StreamConfig</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.compiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">NodeSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">REALTIME</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="n">_SANITIZE_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[^A-Za-z0-9_-]+&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="sanitize">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.sanitize">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">sanitize</span><span class="p">(</span><span class="n">value</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">_SANITIZE_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s1">&#39;_&#39;</span><span class="p">,</span> <span class="n">value</span><span class="p">)</span></div>
+
+
+<span class="c1"># -- naming ----------------------------------------------------------------</span>
+
+<div class="viewcode-block" id="subject_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.subject_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">subject_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="stream_name_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.stream_name_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">stream_name_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="eos_subject_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.eos_subject_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eos_subject_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># End-of-stream markers ride a separate subject on the node&#39;s own stream, so</span>
+    <span class="c1"># data consumers (which filter to the data subject) never see them and every</span>
+    <span class="c1"># consuming replica can observe EOS via its own dedicated consumer.</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">._eos&#39;</span></div>
+
+
+<div class="viewcode-block" id="control_subject_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.control_subject_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">control_subject_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">._control.stop&#39;</span></div>
+
+
+<div class="viewcode-block" id="durable_name_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.durable_name_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">parent_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Durables are scoped to the (run-scoped) parent stream, so they need no</span>
+    <span class="c1"># run_id of their own. Replicas of one consuming node share this durable</span>
+    <span class="c1"># (competing consumers); distinct children of one parent get distinct</span>
+    <span class="c1"># durables (broadcast fan-out).</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">consumer_node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">--from--</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">parent_node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="partitioned_durable_name_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.partitioned_durable_name_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">partitioned_durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">parent_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">replica_id</span> <span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Each replica of a partitioned node gets its own durable, so every replica</span>
+    <span class="c1"># receives every message and keeps only the ones it owns (hash(key)%N==id).</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span><span class="p">,</span><span class="w"> </span><span class="n">parent_node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">--p</span><span class="si">{</span><span class="n">replica_id</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="eos_durable_name_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.eos_durable_name_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eos_durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">parent_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">instance_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="c1"># Per-consuming-replica durable so *every* replica observes EOS (unlike the</span>
+    <span class="c1"># shared data durable, where only one replica would). instance_id makes it</span>
+    <span class="c1"># unique per replica (a stable replica ordinal, or a per-process uuid).</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">consumer_node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">--eos--</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">parent_node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">--</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">instance_id</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="eos_anchor_durable_name_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.eos_anchor_durable_name_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eos_anchor_durable_name_for</span><span class="p">(</span><span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;The provision-time interest anchor on a node&#39;s EOS subject (see eos_anchor_config).&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">--eos--anchor&#39;</span></div>
+
+
+<div class="viewcode-block" id="dlq_stream_name">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.dlq_stream_name">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">dlq_stream_name</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-dlq&#39;</span></div>
+
+
+<div class="viewcode-block" id="dlq_subject_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.dlq_subject_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">dlq_subject_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">._dlq.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">node_name</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span></div>
+
+
+<div class="viewcode-block" id="stream_label_selector">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.stream_label_selector">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">stream_label_selector</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Prefix shared by every stream of one run — used for teardown by name prefix.&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;vf-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">-&#39;</span></div>
+
+
+<span class="c1"># -- stream / consumer config ---------------------------------------------</span>
+
+<span class="c1">#: REALTIME keeps only the freshest N messages per node and never blocks the</span>
+<span class="c1">#: producer (a new publish evicts the oldest). BATCH uses INTEREST retention so</span>
+<span class="c1">#: acked messages are freed, bounding the backlog to unacked messages; a full</span>
+<span class="c1">#: stream then *rejects* new publishes (DiscardPolicy.NEW), which the publisher</span>
+<span class="c1">#: turns into blocking backpressure instead of silent loss.</span>
+<span class="n">DEFAULT_REALTIME_BUFFER</span> <span class="o">=</span> <span class="mi">1</span>
+<span class="n">DEFAULT_BATCH_MAX_MSGS</span> <span class="o">=</span> <span class="mi">10_000</span>
+<span class="n">DUPLICATE_WINDOW_SECONDS</span> <span class="o">=</span> <span class="mi">120</span>
+
+<div class="viewcode-block" id="stream_config_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.stream_config_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">stream_config_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">subjects</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">realtime_buffer</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_REALTIME_BUFFER</span><span class="p">,</span>
+                    <span class="n">batch_max_msgs</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_BATCH_MAX_MSGS</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">StreamConfig</span><span class="p">:</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">stream_name_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">subjects</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Data and EOS ride the same stream on distinct subjects.</span>
+        <span class="n">subjects</span> <span class="o">=</span> <span class="p">[</span><span class="n">subject_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">),</span>
+                    <span class="n">eos_subject_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">)]</span>
+    <span class="k">if</span> <span class="n">flow_type</span> <span class="o">==</span> <span class="n">REALTIME</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">StreamConfig</span><span class="p">(</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">subjects</span> <span class="o">=</span> <span class="n">subjects</span><span class="p">,</span>
+            <span class="n">retention</span> <span class="o">=</span> <span class="n">RetentionPolicy</span><span class="o">.</span><span class="n">LIMITS</span><span class="p">,</span>
+            <span class="n">max_msgs</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">realtime_buffer</span><span class="p">),</span>
+            <span class="n">discard</span> <span class="o">=</span> <span class="n">DiscardPolicy</span><span class="o">.</span><span class="n">OLD</span><span class="p">,</span>
+            <span class="n">duplicate_window</span> <span class="o">=</span> <span class="n">DUPLICATE_WINDOW_SECONDS</span><span class="p">,</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">StreamConfig</span><span class="p">(</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">subjects</span> <span class="o">=</span> <span class="n">subjects</span><span class="p">,</span>
+        <span class="n">retention</span> <span class="o">=</span> <span class="n">RetentionPolicy</span><span class="o">.</span><span class="n">INTEREST</span><span class="p">,</span>
+        <span class="n">max_msgs</span> <span class="o">=</span> <span class="n">batch_max_msgs</span><span class="p">,</span>
+        <span class="n">discard</span> <span class="o">=</span> <span class="n">DiscardPolicy</span><span class="o">.</span><span class="n">NEW</span><span class="p">,</span>
+        <span class="n">duplicate_window</span> <span class="o">=</span> <span class="n">DUPLICATE_WINDOW_SECONDS</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="dlq_stream_config">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.dlq_stream_config">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">dlq_stream_config</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">StreamConfig</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">StreamConfig</span><span class="p">(</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">dlq_stream_name</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">),</span>
+        <span class="n">subjects</span> <span class="o">=</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;vf.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">flow_id</span><span class="p">)</span><span class="si">}</span><span class="s1">.</span><span class="si">{</span><span class="n">sanitize</span><span class="p">(</span><span class="n">run_id</span><span class="p">)</span><span class="si">}</span><span class="s1">._dlq.&gt;&#39;</span><span class="p">],</span>
+        <span class="n">retention</span> <span class="o">=</span> <span class="n">RetentionPolicy</span><span class="o">.</span><span class="n">LIMITS</span><span class="p">,</span>
+        <span class="n">discard</span> <span class="o">=</span> <span class="n">DiscardPolicy</span><span class="o">.</span><span class="n">OLD</span><span class="p">,</span>
+        <span class="n">max_age</span> <span class="o">=</span> <span class="mi">7</span> <span class="o">*</span> <span class="mi">24</span> <span class="o">*</span> <span class="mi">3600</span><span class="p">,</span>  <span class="c1"># keep dead-lettered messages for a week</span>
+    <span class="p">)</span></div>
+
+
+<span class="c1">#: Default number of times a BATCH message is *retried* (redelivered) after the</span>
+<span class="c1">#: first delivery attempt before it is dead-lettered. max_deliver = retries + 1.</span>
+<span class="n">DEFAULT_MAX_RETRIES</span> <span class="o">=</span> <span class="mi">3</span>
+
+<div class="viewcode-block" id="max_deliver_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.max_deliver_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">max_deliver_for</span><span class="p">(</span><span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">max_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_MAX_RETRIES</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    REALTIME never redelivers (freshest wins; a failed frame is dropped), so</span>
+<span class="sd">    max_deliver is 1. BATCH redelivers up to ``max_retries`` times, then the</span>
+<span class="sd">    message is dead-lettered.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">flow_type</span> <span class="o">==</span> <span class="n">REALTIME</span><span class="p">:</span>
+        <span class="k">return</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="n">max_retries</span> <span class="o">+</span> <span class="mi">1</span></div>
+
+
+<div class="viewcode-block" id="consumer_config_for">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.consumer_config_for">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">consumer_config_for</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">consumer_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">parent_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">ack_wait</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">,</span> <span class="n">max_deliver</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+                        <span class="n">max_ack_pending</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ConsumerConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Durable pull-consumer config for one (child, parent) edge. Filters to the</span>
+<span class="sd">    parent&#39;s *data* subject so EOS markers (on the ``_eos`` subject of the same</span>
+<span class="sd">    stream) are handled by a separate per-replica consumer instead. ``max_deliver``</span>
+<span class="sd">    is 1 for REALTIME (no redelivery — freshest wins) and ``retries + 1`` for BATCH;</span>
+<span class="sd">    ``max_ack_pending`` bounds how many un-acked messages the broker will hand out</span>
+<span class="sd">    before it stops delivering (this is the server-side half of prefetch bounding).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">durable</span> <span class="o">=</span> <span class="n">durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span><span class="p">,</span> <span class="n">parent_node_name</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ConsumerConfig</span><span class="p">(</span>
+        <span class="n">durable_name</span> <span class="o">=</span> <span class="n">durable</span><span class="p">,</span>
+        <span class="n">filter_subject</span> <span class="o">=</span> <span class="n">subject_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">parent_node_name</span><span class="p">),</span>
+        <span class="n">ack_wait</span> <span class="o">=</span> <span class="n">ack_wait</span><span class="p">,</span>
+        <span class="n">max_deliver</span> <span class="o">=</span> <span class="n">max_deliver</span><span class="p">,</span>
+        <span class="n">max_ack_pending</span> <span class="o">=</span> <span class="n">max_ack_pending</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="eos_consumer_config">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.eos_consumer_config">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eos_consumer_config</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">consumer_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">parent_node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">instance_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">inactive_threshold</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3600</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ConsumerConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Per-replica durable pull-consumer for a parent&#39;s EOS subject. ``inactive_threshold``</span>
+<span class="sd">    lets the server clean it up automatically some time after the flow ends, so</span>
+<span class="sd">    per-process (uuid-suffixed) EOS consumers don&#39;t accumulate.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">durable</span> <span class="o">=</span> <span class="n">eos_durable_name_for</span><span class="p">(</span><span class="n">consumer_node_name</span><span class="p">,</span> <span class="n">parent_node_name</span><span class="p">,</span> <span class="n">instance_id</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">ConsumerConfig</span><span class="p">(</span>
+        <span class="n">durable_name</span> <span class="o">=</span> <span class="n">durable</span><span class="p">,</span>
+        <span class="n">filter_subject</span> <span class="o">=</span> <span class="n">eos_subject_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">parent_node_name</span><span class="p">),</span>
+        <span class="n">ack_wait</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
+        <span class="n">inactive_threshold</span> <span class="o">=</span> <span class="n">inactive_threshold</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="eos_anchor_config">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.eos_anchor_config">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">eos_anchor_config</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ConsumerConfig</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Provision-time durable on a node&#39;s EOS subject that exists purely to create</span>
+<span class="sd">    *interest*, so an EOS marker is retained by the BATCH (INTEREST-retention)</span>
+<span class="sd">    stream no matter when it is published.</span>
+
+<span class="sd">    The real EOS consumers are per-process (uuid-suffixed) durables created in each</span>
+<span class="sd">    worker&#39;s setup — they cannot be pre-provisioned, so without this anchor an EOS</span>
+<span class="sd">    published by a fast-finishing parent *before* a slow-starting child registers</span>
+<span class="sd">    its EOS consumer is silently discarded (no interest at publish time), and the</span>
+<span class="sd">    child then waits for EOS forever: the flow never terminates. The anchor is</span>
+<span class="sd">    never fetched from and never acks, so the marker stays retained for any number</span>
+<span class="sd">    of late-created consumers (their default DeliverPolicy.ALL replays it); the</span>
+<span class="sd">    run&#39;s stream teardown deletes the anchor with everything else. No</span>
+<span class="sd">    ``inactive_threshold``: it must not be reaped while the run is alive.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">ConsumerConfig</span><span class="p">(</span>
+        <span class="n">durable_name</span> <span class="o">=</span> <span class="n">eos_anchor_durable_name_for</span><span class="p">(</span><span class="n">node_name</span><span class="p">),</span>
+        <span class="n">filter_subject</span> <span class="o">=</span> <span class="n">eos_subject_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">),</span>
+        <span class="n">ack_wait</span> <span class="o">=</span> <span class="mi">30</span><span class="p">,</span>
+    <span class="p">)</span></div>
+
+
+<span class="c1"># -- provisioning ----------------------------------------------------------</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_ensure_stream</span><span class="p">(</span><span class="n">js</span> <span class="p">:</span> <span class="n">JetStreamContext</span><span class="p">,</span> <span class="n">config</span> <span class="p">:</span> <span class="n">StreamConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">js</span><span class="o">.</span><span class="n">add_stream</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>  <span class="c1"># noqa: BLE001 — nats raises a generic error on conflict</span>
+        <span class="n">msg</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+        <span class="k">if</span> <span class="s1">&#39;already in use&#39;</span> <span class="ow">in</span> <span class="n">msg</span> <span class="ow">or</span> <span class="s1">&#39;name already in use&#39;</span> <span class="ow">in</span> <span class="n">msg</span><span class="p">:</span>
+            <span class="c1"># Exists already; best-effort bring config in line (retention changes</span>
+            <span class="c1"># are rejected by JetStream, but run-scoped names make that unreachable).</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">await</span> <span class="n">js</span><span class="o">.</span><span class="n">update_stream</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;stream </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1"> exists; update skipped&#39;</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span>
+
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_ensure_consumer</span><span class="p">(</span><span class="n">js</span> <span class="p">:</span> <span class="n">JetStreamContext</span><span class="p">,</span> <span class="n">stream_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">config</span> <span class="p">:</span> <span class="n">ConsumerConfig</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">js</span><span class="o">.</span><span class="n">add_consumer</span><span class="p">(</span><span class="n">stream_name</span><span class="p">,</span> <span class="n">config</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>  <span class="c1"># noqa: BLE001</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;add_consumer(</span><span class="si">{</span><span class="n">stream_name</span><span class="si">}</span><span class="s1">, </span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">durable_name</span><span class="si">}</span><span class="s1">) skipped: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="provision_flow">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.provision_flow">[docs]</a>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">provision_flow</span><span class="p">(</span><span class="n">nc</span> <span class="p">:</span> <span class="n">Client</span><span class="p">,</span> <span class="n">specs</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodeSpec</span><span class="p">],</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">max_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_MAX_RETRIES</span><span class="p">,</span> <span class="n">ack_wait</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">,</span>
+                        <span class="n">max_ack_pending</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">8</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Idempotently create every stream and durable consumer a flow needs, before any</span>
+<span class="sd">    worker publishes. Required for BATCH: under INTEREST retention a message</span>
+<span class="sd">    published with no registered consumer interest is discarded immediately, so</span>
+<span class="sd">    the durables must exist first.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - nc: a connected ``nats`` client.</span>
+<span class="sd">        - specs: list of ``videoflow.core.compiler.NodeSpec``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">js</span> <span class="o">=</span> <span class="n">nc</span><span class="o">.</span><span class="n">jetstream</span><span class="p">()</span>
+    <span class="n">by_name</span> <span class="o">=</span> <span class="p">{</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">:</span> <span class="n">spec</span> <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">specs</span><span class="p">}</span>
+    <span class="n">max_deliver</span> <span class="o">=</span> <span class="n">max_deliver_for</span><span class="p">(</span><span class="n">flow_type</span><span class="p">,</span> <span class="n">max_retries</span><span class="p">)</span>
+
+    <span class="c1"># 1. One stream per node — plus, for any node something consumes from, an</span>
+    <span class="c1">#    interest *anchor* on its EOS subject. The per-process EOS durables are</span>
+    <span class="c1">#    created only in worker setup, so without the anchor an EOS published</span>
+    <span class="c1">#    before a slow-starting child registers loses the interest race and is</span>
+    <span class="c1">#    discarded — leaving the child waiting for EOS forever (see eos_anchor_config).</span>
+    <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">specs</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">_ensure_stream</span><span class="p">(</span><span class="n">js</span><span class="p">,</span> <span class="n">stream_config_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">flow_type</span><span class="p">))</span>
+        <span class="k">if</span> <span class="n">spec</span><span class="o">.</span><span class="n">has_children</span><span class="p">:</span>
+            <span class="k">await</span> <span class="n">_ensure_consumer</span><span class="p">(</span><span class="n">js</span><span class="p">,</span> <span class="n">stream_name_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">),</span>
+                                   <span class="n">eos_anchor_config</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">))</span>
+
+    <span class="c1"># 2. DLQ stream — where messages that exhaust their retries land.</span>
+    <span class="k">await</span> <span class="n">_ensure_stream</span><span class="p">(</span><span class="n">js</span><span class="p">,</span> <span class="n">dlq_stream_config</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">))</span>
+
+    <span class="c1"># 3. Durable consumers per (child, parent) edge, on the parent&#39;s stream. A</span>
+    <span class="c1">#    partitioned child gets one durable *per replica* (broadcast + client-side</span>
+    <span class="c1">#    ownership); everything else gets one shared durable (competing consumers).</span>
+    <span class="k">for</span> <span class="n">spec</span> <span class="ow">in</span> <span class="n">specs</span><span class="p">:</span>
+        <span class="n">partition_by</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">partition_by</span>
+        <span class="n">nb_tasks</span> <span class="o">=</span> <span class="n">spec</span><span class="o">.</span><span class="n">nb_tasks</span>
+        <span class="k">for</span> <span class="n">parent_name</span> <span class="ow">in</span> <span class="n">spec</span><span class="o">.</span><span class="n">parents</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">parent_name</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">by_name</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">parent_stream</span> <span class="o">=</span> <span class="n">stream_name_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">)</span>
+            <span class="n">base</span> <span class="o">=</span> <span class="n">consumer_config_for</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">,</span> <span class="n">ack_wait</span> <span class="o">=</span> <span class="n">ack_wait</span><span class="p">,</span>
+                                    <span class="n">max_deliver</span> <span class="o">=</span> <span class="n">max_deliver</span><span class="p">,</span> <span class="n">max_ack_pending</span> <span class="o">=</span> <span class="n">max_ack_pending</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">partition_by</span> <span class="ow">and</span> <span class="n">nb_tasks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+                <span class="k">for</span> <span class="n">replica_id</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="n">nb_tasks</span><span class="p">):</span>
+                    <span class="n">cfg</span> <span class="o">=</span> <span class="n">ConsumerConfig</span><span class="p">(</span>
+                        <span class="n">durable_name</span> <span class="o">=</span> <span class="n">partitioned_durable_name_for</span><span class="p">(</span><span class="n">spec</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">,</span> <span class="n">replica_id</span><span class="p">),</span>
+                        <span class="n">filter_subject</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">filter_subject</span><span class="p">,</span> <span class="n">ack_wait</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">ack_wait</span><span class="p">,</span>
+                        <span class="n">max_deliver</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">max_deliver</span><span class="p">,</span> <span class="n">max_ack_pending</span> <span class="o">=</span> <span class="n">base</span><span class="o">.</span><span class="n">max_ack_pending</span><span class="p">)</span>
+                    <span class="k">await</span> <span class="n">_ensure_consumer</span><span class="p">(</span><span class="n">js</span><span class="p">,</span> <span class="n">parent_stream</span><span class="p">,</span> <span class="n">cfg</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="k">await</span> <span class="n">_ensure_consumer</span><span class="p">(</span><span class="n">js</span><span class="p">,</span> <span class="n">parent_stream</span><span class="p">,</span> <span class="n">base</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="provision_flow_connect">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.provision_flow_connect">[docs]</a>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">provision_flow_connect</span><span class="p">(</span><span class="n">nats_url</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">specs</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodeSpec</span><span class="p">],</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                                <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">connect_options</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                                <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Connects to NATS, provisions, and drains — a self-contained entrypoint.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - connect_options: extra kwargs for ``nats.connect``. The default (retry \</span>
+<span class="sd">            forever) is right for the in-cluster provision Job, whose broker may \</span>
+<span class="sd">            still be starting; a local run passes fail-fast options instead so an \</span>
+<span class="sd">            unreachable broker reports itself rather than hanging.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">nc</span> <span class="o">=</span> <span class="k">await</span> <span class="n">nats</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="n">nats_url</span><span class="p">,</span> <span class="o">**</span><span class="p">(</span><span class="n">connect_options</span> <span class="ow">or</span> <span class="p">{}))</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">provision_flow</span><span class="p">(</span><span class="n">nc</span><span class="p">,</span> <span class="n">specs</span><span class="p">,</span> <span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">flow_type</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+    <span class="k">finally</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">nc</span><span class="o">.</span><span class="n">drain</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="provision_flow_sync">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.provision_flow_sync">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">provision_flow_sync</span><span class="p">(</span><span class="n">nats_url</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">specs</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">NodeSpec</span><span class="p">],</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">connect_options</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">timeout</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Synchronous wrapper for callers outside an event loop (the local engine, the</span>
+<span class="sd">    init entrypoint).</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - timeout: overall bound in seconds, or None (the default) to wait \</span>
+<span class="sd">            indefinitely. ``nats.connect`` retries an unreachable server forever — \</span>
+<span class="sd">            ``allow_reconnect``/``max_reconnect_attempts`` only govern reconnects \</span>
+<span class="sd">            *after* a successful connect — so a caller that would rather report the \</span>
+<span class="sd">            problem than block must set this.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ``TimeoutError`` when ``timeout`` elapses first.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_go</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">provision_flow_connect</span><span class="p">(</span><span class="n">nats_url</span><span class="p">,</span> <span class="n">specs</span><span class="p">,</span> <span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">flow_type</span><span class="p">,</span>
+                                     <span class="n">connect_options</span> <span class="o">=</span> <span class="n">connect_options</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_bounded</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span><span class="n">_go</span><span class="p">(),</span> <span class="n">timeout</span> <span class="o">=</span> <span class="n">timeout</span><span class="p">)</span>
+
+    <span class="n">asyncio</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">_bounded</span><span class="p">()</span> <span class="k">if</span> <span class="n">timeout</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">_go</span><span class="p">())</span></div>
+
+
+<div class="viewcode-block" id="delete_run_streams">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.topology.delete_run_streams">[docs]</a>
+<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">delete_run_streams</span><span class="p">(</span><span class="n">nc</span> <span class="p">:</span> <span class="n">Client</span><span class="p">,</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Best-effort teardown: delete every stream belonging to this run.&#39;&#39;&#39;</span>
+    <span class="n">js</span> <span class="o">=</span> <span class="n">nc</span><span class="o">.</span><span class="n">jetstream</span><span class="p">()</span>
+    <span class="n">prefix</span> <span class="o">=</span> <span class="n">stream_label_selector</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">)</span>
+    <span class="n">dlq</span> <span class="o">=</span> <span class="n">dlq_stream_name</span><span class="p">(</span><span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">)</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">names</span> <span class="o">=</span> <span class="k">await</span> <span class="n">js</span><span class="o">.</span><span class="n">streams_info</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+        <span class="k">return</span>
+    <span class="k">for</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">names</span><span class="p">:</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">info</span><span class="o">.</span><span class="n">config</span><span class="o">.</span><span class="n">name</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">and</span> <span class="p">(</span><span class="n">name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="n">prefix</span><span class="p">)</span> <span class="ow">or</span> <span class="n">name</span> <span class="o">==</span> <span class="n">dlq</span><span class="p">):</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">await</span> <span class="n">js</span><span class="o">.</span><span class="n">delete_stream</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;delete_stream(</span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s1">) failed during teardown&#39;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

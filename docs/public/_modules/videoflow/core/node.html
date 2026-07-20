@@ -1,0 +1,783 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.core.node &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.core.node</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.core.node</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">re</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">NoReturn</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Set</span><span class="p">,</span> <span class="n">TypeAlias</span><span class="p">,</span> <span class="n">Union</span><span class="p">,</span> <span class="n">cast</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils.graph</span><span class="w"> </span><span class="kn">import</span> <span class="n">has_cycle</span><span class="p">,</span> <span class="n">topological_sort</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">CPU</span><span class="p">,</span> <span class="n">DEVICE_TYPES</span><span class="p">,</span> <span class="n">GPU</span><span class="p">,</span> <span class="n">LOGGING_LEVEL</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.policies</span><span class="w"> </span><span class="kn">import</span> <span class="n">JoinPolicy</span>
+
+<span class="n">_SLUG_RE</span> <span class="o">=</span> <span class="n">re</span><span class="o">.</span><span class="n">compile</span><span class="p">(</span><span class="sa">r</span><span class="s1">&#39;[^a-z0-9]+&#39;</span><span class="p">)</span>
+
+<span class="c1">#: What a node&#39;s ``join_policy=`` argument accepts: a policy object, the plain dict</span>
+<span class="c1">#: it serializes to (how it arrives when a worker reconstructs the node), or None.</span>
+<span class="n">JoinPolicyArg</span> <span class="p">:</span> <span class="n">TypeAlias</span> <span class="o">=</span> <span class="n">Union</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_slugify</span><span class="p">(</span><span class="n">value</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">_SLUG_RE</span><span class="o">.</span><span class="n">sub</span><span class="p">(</span><span class="s1">&#39;-&#39;</span><span class="p">,</span> <span class="n">value</span><span class="o">.</span><span class="n">lower</span><span class="p">())</span><span class="o">.</span><span class="n">strip</span><span class="p">(</span><span class="s1">&#39;-&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Node">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Node</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Represents a computational node in the graph. It is also a callable object. \</span>
+<span class="sd">        It can be call with the list of parents on which it depends.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - name (str): a unique, stable identifier for this node within a flow. \</span>
+<span class="sd">            Used as the node&#39;s identity everywhere outside the process that built \</span>
+<span class="sd">            the graph: message broker subject names, Kubernetes resource names, and \</span>
+<span class="sd">            logging. If not given, one is auto-generated from the class name and a \</span>
+<span class="sd">            per-class construction counter; uniqueness within a flow is validated when \</span>
+<span class="sd">            the flow is built (see ``videoflow.core.graph.GraphEngine``), not at \</span>
+<span class="sd">            construction time, since a collision can only be detected once the whole \</span>
+<span class="sd">            graph is known.</span>
+<span class="sd">        - image (str): the container image ref that this node&#39;s worker runs in on \</span>
+<span class="sd">            Kubernetes, e.g. ``ghcr.io/me/app:v1``. Declare it here when a node \</span>
+<span class="sd">            intrinsically needs a specific environment (a GPU model image, say). If \</span>
+<span class="sd">            omitted, the image is taken from the deploy-time default (``--image``); \</span>
+<span class="sd">            a deploy-time ``--image-override`` beats both. Ignored by the local \</span>
+<span class="sd">            engine, which runs workers in the current Python environment.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">_name_counters</span><span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">image</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">cls_name</span> <span class="o">=</span> <span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span>
+            <span class="n">Node</span><span class="o">.</span><span class="n">_name_counters</span><span class="p">[</span><span class="n">cls_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">Node</span><span class="o">.</span><span class="n">_name_counters</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cls_name</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+            <span class="n">name</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">_slugify</span><span class="p">(</span><span class="n">cls_name</span><span class="p">)</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">Node</span><span class="o">.</span><span class="n">_name_counters</span><span class="p">[</span><span class="n">cls_name</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_name</span> <span class="o">=</span> <span class="n">name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_image</span> <span class="o">=</span> <span class="n">image</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="s2">&quot;Node&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Set</span><span class="p">[</span><span class="s2">&quot;Node&quot;</span><span class="p">]]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_is_part_of_taskmodule_node</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_configure_logger</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Created Node with name </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_name</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_configure_logger</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">logging</span><span class="o">.</span><span class="n">Logger</span><span class="p">:</span>
+        <span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="fm">__repr__</span><span class="p">()</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">LOGGING_LEVEL</span><span class="p">)</span>
+        <span class="n">ch</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">StreamHandler</span><span class="p">()</span>
+        <span class="n">ch</span><span class="o">.</span><span class="n">setLevel</span><span class="p">(</span><span class="n">LOGGING_LEVEL</span><span class="p">)</span>
+        <span class="n">formatter</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">Formatter</span><span class="p">(</span><span class="s1">&#39;</span><span class="si">%(asctime)s</span><span class="s1"> - </span><span class="si">%(name)s</span><span class="s1"> - </span><span class="si">%(levelname)s</span><span class="s1"> - </span><span class="si">%(message)s</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="n">ch</span><span class="o">.</span><span class="n">setFormatter</span><span class="p">(</span><span class="n">formatter</span><span class="p">)</span>
+        <span class="n">logger</span><span class="o">.</span><span class="n">addHandler</span><span class="p">(</span><span class="n">ch</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">logger</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span>
+
+<div class="viewcode-block" id="Node.open">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node.open">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        This method is called by the task runner before doing any consuming,</span>
+<span class="sd">        processing or producing.  Should be used to open any resources</span>
+<span class="sd">        that will be needed during the life of the task, such as opening files,</span>
+<span class="sd">        tensorflow sessions, etc.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="Node.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        This method is called by the task running after finishing doing all</span>
+<span class="sd">        consuming, processing or producing because of and end signal receival.</span>
+<span class="sd">        Should be used to close any resources</span>
+<span class="sd">        that were opened by the open() method, such as files,</span>
+<span class="sd">        tensorflow sessions, etc.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">pass</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        The stable, unique-within-a-flow string identity of the node. This is the \</span>
+<span class="sd">            identifier used for broker subjects, Kubernetes resource names, and node \</span>
+<span class="sd">            reconstruction in worker processes.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">image</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;The container image ref declared for this node (or None to use the deploy-time default).&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_image</span>
+
+<div class="viewcode-block" id="Node.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns a JSON-serializable dict of keyword arguments sufficient to \</span>
+<span class="sd">            reconstruct an equivalent node via ``type(node)(**node.get_params())``. \</span>
+<span class="sd">            This is what lets a worker process (running in its own container, with no \</span>
+<span class="sd">            access to the object that built the graph) recreate the exact node it is \</span>
+<span class="sd">            responsible for running.</span>
+
+<span class="sd">        Default implementation: walks every class in this node&#39;s MRO that declares \</span>
+<span class="sd">            its own ``__init__``, inspects that ``__init__``&#39;s named parameters \</span>
+<span class="sd">            (skipping ``*args``/``**kwargs``), and for each parameter name looks up \</span>
+<span class="sd">            ``self._&lt;name&gt;`` and then ``self.&lt;name&gt;``. This matches the prevailing \</span>
+<span class="sd">            convention in this codebase of storing constructor arguments verbatim as \</span>
+<span class="sd">            an underscore-prefixed attribute of the same name.</span>
+
+<span class="sd">        Subclasses whose constructor arguments aren&#39;t stored under a matching \</span>
+<span class="sd">            attribute name, or that accept non-serializable arguments (e.g. \</span>
+<span class="sd">            references to other nodes, as ``TaskModuleNode`` does), must override \</span>
+<span class="sd">            this method.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">params</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="k">for</span> <span class="n">klass</span> <span class="ow">in</span> <span class="nb">reversed</span><span class="p">(</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__mro__</span><span class="p">):</span>
+            <span class="k">if</span> <span class="s1">&#39;__init__&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">klass</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">sig</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">klass</span><span class="o">.</span><span class="vm">__dict__</span><span class="p">[</span><span class="s1">&#39;__init__&#39;</span><span class="p">])</span>
+            <span class="k">for</span> <span class="n">pname</span><span class="p">,</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">sig</span><span class="o">.</span><span class="n">parameters</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="k">if</span> <span class="n">pname</span> <span class="o">==</span> <span class="s1">&#39;self&#39;</span> <span class="ow">or</span> <span class="n">p</span><span class="o">.</span><span class="n">kind</span> <span class="ow">in</span> <span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">VAR_POSITIONAL</span><span class="p">,</span> <span class="n">p</span><span class="o">.</span><span class="n">VAR_KEYWORD</span><span class="p">):</span>
+                    <span class="k">continue</span>
+                <span class="k">if</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">pname</span><span class="p">):</span>
+                    <span class="n">params</span><span class="p">[</span><span class="n">pname</span><span class="p">]</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="s1">&#39;_&#39;</span> <span class="o">+</span> <span class="n">pname</span><span class="p">)</span>
+                <span class="k">elif</span> <span class="nb">hasattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pname</span><span class="p">):</span>
+                    <span class="n">params</span><span class="p">[</span><span class="n">pname</span><span class="p">]</span> <span class="o">=</span> <span class="nb">getattr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">pname</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">AttributeError</span><span class="p">(</span>
+                        <span class="sa">f</span><span class="s2">&quot;Cannot auto-capture constructor parameter &#39;</span><span class="si">{</span><span class="n">pname</span><span class="si">}</span><span class="s2">&#39; for &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s2">: no attribute &#39;self._</span><span class="si">{</span><span class="n">pname</span><span class="si">}</span><span class="s2">&#39; or &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;&#39;self.</span><span class="si">{</span><span class="n">pname</span><span class="si">}</span><span class="s2">&#39; found. Store the parameter under one of &quot;</span>
+                        <span class="sa">f</span><span class="s2">&quot;those names, or override get_params() on this class.&quot;</span>
+                    <span class="p">)</span>
+        <span class="k">return</span> <span class="n">params</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">parents</span> <span class="p">:</span> <span class="s2">&quot;Node&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="s2">&quot;Node&quot;</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s1">&#39;This method has already been called. It can only be called once.&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_is_part_of_taskmodule_node</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s1">&#39;Cannot make a node that belongs to a TaskModuleNode to be&#39;</span>
+                                <span class="s1">&#39; a child of another node in the graph. Use the TaskModuleNode for the edge&#39;</span>
+                                <span class="s1">&#39; if possible.&#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">parent</span> <span class="ow">in</span> <span class="n">parents</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">parent</span><span class="o">.</span><span class="n">_is_part_of_taskmodule_node</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s1">&#39;Cannot make a node that belongs to a TaskModuleNode to be&#39;</span>
+                                <span class="s1">&#39; a parent of another node. Use the TaskModuleNode as parent&#39;</span>
+                                <span class="s1">&#39; if possible.&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">parent</span> <span class="ow">in</span> <span class="n">parents</span><span class="p">:</span>
+            <span class="k">assert</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="n">Node</span><span class="p">),</span> <span class="s1">&#39;</span><span class="si">%s</span><span class="s1"> is not a node&#39;</span> <span class="o">%</span> <span class="nb">str</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+            <span class="n">parent</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span>
+
+<div class="viewcode-block" id="Node.add_child">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node.add_child">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">add_child</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">child</span> <span class="p">:</span> <span class="s2">&quot;Node&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Adds child to the set of childs that depend on it.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="c1"># Only non-leaf nodes ever get children (a Leaf sets _children to None and</span>
+        <span class="c1"># is never made a parent), so this is always a real set here.</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">child</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Node.remove_child">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Node.remove_child">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">remove_child</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">child</span> <span class="p">:</span> <span class="s2">&quot;Node&quot;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span><span class="o">.</span><span class="n">remove</span><span class="p">(</span><span class="n">child</span><span class="p">)</span></div>
+
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">parents</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="s2">&quot;Node&quot;</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns a list with the parent nodes</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parents</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">children</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Set</span><span class="p">[</span><span class="s2">&quot;Node&quot;</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns a set of the child nodes</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="nb">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_children</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Leaf">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.Leaf">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Leaf</span><span class="p">(</span><span class="n">Node</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Node with no children.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_children</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">Leaf</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ConsumerNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ConsumerNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ConsumerNode</span><span class="p">(</span><span class="n">Leaf</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - metadata (boolean): By default is False. If True, instead of receiving \</span>
+<span class="sd">            output of parent nodes, receives metadata produced by parent nodes.</span>
+<span class="sd">        - name (str): see ``Node``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">join_policy</span> <span class="p">:</span> <span class="n">JoinPolicyArg</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">idempotent</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span> <span class="o">=</span> <span class="n">metadata</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_idempotent</span> <span class="o">=</span> <span class="n">idempotent</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">join_policy</span><span class="p">,</span> <span class="n">JoinPolicy</span><span class="p">):</span>
+            <span class="n">join_policy</span> <span class="o">=</span> <span class="n">join_policy</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span> <span class="o">=</span> <span class="n">join_policy</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ConsumerNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metadata</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">idempotent</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;If True (and the flow has a Redis blob/idempotency store), the consumer&#39;s side effects are deduplicated across redelivery.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_idempotent</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">partition_by</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="c1"># Consumers are single sinks (no nb_tasks), so they never partition.</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">join_policy</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;JoinPolicy&quot;</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="n">JoinPolicy</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ConsumerNode.consume">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ConsumerNode.consume">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">item</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Method definition that needs to be implemented by subclasses.</span>
+
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - item: the item being received as input (or consumed).</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;consume function needs to be implemented</span><span class="se">\</span>
+<span class="s1">                            by subclass&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ProcessorNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ProcessorNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProcessorNode</span><span class="p">(</span><span class="n">Node</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - nb_tasks (int): number of parallel replicas to allocate for this processor.</span>
+<span class="sd">        - device_type (str): ``videoflow.core.constants.CPU`` or ``GPU``.</span>
+<span class="sd">        - partition_by (str): if set (and ``nb_tasks &gt; 1``), replicas partition the \</span>
+<span class="sd">            input by a key instead of competing for it: each message is handled by \</span>
+<span class="sd">            exactly one replica chosen by ``hash(key) % nb_tasks``. The key is the \</span>
+<span class="sd">            message&#39;s ``trace_id`` (the special value ``&#39;trace_id&#39;``, which co-locates \</span>
+<span class="sd">            both halves of a join on the same replica) or a metadata field name. \</span>
+<span class="sd">            Required for a multi-parent (join) node with ``nb_tasks &gt; 1``.</span>
+<span class="sd">        - join_policy (JoinPolicy | dict): for multi-parent nodes, how to handle a \</span>
+<span class="sd">            join group that never completes (timeout + missing policy). Defaults per \</span>
+<span class="sd">            flow type when unset.</span>
+<span class="sd">        - gpu_count (int): GPUs each replica requests on Kubernetes (``device_type=GPU`` \</span>
+<span class="sd">            only; ignored locally). Whole devices — the resource is not overcommittable.</span>
+<span class="sd">        - gpu_resource_name (str): Kubernetes extended-resource name each replica \</span>
+<span class="sd">            requests, when the cluster does not expose plain ``nvidia.com/gpu`` — e.g. \</span>
+<span class="sd">            a MIG profile (``nvidia.com/mig-1g.10gb``) or a renamed time-sliced \</span>
+<span class="sd">            resource (``nvidia.com/gpu.shared``). None defers to the deploy-time \</span>
+<span class="sd">            default (``--gpu-resource-name``, else ``nvidia.com/gpu``).</span>
+<span class="sd">        - name (str): see ``Node``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">CPU</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">partition_by</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">join_policy</span> <span class="p">:</span> <span class="n">JoinPolicyArg</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">gpu_count</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nb_tasks</span> <span class="o">=</span> <span class="n">nb_tasks</span>
+        <span class="k">if</span> <span class="n">device_type</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">DEVICE_TYPES</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Device is not one of </span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">DEVICE_TYPES</span><span class="p">)))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device_type</span> <span class="o">=</span> <span class="n">device_type</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gpu_count</span><span class="p">,</span> <span class="nb">int</span><span class="p">)</span> <span class="ow">or</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gpu_count</span><span class="p">,</span> <span class="nb">bool</span><span class="p">)</span> <span class="ow">or</span> <span class="n">gpu_count</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;gpu_count must be a positive integer, got </span><span class="si">{</span><span class="n">gpu_count</span><span class="si">!r}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_count</span> <span class="o">=</span> <span class="n">gpu_count</span>
+        <span class="k">if</span> <span class="n">gpu_resource_name</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="p">(</span><span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">gpu_resource_name</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span>
+                                              <span class="ow">or</span> <span class="ow">not</span> <span class="n">gpu_resource_name</span><span class="o">.</span><span class="n">strip</span><span class="p">()):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;gpu_resource_name must be a non-empty string or None, &#39;</span>
+                             <span class="sa">f</span><span class="s1">&#39;got </span><span class="si">{</span><span class="n">gpu_resource_name</span><span class="si">!r}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_resource_name</span> <span class="o">=</span> <span class="n">gpu_resource_name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span> <span class="o">=</span> <span class="n">partition_by</span>
+        <span class="c1"># Stored as a plain dict so get_params() stays JSON-serializable.</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">join_policy</span><span class="p">,</span> <span class="n">JoinPolicy</span><span class="p">):</span>
+            <span class="n">join_policy</span> <span class="o">=</span> <span class="n">join_policy</span><span class="o">.</span><span class="n">to_dict</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span> <span class="o">=</span> <span class="n">join_policy</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProcessorNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">nb_tasks</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns the number of tasks to allocate to this processor</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_tasks</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device_type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns the preferred device type to use to run the processor&#39;s code</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_device_type</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">gpu_count</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;GPUs each replica requests on Kubernetes (meaningful only when ``device_type`` is GPU).&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_count</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">gpu_resource_name</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Extended-resource name each replica requests, or None for the deploy default.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_resource_name</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">partition_by</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">join_policy</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;JoinPolicy&quot;</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Returns the ``JoinPolicy`` object (or None), reconstructed from the stored dict.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="n">JoinPolicy</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ProcessorNode.change_device">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ProcessorNode.change_device">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">change_device</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">device_type</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">DEVICE_TYPES</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Device is not one of </span><span class="si">{}</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">format</span><span class="p">(</span><span class="s2">&quot;,&quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">DEVICE_TYPES</span><span class="p">)))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_device_type</span> <span class="o">=</span> <span class="n">device_type</span></div>
+
+
+<div class="viewcode-block" id="ProcessorNode.process">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ProcessorNode.process">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inp</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Method definition that needs to be implemented by subclasses.</span>
+
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - inp: object or list of objects being received for processing \</span>
+<span class="sd">                from parent nodes.</span>
+
+<span class="sd">        - Returns:</span>
+<span class="sd">            - the output being consumed by child nodes.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;process function needs to be implemented</span><span class="se">\</span>
+<span class="s1">                            by subclass&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="OneTaskProcessorNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.OneTaskProcessorNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">OneTaskProcessorNode</span><span class="p">(</span><span class="n">ProcessorNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Used for processes that keep internal state so they are easily parallelizable.</span>
+<span class="sd">    The main use of this class if for processes that can only run one</span>
+<span class="sd">    task, such as trackers and aggregators.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">CPU</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># nb_tasks is always 1 for this class; discard it if present (e.g. when</span>
+        <span class="c1"># reconstructing from get_params(), which captures it from the ProcessorNode</span>
+        <span class="c1"># level of the MRO) so it doesn&#39;t collide with the positional 1 below.</span>
+        <span class="n">kwargs</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="s1">&#39;nb_tasks&#39;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">OneTaskProcessorNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="n">device_type</span> <span class="o">=</span> <span class="n">device_type</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="TaskModuleNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.TaskModuleNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">TaskModuleNode</span><span class="p">(</span><span class="n">ProcessorNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Processor node that wraps a graph of processor nodes. This has the effect</span>
+<span class="sd">    that instead of allocating one task per processor node in</span>
+<span class="sd">    the graph, only one task process is allocated for the entire subgraph.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - entry_node (Node): The node that sits at the top of the subgraph</span>
+<span class="sd">        - exit_node (Node): The node that sits at the top of the subgraph</span>
+<span class="sd">        - nb_tasks (int) The number of parallel tasks to allocate</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ``ValueError`` if:</span>
+<span class="sd">            - There is at least one node in the subgraph that is not instance of ``ProcessorNode``</span>
+<span class="sd">            - ``nb_tasks`` parameter is greater than one and there is at least one node in the sequence \</span>
+<span class="sd">                that derives from ``OneTaskProcessorNode``.</span>
+<span class="sd">            - There is at least one node in the sequence that has device_type GPU</span>
+<span class="sd">            - The subgraph has less than one node.</span>
+<span class="sd">            - There is a node of type ``TaskModuleNode`` among the nodes of the \</span>
+<span class="sd">                subgraph.</span>
+
+<span class="sd">    Note: because it wraps live references to other nodes, ``TaskModuleNode`` does \</span>
+<span class="sd">        not support ``get_params()``-based reconstruction and is not yet supported \</span>
+<span class="sd">        by the distributed Kubernetes execution path (see ``videoflow.core.compiler``).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entry_node</span> <span class="p">:</span> <span class="n">ProcessorNode</span><span class="p">,</span> <span class="n">exit_node</span><span class="p">:</span> <span class="n">ProcessorNode</span><span class="p">,</span> <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">TaskModuleNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">nb_tasks</span> <span class="o">=</span> <span class="n">nb_tasks</span><span class="p">,</span> <span class="n">device_type</span> <span class="o">=</span> <span class="n">CPU</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_entry_node</span> <span class="o">=</span> <span class="n">entry_node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_exit_node</span> <span class="o">=</span> <span class="n">exit_node</span>
+
+        <span class="c1">#3. Relinking entry and exit nodes</span>
+        <span class="c1">#3.1 Adopt entry_node parents if any</span>
+        <span class="n">entry_parents</span> <span class="o">=</span> <span class="n">entry_node</span><span class="o">.</span><span class="n">parents</span>
+        <span class="k">if</span> <span class="n">entry_parents</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_parents</span> <span class="o">=</span> <span class="n">entry_parents</span>
+            <span class="n">entry_node</span><span class="o">.</span><span class="n">_parents</span> <span class="o">=</span> <span class="kc">None</span>
+            <span class="k">for</span> <span class="n">parent</span> <span class="ow">in</span> <span class="n">entry_parents</span><span class="p">:</span>
+                <span class="n">parent</span><span class="o">.</span><span class="n">remove_child</span><span class="p">(</span><span class="n">entry_node</span><span class="p">)</span>
+                <span class="n">parent</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+
+        <span class="c1">#3.2 Relink things with exit_node</span>
+        <span class="k">for</span> <span class="n">child</span> <span class="ow">in</span> <span class="p">(</span><span class="n">exit_node</span><span class="o">.</span><span class="n">children</span> <span class="ow">or</span> <span class="nb">set</span><span class="p">()):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">add_child</span><span class="p">(</span><span class="n">child</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">child</span><span class="o">.</span><span class="n">_parents</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="n">pos_idx</span> <span class="o">=</span> <span class="n">child</span><span class="o">.</span><span class="n">_parents</span><span class="o">.</span><span class="n">index</span><span class="p">(</span><span class="n">exit_node</span><span class="p">)</span>
+                <span class="n">child</span><span class="o">.</span><span class="n">_parents</span><span class="p">[</span><span class="n">pos_idx</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span>
+        <span class="n">exit_node</span><span class="o">.</span><span class="n">_children</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="c1">#1. Building topological sort</span>
+        <span class="k">if</span> <span class="n">has_cycle</span><span class="p">([</span><span class="n">entry_node</span><span class="p">]):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s1">&#39;Cycle detected in module graph. Exiting now...&#39;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Cycle found in module graph&#39;</span><span class="p">)</span>
+        <span class="c1"># Every member is checked to be a ProcessorNode a few lines below, which is</span>
+        <span class="c1"># what makes the narrower element type true for the rest of this class.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">List</span><span class="p">[</span><span class="n">ProcessorNode</span><span class="p">],</span> <span class="n">topological_sort</span><span class="p">([</span><span class="n">entry_node</span><span class="p">]))</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">:</span>
+            <span class="n">node</span><span class="o">.</span><span class="n">_is_part_of_taskmodule_node</span> <span class="o">=</span> <span class="kc">True</span>
+
+        <span class="c1">#2. Checking for correctness</span>
+        <span class="k">if</span> <span class="n">exit_node</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">exit_node</span><span class="si">}</span><span class="s1"> is not descendant of entry node. Exiting now...&#39;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">exit_node</span><span class="si">}</span><span class="s1"> is not descendant of entry node&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;There is at least one instance in the module graph that is not instance of ProcessorNode&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">TaskModuleNode</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;TaskModuleNode type of nodes cannot be nested.&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">OneTaskProcessorNode</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">)</span> <span class="ow">and</span> <span class="n">nb_tasks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Cannot have nb_tasks &gt; 1 if one of the processor nodes is derived from OneTaskProcessorNode&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">device_type</span> <span class="o">==</span> <span class="n">GPU</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Cannot have nodes with device type GPU as part of the sequence&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">)</span> <span class="o">&lt;</span> <span class="mi">1</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Must pass a list of at least one processor node&#39;</span><span class="p">)</span>
+        <span class="k">for</span> <span class="n">node</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+            <span class="c1"># ``parents`` is declared Optional; normalize as elsewhere in the repo.</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">parents</span> <span class="ow">or</span> <span class="p">[]):</span>
+                <span class="k">if</span> <span class="n">p</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">:</span>
+                    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;There is a node whose parents are not part&#39;</span>
+                                        <span class="s1">&#39; of the list of processor nodes&#39;</span><span class="p">)</span>
+
+
+<div class="viewcode-block" id="TaskModuleNode.process">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.TaskModuleNode.process">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inp</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="n">intermediate_results</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="s2">&quot;Node&quot;</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="o">*</span><span class="n">inp</span><span class="p">)</span>
+        <span class="n">intermediate_results</span><span class="p">[</span><span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">[</span><span class="mi">0</span><span class="p">]]</span> <span class="o">=</span> <span class="n">result</span>
+        <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">[</span><span class="mi">1</span><span class="p">:]:</span>
+            <span class="n">inp_values</span> <span class="o">=</span> <span class="p">[</span><span class="n">intermediate_results</span><span class="p">[</span><span class="n">a</span><span class="p">]</span> <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="p">(</span><span class="n">p</span><span class="o">.</span><span class="n">parents</span> <span class="ow">or</span> <span class="p">[])]</span>
+            <span class="n">result</span> <span class="o">=</span> <span class="n">p</span><span class="o">.</span><span class="n">process</span><span class="p">(</span><span class="o">*</span><span class="n">inp_values</span><span class="p">)</span>
+            <span class="n">intermediate_results</span><span class="p">[</span><span class="n">p</span><span class="p">]</span> <span class="o">=</span> <span class="n">result</span>
+        <span class="k">return</span> <span class="n">result</span></div>
+
+
+<div class="viewcode-block" id="TaskModuleNode.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.TaskModuleNode.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NoReturn</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s1">&#39;TaskModuleNode wraps live node references and is not supported by the &#39;</span>
+            <span class="s1">&#39;distributed execution path yet. Deploy the fused nodes as separate, &#39;</span>
+            <span class="s1">&#39;unfused nodes instead of wrapping them in a TaskModuleNode.&#39;</span>
+        <span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="FunctionProcessorNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.FunctionProcessorNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">FunctionProcessorNode</span><span class="p">(</span><span class="n">ProcessorNode</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">processor_function</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Any</span><span class="p">],</span> <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">CPU</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_processor_function</span> <span class="o">=</span> <span class="n">processor_function</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">FunctionProcessorNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">nb_tasks</span><span class="p">,</span> <span class="n">device_type</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="FunctionProcessorNode.process">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.FunctionProcessorNode.process">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inp</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_processor_function</span><span class="p">(</span><span class="n">inp</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="FunctionProcessorNode.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.FunctionProcessorNode.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NoReturn</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s1">&#39;FunctionProcessorNode wraps an arbitrary Python callable, which is not &#39;</span>
+            <span class="s1">&#39;JSON-serializable. Define a ProcessorNode subclass instead if this node &#39;</span>
+            <span class="s1">&#39;needs to run in a distributed/Kubernetes flow.&#39;</span>
+        <span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ModuleNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ModuleNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ModuleNode</span><span class="p">(</span><span class="n">Node</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Module node that wraps a subgraph of computation. Each node of the Module must be a ``ProcessorNode``</span>
+<span class="sd">    or a ``ModuleNode`` itself.  For simplicity, a module node has exaclty one node as entry point,</span>
+<span class="sd">    and exactly one node as exit point.</span>
+<span class="sd">    If for some reason a ModuleNode has flag ``one_process`` set to ``True``:</span>
+<span class="sd">        - Then any module within the subgraph must also be of that type, or an exception will be thrown.</span>
+<span class="sd">        - No process inside the module can be allocated to a gpu, or an exception will be thrown</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - entry_node (Node): The node that sits at the top of the subgraph</span>
+<span class="sd">        - exit_node (Node): The node that sits at the top of the subgraph</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ``ValueError`` if:</span>
+<span class="sd">            - There is at least one node in the sequence that is not instance of ``ProcessorNode`` or of ``ModuleNode``</span>
+<span class="sd">            - There is a cycle in the subgraph</span>
+<span class="sd">            - The ``exit_node`` is not reachable from the ``entry_node``</span>
+<span class="sd">            - The flag ``one_process`` is set to ``True``, and any of the following conditions is true:</span>
+<span class="sd">                - There is a ModuleNode within the subgraph that does not have that flag set to true too.</span>
+<span class="sd">                - There is at least one node in the sequence that has device_type GPU</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entry_node</span> <span class="p">:</span> <span class="n">Node</span><span class="p">,</span> <span class="n">exit_node</span> <span class="p">:</span> <span class="n">Node</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_entry_node</span> <span class="o">=</span> <span class="n">entry_node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_exit_node</span> <span class="o">=</span> <span class="n">exit_node</span>
+
+        <span class="k">if</span> <span class="n">has_cycle</span><span class="p">([</span><span class="n">entry_node</span><span class="p">]):</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="s1">&#39;Cycle detected in module graph. Exiting now...&#39;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Cycle found in module graph&#39;</span><span class="p">)</span>
+
+        <span class="n">temp_tsort</span> <span class="o">=</span> <span class="n">topological_sort</span><span class="p">([</span><span class="n">entry_node</span><span class="p">])</span>
+
+        <span class="k">if</span> <span class="n">exit_node</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">temp_tsort</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">exit_node</span><span class="si">}</span><span class="s1"> is not descendant of entry node. Exiting now...&#39;</span><span class="p">)</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">exit_node</span><span class="si">}</span><span class="s1"> is not descendant of entry node&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="nb">any</span><span class="p">(((</span><span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">))</span> <span class="ow">and</span> <span class="p">(</span><span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">p</span><span class="p">,</span> <span class="n">ModuleNode</span><span class="p">)))</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">temp_tsort</span><span class="p">):</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;There is at least one node in the module graph that is not instance of ProcessorNode or of ModuleNode&#39;</span><span class="p">)</span>
+
+        <span class="c1"># Create valid tsort here.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ProcessorNode</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">n</span> <span class="ow">in</span> <span class="n">temp_tsort</span><span class="p">:</span>
+            <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">n</span><span class="p">,</span> <span class="n">ModuleNode</span><span class="p">):</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">n</span><span class="o">.</span><span class="n">nodes</span><span class="p">)</span>
+
+        <span class="nb">super</span><span class="p">(</span><span class="n">ModuleNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="c1"># override: unimplemented stub. Node.__call__ returns self for chaining; this</span>
+    <span class="c1"># returns None, so wiring a ModuleNode into a graph silently yields None. It has</span>
+    <span class="c1"># no callers anywhere in the repo — left as-is rather than implementing dead code.</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__call__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">parents</span> <span class="p">:</span> <span class="n">Node</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>   <span class="c1"># type: ignore[override]</span>
+        <span class="c1">#TODO</span>
+        <span class="k">pass</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">nodes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ProcessorNode</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_tsort</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ModuleNode.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ModuleNode.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">NoReturn</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span>
+            <span class="s1">&#39;ModuleNode wraps live node references and is not supported by the &#39;</span>
+            <span class="s1">&#39;distributed execution path.&#39;</span>
+        <span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ProducerNode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ProducerNode">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProducerNode</span><span class="p">(</span><span class="n">Node</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The `producer node` does not receive input, and produces input. \</span>
+<span class="sd">        Each time the ``next()`` method is called, it produces a new input.</span>
+
+<span class="sd">    It would have been more natural to implement the ``ProducerNode`` as a generator, \</span>
+<span class="sd">        but a node is shipped to its worker as ``(class path, get_params())`` and rebuilt \</span>
+<span class="sd">        there with ``type(node)(**get_params())`` — a generator has no such reconstructable \</span>
+<span class="sd">        form, so it cannot cross into the worker process.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - is_finite (bool): True (the default) if a call to ``next()`` will eventually \</span>
+<span class="sd">            raise ``StopIteration`` on its own (e.g. reading a fixed video file). Set to \</span>
+<span class="sd">            ``False`` for producers that read from an unbounded/live source (e.g. an \</span>
+<span class="sd">            RTSP stream) and only stop when told to. The Kubernetes execution engine \</span>
+<span class="sd">            uses this to decide whether to deploy the producer as a ``Job`` (finite) or \</span>
+<span class="sd">            a ``Deployment`` (infinite).</span>
+<span class="sd">        - name (str): see ``Node``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">is_finite</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_is_finite</span> <span class="o">=</span> <span class="n">is_finite</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProducerNode</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_finite</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_is_finite</span>
+
+<div class="viewcode-block" id="ProducerNode.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.node.ProducerNode.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns next produced element.</span>
+
+<span class="sd">        Raises ``StopIteration`` after the last element has been produced</span>
+<span class="sd">        and a call to self.next happens.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Method needs to be implemented by subclass&#39;</span><span class="p">)</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

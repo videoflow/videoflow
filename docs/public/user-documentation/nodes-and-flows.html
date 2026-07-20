@@ -1,0 +1,273 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Nodes and Flows &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Writing your own components" href="writing-your-own-components.html" />
+    <link rel="prev" title="How to contribute" href="../first-steps/how-to-contribute.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Nodes and Flows</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#the-three-node-types">The three node types</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#node-identity-the-name">Node identity: the <code class="docutils literal notranslate"><span class="pre">name</span></code></a></li>
+<li class="toctree-l2"><a class="reference internal" href="#constructor-arguments-must-be-serializable">Constructor arguments must be serializable</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#building-a-flow">Building a Flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#running-a-flow">Running a Flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#reliability">Reliability</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Nodes and Flows</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/user-documentation/nodes-and-flows.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="nodes-and-flows">
+<h1>Nodes and Flows<a class="headerlink" href="#nodes-and-flows" title="Link to this heading"></a></h1>
+<p>This page describes the building blocks of a Videoflow application and the rules
+that make a graph deployable in a distributed setting.</p>
+<section id="the-three-node-types">
+<h2>The three node types<a class="headerlink" href="#the-three-node-types" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Type</p></th>
+<th class="head"><p>Base class</p></th>
+<th class="head"><p>Method to implement</p></th>
+<th class="head"><p>Role</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p>Producer</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ProducerNode</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">next()</span></code></p></td>
+<td><p>Creates data from an external source (file, camera,
+stream). Set <code class="docutils literal notranslate"><span class="pre">is_finite=False</span></code> for unbounded ones.</p></td>
+</tr>
+<tr class="row-odd"><td><p>Processor</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ProcessorNode</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">process(*inputs)</span></code></p></td>
+<td><p>Transforms inputs into an output. Supports
+<code class="docutils literal notranslate"><span class="pre">nb_tasks</span></code>, <code class="docutils literal notranslate"><span class="pre">device_type</span></code>, <code class="docutils literal notranslate"><span class="pre">partition_by</span></code>,
+<code class="docutils literal notranslate"><span class="pre">join_policy</span></code>.</p></td>
+</tr>
+<tr class="row-even"><td><p>Consumer</p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">ConsumerNode</span></code></p></td>
+<td><p><code class="docutils literal notranslate"><span class="pre">consume(item)</span></code></p></td>
+<td><p>Terminal sink; produces no output. Supports
+<code class="docutils literal notranslate"><span class="pre">idempotent</span></code> and <code class="docutils literal notranslate"><span class="pre">join_policy</span></code>.</p></td>
+</tr>
+</tbody>
+</table>
+<p>Every node also has <code class="docutils literal notranslate"><span class="pre">open()</span></code> and <code class="docutils literal notranslate"><span class="pre">close()</span></code> lifecycle hooks for acquiring and
+releasing resources. Any lifecycle or processing method may be an <code class="docutils literal notranslate"><span class="pre">async</span> <span class="pre">def</span></code> (the
+worker awaits it) and may take a final <code class="docutils literal notranslate"><span class="pre">ctx</span></code> parameter to receive a
+<a class="reference internal" href="../distributed/distributed-execution.html"><span class="doc">runtime context</span></a> — see
+<a class="reference internal" href="writing-your-own-components.html"><span class="doc">Writing your own components</span></a>.</p>
+</section>
+<section id="node-identity-the-name">
+<h2>Node identity: the <code class="docutils literal notranslate"><span class="pre">name</span></code><a class="headerlink" href="#node-identity-the-name" title="Link to this heading"></a></h2>
+<p>Each node has a <strong>stable, unique</strong> string <code class="docutils literal notranslate"><span class="pre">name</span></code>. In a distributed flow that name
+is the node’s identity everywhere it matters: the broker subjects it publishes and
+subscribes to, and the Kubernetes resources generated for it. If you do not pass a
+<code class="docutils literal notranslate"><span class="pre">name</span></code>, one is generated from the class name, but for anything you intend to
+deploy you should give each node an explicit, meaningful name:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">detector</span> <span class="o">=</span> <span class="n">ObjectDetector</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s1">&#39;detector&#39;</span><span class="p">)(</span><span class="n">frame</span><span class="p">)</span>
+</pre></div>
+</div>
+<p>Names must be unique within a flow; a duplicate raises a <code class="docutils literal notranslate"><span class="pre">ValueError</span></code> when the
+flow is built.</p>
+</section>
+<section id="constructor-arguments-must-be-serializable">
+<h2>Constructor arguments must be serializable<a class="headerlink" href="#constructor-arguments-must-be-serializable" title="Link to this heading"></a></h2>
+<p>Because a worker reconstructs <strong>only its one node</strong> from configuration (it never
+receives a live Python object), a node’s constructor arguments must be
+<strong>JSON-serializable</strong> — numbers, strings, booleans, and lists/dicts of those.</p>
+<p>Two consequences follow:</p>
+<ul class="simple">
+<li><p><strong>Do heavy or stateful setup in</strong> <code class="docutils literal notranslate"><span class="pre">open()</span></code>, not <code class="docutils literal notranslate"><span class="pre">__init__</span></code>. Opening a camera,
+loading a model, or creating a database connection belongs in <code class="docutils literal notranslate"><span class="pre">open()</span></code>, which
+runs inside the worker just before processing begins.</p></li>
+<li><p><strong>Store each constructor argument on</strong> <code class="docutils literal notranslate"><span class="pre">self</span></code> <strong>under the same name</strong> so it can
+be captured automatically for reconstruction. Always accept and forward
+<code class="docutils literal notranslate"><span class="pre">**kwargs</span></code> to <code class="docutils literal notranslate"><span class="pre">super().__init__()</span></code>.</p></li>
+</ul>
+<p>See <a class="reference internal" href="writing-your-own-components.html"><span class="doc">Writing your own components</span></a> for full examples.</p>
+</section>
+<section id="building-a-flow">
+<h2>Building a Flow<a class="headerlink" href="#building-a-flow" title="Link to this heading"></a></h2>
+<p>A <code class="docutils literal notranslate"><span class="pre">Flow</span></code> is created from the <strong>consumers</strong> (the leaves of the graph); producers
+are discovered automatically:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">videoflow.core</span><span class="w"> </span><span class="kn">import</span> <span class="n">Flow</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">videoflow.core.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">REALTIME</span>
+
+<span class="n">flow</span> <span class="o">=</span> <span class="n">Flow</span><span class="p">([</span><span class="n">consumer_a</span><span class="p">,</span> <span class="n">consumer_b</span><span class="p">],</span> <span class="n">flow_type</span><span class="o">=</span><span class="n">REALTIME</span><span class="p">,</span> <span class="n">flow_id</span><span class="o">=</span><span class="s1">&#39;my-flow&#39;</span><span class="p">)</span>
+</pre></div>
+</div>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">flow_type</span></code> is <code class="docutils literal notranslate"><span class="pre">REALTIME</span></code> (drop stale messages, never block producers) or
+<code class="docutils literal notranslate"><span class="pre">BATCH</span></code> (at-least-once, loss-free delivery). See <a class="reference internal" href="batch-versus-realtime-mode.html"><span class="doc">Batch versus realtime mode</span></a>.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">flow_id</span></code> namespaces the broker subjects and Kubernetes resources; pass a stable
+value when you want to redeploy the same logical flow.</p></li>
+</ul>
+<p>When the flow is built it validates the graph: it must be acyclic, every consumer
+must be reachable from a producer, all names must be unique, and a replicated
+multi-parent join node must set <code class="docutils literal notranslate"><span class="pre">partition_by</span></code> (see <a class="reference internal" href="task-allocation.html"><span class="doc">Scaling and node allocation</span></a>).</p>
+</section>
+<section id="running-a-flow">
+<h2>Running a Flow<a class="headerlink" href="#running-a-flow" title="Link to this heading"></a></h2>
+<p>A flow runs through an <strong>execution engine</strong>:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">videoflow.engines.local</span><span class="w"> </span><span class="kn">import</span> <span class="n">LocalProcessEngine</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">LocalProcessEngine</span><span class="p">())</span>   <span class="c1"># local subprocesses; or KubernetesExecutionEngine</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>                       <span class="c1"># block until done</span>
+<span class="c1"># flow.stop()                     # signal termination early</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">flow.run(engine)</span></code> mints a fresh <code class="docutils literal notranslate"><span class="pre">run_id</span></code> and is non-blocking. <code class="docutils literal notranslate"><span class="pre">flow.join()</span></code>
+blocks until the flow finishes naturally (all producers exhausted). <code class="docutils literal notranslate"><span class="pre">flow.stop()</span></code>
+publishes a termination signal on the broker’s control channel that every worker is
+subscribed to, then waits for them to drain and exit.</p>
+<p>See <a class="reference internal" href="../distributed/distributed-execution.html"><span class="doc">Distributed execution</span></a> for the available engines.</p>
+</section>
+<section id="reliability">
+<h2>Reliability<a class="headerlink" href="#reliability" title="Link to this heading"></a></h2>
+<p>Each call to <code class="docutils literal notranslate"><span class="pre">flow.run()</span></code> is scoped by a <strong>run id</strong>, so re-running a flow gets a
+fresh set of broker streams instead of colliding with a previous run.</p>
+<p>Delivery is <strong>at-least-once</strong>: a worker acknowledges a message only after it has
+processed it (and published its output), so a crash mid-processing causes
+redelivery, not loss. In BATCH mode a message that keeps failing is retried a few
+times and then <strong>dead-lettered</strong> to a DLQ stream (<code class="docutils literal notranslate"><span class="pre">vf-&lt;flow&gt;-&lt;run&gt;-dlq</span></code>) with the
+error attached, instead of being dropped or crashing the pod. See
+<a class="reference internal" href="../distributed/distributed-execution.html"><span class="doc">Distributed execution</span></a> and <a class="reference internal" href="batch-versus-realtime-mode.html"><span class="doc">Batch versus realtime mode</span></a>.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../first-steps/how-to-contribute.html" class="btn btn-neutral float-left" title="How to contribute" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="writing-your-own-components.html" class="btn btn-neutral float-right" title="Writing your own components" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -71,3 +71,6 @@ dev.db-journal
 
 # Auto-generated API docs (sphinxcontrib-apidoc)
 apidocs/
+
+# Sphinx build cache (the published HTML in docs/public/ IS committed; this is not)
+.doctrees/

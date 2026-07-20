@@ -1,0 +1,420 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.deploy.gpu &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.deploy.gpu</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.deploy.gpu</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">GPU allocation strategies: how a GPU node&#39;s pods claim devices, what to preflight</span>
+<span class="sd">before deploying them, and any cluster state a strategy needs to set up for a run</span>
+<span class="sd">and restore afterwards.</span>
+
+<span class="sd">Two strategies ship. ``exclusive`` claims whole devices through an integer</span>
+<span class="sd">extended resource, so the scheduler accounts for them and a flow that outgrows</span>
+<span class="sd">the cluster stays Pending rather than thrashing. ``shared`` emits no resource</span>
+<span class="sd">limit at all: pods land on the pool by selector alone and share the physical</span>
+<span class="sd">devices through the NVIDIA runtime — dev-box semantics, no accounting, no memory</span>
+<span class="sd">isolation.</span>
+
+<span class="sd">The mode used to be a bare string branched on in four places (pod resources,</span>
+<span class="sd">manifest validation, preflight, the CLI&#39;s choices), which is why adding a third</span>
+<span class="sd">meant finding all four. A strategy is now one class registered here. The two</span>
+<span class="sd">lifecycle hooks, ``prepare`` and ``cleanup``, are no-ops for both built-ins but</span>
+<span class="sd">exist because the strategies we expect next need them: setting device-plugin</span>
+<span class="sd">time-slicing replicas for the duration of a run and reverting after, or</span>
+<span class="sd">partitioning GPUs from measured per-component memory demand.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.compiler</span><span class="w"> </span><span class="kn">import</span> <span class="n">NodeSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">plugins</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="c1">#: Extended resource used when neither the node nor the deploy names one.</span>
+<span class="n">DEFAULT_GPU_RESOURCE</span> <span class="o">=</span> <span class="s1">&#39;nvidia.com/gpu&#39;</span>
+
+<span class="c1">#: Node label a GPU pod selects on, and the taint key it tolerates.</span>
+<span class="n">GPU_POOL_LABEL</span> <span class="o">=</span> <span class="s1">&#39;videoflow.io/gpu-pool&#39;</span>
+<span class="n">GPU_TAINT_KEY</span> <span class="o">=</span> <span class="s1">&#39;nvidia.com/gpu&#39;</span>
+
+<span class="n">GPU_STRATEGY_ENTRY_POINT_GROUP</span> <span class="o">=</span> <span class="s1">&#39;videoflow.gpu_strategies&#39;</span>
+
+<div class="viewcode-block" id="resolve_gpu_resource">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.resolve_gpu_resource">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">resolve_gpu_resource</span><span class="p">(</span><span class="n">spec</span> <span class="p">:</span> <span class="n">NodeSpec</span><span class="p">,</span> <span class="n">default</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;The extended-resource name a GPU spec requests: the node&#39;s own, else the</span>
+<span class="sd">    deploy default (``--gpu-resource-name``), else ``nvidia.com/gpu``.&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">spec</span><span class="o">.</span><span class="n">gpu_resource_name</span> <span class="ow">or</span> <span class="n">default</span> <span class="ow">or</span> <span class="n">DEFAULT_GPU_RESOURCE</span></div>
+
+
+<div class="viewcode-block" id="GpuStrategy">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.GpuStrategy">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">GpuStrategy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    One GPU allocation mode.</span>
+
+<span class="sd">    A strategy owns three decisions that must agree with each other: what a GPU</span>
+<span class="sd">    pod asks the scheduler for (``pod_resources``), what makes that request</span>
+<span class="sd">    satisfiable and is therefore worth checking first (``preflight_problems``),</span>
+<span class="sd">    and whether the cluster needs temporary reconfiguration to honour it</span>
+<span class="sd">    (``prepare``/``cleanup``). Splitting them across modules is what made the</span>
+<span class="sd">    old string-mode version easy to extend incorrectly.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c1">#: Mode name, as used by ``--gpu-mode``.</span>
+    <span class="n">name</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+
+<div class="viewcode-block" id="GpuStrategy.pod_resources">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.GpuStrategy.pod_resources">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pod_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span> <span class="p">:</span> <span class="n">NodeSpec</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        The container ``resources`` fragment for one GPU pod — ``{}`` for a</span>
+<span class="sd">        strategy that requests nothing.</span>
+
+<span class="sd">        Stays a plain dict on purpose: it is spliced straight into a container</span>
+<span class="sd">        spec, so its shape is Kubernetes&#39; ``ResourceRequirements`` schema and not</span>
+<span class="sd">        a record we own. A strategy may legitimately emit ``requests``, ``limits``</span>
+<span class="sd">        or neither, with arbitrary extended-resource keys.</span>
+
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - spec: the node&#39;s ``NodeSpec`` (``gpu_count``, ``gpu_resource_name``).</span>
+<span class="sd">            - gpu_resource_name: deploy-level default extended-resource name.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;GpuStrategy subclass must implement pod_resources()&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="GpuStrategy.preflight_problems">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.GpuStrategy.preflight_problems">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preflight_problems</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">,</span> <span class="n">demand</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">gpu_runtime_class</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Strategy-specific preflight problems, each a string naming its fix. The</span>
+<span class="sd">        flavor-independent checks (cluster reachable, a labeled GPU node) are run</span>
+<span class="sd">        by ``cluster.gpu_preflight`` before this is called.</span>
+
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - demand: extended-resource name -&gt; units the flow requests, or None \</span>
+<span class="sd">                to skip capacity comparison.</span>
+<span class="sd">            - gpu_runtime_class: the ``--gpu-runtime-class`` value, if given.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">[]</span></div>
+
+
+<div class="viewcode-block" id="GpuStrategy.prepare">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.GpuStrategy.prepare">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">prepare</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">demand</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Cluster setup this strategy needs before a run&#39;s manifests are applied.</span>
+<span class="sd">        Default: nothing. A strategy that mutates cluster state here is</span>
+<span class="sd">        responsible for restoring it in ``cleanup``.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="GpuStrategy.cleanup">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.GpuStrategy.cleanup">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">cleanup</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Undoes ``prepare``. Must be idempotent and tolerant: it is called after a</span>
+<span class="sd">        ``prepare`` that only partly succeeded, and — for a REALTIME flow, whose</span>
+<span class="sd">        lifetime outlives the deploy command — from a later ``videoflow teardown``</span>
+<span class="sd">        that passes ``--gpu-mode`` but shares no state with the deploy that ran</span>
+<span class="sd">        ``prepare``. So it cannot assume ``prepare`` completed, or ran at all.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ExclusiveGpu">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.ExclusiveGpu">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ExclusiveGpu</span><span class="p">(</span><span class="n">GpuStrategy</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Whole-device claims through an integer extended resource (the default).&#39;&#39;&#39;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="s1">&#39;exclusive&#39;</span>
+
+<div class="viewcode-block" id="ExclusiveGpu.pod_resources">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.ExclusiveGpu.pod_resources">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pod_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span> <span class="p">:</span> <span class="n">NodeSpec</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="c1"># nvidia.com/gpu (or a MIG profile / renamed time-sliced resource via</span>
+        <span class="c1"># gpu_resource_name) is an integer extended resource the scheduler</span>
+        <span class="c1"># allocates exclusively — N GPU replicas need N allocatable units, and</span>
+        <span class="c1"># pods beyond capacity stay Pending.</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;limits&#39;</span><span class="p">:</span> <span class="p">{</span><span class="n">resolve_gpu_resource</span><span class="p">(</span><span class="n">spec</span><span class="p">,</span> <span class="n">gpu_resource_name</span><span class="p">):</span> <span class="n">spec</span><span class="o">.</span><span class="n">gpu_count</span><span class="p">}}</span></div>
+
+
+<div class="viewcode-block" id="ExclusiveGpu.preflight_problems">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.ExclusiveGpu.preflight_problems">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preflight_problems</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">,</span> <span class="n">demand</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">gpu_runtime_class</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="c1"># Function-level: cluster.py imports this module at module scope (for</span>
+        <span class="c1"># SHARED_NEEDS_RUNTIME_CLASS and get_gpu_mode), so importing it back at</span>
+        <span class="c1"># module scope here would be a cycle.</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.cluster</span><span class="w"> </span><span class="kn">import</span> <span class="n">allocatable_gpus</span><span class="p">,</span> <span class="n">nvidia_runtimeclass</span>
+
+        <span class="n">problems</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">resource</span> <span class="ow">in</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">demand</span><span class="p">)</span> <span class="k">if</span> <span class="n">demand</span> <span class="k">else</span> <span class="p">[</span><span class="n">DEFAULT_GPU_RESOURCE</span><span class="p">]:</span>
+            <span class="n">capacity</span> <span class="o">=</span> <span class="n">allocatable_gpus</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="n">resource</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">capacity</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">resource</span> <span class="o">==</span> <span class="n">DEFAULT_GPU_RESOURCE</span><span class="p">:</span>
+                    <span class="n">problems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="s1">&#39;no node advertises nvidia.com/gpu — install the NVIDIA device &#39;</span>
+                                    <span class="s1">&#39;plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/&#39;</span>
+                                    <span class="s1">&#39;k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml&#39;</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="n">problems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;no node advertises </span><span class="si">{</span><span class="n">resource</span><span class="si">}</span><span class="s1"> — the flow requests it &#39;</span>
+                                    <span class="sa">f</span><span class="s1">&#39;(gpu_resource_name) but the cluster does not expose it&#39;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="n">demand</span> <span class="ow">and</span> <span class="n">demand</span><span class="p">[</span><span class="n">resource</span><span class="p">]</span> <span class="o">&gt;</span> <span class="n">capacity</span><span class="p">:</span>
+                <span class="n">problems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s1">&#39;flow demands </span><span class="si">{</span><span class="n">demand</span><span class="p">[</span><span class="n">resource</span><span class="p">]</span><span class="si">}</span><span class="s1"> x </span><span class="si">{</span><span class="n">resource</span><span class="si">}</span><span class="s1"> but the cluster has only &#39;</span>
+                    <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">capacity</span><span class="si">}</span><span class="s1"> allocatable — </span><span class="si">{</span><span class="n">demand</span><span class="p">[</span><span class="n">resource</span><span class="p">]</span><span class="w"> </span><span class="o">-</span><span class="w"> </span><span class="n">capacity</span><span class="si">}</span><span class="s1"> pod(s) will stay &#39;</span>
+                    <span class="sa">f</span><span class="s1">&#39;Pending and the flow will stall. Reduce GPU nodes/replicas, enable &#39;</span>
+                    <span class="sa">f</span><span class="s1">&#39;device-plugin time-slicing, or deploy with --gpu-mode shared &#39;</span>
+                    <span class="sa">f</span><span class="s1">&#39;(dev clusters; see the GPU sharing docs)&#39;</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">gpu_runtime_class</span><span class="p">:</span>
+            <span class="n">nvidia_rc</span> <span class="o">=</span> <span class="n">nvidia_runtimeclass</span><span class="p">(</span><span class="n">kubectl</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">nvidia_rc</span><span class="p">:</span>
+                <span class="n">problems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;a </span><span class="si">{</span><span class="n">nvidia_rc</span><span class="si">!r}</span><span class="s1"> RuntimeClass exists but no --gpu-runtime-class was &#39;</span>
+                                <span class="sa">f</span><span class="s1">&#39;given — if the NVIDIA runtime is not this node</span><span class="se">\&#39;</span><span class="s1">s containerd default, &#39;</span>
+                                <span class="sa">f</span><span class="s1">&#39;GPU pods will start with no device. Fix: deploy with &#39;</span>
+                                <span class="sa">f</span><span class="s1">&#39;--gpu-runtime-class </span><span class="si">{</span><span class="n">nvidia_rc</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">problems</span></div>
+</div>
+
+
+<span class="c1">#: The one preflight problem that is fatal in shared mode (cli hard-errors on it):</span>
+<span class="c1">#: shared pods carry no GPU resource limit, so the RuntimeClass is their only path</span>
+<span class="c1">#: to the device. A shared constant so the check never depends on message prose.</span>
+<span class="n">SHARED_NEEDS_RUNTIME_CLASS</span> <span class="o">=</span> <span class="s1">&#39;--gpu-mode shared without --gpu-runtime-class&#39;</span>
+
+<div class="viewcode-block" id="SharedGpu">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.SharedGpu">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">SharedGpu</span><span class="p">(</span><span class="n">GpuStrategy</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;No resource limit: pods co-schedule on the pool and share devices via the NVIDIA runtime.&#39;&#39;&#39;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="s1">&#39;shared&#39;</span>
+
+<div class="viewcode-block" id="SharedGpu.pod_resources">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.SharedGpu.pod_resources">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">pod_resources</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">spec</span> <span class="p">:</span> <span class="n">NodeSpec</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="c1"># No limit at all: every GPU pod is scheduled onto the pool by the selector</span>
+        <span class="c1"># alone and shares the physical devices through the NVIDIA runtime (the CUDA</span>
+        <span class="c1"># base images set NVIDIA_VISIBLE_DEVICES=all) — LocalProcessEngine semantics</span>
+        <span class="c1"># on Kubernetes, bounded only by VRAM. Dev-box tool: no scheduler accounting,</span>
+        <span class="c1"># no memory isolation, and on a multi-GPU node every shared pod sees every</span>
+        <span class="c1"># device.</span>
+        <span class="k">return</span> <span class="p">{}</span></div>
+
+
+<div class="viewcode-block" id="SharedGpu.preflight_problems">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.SharedGpu.preflight_problems">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">preflight_problems</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">,</span> <span class="n">demand</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">gpu_runtime_class</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="c1"># Function-level to break the same cycle as in ExclusiveGpu above.</span>
+        <span class="kn">from</span><span class="w"> </span><span class="nn">.cluster</span><span class="w"> </span><span class="kn">import</span> <span class="n">nvidia_runtimeclass</span>
+
+        <span class="c1"># Capacity math and the device plugin are irrelevant without a resource</span>
+        <span class="c1"># limit; the RuntimeClass is escalated instead, because in shared mode it is</span>
+        <span class="c1"># the only thing granting device access at all.</span>
+        <span class="k">if</span> <span class="n">gpu_runtime_class</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="n">nvidia_rc</span> <span class="o">=</span> <span class="n">nvidia_runtimeclass</span><span class="p">(</span><span class="n">kubectl</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">nvidia_rc</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">[]</span>
+        <span class="k">return</span> <span class="p">[</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">SHARED_NEEDS_RUNTIME_CLASS</span><span class="si">}</span><span class="s1">: shared pods carry no &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;GPU resource limit, so the RuntimeClass is the only thing that &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;injects the device — without it every GPU pod runs device-less. &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;Fix: deploy with --gpu-runtime-class </span><span class="si">{</span><span class="n">nvidia_rc</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">]</span></div>
+</div>
+
+
+<span class="c1"># -- registry --------------------------------------------------------------</span>
+
+<span class="n">_GPU_STRATEGIES</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">GpuStrategy</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<div class="viewcode-block" id="register_gpu_mode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.register_gpu_mode">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">register_gpu_mode</span><span class="p">(</span><span class="n">strategy</span> <span class="p">:</span> <span class="n">GpuStrategy</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Registers a GPU allocation strategy under its ``name``. Registering makes the</span>
+<span class="sd">    mode selectable via ``--gpu-mode`` — the CLI builds its choices from here — so</span>
+<span class="sd">    a new strategy needs no CLI edit.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - strategy: the strategy instance.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ValueError: the strategy has no ``name``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">strategy</span><span class="o">.</span><span class="n">name</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">strategy</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1"> must set a non-empty name&#39;</span><span class="p">)</span>
+    <span class="n">_GPU_STRATEGIES</span><span class="p">[</span><span class="n">strategy</span><span class="o">.</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="n">strategy</span></div>
+
+
+<div class="viewcode-block" id="registered_gpu_modes">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.registered_gpu_modes">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">registered_gpu_modes</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Registered GPU mode names, sorted. The CLI&#39;s ``--gpu-mode`` choices.&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">_GPU_STRATEGIES</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="get_gpu_mode">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.gpu.get_gpu_mode">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_gpu_mode</span><span class="p">(</span><span class="n">name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">GpuStrategy</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The strategy registered under ``name``.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ValueError: no strategy is registered under that name; the message \</span>
+<span class="sd">            names the known modes and ``register_gpu_mode``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">strategy</span> <span class="o">=</span> <span class="n">_GPU_STRATEGIES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">strategy</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># May belong to an installed-but-unimported package. Called through the</span>
+        <span class="c1"># module object so the entry-point scan stays a patchable seam.</span>
+        <span class="n">plugins</span><span class="o">.</span><span class="n">load_plugin_group</span><span class="p">(</span><span class="n">GPU_STRATEGY_ENTRY_POINT_GROUP</span><span class="p">)</span>
+        <span class="n">strategy</span> <span class="o">=</span> <span class="n">_GPU_STRATEGIES</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">strategy</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">&#39;gpu_mode must be one of </span><span class="si">{</span><span class="nb">tuple</span><span class="p">(</span><span class="n">registered_gpu_modes</span><span class="p">())</span><span class="si">}</span><span class="s1">, got </span><span class="si">{</span><span class="n">name</span><span class="si">!r}</span><span class="s1">. &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;Register another with videoflow.deploy.gpu.register_gpu_mode.&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">strategy</span></div>
+
+
+<span class="n">register_gpu_mode</span><span class="p">(</span><span class="n">ExclusiveGpu</span><span class="p">())</span>
+<span class="n">register_gpu_mode</span><span class="p">(</span><span class="n">SharedGpu</span><span class="p">())</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

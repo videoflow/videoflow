@@ -1,0 +1,1048 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.messaging.nats_messenger &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.messaging.nats_messenger</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.messaging.nats_messenger</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">NATS JetStream-backed implementation of ``videoflow.core.engine.Messenger``.</span>
+
+<span class="sd">One JetStream stream per node (subject ``vf.{flow_id}.{node.name}``); a node&#39;s</span>
+<span class="sd">messenger publishes only its own output there. Each real parent gets its own</span>
+<span class="sd">durable pull consumer, named after the *consuming* node so that replicas of the</span>
+<span class="sd">same consuming node (``nb_tasks &gt; 1``) share one durable name (competing</span>
+<span class="sd">consumers / load balancing), while distinct children of the same parent get</span>
+<span class="sd">distinct durable names (each gets its own full copy — broadcast fan-out).</span>
+
+<span class="sd">Runs its own asyncio event loop on a background thread so the rest of the</span>
+<span class="sd">framework (``videoflow.core.task``) can stay synchronous, matching the blocking</span>
+<span class="sd">``Queue.get()``-style calls the local engine used to make.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Coroutine</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">TypeVar</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">nats</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nats.aio.msg</span><span class="w"> </span><span class="kn">import</span> <span class="n">Msg</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">nats.js</span><span class="w"> </span><span class="kn">import</span> <span class="n">JetStreamContext</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.constants</span><span class="w"> </span><span class="kn">import</span> <span class="n">REALTIME</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">Messenger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.node</span><span class="w"> </span><span class="kn">import</span> <span class="n">Node</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.policies</span><span class="w"> </span><span class="kn">import</span> <span class="n">JOIN_TIME</span><span class="p">,</span> <span class="n">JoinPolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..wire.serialization</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">DEFAULT_ENVELOPE_VERSION</span><span class="p">,</span>
+    <span class="n">MSG_TYPE_DATA</span><span class="p">,</span>
+    <span class="n">MSG_TYPE_EOS</span><span class="p">,</span>
+    <span class="n">BlobStore</span><span class="p">,</span>
+    <span class="n">decode_envelope</span><span class="p">,</span>
+    <span class="n">derive_message_id</span><span class="p">,</span>
+    <span class="n">encode_envelope</span><span class="p">,</span>
+<span class="p">)</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.grouping</span><span class="w"> </span><span class="kn">import</span> <span class="n">EnvelopeEntry</span><span class="p">,</span> <span class="n">make_assembler</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.topology</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+    <span class="n">consumer_config_for</span><span class="p">,</span>
+    <span class="n">control_subject_for</span><span class="p">,</span>
+    <span class="n">dlq_subject_for</span><span class="p">,</span>
+    <span class="n">durable_name_for</span><span class="p">,</span>
+    <span class="n">eos_consumer_config</span><span class="p">,</span>
+    <span class="n">eos_subject_for</span><span class="p">,</span>
+    <span class="n">max_deliver_for</span><span class="p">,</span>
+    <span class="n">partitioned_durable_name_for</span><span class="p">,</span>
+    <span class="n">stream_config_for</span><span class="p">,</span>
+    <span class="n">stream_name_for</span><span class="p">,</span>
+    <span class="n">subject_for</span><span class="p">,</span>
+<span class="p">)</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="n">_FETCH_TIMEOUT_SECONDS</span> <span class="o">=</span> <span class="mf">1.0</span>
+<span class="c1"># Flow-type blob TTL defaults (BLOB-7). REALTIME delivery is near-immediate (the</span>
+<span class="c1"># stream holds one message and never redelivers), so the TTL bounds only leaked</span>
+<span class="c1"># blobs. A BATCH Interest-retention backlog can legitimately delay a blob&#39;s *first*</span>
+<span class="c1"># read past an hour, so a short TTL there is silent data loss; refcounted</span>
+<span class="c1"># reclamation (BLOB-5/6) is what makes the long TTL affordable.</span>
+<span class="n">DEFAULT_BLOB_TTL_REALTIME_SECONDS</span> <span class="o">=</span> <span class="mi">3600</span>
+<span class="n">DEFAULT_BLOB_TTL_BATCH_SECONDS</span> <span class="o">=</span> <span class="mi">86400</span>
+<span class="c1"># Small prefetch: un-acked messages parked here age against ack_wait, so we keep</span>
+<span class="c1"># few in flight and let the server-side max_ack_pending bound the rest.</span>
+<span class="n">_QUEUE_MAXSIZE</span> <span class="o">=</span> <span class="mi">4</span>
+<span class="c1"># How many times a BATCH publish retries when the stream is full (backpressure)</span>
+<span class="c1"># before giving up. Each retry rechecks the termination flag so a stopping flow</span>
+<span class="c1"># doesn&#39;t wedge here forever.</span>
+<span class="n">_PUBLISH_RETRY_BACKOFF</span> <span class="o">=</span> <span class="p">[</span><span class="mf">0.05</span><span class="p">,</span> <span class="mf">0.1</span><span class="p">,</span> <span class="mf">0.2</span><span class="p">,</span> <span class="mf">0.5</span><span class="p">,</span> <span class="mf">1.0</span><span class="p">]</span>
+
+<span class="c1">#: Result type of a coroutine handed to ``_AckHandle._run`` — ties the value the</span>
+<span class="c1">#: caller gets back to the coroutine it passed in.</span>
+<span class="n">_T</span> <span class="o">=</span> <span class="n">TypeVar</span><span class="p">(</span><span class="s1">&#39;_T&#39;</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_AckHandle</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Thread-safe wrapper over a JetStream ``Msg`` so the synchronous task loop (on</span>
+<span class="sd">    the main thread) can acknowledge, negatively-acknowledge, terminate, or extend</span>
+<span class="sd">    a message whose I/O lives on the messenger&#39;s background event loop. The whole</span>
+<span class="sd">    point of Phase-2 at-least-once delivery is that these are called only *after*</span>
+<span class="sd">    the node has processed the message (and published its output), never before.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span> <span class="p">:</span> <span class="n">Msg</span><span class="p">,</span> <span class="n">messenger</span> <span class="p">:</span> <span class="s1">&#39;NATSMessenger&#39;</span><span class="p">,</span> <span class="n">blob_ref</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_msg</span> <span class="o">=</span> <span class="n">msg</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_m</span> <span class="o">=</span> <span class="n">messenger</span>
+        <span class="c1"># Blob store reference the message&#39;s payload was resolved from, released</span>
+        <span class="c1"># after a successful ack (BLOB-6); None for inline payloads and EOS.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blob_ref</span> <span class="o">=</span> <span class="n">blob_ref</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">num_delivered</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">num_delivered</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mi">1</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">stream_seq</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">int</span><span class="p">]:</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">sequence</span><span class="o">.</span><span class="n">stream</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">coro</span> <span class="p">:</span> <span class="n">Coroutine</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">_T</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">_T</span><span class="p">:</span>
+        <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">coro</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_m</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">ack</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_m</span><span class="o">.</span><span class="n">_forget_handle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">ack</span><span class="p">())</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;ack failed (message may have been redelivered/evicted)&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="c1"># Release only on ack *success*: a failed ack can mean the broker</span>
+            <span class="c1"># redelivers, and a redelivery re-reads the blob (BLOB-6). nak/term</span>
+            <span class="c1"># never release for the same reason.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_m</span><span class="o">.</span><span class="n">_release_blob</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_blob_ref</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">nak</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">delay</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_m</span><span class="o">.</span><span class="n">_forget_handle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">nak</span><span class="p">(</span><span class="n">delay</span> <span class="o">=</span> <span class="n">delay</span><span class="p">))</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;nak failed&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">term</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_resolved</span> <span class="o">=</span> <span class="kc">True</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_m</span><span class="o">.</span><span class="n">_forget_handle</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">term</span><span class="p">())</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;term failed&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+
+<div class="viewcode-block" id="NATSMessenger">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">NATSMessenger</span><span class="p">(</span><span class="n">Messenger</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - node: the ``videoflow.core.node.Node`` this messenger is bound to.</span>
+<span class="sd">        - parent_names ([str]): the real parents of ``node``, by ``.name``.</span>
+<span class="sd">        - nats_url (str): e.g. ``nats://localhost:4222``.</span>
+<span class="sd">        - flow_id (str): shared across every node in the flow.</span>
+<span class="sd">        - flow_type (str): ``videoflow.core.constants.REALTIME`` or ``BATCH`` — \</span>
+<span class="sd">            controls the stream retention/discard policy used for ``node``&#39;s own \</span>
+<span class="sd">            output stream.</span>
+<span class="sd">        - blob_store: optional ``videoflow.wire.serialization.BlobStore`` for payloads \</span>
+<span class="sd">            over the inline size threshold.</span>
+<span class="sd">        - blob_readers (int): how many downstream reads each message this node \</span>
+<span class="sd">            publishes receives (Σ over children of ``nb_tasks`` if partitioned else 1, \</span>
+<span class="sd">            computed by the compiler); enables refcounted blob reclamation (BLOB-5). \</span>
+<span class="sd">            ``None`` disables it (blobs are TTL-only).</span>
+<span class="sd">        - blob_ttl_seconds (int): TTL for offloaded payloads; ``None`` picks the \</span>
+<span class="sd">            flow-type default (3600s realtime / 86400s batch, BLOB-7).</span>
+<span class="sd">        - join_policy (dict): serialized ``videoflow.core.policies.JoinPolicy`` \</span>
+<span class="sd">            controlling how multi-parent input groups are formed (by trace id or \</span>
+<span class="sd">            by event time) and expired; defaults per flow type when unset. The \</span>
+<span class="sd">            policy&#39;s ``max_pending`` bounds how many not-yet-complete groups are \</span>
+<span class="sd">            held in memory before the oldest is evicted.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node</span> <span class="p">:</span> <span class="n">Node</span><span class="p">,</span> <span class="n">parent_names</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">nats_url</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">replica_id</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">ack_wait</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">60</span><span class="p">,</span> <span class="n">max_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+                <span class="n">eos_quiescence_ms</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">500</span><span class="p">,</span> <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+                <span class="n">partition_by</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">join_policy</span> <span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">envelope_version</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">blob_readers</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">blob_ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_node</span> <span class="o">=</span> <span class="n">node</span>
+        <span class="c1"># Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_envelope_version</span> <span class="o">=</span> <span class="n">DEFAULT_ENVELOPE_VERSION</span> <span class="k">if</span> <span class="n">envelope_version</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">envelope_version</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parent_names</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nats_url</span> <span class="o">=</span> <span class="n">nats_url</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span> <span class="o">=</span> <span class="n">flow_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_flow_type</span> <span class="o">=</span> <span class="n">flow_type</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span> <span class="o">=</span> <span class="n">run_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blob_store</span> <span class="o">=</span> <span class="n">blob_store</span>
+        <span class="c1"># Downstream read count for refcounted blob reclamation (BLOB-5): None means</span>
+        <span class="c1"># the deployment didn&#39;t supply one, so blobs stay TTL-only.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blob_readers</span> <span class="o">=</span> <span class="n">blob_readers</span>
+        <span class="c1"># Publisher-chosen blob TTL (BLOB-7): explicit override, else flow-type default.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_blob_ttl_seconds</span> <span class="o">=</span> <span class="p">(</span><span class="n">blob_ttl_seconds</span> <span class="k">if</span> <span class="n">blob_ttl_seconds</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span>
+                            <span class="k">else</span> <span class="p">(</span><span class="n">DEFAULT_BLOB_TTL_REALTIME_SECONDS</span> <span class="k">if</span> <span class="n">flow_type</span> <span class="o">==</span> <span class="n">REALTIME</span>
+                                <span class="k">else</span> <span class="n">DEFAULT_BLOB_TTL_BATCH_SECONDS</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_replica_id</span> <span class="o">=</span> <span class="n">replica_id</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ack_wait</span> <span class="o">=</span> <span class="n">ack_wait</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_max_deliver</span> <span class="o">=</span> <span class="n">max_deliver_for</span><span class="p">(</span><span class="n">flow_type</span><span class="p">,</span> <span class="n">max_retries</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_eos_quiescence_s</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">eos_quiescence_ms</span> <span class="o">/</span> <span class="mf">1000.0</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nb_tasks</span> <span class="o">=</span> <span class="n">nb_tasks</span>
+        <span class="c1"># Partitioned iff a key is set and there&#39;s more than one replica.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span> <span class="o">=</span> <span class="n">partition_by</span> <span class="k">if</span> <span class="p">(</span><span class="n">partition_by</span> <span class="ow">and</span> <span class="n">nb_tasks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span><span class="p">:</span> <span class="n">JoinPolicy</span> <span class="o">=</span> <span class="p">(</span><span class="n">JoinPolicy</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">join_policy</span><span class="p">)</span>
+                            <span class="k">if</span> <span class="n">join_policy</span> <span class="k">else</span> <span class="kc">None</span><span class="p">)</span> <span class="ow">or</span> <span class="n">JoinPolicy</span><span class="o">.</span><span class="n">default_for</span><span class="p">(</span><span class="n">flow_type</span><span class="p">)</span>
+        <span class="k">if</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span><span class="o">.</span><span class="n">mode</span> <span class="o">==</span> <span class="n">JOIN_TIME</span> <span class="ow">and</span> <span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">)</span> <span class="o">&gt;</span> <span class="mi">1</span>
+                <span class="ow">and</span> <span class="n">nb_tasks</span> <span class="o">&gt;</span> <span class="mi">1</span><span class="p">):</span>
+            <span class="c1"># Replicas (competing or partitioned) would each see only some halves</span>
+            <span class="c1"># of a time window, so no replica could ever complete a group.</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1">: a time-aligned join (join_policy &#39;</span>
+                            <span class="sa">f</span><span class="s2">&quot;mode=&#39;time&#39;) requires nb_tasks == 1, got </span><span class="si">{</span><span class="n">nb_tasks</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+        <span class="c1"># Assembles multi-parent input groups (by trace id or by event time) and</span>
+        <span class="c1"># owns all pending-group buffering/expiry — see videoflow.messaging.grouping.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span> <span class="o">=</span> <span class="n">make_assembler</span><span class="p">(</span><span class="n">node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_join_policy</span><span class="p">)</span>
+        <span class="c1"># Unique per replica: names this replica&#39;s EOS consumers so every replica</span>
+        <span class="c1"># observes end-of-stream (the shared data durable would deliver EOS to only</span>
+        <span class="c1"># one of them).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_instance_id</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;r</span><span class="si">{</span><span class="n">replica_id</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()</span><span class="o">.</span><span class="n">hex</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_trace_counter</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="c1"># seq/event_ts are carried forward from the input group so a re-run of the</span>
+        <span class="c1"># same logical output derives the same message_id (dedup) and event time</span>
+        <span class="c1"># survives the whole pipeline. Producers use the local counter (and stamp</span>
+        <span class="c1"># event time themselves); downstream nodes inherit the input group&#39;s values.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_seq</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_event_ts</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_input_info</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]]</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="c1"># Optional partition key / event timestamp set by the node (via</span>
+        <span class="c1"># ctx.set_partition_key / ctx.set_event_timestamp) and attached to the</span>
+        <span class="c1"># next published message.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_output_partition_key</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_output_event_ts</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_stopped_parents</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="c1"># EOS drain state: a parent is fully stopped only once its EOS has been</span>
+        <span class="c1"># observed AND its data durable is quiescent (all data drained) — see</span>
+        <span class="c1"># _is_parent_stopped. _eos_handles holds the EOS ack until drain completes.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_eos_handles</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">_AckHandle</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="c1"># Consecutive empty receive polls — drives the periodic EOS-drain stall log.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_idle_polls</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="c1"># Ack handles: _inflight_handles are the handles of the group last returned</span>
+        <span class="c1"># by receive_message, resolved by the task via ack_inputs()/fail_inputs()</span>
+        <span class="c1"># (handles of still-pending groups live inside the assembler).</span>
+        <span class="c1"># _live_handles is every unresolved handle (for the keepalive extender),</span>
+        <span class="c1"># guarded by _live_lock.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">_AckHandle</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_live_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_live_handles</span><span class="p">:</span> <span class="nb">set</span><span class="p">[</span><span class="n">_AckHandle</span><span class="p">]</span> <span class="o">=</span> <span class="nb">set</span><span class="p">()</span>
+
+        <span class="c1"># _termination_event: control-channel &quot;stop the whole flow&quot; signal, read by</span>
+        <span class="c1">#   producers (to stop early) and by receive_message (to stop waiting).</span>
+        <span class="c1"># _closing: set only by close(); the pull loops keep draining the broker</span>
+        <span class="c1">#   into local queues until then, independent of termination, so a</span>
+        <span class="c1">#   control-stop doesn&#39;t strand messages already in flight.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_termination_event</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">new_event_loop</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_loop</span><span class="p">,</span> <span class="n">daemon</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span>
+
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+        <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_setup</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+        <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">30</span><span class="p">)</span>
+
+    <span class="c1"># -- lifecycle -----------------------------------------------------</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">asyncio</span><span class="o">.</span><span class="n">set_event_loop</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">run_forever</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_setup</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span> <span class="o">=</span> <span class="k">await</span> <span class="n">nats</span><span class="o">.</span><span class="n">connect</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_nats_url</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_js</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span><span class="o">.</span><span class="n">jetstream</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span> <span class="o">=</span> <span class="p">[]</span>
+
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_stream</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+        <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span><span class="o">.</span><span class="n">subscribe</span><span class="p">(</span><span class="n">control_subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">),</span> <span class="n">cb</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_on_control_message</span><span class="p">)</span>
+
+        <span class="k">for</span> <span class="n">parent_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">:</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ensure_stream</span><span class="p">(</span><span class="n">parent_name</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="p">[</span><span class="n">parent_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">Queue</span><span class="p">(</span><span class="n">maxsize</span> <span class="o">=</span> <span class="n">_QUEUE_MAXSIZE</span><span class="p">)</span>
+
+            <span class="c1"># Data consumer: shared durable (competing consumers), or a per-replica</span>
+            <span class="c1"># durable for a partitioned node (broadcast + client-side ownership).</span>
+            <span class="n">data_durable</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data_durable_name</span><span class="p">(</span><span class="n">parent_name</span><span class="p">)</span>
+            <span class="n">base_cfg</span> <span class="o">=</span> <span class="n">consumer_config_for</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">,</span>
+                <span class="n">ack_wait</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ack_wait</span><span class="p">,</span> <span class="n">max_deliver</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_max_deliver</span><span class="p">,</span>
+                <span class="n">max_ack_pending</span> <span class="o">=</span> <span class="n">_QUEUE_MAXSIZE</span> <span class="o">+</span> <span class="mi">2</span><span class="p">)</span>
+            <span class="n">base_cfg</span><span class="o">.</span><span class="n">durable_name</span> <span class="o">=</span> <span class="n">data_durable</span>
+            <span class="n">data_sub</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">pull_subscribe</span><span class="p">(</span>
+                <span class="n">subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">),</span>
+                <span class="n">durable</span> <span class="o">=</span> <span class="n">data_durable</span><span class="p">,</span> <span class="n">config</span> <span class="o">=</span> <span class="n">base_cfg</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">asyncio</span><span class="o">.</span><span class="n">ensure_future</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_pull_loop</span><span class="p">(</span><span class="n">parent_name</span><span class="p">,</span> <span class="n">data_sub</span><span class="p">),</span> <span class="n">loop</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+            <span class="p">)</span>
+
+            <span class="c1"># EOS consumer: per-replica durable so every replica observes EOS.</span>
+            <span class="n">eos_cfg</span> <span class="o">=</span> <span class="n">eos_consumer_config</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                                        <span class="n">parent_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_instance_id</span><span class="p">)</span>
+            <span class="n">eos_sub</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">pull_subscribe</span><span class="p">(</span>
+                <span class="n">eos_subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">),</span>
+                <span class="n">durable</span> <span class="o">=</span> <span class="n">eos_cfg</span><span class="o">.</span><span class="n">durable_name</span><span class="p">,</span> <span class="n">config</span> <span class="o">=</span> <span class="n">eos_cfg</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="n">asyncio</span><span class="o">.</span><span class="n">ensure_future</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_eos_pull_loop</span><span class="p">(</span><span class="n">parent_name</span><span class="p">,</span> <span class="n">eos_sub</span><span class="p">),</span> <span class="n">loop</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+            <span class="p">)</span>
+
+        <span class="c1"># Periodically extend the ack deadline of unresolved messages so a slow</span>
+        <span class="c1"># process() call doesn&#39;t trigger spurious redelivery of parked/in-flight</span>
+        <span class="c1"># messages while they wait their turn.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">asyncio</span><span class="o">.</span><span class="n">ensure_future</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_keepalive_loop</span><span class="p">(),</span> <span class="n">loop</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_data_durable_name</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">partitioned_durable_name_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replica_id</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">durable_name_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">parent_name</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_owns</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">entry</span> <span class="p">:</span> <span class="n">EnvelopeEntry</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;For a partitioned node, whether this replica owns the message (hash of the partition key modulo replica count).&#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="n">key</span> <span class="p">:</span> <span class="n">Any</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span> <span class="o">==</span> <span class="s1">&#39;trace_id&#39;</span><span class="p">:</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">trace_id</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">key</span> <span class="o">=</span> <span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_partition_by</span><span class="p">)</span>
+        <span class="n">digest</span> <span class="o">=</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">key</span><span class="p">)</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()</span>
+        <span class="k">return</span> <span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">digest</span><span class="p">[:</span><span class="mi">8</span><span class="p">],</span> <span class="mi">16</span><span class="p">)</span> <span class="o">%</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_tasks</span><span class="p">)</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replica_id</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_ensure_stream</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Provisioning (topology.provision_flow) normally creates streams up front;</span>
+        <span class="c1"># this lazy create is a fallback. It is idempotent — a sibling child or a</span>
+        <span class="c1"># replica of this node may have created the same stream already.</span>
+        <span class="n">config</span> <span class="o">=</span> <span class="n">stream_config_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_flow_type</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">add_stream</span><span class="p">(</span><span class="n">config</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+            <span class="k">if</span> <span class="s1">&#39;already in use&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span> <span class="ow">and</span> <span class="s1">&#39;name already in use&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">):</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;add_stream(</span><span class="si">{</span><span class="n">config</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1">) raised (likely already exists): </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_on_control_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">msg</span> <span class="p">:</span> <span class="n">Msg</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_termination_event</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_pull_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">sub</span> <span class="p">:</span> <span class="n">JetStreamContext</span><span class="o">.</span><span class="n">PullSubscription</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sub</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">batch</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">timeout</span> <span class="o">=</span> <span class="n">_FETCH_TIMEOUT_SECONDS</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="n">nats</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">,</span> <span class="ne">TimeoutError</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+                    <span class="k">return</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;pull fetch on </span><span class="si">{</span><span class="n">parent_name</span><span class="si">}</span><span class="s1"> failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="c1"># The one place a decoded envelope crosses into messaging:</span>
+                    <span class="c1"># adapt the wire dict to the typed record here so nothing</span>
+                    <span class="c1"># downstream (join, EOS drain, ownership) reads it by key.</span>
+                    <span class="n">entry</span> <span class="o">=</span> <span class="n">EnvelopeEntry</span><span class="o">.</span><span class="n">from_decoded</span><span class="p">(</span>
+                        <span class="n">decode_envelope</span><span class="p">(</span><span class="n">msg</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">blob_store</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blob_store</span><span class="p">))</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="c1"># Undecodable message: terminate it so it is not redelivered</span>
+                    <span class="c1"># forever (a genuinely poisoned wire payload).</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Failed to decode message from </span><span class="si">{</span><span class="n">parent_name</span><span class="si">}</span><span class="s1">; terminating it&#39;</span><span class="p">)</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="k">await</span> <span class="n">msg</span><span class="o">.</span><span class="n">term</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="k">pass</span>
+                    <span class="k">continue</span>
+                <span class="c1"># Partitioned node: this replica keeps only the messages it owns and</span>
+                <span class="c1"># acks-and-skips the rest (every replica sees every message on its own</span>
+                <span class="c1"># durable). Ownership is stable across replicas via hashing.</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_owns</span><span class="p">(</span><span class="n">entry</span><span class="p">):</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="k">await</span> <span class="n">msg</span><span class="o">.</span><span class="n">ack</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="k">pass</span>
+                    <span class="k">else</span><span class="p">:</span>
+                        <span class="c1"># This replica read the blob during decode even though it</span>
+                        <span class="c1"># skips processing, so its ack counts as one release</span>
+                        <span class="c1"># (BLOB-6). Called directly, not via a handle: _AckHandle</span>
+                        <span class="c1"># bridges *from another thread* into this loop and would</span>
+                        <span class="c1"># deadlock called from the loop itself.</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_release_blob</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">blob_ref</span><span class="p">)</span>
+                    <span class="k">continue</span>
+                <span class="c1"># Ack-after-process: the handle is queued *unacked*. It is resolved</span>
+                <span class="c1"># only once the task calls ack_inputs()/fail_inputs() (data), or</span>
+                <span class="c1"># immediately in receive_message() for stop markers.</span>
+                <span class="n">handle</span> <span class="o">=</span> <span class="n">_AckHandle</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="bp">self</span><span class="p">,</span> <span class="n">blob_ref</span> <span class="o">=</span> <span class="n">entry</span><span class="o">.</span><span class="n">blob_ref</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_register_handle</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+                <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="p">[</span><span class="n">parent_name</span><span class="p">]</span><span class="o">.</span><span class="n">put</span><span class="p">((</span><span class="n">entry</span><span class="p">,</span> <span class="n">handle</span><span class="p">))</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_eos_pull_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">sub</span> <span class="p">:</span> <span class="n">JetStreamContext</span><span class="o">.</span><span class="n">PullSubscription</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># Observes end-of-stream for one parent. The EOS message is *not* acked</span>
+        <span class="c1"># here — it&#39;s held (in _eos_handles) and acked only once the parent&#39;s data</span>
+        <span class="c1"># is fully drained (see _is_parent_stopped), so a crash mid-drain leaves EOS</span>
+        <span class="c1"># un-acked and re-observable on restart.</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">msgs</span> <span class="o">=</span> <span class="k">await</span> <span class="n">sub</span><span class="o">.</span><span class="n">fetch</span><span class="p">(</span><span class="n">batch</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">timeout</span> <span class="o">=</span> <span class="n">_FETCH_TIMEOUT_SECONDS</span><span class="p">)</span>
+            <span class="k">except</span> <span class="p">(</span><span class="n">nats</span><span class="o">.</span><span class="n">errors</span><span class="o">.</span><span class="n">TimeoutError</span><span class="p">,</span> <span class="ne">TimeoutError</span><span class="p">):</span>
+                <span class="k">continue</span>
+            <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+                    <span class="k">return</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;eos fetch on </span><span class="si">{</span><span class="n">parent_name</span><span class="si">}</span><span class="s1"> failed: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+                <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.5</span><span class="p">)</span>
+                <span class="k">continue</span>
+            <span class="k">for</span> <span class="n">msg</span> <span class="ow">in</span> <span class="n">msgs</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">parent_name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span><span class="p">:</span>
+                    <span class="c1"># Already saw EOS from this parent (another replica&#39;s marker):</span>
+                    <span class="c1"># ack the extra and move on.</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="k">await</span> <span class="n">msg</span><span class="o">.</span><span class="n">ack</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="k">pass</span>
+                    <span class="k">continue</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">parent_name</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_eos_handles</span><span class="p">[</span><span class="n">parent_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">_AckHandle</span><span class="p">(</span><span class="n">msg</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_register_handle</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_eos_handles</span><span class="p">[</span><span class="n">parent_name</span><span class="p">])</span>
+
+    <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_keepalive_loop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">interval</span> <span class="o">=</span> <span class="nb">max</span><span class="p">(</span><span class="mf">1.0</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ack_wait</span> <span class="o">/</span> <span class="mf">3.0</span><span class="p">)</span>
+        <span class="k">while</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+            <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">interval</span><span class="p">)</span>
+            <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_live_lock</span><span class="p">:</span>
+                <span class="n">handles</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_live_handles</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">handles</span><span class="p">:</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">h</span><span class="o">.</span><span class="n">_resolved</span><span class="p">:</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="k">await</span> <span class="n">h</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">in_progress</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="k">pass</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_release_blob</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">blob_ref</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Decrement-and-maybe-delete a blob after its message was successfully acked \</span>
+<span class="sd">            (BLOB-6). Failure is logged and swallowed: the TTL backstop (BLOB-7) \</span>
+<span class="sd">            reclaims anything a failed release leaks.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">blob_ref</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blob_store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_blob_store</span><span class="o">.</span><span class="n">release</span><span class="p">(</span><span class="n">blob_ref</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;blob release failed for </span><span class="si">{</span><span class="n">blob_ref</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_register_handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">handle</span> <span class="p">:</span> <span class="n">_AckHandle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_live_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_live_handles</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_forget_handle</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">handle</span> <span class="p">:</span> <span class="n">_AckHandle</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_live_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_live_handles</span><span class="o">.</span><span class="n">discard</span><span class="p">(</span><span class="n">handle</span><span class="p">)</span>
+
+<div class="viewcode-block" id="NATSMessenger.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_closing</span><span class="o">.</span><span class="n">set</span><span class="p">()</span>
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_close</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span><span class="p">:</span>
+                <span class="n">task</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_pull_tasks</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="n">task</span>
+                <span class="k">except</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">CancelledError</span><span class="p">:</span>
+                    <span class="k">pass</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;pull task raised during shutdown&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+            <span class="c1"># We&#39;ve stopped consuming (pull tasks cancelled) and all data is already</span>
+            <span class="c1"># acked by the time a node closes (EOS-drain, see _is_parent_stopped), so a</span>
+            <span class="c1"># graceful ``drain()`` — which also drains the still-registered JetStream</span>
+            <span class="c1"># pull *subscriptions* — would just block until timeout on cancelled pull</span>
+            <span class="c1"># consumers. Flush pending publishes, then close: ``close()`` cancels the</span>
+            <span class="c1"># client&#39;s internal read/ping/flush tasks cleanly (no &quot;task destroyed&quot; noise).</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span><span class="o">.</span><span class="n">is_connected</span><span class="p">:</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_nc</span><span class="o">.</span><span class="n">flush</span><span class="p">(),</span> <span class="n">timeout</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span>
+                    <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;NATS flush incomplete during shutdown&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nc</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;NATS close raised during shutdown&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_close</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+            <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">debug</span><span class="p">(</span><span class="s1">&#39;NATS connection teardown incomplete at shutdown&#39;</span><span class="p">,</span> <span class="n">exc_info</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">call_soon_threadsafe</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="o">.</span><span class="n">stop</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">10</span><span class="p">)</span></div>
+
+
+    <span class="c1"># -- Messenger interface ---------------------------------------------</span>
+
+<div class="viewcode-block" id="NATSMessenger.check_for_termination">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.check_for_termination">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_for_termination</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_termination_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.set_output_partition_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.set_output_partition_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_partition_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_output_partition_key</span> <span class="o">=</span> <span class="n">value</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.set_output_event_timestamp">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.set_output_event_timestamp">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_event_timestamp</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_output_event_ts</span> <span class="o">=</span> <span class="n">value</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.last_input_info">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.last_input_info">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_info</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, ``seq``)</span>
+<span class="sd">        for the input group last returned by ``receive_message``; ``None`` entries</span>
+<span class="sd">        for parents missing from a quorum emission. ``None`` for producers.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_input_info</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.last_input_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.last_input_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        A stable identity for the input group last returned by ``receive_message``,</span>
+<span class="sd">        derived from its trace_id + seq — used as an idempotency key by a sink. The</span>
+<span class="sd">        same logical event yields the same key across redelivery/restart.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">return</span> <span class="n">derive_message_id</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+                                <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_seq</span><span class="p">,</span> <span class="n">MSG_TYPE_DATA</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.publish_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.publish_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">trace_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span>
+        <span class="n">seq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_seq</span>
+        <span class="k">if</span> <span class="n">trace_id</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># Only a producer (no parents) mints fresh trace ids; everything</span>
+            <span class="c1"># downstream carries forward the trace id + seq of the input group it</span>
+            <span class="c1"># was derived from, so a re-run derives the same message_id (dedup).</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_trace_counter</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">trace_id</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_trace_counter</span><span class="si">}</span><span class="s1">&#39;</span>
+            <span class="n">seq</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_trace_counter</span>
+        <span class="c1"># Event time: an explicit stamp from the node (ctx.set_event_timestamp)</span>
+        <span class="c1"># wins; otherwise it is inherited from the input group; a producer with</span>
+        <span class="c1"># neither gets publish wall-clock as a last resort.</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_output_event_ts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">event_ts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_output_event_ts</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_output_event_ts</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_event_ts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">event_ts</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_event_ts</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">event_ts</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_output_partition_key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">metadata</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})</span>
+            <span class="n">metadata</span><span class="p">[</span><span class="s1">&#39;_partition_key&#39;</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_output_partition_key</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_output_partition_key</span> <span class="o">=</span> <span class="kc">None</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_publish</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">trace_id</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">MSG_TYPE_DATA</span><span class="p">,</span> <span class="n">event_ts</span> <span class="o">=</span> <span class="n">event_ts</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.publish_stop_signal">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.publish_stop_signal">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_stop_signal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># EOS goes on this node&#39;s dedicated _eos subject (not the data subject), so</span>
+        <span class="c1"># every downstream replica observes it via its own EOS consumer. The dedup</span>
+        <span class="c1"># id includes replica_id so EOS markers from different replicas of one node</span>
+        <span class="c1"># don&#39;t collapse into a single one.</span>
+        <span class="n">eos_trace</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;eos-r</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_replica_id</span><span class="si">}</span><span class="s1">&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_publish</span><span class="p">(</span><span class="kc">None</span><span class="p">,</span> <span class="kc">None</span><span class="p">,</span> <span class="n">eos_trace</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_seq</span><span class="p">,</span> <span class="n">MSG_TYPE_EOS</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_publish</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">],</span> <span class="n">trace_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">seq</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                <span class="n">msg_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">event_ts</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">node_name</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span>
+        <span class="n">buf</span> <span class="o">=</span> <span class="n">encode_envelope</span><span class="p">(</span>
+            <span class="n">node_name</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">trace_id</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">msg_type</span><span class="p">,</span>
+            <span class="n">metadata</span><span class="p">,</span> <span class="n">message</span><span class="p">,</span> <span class="n">replica_id</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_replica_id</span><span class="p">,</span> <span class="n">event_ts</span> <span class="o">=</span> <span class="n">event_ts</span><span class="p">,</span>
+            <span class="n">blob_store</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blob_store</span><span class="p">,</span> <span class="n">version</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_envelope_version</span><span class="p">,</span>
+            <span class="n">blob_readers</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blob_readers</span><span class="p">,</span> <span class="n">blob_ttl_seconds</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_blob_ttl_seconds</span><span class="p">,</span>
+        <span class="p">)</span>
+        <span class="k">if</span> <span class="n">msg_type</span> <span class="o">==</span> <span class="n">MSG_TYPE_EOS</span><span class="p">:</span>
+            <span class="n">subject</span> <span class="o">=</span> <span class="n">eos_subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">)</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="n">subject</span> <span class="o">=</span> <span class="n">subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">)</span>
+
+        <span class="c1"># Content-derived dedup id: a re-published retry of the same logical message</span>
+        <span class="c1"># is dropped by JetStream within the stream&#39;s duplicate_window. Safe for EOS</span>
+        <span class="c1"># now that the re-injection hack is gone. The VF-Env header lets tooling (and</span>
+        <span class="c1"># the DLQ inspector) identify the wire version without decoding.</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;Nats-Msg-Id&#39;</span><span class="p">:</span> <span class="n">derive_message_id</span><span class="p">(</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">node_name</span><span class="p">,</span> <span class="n">trace_id</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">msg_type</span><span class="p">),</span>
+            <span class="s1">&#39;VF-Env&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_envelope_version</span><span class="p">),</span>
+        <span class="p">}</span>
+
+        <span class="n">is_realtime</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_flow_type</span> <span class="o">==</span> <span class="n">REALTIME</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_do_publish</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="c1"># REALTIME (Discard=OLD): a full stream evicts the oldest message, so a</span>
+            <span class="c1"># publish never blocks — freshest wins. BATCH (Interest + Discard=NEW):</span>
+            <span class="c1"># a full stream *rejects* the publish; retry with backoff so a slow</span>
+            <span class="c1"># consumer applies real backpressure instead of losing data.</span>
+            <span class="n">attempt</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">publish</span><span class="p">(</span><span class="n">subject</span><span class="p">,</span> <span class="n">buf</span><span class="p">,</span> <span class="n">headers</span> <span class="o">=</span> <span class="n">headers</span><span class="p">)</span>
+                    <span class="k">return</span>
+                <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>  <span class="c1"># noqa: BLE001</span>
+                    <span class="k">if</span> <span class="n">is_realtime</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_termination_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">():</span>
+                        <span class="c1"># REALTIME never blocks; a stopping flow abandons the publish.</span>
+                        <span class="k">if</span> <span class="n">is_realtime</span><span class="p">:</span>
+                            <span class="k">return</span>
+                        <span class="k">raise</span>
+                    <span class="k">if</span> <span class="s1">&#39;maximum messages&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span> <span class="ow">and</span> <span class="s1">&#39;wrong last sequence&#39;</span> <span class="ow">not</span> <span class="ow">in</span> <span class="nb">str</span><span class="p">(</span><span class="n">e</span><span class="p">)</span><span class="o">.</span><span class="n">lower</span><span class="p">():</span>
+                        <span class="k">raise</span>
+                    <span class="n">delay</span> <span class="o">=</span> <span class="n">_PUBLISH_RETRY_BACKOFF</span><span class="p">[</span><span class="nb">min</span><span class="p">(</span><span class="n">attempt</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">_PUBLISH_RETRY_BACKOFF</span><span class="p">)</span> <span class="o">-</span> <span class="mi">1</span><span class="p">)]</span>
+                    <span class="n">attempt</span> <span class="o">+=</span> <span class="mi">1</span>
+                    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="n">delay</span><span class="p">)</span>
+
+        <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_do_publish</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+        <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">120</span><span class="p">)</span>
+
+    <span class="c1"># -- ack / fail (called by the task after process()/consume()) --------</span>
+
+<div class="viewcode-block" id="NATSMessenger.ack_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.ack_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ack_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Acknowledge the input group last returned by ``receive_message`` — the node processed it successfully (and, for a processor, already published its output).&#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">handle</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span><span class="p">:</span>
+            <span class="n">handle</span><span class="o">.</span><span class="n">ack</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span> <span class="o">=</span> <span class="p">[]</span></div>
+
+
+<div class="viewcode-block" id="NATSMessenger.fail_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.fail_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fail_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span> <span class="p">:</span> <span class="ne">BaseException</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        The node raised while processing the last input group. REALTIME drops it</span>
+<span class="sd">        (no redelivery — freshest wins). BATCH nak&#39;s it for redelivery until it</span>
+<span class="sd">        exhausts ``max_deliver``, then dead-letters it and terminates it so it</span>
+<span class="sd">        stops being redelivered.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">for</span> <span class="n">handle</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_flow_type</span> <span class="o">==</span> <span class="n">REALTIME</span><span class="p">:</span>
+                <span class="n">handle</span><span class="o">.</span><span class="n">term</span><span class="p">()</span>
+            <span class="k">elif</span> <span class="n">handle</span><span class="o">.</span><span class="n">num_delivered</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_max_deliver</span><span class="p">:</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_dlq_publish</span><span class="p">(</span><span class="n">handle</span><span class="p">,</span> <span class="n">exc</span><span class="p">):</span>
+                    <span class="n">handle</span><span class="o">.</span><span class="n">term</span><span class="p">()</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="c1"># Never silently drop: if the DLQ publish itself failed, keep</span>
+                    <span class="c1"># the message alive (nak) so a later attempt can dead-letter it.</span>
+                    <span class="n">handle</span><span class="o">.</span><span class="n">nak</span><span class="p">(</span><span class="n">delay</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">handle</span><span class="o">.</span><span class="n">nak</span><span class="p">(</span><span class="n">delay</span> <span class="o">=</span> <span class="nb">min</span><span class="p">(</span><span class="mi">2</span> <span class="o">**</span> <span class="n">handle</span><span class="o">.</span><span class="n">num_delivered</span><span class="p">,</span> <span class="mi">30</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span> <span class="o">=</span> <span class="p">[]</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_dlq_publish</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">handle</span> <span class="p">:</span> <span class="n">_AckHandle</span><span class="p">,</span> <span class="n">exc</span> <span class="p">:</span> <span class="ne">BaseException</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="n">subject</span> <span class="o">=</span> <span class="n">dlq_subject_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+        <span class="n">seq</span> <span class="o">=</span> <span class="n">handle</span><span class="o">.</span><span class="n">stream_seq</span>
+        <span class="n">headers</span> <span class="o">=</span> <span class="p">{</span>
+            <span class="s1">&#39;VF-Origin-Node&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="p">,</span>
+            <span class="s1">&#39;VF-Error&#39;</span><span class="p">:</span> <span class="nb">repr</span><span class="p">(</span><span class="n">exc</span><span class="p">)[:</span><span class="mi">256</span><span class="p">],</span>
+            <span class="s1">&#39;VF-Num-Delivered&#39;</span><span class="p">:</span> <span class="nb">str</span><span class="p">(</span><span class="n">handle</span><span class="o">.</span><span class="n">num_delivered</span><span class="p">),</span>
+            <span class="c1"># Idempotent DLQ id (stream seq is unique per original message), so a</span>
+            <span class="c1"># re-attempt of the same dead-letter doesn&#39;t duplicate it.</span>
+            <span class="s1">&#39;Nats-Msg-Id&#39;</span><span class="p">:</span> <span class="sa">f</span><span class="s1">&#39;dlq:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">seq</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">,</span>
+        <span class="p">}</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="n">handle</span><span class="o">.</span><span class="n">_msg</span><span class="o">.</span><span class="n">data</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_go</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+            <span class="k">for</span> <span class="n">attempt</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">3</span><span class="p">):</span>
+                <span class="k">try</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">publish</span><span class="p">(</span><span class="n">subject</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">headers</span> <span class="o">=</span> <span class="n">headers</span><span class="p">)</span>
+                    <span class="k">return</span> <span class="kc">True</span>
+                <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                    <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">sleep</span><span class="p">(</span><span class="mf">0.1</span> <span class="o">*</span> <span class="p">(</span><span class="n">attempt</span> <span class="o">+</span> <span class="mi">1</span><span class="p">))</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_go</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">15</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="s1">&#39;DLQ publish raised&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+
+<div class="viewcode-block" id="NATSMessenger.receive_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.messaging.html#videoflow.messaging.nats_messenger.NATSMessenger.receive_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">receive_message</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="c1"># A control-channel stop ends the flow immediately, even mid-stream —</span>
+            <span class="c1"># surface it to the task loop as an all-parents-stopped result so</span>
+            <span class="c1"># ConsumerTask/ProcessorTask break out and run close(). Otherwise a</span>
+            <span class="c1"># parent is &quot;stopped&quot; only once its EOS is seen and its data is drained.</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_termination_event</span><span class="o">.</span><span class="n">is_set</span><span class="p">()</span> <span class="ow">or</span> <span class="bp">self</span><span class="o">.</span><span class="n">_all_parents_stopped</span><span class="p">():</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_input_info</span> <span class="o">=</span> <span class="kc">None</span>
+                <span class="k">return</span> <span class="p">{</span>
+                    <span class="n">name</span><span class="p">:</span> <span class="p">{</span><span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;metadata&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;is_stop_signal&#39;</span><span class="p">:</span> <span class="kc">True</span><span class="p">}</span>
+                    <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span>
+                <span class="p">}</span>
+
+            <span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span><span class="o">.</span><span class="n">sweep</span><span class="p">()</span>
+
+            <span class="n">ready</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span><span class="o">.</span><span class="n">pop_ready</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">ready</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_trace_id</span> <span class="o">=</span> <span class="n">ready</span><span class="o">.</span><span class="n">trace_id</span>
+                <span class="c1"># Deterministic representative seq/event_ts carried forward so this</span>
+                <span class="c1"># node&#39;s output derives a stable message_id across retries and</span>
+                <span class="c1"># keeps its event time.</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_seq</span> <span class="o">=</span> <span class="n">ready</span><span class="o">.</span><span class="n">seq</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_event_ts</span> <span class="o">=</span> <span class="n">ready</span><span class="o">.</span><span class="n">event_ts</span>
+                <span class="c1"># Hold this group&#39;s handles for the task to ack/fail after process().</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_inflight_handles</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">ready</span><span class="o">.</span><span class="n">handles</span><span class="p">)</span>
+                <span class="n">out</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+                <span class="n">info</span><span class="p">:</span> <span class="nb">dict</span> <span class="o">=</span> <span class="p">{}</span>
+                <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">:</span>
+                    <span class="n">entry</span> <span class="o">=</span> <span class="n">ready</span><span class="o">.</span><span class="n">entries</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">name</span><span class="p">)</span>
+                    <span class="k">if</span> <span class="n">entry</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="c1"># Parent missing from a quorum emission: the node sees None.</span>
+                        <span class="n">out</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span><span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;metadata&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">,</span>
+                                    <span class="s1">&#39;is_stop_signal&#39;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span> <span class="s1">&#39;event_ts&#39;</span><span class="p">:</span> <span class="kc">None</span><span class="p">}</span>
+                        <span class="n">info</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+                        <span class="k">continue</span>
+                    <span class="c1"># A CollectEntry carries lists and has no lineage of its own,</span>
+                    <span class="c1"># so it reports trace_id/seq as None — as it always has.</span>
+                    <span class="n">out</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">message</span><span class="p">,</span>
+                        <span class="s1">&#39;metadata&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">metadata</span><span class="p">,</span>
+                        <span class="s1">&#39;is_stop_signal&#39;</span><span class="p">:</span> <span class="kc">False</span><span class="p">,</span>
+                        <span class="s1">&#39;event_ts&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">event_ts</span><span class="p">,</span>
+                    <span class="p">}</span>
+                    <span class="n">info</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="o">=</span> <span class="p">{</span>
+                        <span class="s1">&#39;event_ts&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">event_ts</span><span class="p">,</span>
+                        <span class="s1">&#39;metadata&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">metadata</span><span class="p">,</span>
+                        <span class="s1">&#39;trace_id&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">trace_id</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">entry</span><span class="p">,</span> <span class="n">EnvelopeEntry</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="s1">&#39;seq&#39;</span><span class="p">:</span> <span class="n">entry</span><span class="o">.</span><span class="n">seq</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">entry</span><span class="p">,</span> <span class="n">EnvelopeEntry</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="p">}</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_last_input_info</span> <span class="o">=</span> <span class="n">info</span>
+                <span class="k">return</span> <span class="n">out</span>
+
+            <span class="c1"># asyncio.wait(FIRST_COMPLETED) can legitimately return more than one</span>
+            <span class="c1"># completed get() if two parent queues both had data ready — every one</span>
+            <span class="c1"># of those items has already been dequeued from its asyncio.Queue, so</span>
+            <span class="c1"># all of them must be folded into the assembler here. Discarding</span>
+            <span class="c1"># all-but-one (an earlier version of this method did) silently lost</span>
+            <span class="c1"># messages whenever two parents produced close together in time.</span>
+            <span class="n">ready_items</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_recv_ready</span><span class="p">()</span>
+            <span class="k">if</span> <span class="n">ready_items</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_idle_polls</span> <span class="o">=</span> <span class="mi">0</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="c1"># Nothing arriving. If we&#39;re in the EOS-drain phase (some parent</span>
+                <span class="c1"># already ended) and still not stopped after ~15s of idle polls,</span>
+                <span class="c1"># say why — a stall here otherwise looks like a silent hang.</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_idle_polls</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_idle_polls</span> <span class="o">%</span> <span class="mi">15</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_log_drain_stall</span><span class="p">()</span>
+            <span class="k">for</span> <span class="n">parent_name</span><span class="p">,</span> <span class="n">entry</span><span class="p">,</span> <span class="n">handle</span> <span class="ow">in</span> <span class="n">ready_items</span><span class="p">:</span>
+                <span class="k">if</span> <span class="n">entry</span><span class="o">.</span><span class="n">is_stop_signal</span><span class="p">:</span>
+                    <span class="c1"># Data consumers filter to the data subject, so EOS is handled by</span>
+                    <span class="c1"># the EOS loop, not here. Ack defensively if one slips through.</span>
+                    <span class="n">handle</span><span class="o">.</span><span class="n">ack</span><span class="p">()</span>
+                    <span class="k">continue</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">parent_name</span><span class="p">,</span> <span class="n">entry</span><span class="p">,</span> <span class="n">handle</span><span class="p">)</span></div>
+
+
+    <span class="c1"># -- EOS drain -------------------------------------------------------</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_all_parents_stopped</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="k">return</span> <span class="nb">all</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_is_parent_stopped</span><span class="p">(</span><span class="n">p</span><span class="p">)</span> <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_is_parent_stopped</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        A parent is stopped once (a) its EOS has been observed and (b) its data is</span>
+<span class="sd">        fully drained. Drain = no data buffered locally for it, no pending join</span>
+<span class="sd">        group holding its half, and its data durable reports no pending and no</span>
+<span class="sd">        un-acked messages — confirmed on two checks ``eos_quiescence`` apart, which</span>
+<span class="sd">        tolerates a replicated parent whose sibling replica is momentarily between</span>
+<span class="sd">        finishing and publishing. For a shared durable (nb_tasks&gt;1) these counts</span>
+<span class="sd">        span all replicas, so replicas naturally stop together only once the whole</span>
+<span class="sd">        durable is drained.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="n">parent</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stopped_parents</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">True</span>
+        <span class="k">if</span> <span class="n">parent</span> <span class="ow">not</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">q</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">q</span><span class="o">.</span><span class="n">qsize</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_pending_from</span><span class="p">(</span><span class="n">parent</span><span class="p">):</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="n">num_pending</span><span class="p">,</span> <span class="n">num_ack_pending</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_consumer_pending</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">num_pending</span> <span class="o">==</span> <span class="mi">0</span> <span class="ow">and</span> <span class="n">num_ack_pending</span> <span class="o">==</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="n">now</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">monotonic</span><span class="p">()</span>
+            <span class="n">since</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">since</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="p">[</span><span class="n">parent</span><span class="p">]</span> <span class="o">=</span> <span class="n">now</span>
+                <span class="k">return</span> <span class="kc">False</span>
+            <span class="k">if</span> <span class="n">now</span> <span class="o">-</span> <span class="n">since</span> <span class="o">&gt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_eos_quiescence_s</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_stopped_parents</span><span class="o">.</span><span class="n">add</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_ack_eos</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+                <span class="k">return</span> <span class="kc">True</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_quiescent_since</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">return</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_has_pending_from</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span><span class="o">.</span><span class="n">has_pending_from</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_log_drain_stall</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Periodic (once per ~15 idle seconds) explanation of why the EOS drain has</span>
+<span class="sd">        not completed, per unstopped parent — turns a would-be silent termination</span>
+<span class="sd">        hang into a directly diagnosable log line (e.g. a parent whose EOS was</span>
+<span class="sd">        never observed, a join group still holding a half, or unacked deliveries).</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">parts</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">parent</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">parent</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_stopped_parents</span><span class="p">:</span>
+                <span class="k">continue</span>
+            <span class="n">q</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+            <span class="n">num_pending</span><span class="p">,</span> <span class="n">num_ack_pending</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_consumer_pending</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+            <span class="n">parts</span><span class="o">.</span><span class="n">append</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">parent</span><span class="si">}</span><span class="s1">(eos_seen=</span><span class="si">{</span><span class="n">parent</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="bp">self</span><span class="o">.</span><span class="n">_eos_seen</span><span class="si">}</span><span class="s1">, &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;queued=</span><span class="si">{</span><span class="n">q</span><span class="o">.</span><span class="n">qsize</span><span class="p">()</span><span class="w"> </span><span class="k">if</span><span class="w"> </span><span class="n">q</span><span class="w"> </span><span class="ow">is</span><span class="w"> </span><span class="ow">not</span><span class="w"> </span><span class="kc">None</span><span class="w"> </span><span class="k">else</span><span class="w"> </span><span class="mi">0</span><span class="si">}</span><span class="s1">, &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;in_groups=</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_assembler</span><span class="o">.</span><span class="n">has_pending_from</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span><span class="si">}</span><span class="s1">, &#39;</span>
+                <span class="sa">f</span><span class="s1">&#39;broker_pending=</span><span class="si">{</span><span class="n">num_pending</span><span class="si">}</span><span class="s1">, unacked=</span><span class="si">{</span><span class="n">num_ack_pending</span><span class="si">}</span><span class="s1">)&#39;</span>
+            <span class="p">)</span>
+        <span class="k">if</span> <span class="n">parts</span><span class="p">:</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_node</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s1">: EOS drain waiting on &#39;</span> <span class="o">+</span> <span class="s1">&#39;; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">parts</span><span class="p">))</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_consumer_pending</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+        <span class="n">durable</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_data_durable_name</span><span class="p">(</span><span class="n">parent</span><span class="p">)</span>
+        <span class="n">stream</span> <span class="o">=</span> <span class="n">stream_name_for</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_flow_id</span><span class="p">,</span> <span class="bp">self</span><span class="o">.</span><span class="n">_run_id</span><span class="p">,</span> <span class="n">parent</span><span class="p">)</span>
+
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_go</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="n">info</span> <span class="o">=</span> <span class="k">await</span> <span class="bp">self</span><span class="o">.</span><span class="n">_js</span><span class="o">.</span><span class="n">consumer_info</span><span class="p">(</span><span class="n">stream</span><span class="p">,</span> <span class="n">durable</span><span class="p">)</span>
+                <span class="k">return</span> <span class="n">info</span><span class="o">.</span><span class="n">num_pending</span><span class="p">,</span> <span class="n">info</span><span class="o">.</span><span class="n">num_ack_pending</span>
+            <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+                <span class="k">return</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_go</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+            <span class="k">return</span> <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">(</span><span class="n">timeout</span> <span class="o">=</span> <span class="mi">5</span><span class="p">)</span>
+        <span class="k">except</span> <span class="ne">Exception</span><span class="p">:</span>
+            <span class="k">return</span> <span class="mi">0</span><span class="p">,</span> <span class="mi">0</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_ack_eos</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">parent</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">handle</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_eos_handles</span><span class="o">.</span><span class="n">pop</span><span class="p">(</span><span class="n">parent</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">handle</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">handle</span><span class="o">.</span><span class="n">ack</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_recv_ready</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EnvelopeEntry</span><span class="p">,</span> <span class="n">_AckHandle</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Waits up to a short timeout for at least one parent queue to have an item, \</span>
+<span class="sd">            then returns every parent item that became ready within that wait as \</span>
+<span class="sd">            ``[(parent_name, entry, handle), ...]`` — possibly empty on timeout, \</span>
+<span class="sd">            which lets ``receive_message`` loop back and re-check the termination \</span>
+<span class="sd">            event instead of blocking forever when the flow is being torn down.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">_wait_for_any_parent</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">EnvelopeEntry</span><span class="p">,</span> <span class="n">_AckHandle</span><span class="p">]]:</span>
+            <span class="n">get_tasks</span> <span class="o">=</span> <span class="p">{</span>
+                <span class="n">asyncio</span><span class="o">.</span><span class="n">ensure_future</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_parent_queues</span><span class="p">[</span><span class="n">name</span><span class="p">]</span><span class="o">.</span><span class="n">get</span><span class="p">()):</span> <span class="n">name</span>
+                <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span>
+            <span class="p">}</span>
+            <span class="n">done</span><span class="p">,</span> <span class="n">pending</span> <span class="o">=</span> <span class="k">await</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">wait</span><span class="p">(</span>
+                <span class="n">get_tasks</span><span class="o">.</span><span class="n">keys</span><span class="p">(),</span>
+                <span class="n">timeout</span> <span class="o">=</span> <span class="n">_FETCH_TIMEOUT_SECONDS</span><span class="p">,</span>
+                <span class="n">return_when</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">FIRST_COMPLETED</span><span class="p">,</span>
+            <span class="p">)</span>
+            <span class="k">for</span> <span class="n">p</span> <span class="ow">in</span> <span class="n">pending</span><span class="p">:</span>
+                <span class="n">p</span><span class="o">.</span><span class="n">cancel</span><span class="p">()</span>
+            <span class="c1"># Cancelling a pending asyncio.Queue.get() is safe: if an item had</span>
+            <span class="c1"># become available it would be in `done`, not `pending`; a genuinely</span>
+            <span class="c1"># pending getter has no item and leaves the queue untouched.</span>
+            <span class="n">results</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="k">for</span> <span class="n">task</span> <span class="ow">in</span> <span class="n">done</span><span class="p">:</span>
+                <span class="n">entry</span><span class="p">,</span> <span class="n">handle</span> <span class="o">=</span> <span class="n">task</span><span class="o">.</span><span class="n">result</span><span class="p">()</span>
+                <span class="n">results</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">get_tasks</span><span class="p">[</span><span class="n">task</span><span class="p">],</span> <span class="n">entry</span><span class="p">,</span> <span class="n">handle</span><span class="p">))</span>
+            <span class="k">return</span> <span class="n">results</span>
+
+        <span class="n">fut</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">run_coroutine_threadsafe</span><span class="p">(</span><span class="n">_wait_for_any_parent</span><span class="p">(),</span> <span class="bp">self</span><span class="o">.</span><span class="n">_loop</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">fut</span><span class="o">.</span><span class="n">result</span><span class="p">()</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,515 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.deploy.cluster &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.deploy.cluster</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.deploy.cluster</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Best-effort detection of what kind of Kubernetes cluster kubectl points at, and</span>
+<span class="sd">the cluster-flavor-specific mechanics that depend on it: how to load a locally</span>
+<span class="sd">built image into it, whether hostPath mounts see the local filesystem, and</span>
+<span class="sd">whether GPU pods are schedulable. Everything here is advisory — deploy still</span>
+<span class="sd">works with explicit flags when detection gets it wrong.</span>
+
+<span class="sd">Each flavor is one ``ClusterFlavorHandler`` registered at import. Supporting a</span>
+<span class="sd">new one (microk8s, colima, k0s) is a class plus a ``register_cluster_flavor``</span>
+<span class="sd">call rather than an edit to three parallel if-ladders, which is what this used to</span>
+<span class="sd">be — and what made it easy to teach detection about a flavor while forgetting to</span>
+<span class="sd">teach image loading about it.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">subprocess</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="c1"># SHARED_NEEDS_RUNTIME_CLASS lived here before the GPU strategies were extracted;</span>
+<span class="c1"># cli.py still imports it from this module to detect the fatal shared-mode problem.</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.gpu</span><span class="w"> </span><span class="kn">import</span> <span class="n">SHARED_NEEDS_RUNTIME_CLASS</span><span class="p">,</span> <span class="n">get_gpu_mode</span>  <span class="c1"># noqa: F401</span>
+
+<span class="n">K3S</span> <span class="o">=</span> <span class="s1">&#39;k3s&#39;</span>
+<span class="n">KIND</span> <span class="o">=</span> <span class="s1">&#39;kind&#39;</span>
+<span class="n">MINIKUBE</span> <span class="o">=</span> <span class="s1">&#39;minikube&#39;</span>
+<span class="n">DOCKER_DESKTOP</span> <span class="o">=</span> <span class="s1">&#39;docker-desktop&#39;</span>
+<span class="n">GENERIC_REMOTE</span> <span class="o">=</span> <span class="s1">&#39;generic-remote&#39;</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Runs kubectl and returns stdout, or &#39;&#39; on any failure (detection is best-effort).&#39;&#39;&#39;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="n">kubectl</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span><span class="p">],</span> <span class="n">capture_output</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">text</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">check</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s1">&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">proc</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span> <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">returncode</span> <span class="o">==</span> <span class="mi">0</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span>
+
+<div class="viewcode-block" id="current_context">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.current_context">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">current_context</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;config&#39;</span><span class="p">,</span> <span class="s1">&#39;current-context&#39;</span><span class="p">)</span></div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_node_labels</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Node labels used to recognize flavors whose context name is generic (a k3s</span>
+<span class="sd">    install&#39;s context is just &#39;default&#39;).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;nodes&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span>
+        <span class="s1">&#39;jsonpath={range .items[*]}{.metadata.labels.node</span><span class="se">\\</span><span class="s1">.kubernetes</span><span class="se">\\</span><span class="s1">.io/instance-type}&#39;</span>
+        <span class="s1">&#39;{&quot; &quot;}{.metadata.labels.minikube</span><span class="se">\\</span><span class="s1">.k8s</span><span class="se">\\</span><span class="s1">.io/name}{&quot;</span><span class="se">\\</span><span class="s1">n&quot;}</span><span class="si">{end}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="c1"># -- flavor handlers -------------------------------------------------------</span>
+
+<div class="viewcode-block" id="ClusterFlavorHandler">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.ClusterFlavorHandler">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ClusterFlavorHandler</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    One local-cluster flavor: how to recognize it, how to get a locally built</span>
+<span class="sd">    image into it, and whether its hostPath mounts see the host filesystem.</span>
+
+<span class="sd">    Subclasses set ``name`` and implement ``matches``. ``load_images`` defaults to</span>
+<span class="sd">    refusing, which is the right answer for anything remote.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c1">#: Flavor identifier, returned by ``detect_cluster`` and passed back to</span>
+    <span class="c1">#: ``load_images``/``hostpath_warning``.</span>
+    <span class="n">name</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+
+<div class="viewcode-block" id="ClusterFlavorHandler.matches">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.ClusterFlavorHandler.matches">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Whether the current cluster is this flavor. ``node_labels`` is a callable</span>
+<span class="sd">        so a handler that can decide from the context name alone costs no kubectl</span>
+<span class="sd">        call; the result is shared between handlers that do need it.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;ClusterFlavorHandler subclass must implement matches()&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ClusterFlavorHandler.load_images">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.ClusterFlavorHandler.load_images">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Side-loads locally built images so pods can run them without a registry.</span>
+
+<span class="sd">        - Raises:</span>
+<span class="sd">            - ``RuntimeError`` when the images cannot be loaded (remote cluster, \</span>
+<span class="sd">                missing tool, failed command). The message must name the fix.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">refs</span> <span class="o">=</span> <span class="s1">&#39; &#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">images</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">&#39;cluster looks remote — pods there cannot see locally built images. &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;Push them to a registry the cluster can reach and pass --image, e.g.:</span><span class="se">\n</span><span class="s1">&#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;  docker tag &lt;local&gt; &lt;registry&gt;/&lt;name&gt;:&lt;tag&gt; &amp;&amp; docker push &lt;registry&gt;/&lt;name&gt;:&lt;tag&gt;</span><span class="se">\n</span><span class="s1">&#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;(locally built: </span><span class="si">{</span><span class="n">refs</span><span class="si">}</span><span class="s1">)&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ClusterFlavorHandler.hostpath_warning">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.ClusterFlavorHandler.hostpath_warning">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">hostpath_warning</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Message when hostPath will not resolve against the local filesystem, else None.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+</div>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_KindFlavor</span><span class="p">(</span><span class="n">ClusterFlavorHandler</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">KIND</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">context_name</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;kind-&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">current_context</span><span class="p">(</span><span class="n">kubectl</span><span class="p">)</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s1">&#39;kind-&#39;</span><span class="p">)</span> <span class="ow">or</span> <span class="s1">&#39;kind&#39;</span>
+        <span class="n">_run_load</span><span class="p">([</span><span class="s1">&#39;kind&#39;</span><span class="p">,</span> <span class="s1">&#39;load&#39;</span><span class="p">,</span> <span class="s1">&#39;docker-image&#39;</span><span class="p">,</span> <span class="o">*</span><span class="n">images</span><span class="p">,</span> <span class="s1">&#39;--name&#39;</span><span class="p">,</span> <span class="n">name</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">hostpath_warning</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="s1">&#39;this is a kind cluster: hostPath resolves inside the kind node &#39;</span>
+                <span class="s1">&#39;container, not on your host. Recreate the cluster with extraMounts &#39;</span>
+                <span class="s1">&#39;covering each mounted path (https://kind.sigs.k8s.io/docs/user/configuration/#extra-mounts).&#39;</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_MinikubeFlavor</span><span class="p">(</span><span class="n">ClusterFlavorHandler</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">MINIKUBE</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">context_name</span> <span class="o">==</span> <span class="s1">&#39;minikube&#39;</span> <span class="ow">or</span> <span class="s1">&#39;minikube&#39;</span> <span class="ow">in</span> <span class="n">node_labels</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">image</span> <span class="ow">in</span> <span class="n">images</span><span class="p">:</span>
+            <span class="n">_run_load</span><span class="p">([</span><span class="s1">&#39;minikube&#39;</span><span class="p">,</span> <span class="s1">&#39;image&#39;</span><span class="p">,</span> <span class="s1">&#39;load&#39;</span><span class="p">,</span> <span class="n">image</span><span class="p">])</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">hostpath_warning</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">(</span><span class="s1">&#39;this is a minikube cluster: hostPath resolves inside the minikube &#39;</span>
+                <span class="s1">&#39;VM. Expose each mounted path with `minikube mount /path:/path` or &#39;</span>
+                <span class="s1">&#39;start minikube with --mount --mount-string=/path:/path.&#39;</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_DockerDesktopFlavor</span><span class="p">(</span><span class="n">ClusterFlavorHandler</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">DOCKER_DESKTOP</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">context_name</span> <span class="o">==</span> <span class="s1">&#39;docker-desktop&#39;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">print</span><span class="p">(</span><span class="s1">&#39;docker-desktop shares the local docker daemon; images need no loading.&#39;</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_K3sFlavor</span><span class="p">(</span><span class="n">ClusterFlavorHandler</span><span class="p">):</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">K3S</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="c1"># k3s uses a generic context name (&#39;default&#39;), so node facts decide.</span>
+        <span class="k">return</span> <span class="s1">&#39;k3s&#39;</span> <span class="ow">in</span> <span class="n">node_labels</span><span class="p">()</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">for</span> <span class="n">image</span> <span class="ow">in</span> <span class="n">images</span><span class="p">:</span>
+            <span class="n">_k3s_import</span><span class="p">(</span><span class="n">image</span><span class="p">)</span>
+
+<span class="k">class</span><span class="w"> </span><span class="nc">_GenericRemoteFlavor</span><span class="p">(</span><span class="n">ClusterFlavorHandler</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Terminal fallback: inherits the base&#39;s refuse-to-load behavior.&#39;&#39;&#39;</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">GENERIC_REMOTE</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">matches</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">context_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">node_labels</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[],</span> <span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+<span class="c1">#: Handlers in detection order. Flavors that can be recognized from the context</span>
+<span class="c1">#: name alone (kind, docker-desktop, minikube) are registered before the label-only</span>
+<span class="c1">#: one (k3s), so a cluster identifiable by its context name is detected without any</span>
+<span class="c1">#: `kubectl get nodes` call — and GENERIC_REMOTE stays last as the terminal</span>
+<span class="c1">#: fallback. Registering k3s ahead of minikube would make a context-named minikube</span>
+<span class="c1">#: cluster pay for k3s&#39;s label probe first, which is the regression this order</span>
+<span class="c1">#: avoids.</span>
+<span class="n">_FLAVORS</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="n">ClusterFlavorHandler</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+<div class="viewcode-block" id="register_cluster_flavor">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.register_cluster_flavor">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">register_cluster_flavor</span><span class="p">(</span><span class="n">handler</span> <span class="p">:</span> <span class="n">ClusterFlavorHandler</span><span class="p">,</span>
+                            <span class="n">before</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">GENERIC_REMOTE</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Registers a cluster flavor. Detection tries handlers in registration order, so</span>
+<span class="sd">    a new handler is inserted before ``before`` (by default the generic-remote</span>
+<span class="sd">    fallback, which matches everything and must stay last).</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - handler: the flavor handler instance.</span>
+<span class="sd">        - before: name of the handler to insert ahead of, or None to append.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ValueError: ``before`` names no registered flavor.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="n">before</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">_FLAVORS</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">handler</span><span class="p">)</span>
+        <span class="k">return</span>
+    <span class="k">for</span> <span class="n">i</span><span class="p">,</span> <span class="n">existing</span> <span class="ow">in</span> <span class="nb">enumerate</span><span class="p">(</span><span class="n">_FLAVORS</span><span class="p">):</span>
+        <span class="k">if</span> <span class="n">existing</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">before</span><span class="p">:</span>
+            <span class="n">_FLAVORS</span><span class="o">.</span><span class="n">insert</span><span class="p">(</span><span class="n">i</span><span class="p">,</span> <span class="n">handler</span><span class="p">)</span>
+            <span class="k">return</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;no registered cluster flavor named </span><span class="si">{</span><span class="n">before</span><span class="si">!r}</span><span class="s1">; &#39;</span>
+                     <span class="sa">f</span><span class="s1">&#39;known: </span><span class="si">{</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">_FLAVORS</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+
+<span class="k">for</span> <span class="n">_flavor</span> <span class="ow">in</span> <span class="p">(</span><span class="n">_KindFlavor</span><span class="p">(),</span> <span class="n">_DockerDesktopFlavor</span><span class="p">(),</span> <span class="n">_MinikubeFlavor</span><span class="p">(),</span>
+                <span class="n">_K3sFlavor</span><span class="p">(),</span> <span class="n">_GenericRemoteFlavor</span><span class="p">()):</span>
+    <span class="n">register_cluster_flavor</span><span class="p">(</span><span class="n">_flavor</span><span class="p">,</span> <span class="n">before</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span>
+
+<div class="viewcode-block" id="get_cluster_flavor">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.get_cluster_flavor">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">get_cluster_flavor</span><span class="p">(</span><span class="n">cluster</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ClusterFlavorHandler</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The handler registered under ``cluster``.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ``RuntimeError`` when no flavor is registered under that name.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">_FLAVORS</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span> <span class="o">==</span> <span class="n">cluster</span><span class="p">:</span>
+            <span class="k">return</span> <span class="n">handler</span>
+    <span class="c1"># RuntimeError, not the ValueError the other registries raise: load_images has</span>
+    <span class="c1"># always raised RuntimeError for this and callers catch that type. The message</span>
+    <span class="c1"># still names the known values and the fix, as the seam convention requires.</span>
+    <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;unknown cluster flavor: </span><span class="si">{</span><span class="n">cluster</span><span class="si">}</span><span class="s1">. Known flavors: &#39;</span>
+                       <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">f</span><span class="o">.</span><span class="n">name</span><span class="w"> </span><span class="k">for</span><span class="w"> </span><span class="n">f</span><span class="w"> </span><span class="ow">in</span><span class="w"> </span><span class="n">_FLAVORS</span><span class="p">)</span><span class="si">}</span><span class="s1">. Register another with &#39;</span>
+                       <span class="sa">f</span><span class="s1">&#39;videoflow.deploy.cluster.register_cluster_flavor.&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="detect_cluster">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.detect_cluster">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">detect_cluster</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Classifies the cluster kubectl currently points at, by asking each registered</span>
+<span class="sd">    flavor in order. Context-name conventions identify kind/minikube/docker-desktop;</span>
+<span class="sd">    k3s installs use a generic context name (&#39;default&#39;), so they are confirmed via</span>
+<span class="sd">    node facts instead — fetched at most once per call, and only if some handler</span>
+<span class="sd">    asks for them.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">ctx</span> <span class="o">=</span> <span class="n">current_context</span><span class="p">(</span><span class="n">kubectl</span><span class="p">)</span>
+    <span class="n">cached</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">node_labels</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">cached</span><span class="p">:</span>
+            <span class="n">cached</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">_node_labels</span><span class="p">(</span><span class="n">kubectl</span><span class="p">))</span>
+        <span class="k">return</span> <span class="n">cached</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span>
+
+    <span class="k">for</span> <span class="n">handler</span> <span class="ow">in</span> <span class="n">_FLAVORS</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">handler</span><span class="o">.</span><span class="n">matches</span><span class="p">(</span><span class="n">ctx</span><span class="p">,</span> <span class="n">node_labels</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">handler</span><span class="o">.</span><span class="n">name</span>
+    <span class="k">return</span> <span class="n">GENERIC_REMOTE</span></div>
+
+
+<div class="viewcode-block" id="load_images">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.load_images">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">load_images</span><span class="p">(</span><span class="n">cluster</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">images</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Loads locally built docker images into the detected cluster so pods can pull</span>
+<span class="sd">    them without a registry.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ``RuntimeError`` when the cluster is remote (push to a registry instead), \</span>
+<span class="sd">            when a required tool is missing, or when a load command fails.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">get_cluster_flavor</span><span class="p">(</span><span class="n">cluster</span><span class="p">)</span><span class="o">.</span><span class="n">load_images</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">kubectl</span><span class="p">)</span></div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_run_load</span><span class="p">(</span><span class="n">cmd</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">proc</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">cmd</span><span class="p">,</span> <span class="n">check</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">cmd</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="si">!r}</span><span class="s1"> not found on PATH — install it or load the &#39;</span>
+                           <span class="sa">f</span><span class="s1">&#39;image manually: </span><span class="si">{</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+    <span class="k">if</span> <span class="n">proc</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;image load failed: </span><span class="si">{</span><span class="s2">&quot; &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">cmd</span><span class="p">)</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_k3s_import</span><span class="p">(</span><span class="n">image</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;docker save | sudo k3s ctr images import - (k3s containerd socket is root-owned).&#39;&#39;&#39;</span>
+    <span class="n">pipeline</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;docker save </span><span class="si">{</span><span class="n">image</span><span class="si">}</span><span class="s1"> | sudo k3s ctr images import -&#39;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="n">save</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">Popen</span><span class="p">([</span><span class="s1">&#39;docker&#39;</span><span class="p">,</span> <span class="s1">&#39;save&#39;</span><span class="p">,</span> <span class="n">image</span><span class="p">],</span> <span class="n">stdout</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">PIPE</span><span class="p">)</span>
+        <span class="n">imp</span> <span class="o">=</span> <span class="n">subprocess</span><span class="o">.</span><span class="n">run</span><span class="p">([</span><span class="s1">&#39;sudo&#39;</span><span class="p">,</span> <span class="s1">&#39;k3s&#39;</span><span class="p">,</span> <span class="s1">&#39;ctr&#39;</span><span class="p">,</span> <span class="s1">&#39;images&#39;</span><span class="p">,</span> <span class="s1">&#39;import&#39;</span><span class="p">,</span> <span class="s1">&#39;-&#39;</span><span class="p">],</span>
+                             <span class="n">stdin</span> <span class="o">=</span> <span class="n">save</span><span class="o">.</span><span class="n">stdout</span><span class="p">,</span> <span class="n">check</span> <span class="o">=</span> <span class="kc">False</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">save</span><span class="o">.</span><span class="n">stdout</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">save</span><span class="o">.</span><span class="n">stdout</span><span class="o">.</span><span class="n">close</span><span class="p">()</span>
+        <span class="n">save</span><span class="o">.</span><span class="n">wait</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">FileNotFoundError</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">filename</span><span class="si">!r}</span><span class="s1"> not found on PATH — load the image &#39;</span>
+                           <span class="sa">f</span><span class="s1">&#39;manually: </span><span class="si">{</span><span class="n">pipeline</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span> <span class="kn">from</span><span class="w"> </span><span class="nn">e</span>
+    <span class="k">if</span> <span class="n">save</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span> <span class="ow">or</span> <span class="n">imp</span><span class="o">.</span><span class="n">returncode</span> <span class="o">!=</span> <span class="mi">0</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;image load into k3s failed — retry manually: </span><span class="si">{</span><span class="n">pipeline</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="hostpath_warning">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.hostpath_warning">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">hostpath_warning</span><span class="p">(</span><span class="n">cluster</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    A message when hostPath mounts will NOT resolve against the local filesystem</span>
+<span class="sd">    (the cluster &quot;node&quot; is a VM/container with its own filesystem), else None.</span>
+<span class="sd">    An unregistered flavor warns nothing rather than raising: this is advisory,</span>
+<span class="sd">    and deploy should not fail over a missing warning.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">try</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">get_cluster_flavor</span><span class="p">(</span><span class="n">cluster</span><span class="p">)</span><span class="o">.</span><span class="n">hostpath_warning</span><span class="p">()</span>
+    <span class="k">except</span> <span class="ne">RuntimeError</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="allocatable_gpus">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.allocatable_gpus">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">allocatable_gpus</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">,</span> <span class="n">resource</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;nvidia.com/gpu&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Total allocatable units of one GPU extended resource across all nodes</span>
+<span class="sd">    (0 when no node advertises it or the cluster is unreachable).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="c1"># jsonpath needs the dots inside the key escaped: nvidia.com/gpu -&gt; nvidia\.com/gpu</span>
+    <span class="n">path</span> <span class="o">=</span> <span class="n">resource</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;.&#39;</span><span class="p">,</span> <span class="s1">&#39;</span><span class="se">\\</span><span class="s1">.&#39;</span><span class="p">)</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;nodes&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span>
+                       <span class="s1">&#39;jsonpath={.items[*].status.allocatable.&#39;</span> <span class="o">+</span> <span class="n">path</span> <span class="o">+</span> <span class="s1">&#39;}&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">sum</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">out</span><span class="o">.</span><span class="n">split</span><span class="p">()</span> <span class="k">if</span> <span class="n">v</span><span class="o">.</span><span class="n">isdigit</span><span class="p">())</span></div>
+
+
+<div class="viewcode-block" id="nvidia_runtimeclass">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.nvidia_runtimeclass">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">nvidia_runtimeclass</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers</span>
+<span class="sd">    the conventional ``nvidia`` but also recognizes variant names (e.g. a distro</span>
+<span class="sd">    registering ``nvidia-container-runtime``) so the shared-mode escalation cannot</span>
+<span class="sd">    silently no-op on them.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">handlers</span> <span class="o">=</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;runtimeclass&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span>
+                            <span class="s1">&#39;jsonpath={.items[*].metadata.name}&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">split</span><span class="p">()</span>
+    <span class="k">if</span> <span class="s1">&#39;nvidia&#39;</span> <span class="ow">in</span> <span class="n">handlers</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s1">&#39;nvidia&#39;</span>
+    <span class="k">return</span> <span class="nb">next</span><span class="p">((</span><span class="n">h</span> <span class="k">for</span> <span class="n">h</span> <span class="ow">in</span> <span class="n">handlers</span> <span class="k">if</span> <span class="n">h</span><span class="o">.</span><span class="n">startswith</span><span class="p">(</span><span class="s1">&#39;nvidia&#39;</span><span class="p">)),</span> <span class="kc">None</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="gpu_preflight">
+<a class="viewcode-back" href="../../../apidocs/videoflow.deploy.html#videoflow.deploy.cluster.gpu_preflight">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">gpu_preflight</span><span class="p">(</span><span class="n">kubectl</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;kubectl&#39;</span><span class="p">,</span> <span class="n">gpu_runtime_class</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                  <span class="n">demand</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                  <span class="n">gpu_mode</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;exclusive&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node</span>
+<span class="sd">    labeled ``videoflow.io/gpu-pool=true``; in exclusive mode, enough allocatable</span>
+<span class="sd">    units of each requested extended resource to satisfy the flow&#39;s whole demand</span>
+<span class="sd">    (an under-provisioned flow schedules partially and stalls with the rest of its</span>
+<span class="sd">    pods Pending); and — where the NVIDIA container runtime is an opt-in</span>
+<span class="sd">    RuntimeClass rather than the node default — a ``--gpu-runtime-class``, without</span>
+<span class="sd">    which the pod schedules and then runs with no device. Returns problem strings</span>
+<span class="sd">    with copy-pasteable fixes (empty list = OK).</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - demand: dict of extended-resource name -&gt; total units the flow requests \</span>
+<span class="sd">            (sum over GPU nodes of ``nb_tasks * gpu_count``), or None to skip the \</span>
+<span class="sd">            capacity comparison and only check that the resource exists.</span>
+<span class="sd">        - gpu_mode: ``&#39;exclusive&#39;`` or ``&#39;shared&#39;``. Shared pods carry no resource \</span>
+<span class="sd">            limit, so the capacity/device-plugin checks are skipped; the RuntimeClass \</span>
+<span class="sd">            check is escalated instead, because in shared mode the runtime class is \</span>
+<span class="sd">            the only thing granting device access at all.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">problems</span> <span class="o">=</span> <span class="p">[]</span>
+    <span class="c1"># An unreachable cluster makes every check below come back empty, which would</span>
+    <span class="c1"># otherwise be reported as &quot;no GPU nodes&quot; and send the operator chasing a</span>
+    <span class="c1"># device-plugin install that was never the problem.</span>
+    <span class="k">if</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;version&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span> <span class="s1">&#39;json&#39;</span><span class="p">)</span> <span class="o">==</span> <span class="s1">&#39;&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="s1">&#39;cannot reach the cluster — check that it is running and that &#39;</span>
+                <span class="s1">&#39;kubectl is pointed at the right context (kubectl config current-context)&#39;</span><span class="p">]</span>
+    <span class="n">labeled</span> <span class="o">=</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;nodes&#39;</span><span class="p">,</span> <span class="s1">&#39;-l&#39;</span><span class="p">,</span> <span class="s1">&#39;videoflow.io/gpu-pool=true&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span> <span class="s1">&#39;name&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">labeled</span><span class="p">:</span>
+        <span class="n">nodes</span> <span class="o">=</span> <span class="n">_kubectl_out</span><span class="p">(</span><span class="n">kubectl</span><span class="p">,</span> <span class="s1">&#39;get&#39;</span><span class="p">,</span> <span class="s1">&#39;nodes&#39;</span><span class="p">,</span> <span class="s1">&#39;-o&#39;</span><span class="p">,</span> <span class="s1">&#39;name&#39;</span><span class="p">)</span><span class="o">.</span><span class="n">splitlines</span><span class="p">()</span>
+        <span class="n">example</span> <span class="o">=</span> <span class="n">nodes</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s1">&#39;node/&#39;</span><span class="p">)</span> <span class="k">if</span> <span class="n">nodes</span> <span class="k">else</span> <span class="s1">&#39;&lt;node-name&gt;&#39;</span>
+        <span class="n">problems</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;no node labeled videoflow.io/gpu-pool=true — GPU pods will stay &#39;</span>
+                        <span class="sa">f</span><span class="s1">&#39;Pending. Fix: kubectl label node </span><span class="si">{</span><span class="n">example</span><span class="si">}</span><span class="s1"> videoflow.io/gpu-pool=true&#39;</span><span class="p">)</span>
+    <span class="c1"># Everything past this point depends on how the mode claims devices — capacity</span>
+    <span class="c1"># math only means something with a resource limit, and the RuntimeClass check is</span>
+    <span class="c1"># merely advisory in exclusive mode but fatal in shared. The strategy owns both.</span>
+    <span class="n">problems</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">get_gpu_mode</span><span class="p">(</span><span class="n">gpu_mode</span><span class="p">)</span><span class="o">.</span><span class="n">preflight_problems</span><span class="p">(</span>
+        <span class="n">kubectl</span> <span class="o">=</span> <span class="n">kubectl</span><span class="p">,</span> <span class="n">demand</span> <span class="o">=</span> <span class="n">demand</span><span class="p">,</span> <span class="n">gpu_runtime_class</span> <span class="o">=</span> <span class="n">gpu_runtime_class</span><span class="p">))</span>
+    <span class="k">return</span> <span class="n">problems</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

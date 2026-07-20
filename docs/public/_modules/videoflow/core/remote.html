@@ -1,0 +1,380 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.core.remote &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.core.remote</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.core.remote</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Remote (language-agnostic) components in a Python-authored graph.</span>
+
+<span class="sd">A ``component(ref, params=...)`` node stands in for a component that runs as its own</span>
+<span class="sd">container image and is authored in any language. It behaves like a normal</span>
+<span class="sd">Producer/Processor/Consumer node for graph-building (wiring, validation, the</span>
+<span class="sd">compiler, manifests), but it carries no Python implementation — its</span>
+<span class="sd">``next``/``process``/``consume`` run out-of-process in the vendor image, driven by</span>
+<span class="sd">that image&#39;s own SDK speaking the wire protocol (spec/PROTOCOL.md). The Python</span>
+<span class="sd">process only ever builds and compiles the graph; it never imports the component.</span>
+
+<span class="sd">The three concrete kinds subclass the existing node base classes so every</span>
+<span class="sd">``isinstance`` dispatch in ``graph.py``/``compiler.py``/``flow.py`` keeps working</span>
+<span class="sd">unchanged; ``RemoteNodeMixin`` marks them for the compiler, which records a</span>
+<span class="sd">``component_ref`` + descriptor instead of a Python ``node_class``.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Union</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..components.descriptor</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComponentDescriptor</span><span class="p">,</span> <span class="n">load_descriptor</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.node</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConsumerNode</span><span class="p">,</span> <span class="n">Node</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">,</span> <span class="n">ProducerNode</span><span class="p">,</span> <span class="n">_slugify</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.policies</span><span class="w"> </span><span class="kn">import</span> <span class="n">JoinPolicy</span>
+
+<span class="c1"># Per-base counter so an unnamed remote node gets a readable, component-derived</span>
+<span class="c1"># default name (e.g. &#39;sort-tracker-1&#39;) instead of the Python class name; final</span>
+<span class="c1"># uniqueness within a flow is still enforced by GraphEngine at build time.</span>
+<span class="n">_remote_name_counters</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_default_remote_name</span><span class="p">(</span><span class="n">descriptor</span> <span class="p">:</span> <span class="n">ComponentDescriptor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="n">base</span> <span class="o">=</span> <span class="n">_slugify</span><span class="p">(</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;/&#39;</span><span class="p">)[</span><span class="o">-</span><span class="mi">1</span><span class="p">])</span> <span class="ow">or</span> <span class="s1">&#39;component&#39;</span>
+    <span class="n">_remote_name_counters</span><span class="p">[</span><span class="n">base</span><span class="p">]</span> <span class="o">=</span> <span class="n">_remote_name_counters</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">base</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="mi">1</span>
+    <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">base</span><span class="si">}</span><span class="s1">-</span><span class="si">{</span><span class="n">_remote_name_counters</span><span class="p">[</span><span class="n">base</span><span class="p">]</span><span class="si">}</span><span class="s1">&#39;</span>
+
+<div class="viewcode-block" id="RemoteNodeMixin">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteNodeMixin">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoteNodeMixin</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Shared state/identity for the three remote node kinds.&#39;&#39;&#39;</span>
+    <span class="n">_component_ref</span> <span class="p">:</span> <span class="nb">str</span>
+    <span class="n">_descriptor</span> <span class="p">:</span> <span class="n">ComponentDescriptor</span>
+    <span class="n">_component_params</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">component_ref</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_component_ref</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">descriptor</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ComponentDescriptor</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">component_command</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span><span class="o">.</span><span class="n">command</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">local_command</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span><span class="o">.</span><span class="n">local_command</span>
+
+<div class="viewcode-block" id="RemoteNodeMixin.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteNodeMixin.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        The component&#39;s own params, delivered via VF_NODE_PARAMS_JSON. For a native</span>
+<span class="sd">        component these are the only params (routing settings reach it via env); for</span>
+<span class="sd">        a Python component, the reconstructing worker calls ``pythonClass(**params)``,</span>
+<span class="sd">        so node-level settings the class needs (nb_tasks/device_type) are merged in —</span>
+<span class="sd">        matching what a normal node&#39;s ``get_params()`` would carry. Every videoflow</span>
+<span class="sd">        node constructor accepts these via ``**kwargs``.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">params</span> <span class="o">=</span> <span class="nb">dict</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_component_params</span><span class="p">)</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span><span class="o">.</span><span class="n">is_native</span><span class="p">:</span>
+            <span class="n">params</span><span class="o">.</span><span class="n">update</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_python_node_params</span><span class="p">())</span>
+        <span class="k">return</span> <span class="n">params</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_python_node_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Node-level params to merge for a Python component; overridden per role.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="p">{}</span></div>
+
+
+<div class="viewcode-block" id="RemoteProducer">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteProducer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoteProducer</span><span class="p">(</span><span class="n">RemoteNodeMixin</span><span class="p">,</span> <span class="n">ProducerNode</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">component_ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">descriptor</span> <span class="p">:</span> <span class="n">ComponentDescriptor</span><span class="p">,</span> <span class="n">params</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+                <span class="n">is_finite</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">image</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_ref</span> <span class="o">=</span> <span class="n">component_ref</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span> <span class="o">=</span> <span class="n">descriptor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_params</span> <span class="o">=</span> <span class="n">params</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">is_finite</span> <span class="o">=</span> <span class="n">is_finite</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="p">)</span>
+
+<div class="viewcode-block" id="RemoteProducer.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteProducer.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;RemoteProducer runs out-of-process in its own image; &#39;</span>
+                                <span class="s1">&#39;next() is never called in the Python process.&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="RemoteProcessor">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteProcessor">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoteProcessor</span><span class="p">(</span><span class="n">RemoteNodeMixin</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">component_ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">descriptor</span> <span class="p">:</span> <span class="n">ComponentDescriptor</span><span class="p">,</span> <span class="n">params</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+                <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;cpu&#39;</span><span class="p">,</span>
+                <span class="n">partition_by</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">join_policy</span> <span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">image</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">gpu_count</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_ref</span> <span class="o">=</span> <span class="n">component_ref</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span> <span class="o">=</span> <span class="n">descriptor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_params</span> <span class="o">=</span> <span class="n">params</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">nb_tasks</span> <span class="o">=</span> <span class="n">nb_tasks</span><span class="p">,</span> <span class="n">device_type</span> <span class="o">=</span> <span class="n">device_type</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span>
+                        <span class="n">partition_by</span> <span class="o">=</span> <span class="n">partition_by</span><span class="p">,</span> <span class="n">join_policy</span> <span class="o">=</span> <span class="n">join_policy</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="p">,</span>
+                        <span class="n">gpu_count</span> <span class="o">=</span> <span class="n">gpu_count</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="o">=</span> <span class="n">gpu_resource_name</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_python_node_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]:</span>
+        <span class="c1"># A Python processor is reconstructed as pythonClass(**params); it needs its</span>
+        <span class="c1"># device/replica settings (e.g. to place a model on CPU vs GPU in open(),</span>
+        <span class="c1"># or to size data-parallel work off self.gpu_count) — mirroring what a</span>
+        <span class="c1"># native node&#39;s get_params() auto-captures.</span>
+        <span class="k">return</span> <span class="p">{</span><span class="s1">&#39;nb_tasks&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_tasks</span><span class="p">,</span> <span class="s1">&#39;device_type&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_device_type</span><span class="p">,</span>
+                <span class="s1">&#39;gpu_count&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_count</span><span class="p">,</span> <span class="s1">&#39;gpu_resource_name&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_gpu_resource_name</span><span class="p">}</span>
+
+<div class="viewcode-block" id="RemoteProcessor.process">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteProcessor.process">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;RemoteProcessor runs out-of-process in its own image; &#39;</span>
+                                <span class="s1">&#39;process() is never called in the Python process.&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="RemoteConsumer">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteConsumer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RemoteConsumer</span><span class="p">(</span><span class="n">RemoteNodeMixin</span><span class="p">,</span> <span class="n">ConsumerNode</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">component_ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">descriptor</span> <span class="p">:</span> <span class="n">ComponentDescriptor</span><span class="p">,</span> <span class="n">params</span> <span class="p">:</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+                <span class="n">metadata</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">idempotent</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+                <span class="n">join_policy</span> <span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">image</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_ref</span> <span class="o">=</span> <span class="n">component_ref</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_descriptor</span> <span class="o">=</span> <span class="n">descriptor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_component_params</span> <span class="o">=</span> <span class="n">params</span>
+        <span class="nb">super</span><span class="p">()</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">metadata</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">join_policy</span> <span class="o">=</span> <span class="n">join_policy</span><span class="p">,</span>
+                        <span class="n">idempotent</span> <span class="o">=</span> <span class="n">idempotent</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">image</span><span class="p">)</span>
+
+<div class="viewcode-block" id="RemoteConsumer.consume">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.RemoteConsumer.consume">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">consume</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;RemoteConsumer runs out-of-process in its own image; &#39;</span>
+                                <span class="s1">&#39;consume() is never called in the Python process.&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_resolve_join_policy</span><span class="p">(</span><span class="n">join_policy</span> <span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="kc">None</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">]:</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">join_policy</span><span class="p">,</span> <span class="n">JoinPolicy</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">join_policy</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">join_policy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">JoinPolicy</span><span class="o">.</span><span class="n">from_dict</span><span class="p">(</span><span class="n">join_policy</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+<div class="viewcode-block" id="component">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.remote.component">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">component</span><span class="p">(</span><span class="n">ref</span> <span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">ComponentDescriptor</span><span class="p">],</span> <span class="n">params</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">nb_tasks</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;cpu&#39;</span><span class="p">,</span>
+            <span class="n">partition_by</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">join_policy</span> <span class="p">:</span> <span class="n">Union</span><span class="p">[</span><span class="n">JoinPolicy</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="kc">None</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">image</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">is_finite</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">bool</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+            <span class="n">metadata</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">idempotent</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">gpu_count</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">,</span>
+            <span class="n">gpu_resource_name</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Node</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Create a graph node backed by a language-agnostic component described by ``ref``</span>
+<span class="sd">    (a path to a ``component.yaml`` or, later, an ``oci://`` ref). Returns a</span>
+<span class="sd">    Producer/Processor/Consumer node per the descriptor&#39;s ``role``, so it wires into</span>
+<span class="sd">    a Python graph exactly like a native node::</span>
+
+<span class="sd">        from videoflow.core import Flow, component</span>
+<span class="sd">        tracker = component(&#39;components/sort&#39;, params={&#39;iou_threshold&#39;: 0.3})(detector)</span>
+
+<span class="sd">    Validation happens here, at graph-build time, so a misconfiguration is a build</span>
+<span class="sd">    error in the authoring script rather than a crash inside the vendor container:</span>
+<span class="sd">    params are checked against the descriptor&#39;s JSON Schema, ``device_type`` against</span>
+<span class="sd">    the declared devices, the image against what the descriptor provides, and the</span>
+<span class="sd">    join policy against what the component says it accepts.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - ref: descriptor reference (local path now; ``oci://`` in Phase 6), or an \</span>
+<span class="sd">            already-loaded ``ComponentDescriptor``.</span>
+<span class="sd">        - params: component params dict (validated + defaulted against the descriptor).</span>
+<span class="sd">        - device_type: &#39;cpu&#39; or &#39;gpu&#39; (must be in the descriptor&#39;s ``device`` list).</span>
+<span class="sd">        - image: explicit image ref override (else the descriptor&#39;s image for the device).</span>
+<span class="sd">        - is_finite: producers only; defaults to the descriptor&#39;s ``finite``.</span>
+<span class="sd">        - nb_tasks/partition_by/join_policy/metadata/idempotent: as on the native nodes.</span>
+<span class="sd">        - gpu_count/gpu_resource_name: processors only; as on ``ProcessorNode``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">descriptor</span> <span class="o">=</span> <span class="n">ref</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="n">ComponentDescriptor</span><span class="p">)</span> <span class="k">else</span> <span class="n">load_descriptor</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+    <span class="n">component_ref</span> <span class="o">=</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">source</span> <span class="ow">or</span> <span class="p">(</span><span class="n">ref</span> <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">ref</span><span class="p">,</span> <span class="nb">str</span><span class="p">)</span> <span class="k">else</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">device_type</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">device</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;: device_type=</span><span class="si">{</span><span class="n">device_type</span><span class="si">!r}</span><span class="s2"> not supported; &quot;</span>
+                        <span class="sa">f</span><span class="s1">&#39;declared devices: </span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">device</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">resolved_image</span> <span class="o">=</span> <span class="n">image</span> <span class="ow">or</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">image_for</span><span class="p">(</span><span class="n">device_type</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">resolved_image</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;: no image for device &#39;</span><span class="si">{</span><span class="n">device_type</span><span class="si">}</span><span class="s2">&#39; &quot;</span>
+                        <span class="sa">f</span><span class="s1">&#39;(declared images: </span><span class="si">{</span><span class="nb">sorted</span><span class="p">(</span><span class="n">descriptor</span><span class="o">.</span><span class="n">images</span><span class="p">)</span><span class="si">}</span><span class="s1">). Pass image= or add it to the descriptor.&#39;</span><span class="p">)</span>
+    <span class="n">validated_params</span> <span class="o">=</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">validate_params</span><span class="p">(</span><span class="n">params</span><span class="p">)</span>
+    <span class="n">policy</span> <span class="o">=</span> <span class="n">_resolve_join_policy</span><span class="p">(</span><span class="n">join_policy</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">singleton</span> <span class="ow">and</span> <span class="n">nb_tasks</span> <span class="o">!=</span> <span class="mi">1</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; is a singleton and cannot be replicated (nb_tasks=</span><span class="si">{</span><span class="n">nb_tasks</span><span class="si">}</span><span class="s2">)&quot;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">partition_by</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">partitionable</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; is not partitionable but partition_by=</span><span class="si">{</span><span class="n">partition_by</span><span class="si">!r}</span><span class="s2"> was set&quot;</span><span class="p">)</span>
+    <span class="c1"># Parent-independent join capability check: a quorum policy delivers None for a</span>
+    <span class="c1"># missing parent, so every input must tolerate it. (The parent-specific collect</span>
+    <span class="c1"># check runs in the compiler, where wired parents are known.)</span>
+    <span class="k">if</span> <span class="n">policy</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">policy</span><span class="o">.</span><span class="n">quorum</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">inputs</span> <span class="ow">and</span> <span class="ow">not</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">all_inputs_accept</span><span class="p">(</span><span class="s1">&#39;missing&#39;</span><span class="p">):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39; has inputs that do not accept missing values, &quot;</span>
+                        <span class="s2">&quot;but the join policy uses quorum (which delivers None for absent parents). &quot;</span>
+                        <span class="s2">&quot;Mark io.inputs[].accepts.missing on the component, or drop quorum.&quot;</span><span class="p">)</span>
+
+    <span class="k">if</span> <span class="n">name</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">name</span> <span class="o">=</span> <span class="n">_default_remote_name</span><span class="p">(</span><span class="n">descriptor</span><span class="p">)</span>
+
+    <span class="n">role</span> <span class="o">=</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">role</span>
+    <span class="k">if</span> <span class="n">role</span> <span class="o">==</span> <span class="s1">&#39;producer&#39;</span><span class="p">:</span>
+        <span class="n">finite</span> <span class="o">=</span> <span class="n">descriptor</span><span class="o">.</span><span class="n">finite</span> <span class="k">if</span> <span class="n">is_finite</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">is_finite</span>
+        <span class="k">return</span> <span class="n">RemoteProducer</span><span class="p">(</span><span class="n">component_ref</span><span class="p">,</span> <span class="n">descriptor</span><span class="p">,</span> <span class="n">validated_params</span><span class="p">,</span>
+                            <span class="n">is_finite</span> <span class="o">=</span> <span class="n">finite</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">resolved_image</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">role</span> <span class="o">==</span> <span class="s1">&#39;processor&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">RemoteProcessor</span><span class="p">(</span><span class="n">component_ref</span><span class="p">,</span> <span class="n">descriptor</span><span class="p">,</span> <span class="n">validated_params</span><span class="p">,</span>
+                            <span class="n">nb_tasks</span> <span class="o">=</span> <span class="n">nb_tasks</span><span class="p">,</span> <span class="n">device_type</span> <span class="o">=</span> <span class="n">device_type</span><span class="p">,</span>
+                            <span class="n">partition_by</span> <span class="o">=</span> <span class="n">partition_by</span><span class="p">,</span> <span class="n">join_policy</span> <span class="o">=</span> <span class="n">policy</span><span class="p">,</span>
+                            <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">resolved_image</span><span class="p">,</span>
+                            <span class="n">gpu_count</span> <span class="o">=</span> <span class="n">gpu_count</span><span class="p">,</span> <span class="n">gpu_resource_name</span> <span class="o">=</span> <span class="n">gpu_resource_name</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">role</span> <span class="o">==</span> <span class="s1">&#39;consumer&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">RemoteConsumer</span><span class="p">(</span><span class="n">component_ref</span><span class="p">,</span> <span class="n">descriptor</span><span class="p">,</span> <span class="n">validated_params</span><span class="p">,</span>
+                            <span class="n">metadata</span> <span class="o">=</span> <span class="n">metadata</span><span class="p">,</span> <span class="n">idempotent</span> <span class="o">=</span> <span class="n">idempotent</span><span class="p">,</span>
+                            <span class="n">join_policy</span> <span class="o">=</span> <span class="n">policy</span><span class="p">,</span> <span class="n">name</span> <span class="o">=</span> <span class="n">name</span><span class="p">,</span> <span class="n">image</span> <span class="o">=</span> <span class="n">resolved_image</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;component &#39;</span><span class="si">{</span><span class="n">descriptor</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">&#39;: unknown role </span><span class="si">{</span><span class="n">role</span><span class="si">!r}</span><span class="s2">&quot;</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

@@ -1,0 +1,351 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.core.engine &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.core.engine</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.core.engine</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+
+<div class="viewcode-block" id="Messenger">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Messenger</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Utility class that tasks use to receive input and write output, over a message \</span>
+<span class="sd">        broker (see ``videoflow.messaging.nats_messenger.NATSMessenger`` for the \</span>
+<span class="sd">        concrete implementation). A ``Messenger`` is bound to exactly one node in the \</span>
+<span class="sd">        graph. It knows that node&#39;s own broker subject (for publishing) and its real \</span>
+<span class="sd">        parents&#39; subjects (for receiving) — routing is by node ``name``, not by \</span>
+<span class="sd">        position in a topological sort, so it works correctly for arbitrary DAGs \</span>
+<span class="sd">        (multi-parent joins, multi-producer graphs).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+<div class="viewcode-block" id="Messenger.publish_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.publish_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Publishes this node&#39;s own output message. Depending on the flow&#39;s \</span>
+<span class="sd">            configured retention policy (REALTIME vs BATCH), this may drop the \</span>
+<span class="sd">            message if downstream consumers are behind.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Messenger.publish_stop_signal">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.publish_stop_signal">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_stop_signal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Publishes a termination marker on this node&#39;s own subject. Unlike \</span>
+<span class="sd">            ``publish_message``, this is never dropped regardless of retention \</span>
+<span class="sd">            policy — every downstream consumer must observe it exactly once.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Messenger.check_for_termination">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.check_for_termination">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_for_termination</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns true if a flow-wide termination signal has been received on the \</span>
+<span class="sd">            control channel. Used by ``videoflow.core.task.ProducerTask`` to stop \</span>
+<span class="sd">            pulling new input even before it naturally reaches ``StopIteration``.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Messenger.ack_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.ack_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ack_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Acknowledge the input group last returned by ``receive_message`` — called by \</span>
+<span class="sd">            the task only *after* the node has processed it (and, for a processor, \</span>
+<span class="sd">            published its output). This ack-after-process ordering is what makes a \</span>
+<span class="sd">            crash mid-processing safe: the un-acked message is redelivered instead \</span>
+<span class="sd">            of lost.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Messenger.fail_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.fail_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fail_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span> <span class="p">:</span> <span class="ne">BaseException</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Report that the node raised while processing the last input group. The \</span>
+<span class="sd">            messenger decides whether to redeliver (BATCH, up to a retry limit, then \</span>
+<span class="sd">            dead-letter) or drop (REALTIME).</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="Messenger.set_output_partition_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.set_output_partition_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_partition_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Set the partition key attached to this node&#39;s next published output (via \</span>
+<span class="sd">            ``RuntimeContext.set_partition_key``), so a downstream partitioned node \</span>
+<span class="sd">            can route by a business key. Default: no-op.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="Messenger.set_output_event_timestamp">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.set_output_event_timestamp">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_event_timestamp</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Set the event time (epoch seconds) stamped on this node&#39;s next published \</span>
+<span class="sd">            output (via ``RuntimeContext.set_event_timestamp``) — when the \</span>
+<span class="sd">            underlying real-world event was captured. Producers of time-sensitive \</span>
+<span class="sd">            data (cameras, sensors) should set this; downstream nodes inherit their \</span>
+<span class="sd">            input group&#39;s event time automatically. Default: no-op.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="Messenger.last_input_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.last_input_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        A stable identity for the input group last returned by ``receive_message``, \</span>
+<span class="sd">            used as a sink idempotency key. Default: None (no idempotency).</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="Messenger.last_input_info">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.last_input_info">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_info</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Per-parent envelope info (``event_ts``, ``metadata``, ``trace_id``, \</span>
+<span class="sd">            ``seq``) for the input group last returned by ``receive_message`` \</span>
+<span class="sd">            (exposed to nodes as ``ctx.input_info``). Default: None.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+
+
+<div class="viewcode-block" id="Messenger.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Release any broker resources held by the messenger. Default: no-op.&#39;&#39;&#39;</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="Messenger.receive_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.Messenger.receive_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">receive_message</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Blocks until this node has received a complete input: one message from \</span>
+<span class="sd">            every real parent, all derived from the same upstream originating event \</span>
+<span class="sd">            (see the ``trace_id`` propagation scheme in the concrete implementation) \</span>
+<span class="sd">            — or until every parent has signaled termination.</span>
+
+<span class="sd">        - Returns:</span>
+<span class="sd">            - a dict ``{parent_name: {&quot;message&quot;: ..., &quot;metadata&quot;: ..., &quot;is_stop_signal&quot;: bool}}`` \</span>
+<span class="sd">                with exactly one entry per real parent of this node.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Messenger subclass must implement method.&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ExecutionEngine">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.ExecutionEngine">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ExecutionEngine</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Defines the interface of the `execution environment` — how tasks are physically \</span>
+<span class="sd">        started (as local OS processes for development, or as Kubernetes pods in \</span>
+<span class="sd">        production) and how flow-wide termination and completion are observed.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_allocation_called</span> <span class="o">=</span> <span class="kc">False</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_al_create_and_start_processes</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tasks_data</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]],</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                                        <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \</span>
+<span class="sd">                as produced by ``videoflow.core.flow.build_tasks_data``.  May be ``None`` \</span>
+<span class="sd">                when the engine was constructed with pre-compiled ``specs``, which is how \</span>
+<span class="sd">                the deploy CLI drives it — there is no in-process graph to derive them from.</span>
+<span class="sd">            - flow_id: stable identifier for this flow (constant across runs).</span>
+<span class="sd">            - flow_type: &#39;realtime&#39; or &#39;batch&#39; — the broker retention policy to use \</span>
+<span class="sd">                for every edge.</span>
+<span class="sd">            - run_id: per-run identifier that scopes this execution&#39;s broker streams.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Subclass of ExecutionEngine must implement&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ExecutionEngine.signal_flow_termination">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.ExecutionEngine.signal_flow_termination">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">signal_flow_termination</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Signals the execution environment that the flow needs to stop.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Subclass of ExecutionEngine must implement&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ExecutionEngine.join_task_processes">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.ExecutionEngine.join_task_processes">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">join_task_processes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Blocking method.  It is supposed to make the calling process sleep until all task \</span>
+<span class="sd">        processes have finished processing.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Subclass of ExecutionEngine must implement&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="ExecutionEngine.allocate_and_run_tasks">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.engine.ExecutionEngine.allocate_and_run_tasks">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">allocate_and_run_tasks</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">tasks_data</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">List</span><span class="p">[</span><span class="nb">tuple</span><span class="p">]],</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                                <span class="n">flow_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Defines a template with the order of methods that need to run in order to \</span>
+<span class="sd">            allocate and run tasks.</span>
+
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - tasks_data: list of tuples ``(node, parent_names : [str], is_last : bool)``, \</span>
+<span class="sd">                or ``None`` when the engine already holds pre-compiled ``specs``.</span>
+<span class="sd">            - flow_id: stable identifier for this flow (constant across runs).</span>
+<span class="sd">            - flow_type: &#39;realtime&#39; or &#39;batch&#39;.</span>
+<span class="sd">            - run_id: per-run identifier that scopes this execution&#39;s broker streams.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_allocation_called</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span><span class="s1">&#39;This method has already been called. It can only be called once.&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_al_create_and_start_processes</span><span class="p">(</span><span class="n">tasks_data</span><span class="p">,</span> <span class="n">flow_id</span><span class="p">,</span> <span class="n">flow_type</span><span class="p">,</span> <span class="n">run_id</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_allocation_called</span> <span class="o">=</span> <span class="kc">True</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

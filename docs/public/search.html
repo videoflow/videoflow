@@ -3,24 +3,24 @@
 <!DOCTYPE html>
 <html class="writer-html5" lang="en" data-content_root="./">
 <head>
-  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-<meta content="distributed video and stream processing framework, object detection, object tracking, Kubernetes, NATS JetStream." lang="en" name="description" xml:lang="en" />
-
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>videoflow’s documentation &mdash; videoflow 1.0.0 documentation</title>
+  <title>Search &mdash; videoflow 1.0.0 documentation</title>
       <link rel="stylesheet" type="text/css" href="_static/pygments.css?v=b86133f3" />
       <link rel="stylesheet" type="text/css" href="_static/css/theme.css?v=9edc463e" />
 
   
+    
       <script src="_static/jquery.js?v=5d32c60e"></script>
       <script src="_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
       <script src="_static/documentation_options.js?v=8d563738"></script>
       <script src="_static/doctools.js?v=fd6eb6e6"></script>
       <script src="_static/sphinx_highlight.js?v=6ffebe34"></script>
     <script src="_static/js/theme.js"></script>
+    <script src="_static/searchtools.js"></script>
+    <script src="_static/language_data.js"></script>
     <link rel="index" title="Index" href="genindex.html" />
-    <link rel="search" title="Search" href="search.html" />
-    <link rel="next" title="Installing Videoflow" href="first-steps/installing-videoflow.html" />
+    <link rel="search" title="Search" href="#" />
 <!-- Global site tag (gtag.js) - Google Analytics -->
 <script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
 <script>
@@ -41,11 +41,11 @@
 
           
           
-          <a href="#" class="icon icon-home">
+          <a href="index.html" class="icon icon-home">
             videoflow
           </a>
 <div role="search">
-  <form id="rtd-search-form" class="wy-form" action="search.html" method="get">
+  <form id="rtd-search-form" class="wy-form" action="#" method="get">
     <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
     <input type="hidden" name="check_keywords" value="yes" />
     <input type="hidden" name="area" value="default" />
@@ -94,17 +94,16 @@
 
     <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
           <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
-          <a href="#">videoflow</a>
+          <a href="index.html">videoflow</a>
       </nav>
 
       <div class="wy-nav-content">
         <div class="rst-content">
           <div role="navigation" aria-label="Page navigation">
   <ul class="wy-breadcrumbs">
-      <li><a href="#" class="icon icon-home" aria-label="Home"></a></li>
-      <li class="breadcrumb-item active">videoflow’s documentation</li>
+      <li><a href="index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Search</li>
       <li class="wy-breadcrumbs-aside">
-            <a href="_sources/index.rst.txt" rel="nofollow"> View page source</a>
       </li>
   </ul>
   <hr/>
@@ -112,58 +111,22 @@
           <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
            <div itemprop="articleBody">
              
-  <section id="videoflow-s-documentation">
-<h1>videoflow’s documentation<a class="headerlink" href="#videoflow-s-documentation" title="Link to this heading"></a></h1>
-<img alt="_images/videoflow_logo.png" src="_images/videoflow_logo.png" />
-<p><strong>Videoflow</strong> is a Python framework for building <strong>distributed</strong> video and stream
-processing pipelines. You describe your pipeline once as a directed acyclic graph
-of producers, processors and consumers, and Videoflow runs it as a set of
-independent workers that communicate over a
-<a class="reference external" href="https://docs.nats.io/nats-concepts/jetstream">NATS JetStream</a> message broker.</p>
-<p>The same graph runs two ways with no code changes:</p>
-<dl class="simple">
-<dt>Locally</dt><dd><p>As one OS subprocess per node — for fast development and testing.</p>
-</dd>
-<dt>On Kubernetes</dt><dd><p>As one container per node — with per-node scaling, GPU scheduling, health
-probes and autoscaling for production.</p>
-</dd>
-<dt>Developer friendly</dt><dd><p>Even complex pipelines are defined in a small <code class="docutils literal notranslate"><span class="pre">build_flow()</span></code> factory of a few
-lines of code.</p>
-</dd>
-<dt>Reliable</dt><dd><p>At-least-once delivery with ack-after-process, per-message de-duplication,
-retries and a dead-letter queue, so a crash or a bad message never silently
-loses or double-emits data.</p>
-</dd>
-<dt>Easy to extend</dt><dd><p>Writing your own producers, processors and consumers is straightforward — sync
-or async, with an optional runtime context.</p>
-</dd>
-<dt>Language-agnostic</dt><dd><p>Components can be written in any language, shipped as container images, and
-dropped into a Python-authored graph by reference — the basis for a component
-marketplace.</p>
-</dd>
-<dt>Free and open source</dt><dd><p>Videoflow uses the MIT License.</p>
-</dd>
-</dl>
-<div class="toctree-wrapper compound">
-</div>
-<div class="toctree-wrapper compound">
-</div>
-<div class="toctree-wrapper compound">
-</div>
-<div class="toctree-wrapper compound">
-</div>
-<div class="toctree-wrapper compound">
-</div>
-<div class="toctree-wrapper compound">
-</div>
-</section>
+  <noscript>
+  <div id="fallback" class="admonition warning">
+    <p class="last">
+      Please activate JavaScript to enable the search functionality.
+    </p>
+  </div>
+  </noscript>
 
+  
+  <div id="search-results">
+  
+  </div>
 
            </div>
           </div>
-          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
-        <a href="first-steps/installing-videoflow.html" class="btn btn-neutral float-right" title="Installing Videoflow" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
-    </div>
+          <footer>
 
   <hr/>
 
@@ -185,7 +148,14 @@ marketplace.</p>
       jQuery(function () {
           SphinxRtdTheme.Navigation.enable(true);
       });
-  </script> 
+  </script>
+  <script>
+    jQuery(function() { Search.loadIndex("searchindex.js"); });
+  </script>
+  
+  <script id="searchindexloader"></script>
+   
+
 
 </body>
 </html>

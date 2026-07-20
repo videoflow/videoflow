@@ -1,0 +1,435 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.core.task &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.core.task</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.core.task</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">asyncio</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">inspect</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">TYPE_CHECKING</span><span class="p">,</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils.generic_utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">DelayedKeyboardInterrupt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.context</span><span class="w"> </span><span class="kn">import</span> <span class="n">RuntimeContext</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">Messenger</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">.node</span><span class="w"> </span><span class="kn">import</span> <span class="n">ConsumerNode</span><span class="p">,</span> <span class="n">Node</span><span class="p">,</span> <span class="n">ProcessorNode</span><span class="p">,</span> <span class="n">ProducerNode</span>
+
+<span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+    <span class="c1"># Type-only: the store is constructed in the worker (videoflow.runtime) and</span>
+    <span class="c1"># handed down to the task, so a real import here would invert the</span>
+    <span class="c1"># core &lt;- runtime dependency direction for nothing but an annotation.</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">..runtime.idempotency</span><span class="w"> </span><span class="kn">import</span> <span class="n">IdempotencyStore</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<div class="viewcode-block" id="Task">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.Task">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">Task</span><span class="p">:</span>
+<div class="viewcode-block" id="Task.run">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.Task.run">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Starts the task in an infinite loop.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Subclass needs to implement run&#39;</span><span class="p">)</span></div>
+</div>
+
+
+<div class="viewcode-block" id="NodeTask">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.NodeTask">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">NodeTask</span><span class="p">(</span><span class="n">Task</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    A ``NodeTask`` is a wrapper around a ``videoflow.core.node.Node`` that \</span>
+<span class="sd">        is able to interact with the execution environment through a messenger. \</span>
+<span class="sd">        Nodes receive input and/or produce output, but tasks are the ones \</span>
+<span class="sd">        that run in infinite loops, receiving inputs from the environment and passing them to the \</span>
+<span class="sd">        computation node, and taking outputs from the computation node and passing \</span>
+<span class="sd">        them to the environment.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - computation_node</span>
+<span class="sd">        - messenger (Messenger): the messenger that will communicate between nodes.</span>
+<span class="sd">        - has_children (bool): True if this node has at least one downstream child \</span>
+<span class="sd">            in the graph — used to skip publishing when nothing would ever consume it.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">computation_node</span> <span class="p">:</span> <span class="n">Node</span><span class="p">,</span> <span class="n">messenger</span> <span class="p">:</span> <span class="n">Messenger</span><span class="p">,</span> <span class="n">has_children</span> <span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                <span class="n">ctx</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RuntimeContext</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span> <span class="o">=</span> <span class="n">messenger</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_computation_node</span> <span class="o">=</span> <span class="n">computation_node</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_has_children</span> <span class="o">=</span> <span class="n">has_children</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ctx</span> <span class="o">=</span> <span class="n">ctx</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">asyncio</span><span class="o">.</span><span class="n">AbstractEventLoop</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">computation_node</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Node</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns the current computation node</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_computation_node</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_assert_messenger</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">assert</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">,</span> <span class="s1">&#39;Task cannot run if messenger has not been set.&#39;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_ctx_kwarg</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">method</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Returns &#39;ctx&#39;/&#39;context&#39; if the method declares that parameter, else None.&#39;&#39;&#39;</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="n">params</span> <span class="o">=</span> <span class="n">inspect</span><span class="o">.</span><span class="n">signature</span><span class="p">(</span><span class="n">method</span><span class="p">)</span><span class="o">.</span><span class="n">parameters</span>
+        <span class="k">except</span> <span class="p">(</span><span class="ne">TypeError</span><span class="p">,</span> <span class="ne">ValueError</span><span class="p">):</span>
+            <span class="k">return</span> <span class="kc">None</span>
+        <span class="k">if</span> <span class="s1">&#39;ctx&#39;</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s1">&#39;ctx&#39;</span>
+        <span class="k">if</span> <span class="s1">&#39;context&#39;</span> <span class="ow">in</span> <span class="n">params</span><span class="p">:</span>
+            <span class="k">return</span> <span class="s1">&#39;context&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_call</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">method</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span> <span class="o">*</span><span class="n">args</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Invoke a node method, passing ``ctx`` only if it declares it, and awaiting</span>
+<span class="sd">        the result if the method is a coroutine (async ``def``). Async node methods</span>
+<span class="sd">        run on a task-owned event loop kept off the messenger&#39;s I/O loop, so a</span>
+<span class="sd">        node&#39;s async work never blocks broker fetches/acks.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="n">kw</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ctx_kwarg</span><span class="p">(</span><span class="n">method</span><span class="p">)</span> <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="n">result</span> <span class="o">=</span> <span class="n">method</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="p">{</span><span class="n">kw</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ctx</span><span class="p">})</span> <span class="k">if</span> <span class="n">kw</span> <span class="k">else</span> <span class="n">method</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">inspect</span><span class="o">.</span><span class="n">isawaitable</span><span class="p">(</span><span class="n">result</span><span class="p">):</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span> <span class="o">=</span> <span class="n">asyncio</span><span class="o">.</span><span class="n">new_event_loop</span><span class="p">()</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span><span class="o">.</span><span class="n">run_until_complete</span><span class="p">(</span><span class="n">result</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">result</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;Sublcass needs to implement _run&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="NodeTask.run">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.NodeTask.run">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Starts the task in an infinite loop.  If this method is called and the \</span>
+<span class="sd">            ``set_messenger()`` method has not been called yet, an assertion error \</span>
+<span class="sd">            will happen.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_assert_messenger</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_computation_node</span><span class="o">.</span><span class="n">open</span><span class="p">)</span>
+        <span class="k">try</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_run</span><span class="p">()</span>
+        <span class="k">finally</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_computation_node</span><span class="o">.</span><span class="n">close</span><span class="p">)</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_async_loop</span><span class="o">.</span><span class="n">close</span><span class="p">()</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="ProducerTask">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.ProducerTask">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProducerTask</span><span class="p">(</span><span class="n">NodeTask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    It runs forever calling the ``next()`` method in the producer node. \</span>
+<span class="sd">    At each iteration it checks for a termination signal, and if so it \</span>
+<span class="sd">    sends a termination message to its child task and breaks the infinite loop.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">producer</span> <span class="p">:</span> <span class="n">ProducerNode</span><span class="p">,</span> <span class="n">messenger</span> <span class="p">:</span> <span class="n">Messenger</span><span class="p">,</span> <span class="n">has_children</span> <span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                <span class="n">ctx</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RuntimeContext</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_producer</span> <span class="o">=</span> <span class="n">producer</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProducerTask</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">producer</span><span class="p">,</span> <span class="n">messenger</span><span class="p">,</span> <span class="n">has_children</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">previous_end_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="n">DelayedKeyboardInterrupt</span><span class="p">():</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">check_for_termination</span><span class="p">():</span>
+                        <span class="k">break</span>
+                    <span class="n">start_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                    <span class="n">a</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_producer</span><span class="o">.</span><span class="n">next</span><span class="p">)</span>
+                    <span class="n">end_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                    <span class="n">proc_time</span> <span class="o">=</span> <span class="n">end_t</span> <span class="o">-</span> <span class="n">start_t</span>
+                    <span class="n">actual_proc_time</span> <span class="o">=</span> <span class="n">end_t</span> <span class="o">-</span> <span class="n">previous_end_t</span>
+                    <span class="n">previous_end_t</span> <span class="o">=</span> <span class="n">end_t</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_children</span><span class="p">:</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">publish_message</span><span class="p">(</span>
+                            <span class="n">a</span><span class="p">,</span>
+                            <span class="p">{</span>
+                                <span class="s1">&#39;proctime&#39;</span><span class="p">:</span> <span class="n">proc_time</span><span class="p">,</span>
+                                <span class="s1">&#39;actual_proctime&#39;</span><span class="p">:</span> <span class="n">actual_proc_time</span>
+                            <span class="p">}</span>
+                        <span class="p">)</span>
+            <span class="k">except</span> <span class="ne">StopIteration</span><span class="p">:</span>
+                <span class="k">break</span>
+            <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
+                <span class="n">logger</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s1">&#39;Interrupt signal received. Sending signal to stop flow.&#39;</span><span class="p">)</span>
+                <span class="k">break</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_children</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">publish_stop_signal</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ProcessorTask">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.ProcessorTask">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ProcessorTask</span><span class="p">(</span><span class="n">NodeTask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    It runs forever, first blocking until it receives a message from every parent \</span>
+<span class="sd">    node through the messenger. Then it passes the merged inputs to the processor \</span>
+<span class="sd">    node and, when it gets back the output, uses the messenger to publish it down \</span>
+<span class="sd">    the flow. If every parent has signaled termination, it passes termination \</span>
+<span class="sd">    message down the flow and breaks from infinite loop.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">processor</span> <span class="p">:</span> <span class="n">ProcessorNode</span><span class="p">,</span> <span class="n">messenger</span> <span class="p">:</span> <span class="n">Messenger</span><span class="p">,</span> <span class="n">has_children</span> <span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                <span class="n">parent_names</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">ctx</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RuntimeContext</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        - Arguments:</span>
+<span class="sd">            - parent_names ([str]): names of this node&#39;s real parents, in the exact \</span>
+<span class="sd">                order ``process()`` expects its positional arguments. Passed \</span>
+<span class="sd">                explicitly rather than read off ``processor.parents`` because a \</span>
+<span class="sd">                worker process only reconstructs the one node it&#39;s responsible for \</span>
+<span class="sd">                (via ``get_params()``) — it never has the live parent ``Node`` \</span>
+<span class="sd">                objects the way the single-process local graph-building step does.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_processor</span> <span class="o">=</span> <span class="n">processor</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parent_names</span><span class="p">)</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ProcessorTask</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">processor</span><span class="p">,</span> <span class="n">messenger</span><span class="p">,</span> <span class="n">has_children</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+
+    <span class="nd">@property</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">device_type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">device_type</span>
+
+<div class="viewcode-block" id="ProcessorTask.change_device">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.ProcessorTask.change_device">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">change_device</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">change_device</span><span class="p">(</span><span class="n">device_type</span><span class="p">)</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">previous_end_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="n">DelayedKeyboardInterrupt</span><span class="p">():</span>
+                    <span class="n">inputs_d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">receive_message</span><span class="p">()</span>
+                    <span class="c1"># Order matters: process(*inputs) is positional, so entries must</span>
+                    <span class="c1"># follow the node&#39;s own declared parent order, not dict iteration</span>
+                    <span class="c1"># order (the messenger may assemble the join in arrival order).</span>
+                    <span class="n">entries</span> <span class="o">=</span> <span class="p">[</span><span class="n">inputs_d</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;is_stop_signal&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span><span class="p">):</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_children</span><span class="p">:</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">publish_stop_signal</span><span class="p">()</span>
+                        <span class="k">break</span>
+
+                    <span class="c1"># Process (and publish) then ack. If process/publish raises, the</span>
+                    <span class="c1"># inputs are failed (redelivered for BATCH up to the retry limit,</span>
+                    <span class="c1"># then dead-lettered; dropped for REALTIME) and the worker keeps</span>
+                    <span class="c1"># running — a poison message never crashes the pod.</span>
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="n">inputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;message&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span><span class="p">]</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_has_children</span><span class="p">:</span>
+                            <span class="n">start_2_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                            <span class="n">output</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">process</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">)</span>
+                            <span class="n">end_t</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+                            <span class="n">proc_time</span> <span class="o">=</span> <span class="n">end_t</span> <span class="o">-</span> <span class="n">start_2_t</span>
+                            <span class="n">actual_proc_time</span> <span class="o">=</span> <span class="n">end_t</span> <span class="o">-</span> <span class="n">previous_end_t</span>
+                            <span class="n">previous_end_t</span> <span class="o">=</span> <span class="n">end_t</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">publish_message</span><span class="p">(</span>
+                                <span class="n">output</span><span class="p">,</span>
+                                <span class="p">{</span>
+                                    <span class="s1">&#39;proctime&#39;</span><span class="p">:</span> <span class="n">proc_time</span><span class="p">,</span>
+                                    <span class="s1">&#39;actual_proctime&#39;</span><span class="p">:</span> <span class="n">actual_proc_time</span>
+                                <span class="p">}</span>
+                            <span class="p">)</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="o">.</span><span class="n">process</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">ack_inputs</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_processor</span><span class="si">}</span><span class="s1"> failed to process a message: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">fail_inputs</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
+                <span class="k">continue</span></div>
+
+
+<div class="viewcode-block" id="ConsumerTask">
+<a class="viewcode-back" href="../../../apidocs/videoflow.core.html#videoflow.core.task.ConsumerTask">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ConsumerTask</span><span class="p">(</span><span class="n">NodeTask</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    It runs forever, blocking until it receives a message from every parent node \</span>
+<span class="sd">    through the messenger. It consumes the message and does not publish anything \</span>
+<span class="sd">    back down the pipe — consumers are the leaves of the graph.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">consumer</span> <span class="p">:</span> <span class="n">ConsumerNode</span><span class="p">,</span> <span class="n">messenger</span> <span class="p">:</span> <span class="n">Messenger</span><span class="p">,</span> <span class="n">has_children</span> <span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+                <span class="n">parent_names</span> <span class="p">:</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="n">ctx</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">RuntimeContext</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                <span class="n">idempotency_store</span> <span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="s2">&quot;IdempotencyStore&quot;</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_consumer</span> <span class="o">=</span> <span class="n">consumer</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">parent_names</span><span class="p">)</span>
+        <span class="c1"># Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_idem_store</span> <span class="o">=</span> <span class="n">idempotency_store</span> <span class="k">if</span> <span class="n">consumer</span><span class="o">.</span><span class="n">idempotent</span> <span class="k">else</span> <span class="kc">None</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ConsumerTask</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">consumer</span><span class="p">,</span> <span class="n">messenger</span><span class="p">,</span> <span class="n">has_children</span><span class="p">,</span> <span class="n">ctx</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_run</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">while</span> <span class="kc">True</span><span class="p">:</span>
+            <span class="k">try</span><span class="p">:</span>
+                <span class="k">with</span> <span class="n">DelayedKeyboardInterrupt</span><span class="p">():</span>
+                    <span class="n">inputs_d</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">receive_message</span><span class="p">()</span>
+                    <span class="n">entries</span> <span class="o">=</span> <span class="p">[</span><span class="n">inputs_d</span><span class="p">[</span><span class="n">name</span><span class="p">]</span> <span class="k">for</span> <span class="n">name</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_parent_names</span><span class="p">]</span>
+                    <span class="k">if</span> <span class="nb">any</span><span class="p">(</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;is_stop_signal&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span><span class="p">):</span>
+                        <span class="k">break</span>
+
+                    <span class="k">try</span><span class="p">:</span>
+                        <span class="c1"># Idempotent sink: if we&#39;ve already applied this exact input&#39;s</span>
+                        <span class="c1"># effects (a redelivery/restart), skip re-consuming.</span>
+                        <span class="n">store</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_idem_store</span>
+                        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">last_input_key</span><span class="p">()</span> <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="kc">None</span>
+                        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">store</span><span class="o">.</span><span class="n">seen</span><span class="p">(</span><span class="n">key</span><span class="p">):</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">ack_inputs</span><span class="p">()</span>
+                            <span class="k">continue</span>
+
+                        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_consumer</span><span class="o">.</span><span class="n">metadata</span><span class="p">:</span>
+                            <span class="n">inputs</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;message&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span><span class="p">]</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_consumer</span><span class="o">.</span><span class="n">consume</span><span class="p">,</span> <span class="o">*</span><span class="n">inputs</span><span class="p">)</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">metadatas</span> <span class="o">=</span> <span class="p">[</span><span class="n">e</span><span class="p">[</span><span class="s1">&#39;metadata&#39;</span><span class="p">]</span> <span class="k">for</span> <span class="n">e</span> <span class="ow">in</span> <span class="n">entries</span><span class="p">]</span>
+                            <span class="bp">self</span><span class="o">.</span><span class="n">_call</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_consumer</span><span class="o">.</span><span class="n">consume</span><span class="p">,</span> <span class="o">*</span><span class="n">metadatas</span><span class="p">)</span>
+
+                        <span class="k">if</span> <span class="n">store</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">key</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                            <span class="n">store</span><span class="o">.</span><span class="n">mark</span><span class="p">(</span><span class="n">key</span><span class="p">)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">ack_inputs</span><span class="p">()</span>
+                    <span class="k">except</span> <span class="ne">Exception</span> <span class="k">as</span> <span class="n">e</span><span class="p">:</span>
+                        <span class="n">logger</span><span class="o">.</span><span class="n">exception</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_consumer</span><span class="si">}</span><span class="s1"> failed to consume a message: </span><span class="si">{</span><span class="n">e</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_messenger</span><span class="o">.</span><span class="n">fail_inputs</span><span class="p">(</span><span class="n">e</span><span class="p">)</span>
+            <span class="k">except</span> <span class="ne">KeyboardInterrupt</span><span class="p">:</span>
+                <span class="k">continue</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

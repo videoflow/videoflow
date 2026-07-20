@@ -1,0 +1,311 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Distributed execution &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="Deploying to Kubernetes" href="deploying-to-kubernetes.html" />
+    <link rel="prev" title="Common flow patterns" href="../user-documentation/common-patterns.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul class="current">
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Distributed execution</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#the-worker-model">The worker model</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#run-scoping-and-provisioning">Run scoping and provisioning</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#delivery-guarantees">Delivery guarantees</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#execution-engines">Execution engines</a><ul>
+<li class="toctree-l3"><a class="reference internal" href="#localprocessengine"><code class="docutils literal notranslate"><span class="pre">LocalProcessEngine</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#videoflow-run-local"><code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">run-local</span></code></a></li>
+<li class="toctree-l3"><a class="reference internal" href="#kubernetesexecutionengine"><code class="docutils literal notranslate"><span class="pre">KubernetesExecutionEngine</span></code></a></li>
+</ul>
+</li>
+<li class="toctree-l2"><a class="reference internal" href="#stopping-a-flow">Stopping a flow</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#large-payloads">Large payloads</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Distributed execution</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/distributed/distributed-execution.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="distributed-execution">
+<h1>Distributed execution<a class="headerlink" href="#distributed-execution" title="Link to this heading"></a></h1>
+<p>Videoflow runs a flow as a set of <strong>independent workers</strong> that communicate over a
+NATS JetStream broker. Every node becomes one worker; the workers do not share
+memory and can run on different machines. What differs between “local” and
+“Kubernetes” execution is only <strong>how the workers are launched</strong> — the worker code
+is identical.</p>
+<div class="highlight-text notranslate"><div class="highlight"><pre><span></span>┌──────────┐      ┌───────────┐      ┌───────────┐      ┌──────────┐
+│ producer │─────▶│ processor │─────▶│ processor │─────▶│ consumer │
+└──────────┘      └───────────┘      └───────────┘      └──────────┘
+     │                  │                  │                  │
+     └──────────────────┴───── NATS JetStream ───────────────┘
+                     (one stream per node)
+</pre></div>
+</div>
+<section id="the-worker-model">
+<h2>The worker model<a class="headerlink" href="#the-worker-model" title="Link to this heading"></a></h2>
+<p>Each node publishes its output to its own broker subject. Each node subscribes to
+the subjects of its <strong>real parents</strong> and reassembles its inputs before calling
+<code class="docutils literal notranslate"><span class="pre">process()</span></code> / <code class="docutils literal notranslate"><span class="pre">consume()</span></code>. This per-edge routing is what makes arbitrary DAGs —
+multi-parent joins, multiple producers, fan-out — work without any special cases.</p>
+<p>A worker is given only what it needs to run one node: the node’s class, its
+JSON-serializable constructor parameters, its parents’ names, the broker URL, the
+flow id and the run id. It reconstructs the node, connects to the broker, and runs
+the node’s loop. This is why constructor arguments must be serializable and heavy
+setup belongs in <code class="docutils literal notranslate"><span class="pre">open()</span></code> (see <a class="reference internal" href="../user-documentation/nodes-and-flows.html"><span class="doc">Nodes and Flows</span></a>).</p>
+<p>The optional <code class="docutils literal notranslate"><span class="pre">ctx</span></code> argument that a node method can declare is a <code class="docutils literal notranslate"><span class="pre">RuntimeContext</span></code>
+carrying exactly this identity — <code class="docutils literal notranslate"><span class="pre">ctx.flow_id</span></code> / <code class="docutils literal notranslate"><span class="pre">ctx.run_id</span></code> /
+<code class="docutils literal notranslate"><span class="pre">ctx.node_name</span></code> / <code class="docutils literal notranslate"><span class="pre">ctx.replica_id</span></code> / <code class="docutils literal notranslate"><span class="pre">ctx.logger</span></code> — plus
+<code class="docutils literal notranslate"><span class="pre">ctx.set_partition_key(...)</span></code>.</p>
+</section>
+<section id="run-scoping-and-provisioning">
+<h2>Run scoping and provisioning<a class="headerlink" href="#run-scoping-and-provisioning" title="Link to this heading"></a></h2>
+<p>Every <code class="docutils literal notranslate"><span class="pre">flow.run()</span></code> (or <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code>) mints a <strong>run id</strong>. All of a run’s
+broker streams, subjects and durable consumers are named by <code class="docutils literal notranslate"><span class="pre">flow_id</span></code> <strong>and</strong>
+<code class="docutils literal notranslate"><span class="pre">run_id</span></code>, so re-running or redeploying never collides with a previous run’s
+streams. Before any worker starts, the flow’s streams and consumers are
+<strong>provisioned</strong> up front (the local engine does this inline; on Kubernetes a
+one-shot init Job does) — this is required for BATCH, whose interest-retention
+streams would drop a message published before its consumer exists.</p>
+</section>
+<section id="delivery-guarantees">
+<h2>Delivery guarantees<a class="headerlink" href="#delivery-guarantees" title="Link to this heading"></a></h2>
+<p>Workers <strong>acknowledge a message only after processing it</strong> (and, for a processor,
+after publishing its output). A crash in between therefore redelivers the message
+rather than losing it. Each message carries a content-derived id, so the re-run’s
+republished output is de-duplicated by the broker instead of double-emitted. In
+BATCH mode a message that keeps failing is retried and then dead-lettered to a
+per-run DLQ stream; in REALTIME mode a failed message is dropped (freshness wins).
+See <a class="reference internal" href="../user-documentation/batch-versus-realtime-mode.html"><span class="doc">Batch versus realtime mode</span></a>.</p>
+</section>
+<section id="execution-engines">
+<h2>Execution engines<a class="headerlink" href="#execution-engines" title="Link to this heading"></a></h2>
+<p>An <strong>execution engine</strong> is the object you pass to <code class="docutils literal notranslate"><span class="pre">flow.run(...)</span></code>. It turns the
+compiled graph into running workers.</p>
+<section id="localprocessengine">
+<h3><code class="docutils literal notranslate"><span class="pre">LocalProcessEngine</span></code><a class="headerlink" href="#localprocessengine" title="Link to this heading"></a></h3>
+<p>Runs the flow on your machine, one OS subprocess per node (per replica, for
+parallel processors), all connected to a NATS server. This is the fast path for
+development and testing; it exercises the exact same worker code Kubernetes uses.</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="kn">from</span><span class="w"> </span><span class="nn">videoflow.engines.local</span><span class="w"> </span><span class="kn">import</span> <span class="n">LocalProcessEngine</span>
+
+<span class="n">flow</span> <span class="o">=</span> <span class="n">build_flow</span><span class="p">()</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">run</span><span class="p">(</span><span class="n">LocalProcessEngine</span><span class="p">(</span><span class="n">nats_url</span><span class="o">=</span><span class="s1">&#39;nats://localhost:4222&#39;</span><span class="p">))</span>
+<span class="n">flow</span><span class="o">.</span><span class="n">join</span><span class="p">()</span>
+</pre></div>
+</div>
+<p>Used as a library like this, the one prerequisite is a running broker:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">docker</span> <span class="n">compose</span> <span class="n">up</span> <span class="o">-</span><span class="n">d</span>       <span class="c1"># NATS on :4222 (and Redis for large payloads)</span>
+<span class="c1"># or</span>
+<span class="n">nats</span><span class="o">-</span><span class="n">server</span> <span class="o">-</span><span class="n">js</span>
+</pre></div>
+</div>
+<p>Because each worker is a separate process that reconstructs its node by importing
+the node’s class, node classes must live in an importable module. The engine
+re-exports this process’s own <code class="docutils literal notranslate"><span class="pre">sys.path</span></code> additions as each worker’s
+<code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code>, so a class defined next to your graph is importable in the worker
+without any manual environment handling. Two knobs control it: <code class="docutils literal notranslate"><span class="pre">python_path</span></code>
+(extra directories to prepend) and <code class="docutils literal notranslate"><span class="pre">inherit_python_path</span></code> (default <code class="docutils literal notranslate"><span class="pre">True</span></code>; set
+<code class="docutils literal notranslate"><span class="pre">False</span></code> for a hermetic child environment). <code class="docutils literal notranslate"><span class="pre">PYTHONPATH</span></code> is deliberately not
+passed to remote components launched with <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span></code> — those bring their own
+image.</p>
+<p>After <code class="docutils literal notranslate"><span class="pre">flow.join()</span></code> returns, <code class="docutils literal notranslate"><span class="pre">engine.failures()</span></code> lists
+<code class="docutils literal notranslate"><span class="pre">(node_name,</span> <span class="pre">replica_idx,</span> <span class="pre">returncode)</span></code> for every worker that exited non-zero and
+<code class="docutils literal notranslate"><span class="pre">engine.report_failures()</span></code> prints them; <code class="docutils literal notranslate"><span class="pre">engine.wait_for_completion()</span></code> returns
+the failed node names, the same contract <code class="docutils literal notranslate"><span class="pre">KubernetesExecutionEngine</span></code> offers.
+Without checking one of these, a worker that died on startup is indistinguishable
+from a clean run.</p>
+</section>
+<section id="videoflow-run-local">
+<h3><code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">run-local</span></code><a class="headerlink" href="#videoflow-run-local" title="Link to this heading"></a></h3>
+<p>The CLI runs a graph module without writing a <code class="docutils literal notranslate"><span class="pre">__main__</span></code> block, and is the local
+twin of <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code> — no broker setup required:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">videoflow</span> <span class="n">run</span><span class="o">-</span><span class="n">local</span> <span class="n">my_flow</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+<p>It generates the solution config (interactive Q&amp;A over a <code class="docutils literal notranslate"><span class="pre">config.template.yaml</span></code>
+when the graph ships one and no <code class="docutils literal notranslate"><span class="pre">config.yaml</span></code> exists), runs the solution’s
+<code class="docutils literal notranslate"><span class="pre">prepare.py</span></code> hook on this host, starts a dev NATS + Redis in Docker <strong>when
+nothing is already listening</strong>, runs the flow, reports any node that exited
+non-zero (exiting non-zero itself), and stops only the containers it started.</p>
+<p>A broker you started yourself — <code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">compose</span> <span class="pre">up</span> <span class="pre">-d</span></code>, <code class="docutils literal notranslate"><span class="pre">nats-server</span> <span class="pre">-js</span></code>, or a
+previous <code class="docutils literal notranslate"><span class="pre">--keep-infra</span></code> run — is detected, reused, and never torn down.</p>
+<p>Overrides: <code class="docutils literal notranslate"><span class="pre">--nats</span></code> / <code class="docutils literal notranslate"><span class="pre">--blob-redis-url</span></code> (bring your own broker; also read from
+<code class="docutils literal notranslate"><span class="pre">$VIDEOFLOW_BLOB_REDIS_URL</span></code>), <code class="docutils literal notranslate"><span class="pre">--config</span></code> / <code class="docutils literal notranslate"><span class="pre">--non-interactive</span></code>,
+<code class="docutils literal notranslate"><span class="pre">--no-prepare</span></code>, <code class="docutils literal notranslate"><span class="pre">--no-infra</span></code> (never start containers), <code class="docutils literal notranslate"><span class="pre">--no-redis</span></code>,
+<code class="docutils literal notranslate"><span class="pre">--keep-infra</span></code> (leave the containers up for faster reruns), <code class="docutils literal notranslate"><span class="pre">--run-id</span></code>.</p>
+</section>
+<section id="kubernetesexecutionengine">
+<h3><code class="docutils literal notranslate"><span class="pre">KubernetesExecutionEngine</span></code><a class="headerlink" href="#kubernetesexecutionengine" title="Link to this heading"></a></h3>
+<p>Renders Kubernetes manifests for the flow and applies them, one Deployment (or Job)
+plus a ConfigMap per node. In practice you will usually use the <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code>
+CLI, which is documented on the next page. See
+<a class="reference internal" href="deploying-to-kubernetes.html"><span class="doc">Deploying to Kubernetes</span></a>.</p>
+</section>
+</section>
+<section id="stopping-a-flow">
+<h2>Stopping a flow<a class="headerlink" href="#stopping-a-flow" title="Link to this heading"></a></h2>
+<p>A flow stops when its producers are exhausted, or when you call <code class="docutils literal notranslate"><span class="pre">flow.stop()</span></code>.
+When a producer finishes it emits an <strong>end-of-stream</strong> marker; this is
+<strong>replica-safe</strong> — every replica of a downstream node observes it and keeps
+draining its input until the broker reports nothing pending before it terminates, so
+no in-flight data is lost when a node has several replicas. <code class="docutils literal notranslate"><span class="pre">flow.stop()</span></code> instead
+publishes on the broker’s <strong>control channel</strong>, to which every worker is subscribed,
+for an immediate flow-wide stop. Either way, each node’s <code class="docutils literal notranslate"><span class="pre">close()</span></code> runs as it
+exits.</p>
+</section>
+<section id="large-payloads">
+<h2>Large payloads<a class="headerlink" href="#large-payloads" title="Link to this heading"></a></h2>
+<p>Uncompressed video frames can exceed a broker’s per-message size limit. Videoflow
+serializes NumPy arrays efficiently and, for payloads above a configurable
+threshold, offloads the bytes to an external blob store (Redis by default) and sends
+only a small reference over the broker. This is transparent to your node code; you
+enable it by pointing workers at a Redis instance. Both <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code> and
+<code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">run-local</span></code> provision one automatically (in-cluster and in Docker
+respectively) unless you pass <code class="docutils literal notranslate"><span class="pre">--blob-redis-url</span></code>; the <code class="docutils literal notranslate"><span class="pre">docker-compose.yml</span></code>
+also includes one, and <code class="docutils literal notranslate"><span class="pre">run-local</span></code> additionally honors
+<code class="docutils literal notranslate"><span class="pre">$VIDEOFLOW_BLOB_REDIS_URL</span></code>.</p>
+<p>Offloaded payloads are reclaimed automatically: each blob carries a reference count
+of its downstream readers, and the last reader to acknowledge its message deletes
+the blob — so the store’s steady-state size tracks the in-flight backlog, not the
+flow’s throughput. A TTL remains on every key as the backstop for messages that are
+never acknowledged (a realtime flow evicting stale frames, a crashed worker, a
+dead-lettered message): one hour for realtime flows and 24 hours for batch flows,
+whose backlog can legitimately delay a payload’s first read well past an hour.
+Override it with <code class="docutils literal notranslate"><span class="pre">--blob-ttl-seconds</span></code> on <code class="docutils literal notranslate"><span class="pre">deploy</span></code>/<code class="docutils literal notranslate"><span class="pre">run-local</span></code> if your batch
+flows drain slower than that. The provisioned Redis runs with <code class="docutils literal notranslate"><span class="pre">maxmemory</span> <span class="pre">4gb</span></code> and
+<code class="docutils literal notranslate"><span class="pre">volatile-lru</span></code> eviction, so under memory pressure the oldest payloads are evicted
+rather than the server growing without bound.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="../user-documentation/common-patterns.html" class="btn btn-neutral float-left" title="Common flow patterns" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="deploying-to-kubernetes.html" class="btn btn-neutral float-right" title="Deploying to Kubernetes" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

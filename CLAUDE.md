@@ -42,6 +42,7 @@ uv run mypy                                    # type check (files = ["videoflow
 uv run ruff check --fix .                      # lint + import sort
 docker compose up -d                           # dev NATS (:4222) + Redis (:6379)
 ./scripts/gen-proto.sh                         # regenerate videoflow/v1/ from spec/proto/
+./scripts/build-docs.sh                        # Sphinx docs/source/ -> docs/public/ (published HTML)
 ```
 
 First-time setup also needs **both** pre-commit hooks — the pytest hook is on pre-push, so
@@ -244,7 +245,9 @@ A change isn't done until the docs describing it are updated **in the same commi
 finishing, check each of these and update the ones your change invalidates:
 
 - `README.md` — behaviour, CLI flags, installation, or extras changed.
-- `docs/source/` — a public API or user-facing concept changed.
+- `docs/source/` — a public API or user-facing concept changed. The published HTML in
+  `docs/public/` is committed alongside it; a pre-commit hook rebuilds and stages it whenever
+  `docs/source/` changes, so don't edit `docs/public/` by hand.
 - `spec/PROTOCOL.md` + `spec/vectors/` — the wire format or routing changed (also needs an RFC).
 - `CLAUDE.md` and `.claude/docs/*.md` — conventions, layout, or commands changed.
 - `examples/` — an example is now wrong or misleading.

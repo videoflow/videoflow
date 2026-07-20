@@ -1,0 +1,468 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.producers.video &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.producers.video</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.producers.video</h1><div class="highlight"><pre>
+<span></span><span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">cv2</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.context</span><span class="w"> </span><span class="kn">import</span> <span class="n">RuntimeContext</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.node</span><span class="w"> </span><span class="kn">import</span> <span class="n">ProducerNode</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="vm">__name__</span><span class="p">)</span>
+
+<span class="c1">#: Timestamp sources for ``VideostreamReader``: ``clock`` stamps each frame with</span>
+<span class="c1">#: the wall-clock time it was read (live cameras/streams on NTP/PTP-disciplined</span>
+<span class="c1">#: hosts); ``position`` stamps it with the frame&#39;s position on the video&#39;s own</span>
+<span class="c1">#: timeline (``CAP_PROP_POS_MSEC`` — synchronized recordings played back together).</span>
+<span class="n">TIMESTAMP_CLOCK</span> <span class="o">=</span> <span class="s1">&#39;clock&#39;</span>
+<span class="n">TIMESTAMP_POSITION</span> <span class="o">=</span> <span class="s1">&#39;position&#39;</span>
+<span class="n">TIMESTAMP_SOURCES</span> <span class="o">=</span> <span class="p">(</span><span class="n">TIMESTAMP_CLOCK</span><span class="p">,</span> <span class="n">TIMESTAMP_POSITION</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ImageProducer">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageProducer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ImageProducer</span><span class="p">(</span><span class="n">ProducerNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Reads a single image and produces it</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">image_path</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_image_path</span> <span class="o">=</span> <span class="n">image_path</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_image_returned</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ImageProducer</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ImageProducer.open">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageProducer.open">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="ImageProducer.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageProducer.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">pass</span></div>
+
+
+<div class="viewcode-block" id="ImageProducer.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageProducer.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Returns image in RGB format.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_image_returned</span><span class="p">:</span>
+            <span class="n">im</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">imread</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_image_path</span><span class="p">)</span>
+            <span class="k">if</span> <span class="n">im</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">()</span>
+            <span class="n">im</span> <span class="o">=</span> <span class="n">im</span><span class="p">[</span><span class="o">...</span><span class="p">,::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_image_returned</span> <span class="o">=</span> <span class="kc">True</span>
+            <span class="k">return</span> <span class="n">im</span>
+        <span class="k">else</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">()</span></div>
+</div>
+
+
+<div class="viewcode-block" id="ImageFolderReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageFolderReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">ImageFolderReader</span><span class="p">(</span><span class="n">ProducerNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Reads from a folder of images and returns them one by one.</span>
+<span class="sd">    Passes through images in alphabetical order.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">ImageFolderReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="ImageFolderReader.open">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageFolderReader.open">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ImageFolderReader.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageFolderReader.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="ImageFolderReader.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.ImageFolderReader.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+</div>
+
+
+<div class="viewcode-block" id="VideoFolderReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFolderReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">VideoFolderReader</span><span class="p">(</span><span class="n">ProducerNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Reads videos from a folder of videos and returns the frames of</span>
+<span class="sd">    the videos one by one.</span>
+<span class="sd">    Passes through videos in alphabetical order.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">VideoFolderReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="VideoFolderReader.open">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFolderReader.open">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="VideoFolderReader.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFolderReader.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="VideoFolderReader.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFolderReader.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">()</span></div>
+</div>
+
+
+<div class="viewcode-block" id="VideostreamReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideostreamReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">VideostreamReader</span><span class="p">(</span><span class="n">ProducerNode</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Reader of video streams, using ``cv2``</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - url_or_deviceid: (int or str) The url, filesystem path or id of the \</span>
+<span class="sd">            video stream.</span>
+<span class="sd">        - swap_channels: if True, it will change channels from BGR to RGB</span>
+<span class="sd">        - nb_frames: (int) The number of frames when to stop. -1 never stops</span>
+<span class="sd">        - nb_retries: (int) If there are errors reading the stream, how \</span>
+<span class="sd">            many times to retry.</span>
+<span class="sd">        - timestamp_source: (str) how each frame&#39;s event time is stamped (see \</span>
+<span class="sd">            ``TIMESTAMP_SOURCES``): ``clock`` (default — wall clock at read) or \</span>
+<span class="sd">            ``position`` (the video&#39;s own timeline). The stamp is attached to the \</span>
+<span class="sd">            published message via ``ctx.set_event_timestamp`` so time-aligned \</span>
+<span class="sd">            joins downstream can synchronize this stream with others.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url_or_deviceid</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="nb">str</span><span class="p">,</span> <span class="n">swap_channels</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+                <span class="n">nb_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">is_finite</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                <span class="n">timestamp_source</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">TIMESTAMP_CLOCK</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">timestamp_source</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">TIMESTAMP_SOURCES</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;timestamp_source must be one of </span><span class="si">{</span><span class="n">TIMESTAMP_SOURCES</span><span class="si">}</span><span class="s1">, &#39;</span>
+                            <span class="sa">f</span><span class="s1">&#39;got </span><span class="si">{</span><span class="n">timestamp_source</span><span class="si">!r}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span> <span class="o">=</span> <span class="n">url_or_deviceid</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="p">:</span> <span class="n">cv2</span><span class="o">.</span><span class="n">VideoCapture</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>   <span class="c1"># opened lazily in open()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_swap_channels</span> <span class="o">=</span> <span class="n">swap_channels</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nb_frames</span> <span class="o">=</span> <span class="n">nb_frames</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_frame_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_nb_retries</span> <span class="o">=</span> <span class="n">nb_retries</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_retries_count</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_timestamp_source</span> <span class="o">=</span> <span class="n">timestamp_source</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">VideostreamReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">is_finite</span> <span class="o">=</span> <span class="n">is_finite</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="VideostreamReader.open">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideostreamReader.open">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">open</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Opens the video stream</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">VideoCapture</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="VideostreamReader.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideostreamReader.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Releases the video stream object</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="ow">and</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">isOpened</span><span class="p">():</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">release</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="VideostreamReader.next">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideostreamReader.next">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">next</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ctx</span> <span class="p">:</span> <span class="n">RuntimeContext</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">]:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        - Returns:</span>
+<span class="sd">            - frame no / index  : integer value of the frame read</span>
+<span class="sd">            - frame: np.ndarray of shape (h, w, 3)</span>
+
+<span class="sd">        When run by a task (which passes the runtime ``ctx``), each frame&#39;s event</span>
+<span class="sd">        time is stamped on the published message per ``timestamp_source``.</span>
+
+<span class="sd">        - Raises:</span>
+<span class="sd">            - StopIteration: after it finishes reading the videofile \</span>
+<span class="sd">                or when it reaches the specified number of frames to \</span>
+<span class="sd">                process, or if it reaches the number of retries wihout \</span>
+<span class="sd">                success.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+                <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1">.next() called before open(). The capture object is &#39;</span>
+                <span class="s1">&#39;created in open(), which the task runs in the worker — call open() first.&#39;</span><span class="p">)</span>
+
+        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_frame_count</span> <span class="o">==</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_frames</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">()</span>
+
+        <span class="k">while</span> <span class="bp">self</span><span class="o">.</span><span class="n">_retries_count</span> <span class="o">&lt;=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_retries</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">isOpened</span><span class="p">():</span>
+                <span class="n">success</span><span class="p">,</span> <span class="n">frame</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_frame_count</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">if</span> <span class="ow">not</span> <span class="n">success</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">isOpened</span><span class="p">():</span>
+                        <span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">release</span><span class="p">()</span>
+                    <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">VideoCapture</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">)</span>
+                <span class="k">else</span><span class="p">:</span>
+                    <span class="k">if</span> <span class="n">ctx</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+                        <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_timestamp_source</span> <span class="o">==</span> <span class="n">TIMESTAMP_POSITION</span><span class="p">:</span>
+                            <span class="n">ctx</span><span class="o">.</span><span class="n">set_event_timestamp</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_video</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">cv2</span><span class="o">.</span><span class="n">CAP_PROP_POS_MSEC</span><span class="p">)</span> <span class="o">/</span> <span class="mf">1000.0</span><span class="p">)</span>
+                        <span class="k">else</span><span class="p">:</span>
+                            <span class="n">ctx</span><span class="o">.</span><span class="n">set_event_timestamp</span><span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">())</span>
+                    <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">_swap_channels</span><span class="p">:</span>
+                        <span class="n">frame</span> <span class="o">=</span> <span class="n">frame</span><span class="p">[</span><span class="o">...</span><span class="p">,::</span><span class="o">-</span><span class="mi">1</span><span class="p">]</span>
+                    <span class="k">return</span> <span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_frame_count</span><span class="p">,</span> <span class="n">frame</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_video</span> <span class="o">=</span> <span class="n">cv2</span><span class="o">.</span><span class="n">VideoCapture</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_retries_count</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">logger</span><span class="o">.</span><span class="n">error</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Error reading video, increasing retries count to </span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">_retries_count</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+        <span class="k">raise</span> <span class="ne">StopIteration</span><span class="p">()</span></div>
+</div>
+
+
+<div class="viewcode-block" id="VideoUrlReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoUrlReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">VideoUrlReader</span><span class="p">(</span><span class="n">VideostreamReader</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Opens a video capture object and returns subsequent frames</span>
+<span class="sd">    from the video url each time ``next`` is called.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - device_id: id of the video device connected to the computer</span>
+<span class="sd">        - nb_frames: number of frames to process. -1 means all of them</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">nb_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">is_finite</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">VideoUrlReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">url</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="o">=</span> <span class="n">nb_frames</span><span class="p">,</span> <span class="n">nb_retries</span> <span class="o">=</span> <span class="n">nb_retries</span><span class="p">,</span>
+                                            <span class="n">is_finite</span> <span class="o">=</span> <span class="n">is_finite</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="VideoUrlReader.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoUrlReader.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="c1"># Overridden because this class&#39;s own __init__ names its first argument</span>
+        <span class="c1"># `url`, while the base class stores it as `self._url_or_deviceid` — the</span>
+        <span class="c1"># default MRO-walking get_params() can&#39;t bridge that rename automatically.</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;url&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">,</span>
+            <span class="s1">&#39;nb_frames&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_frames</span><span class="p">,</span>
+            <span class="s1">&#39;nb_retries&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_retries</span><span class="p">,</span>
+            <span class="s1">&#39;is_finite&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_is_finite</span><span class="p">,</span>
+            <span class="s1">&#39;swap_channels&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_swap_channels</span><span class="p">,</span>
+            <span class="s1">&#39;timestamp_source&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_timestamp_source</span><span class="p">,</span>
+            <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span><span class="p">,</span>
+        <span class="p">}</span></div>
+</div>
+
+
+<div class="viewcode-block" id="VideoDeviceReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoDeviceReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">VideoDeviceReader</span><span class="p">(</span><span class="n">VideostreamReader</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Opens a video capture object and returns subsequent frames</span>
+<span class="sd">    from the video device each time ``next`` is called.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - device_id: id of the video device connected to the computer</span>
+<span class="sd">        - nb_frames: number of frames to process. -1 means all of them</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">device_id</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span> <span class="n">nb_retries</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">is_finite</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">VideoDeviceReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">device_id</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="o">=</span> <span class="n">nb_frames</span><span class="p">,</span> <span class="n">nb_retries</span> <span class="o">=</span> <span class="n">nb_retries</span><span class="p">,</span>
+                                                <span class="n">is_finite</span> <span class="o">=</span> <span class="n">is_finite</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="VideoDeviceReader.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoDeviceReader.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;device_id&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">,</span>
+            <span class="s1">&#39;nb_frames&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_frames</span><span class="p">,</span>
+            <span class="s1">&#39;nb_retries&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_retries</span><span class="p">,</span>
+            <span class="s1">&#39;is_finite&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_is_finite</span><span class="p">,</span>
+            <span class="s1">&#39;swap_channels&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_swap_channels</span><span class="p">,</span>
+            <span class="s1">&#39;timestamp_source&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_timestamp_source</span><span class="p">,</span>
+            <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span><span class="p">,</span>
+        <span class="p">}</span></div>
+</div>
+
+
+
+<div class="viewcode-block" id="VideoFileReader">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFileReader">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">VideoFileReader</span><span class="p">(</span><span class="n">VideostreamReader</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Opens a video capture object and returns subsequent frames</span>
+<span class="sd">    from the video file each time ``next`` is called.</span>
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - video_file: path to video file</span>
+<span class="sd">        - swap_channels: If true, swaps from BGR to RGB</span>
+<span class="sd">        - nb_frames: number of frames to process. -1 means all of them</span>
+<span class="sd">        - timestamp_source: defaults to ``position`` (the file&#39;s own timeline), \</span>
+<span class="sd">            which is what synchronized recordings replayed together should align on.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">video_file</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">swap_channels</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="o">-</span><span class="mi">1</span><span class="p">,</span>
+                <span class="n">timestamp_source</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">TIMESTAMP_POSITION</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="nb">super</span><span class="p">(</span><span class="n">VideoFileReader</span><span class="p">,</span> <span class="bp">self</span><span class="p">)</span><span class="o">.</span><span class="fm">__init__</span><span class="p">(</span><span class="n">video_file</span><span class="p">,</span> <span class="n">swap_channels</span> <span class="o">=</span> <span class="n">swap_channels</span><span class="p">,</span> <span class="n">nb_frames</span> <span class="o">=</span> <span class="n">nb_frames</span><span class="p">,</span>
+                                            <span class="n">nb_retries</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span> <span class="n">is_finite</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+                                            <span class="n">timestamp_source</span> <span class="o">=</span> <span class="n">timestamp_source</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">)</span>
+
+<div class="viewcode-block" id="VideoFileReader.get_params">
+<a class="viewcode-back" href="../../../apidocs/videoflow.producers.html#videoflow.producers.video.VideoFileReader.get_params">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_params</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span>
+            <span class="s1">&#39;video_file&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_url_or_deviceid</span><span class="p">,</span>
+            <span class="s1">&#39;swap_channels&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_swap_channels</span><span class="p">,</span>
+            <span class="s1">&#39;nb_frames&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_nb_frames</span><span class="p">,</span>
+            <span class="s1">&#39;timestamp_source&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_timestamp_source</span><span class="p">,</span>
+            <span class="s1">&#39;name&#39;</span><span class="p">:</span> <span class="bp">self</span><span class="o">.</span><span class="n">_name</span><span class="p">,</span>
+        <span class="p">}</span></div>
+</div>
+
+
+<span class="c1"># Here for the sake of not breaking</span>
+<span class="c1"># old code</span>
+<span class="n">VideofileReader</span> <span class="o">=</span> <span class="n">VideoFileReader</span>
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

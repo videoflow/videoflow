@@ -1,0 +1,408 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../">
+<head>
+  <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Deploying to Kubernetes &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../genindex.html" />
+    <link rel="search" title="Search" href="../search.html" />
+    <link rel="next" title="GPU sharing: running more GPU nodes than you have GPUs" href="gpu-sharing.html" />
+    <link rel="prev" title="Distributed execution" href="distributed-execution.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul class="current">
+<li class="toctree-l1"><a class="reference internal" href="distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1 current"><a class="current reference internal" href="#">Deploying to Kubernetes</a><ul>
+<li class="toctree-l2"><a class="reference internal" href="#what-videoflow-deploy-does-step-by-step">What <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code> does, step by step</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#prerequisites">Prerequisites</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#building-the-image-manually">Building the image manually</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#option-reference">Option reference</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#other-cli-commands">Other CLI commands</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#how-graph-concepts-map-onto-kubernetes">How graph concepts map onto Kubernetes</a></li>
+<li class="toctree-l2"><a class="reference internal" href="#observability">Observability</a></li>
+</ul>
+</li>
+<li class="toctree-l1"><a class="reference internal" href="gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../index.html" class="icon icon-home" aria-label="Home"></a></li>
+      <li class="breadcrumb-item active">Deploying to Kubernetes</li>
+      <li class="wy-breadcrumbs-aside">
+            <a href="../_sources/distributed/deploying-to-kubernetes.rst.txt" rel="nofollow"> View page source</a>
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <section id="deploying-to-kubernetes">
+<h1>Deploying to Kubernetes<a class="headerlink" href="#deploying-to-kubernetes" title="Link to this heading"></a></h1>
+<p>On a dev cluster, deploying a flow is one command:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="n">videoflow</span> <span class="n">deploy</span> <span class="n">my_flow</span><span class="o">.</span><span class="n">py</span>
+</pre></div>
+</div>
+<p><code class="docutils literal notranslate"><span class="pre">deploy</span></code> is a one-stop pipeline: every step below runs automatically by
+default, and every step has an explicit flag to do it manually instead. The
+same graph you run locally deploys unchanged.</p>
+<section id="what-videoflow-deploy-does-step-by-step">
+<h2>What <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">deploy</span></code> does, step by step<a class="headerlink" href="#what-videoflow-deploy-does-step-by-step" title="Link to this heading"></a></h2>
+<ol class="arabic simple">
+<li><p><strong>Config</strong> — if the solution ships a <code class="docutils literal notranslate"><span class="pre">config.template.yaml</span></code> and there is no
+<code class="docutils literal notranslate"><span class="pre">config.yaml</span></code> next to the graph, deploy asks the template’s <code class="docutils literal notranslate"><span class="pre">x-questions</span></code>
+interactively on the terminal and writes <code class="docutils literal notranslate"><span class="pre">config.yaml</span></code>. An existing
+<code class="docutils literal notranslate"><span class="pre">config.yaml</span></code> (or <code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">PATH</span></code>) is used as-is. In a non-interactive
+session (<code class="docutils literal notranslate"><span class="pre">--non-interactive</span></code>, or stdin is not a TTY) deploy fails with the
+full list of missing inputs instead of hanging on a prompt.</p></li>
+<li><p><strong>Image build</strong> — with no <code class="docutils literal notranslate"><span class="pre">--image</span></code>, deploy looks for a Dockerfile next to
+the graph: <code class="docutils literal notranslate"><span class="pre">gpu.Dockerfile</span></code> when the local docker daemon has the NVIDIA
+runtime, else <code class="docutils literal notranslate"><span class="pre">Dockerfile</span></code> (falling back to whichever exists). The build
+context is the <strong>git root</strong> enclosing the graph (solution Dockerfiles COPY
+sibling packages from the repo root); override with <code class="docutils literal notranslate"><span class="pre">--build-context</span></code>. If
+the Dockerfile is <code class="docutils literal notranslate"><span class="pre">FROM</span></code> a <code class="docutils literal notranslate"><span class="pre">videoflow-base:*</span></code> image that is not built
+locally, deploy builds it first from the videoflow source checkout (this
+requires an editable/source install — a wheel-only install gets an error
+with the exact manual commands). The image is tagged
+<code class="docutils literal notranslate"><span class="pre">videoflow-&lt;solution-dir&gt;:latest</span></code>. Docker’s layer cache makes unchanged
+rebuilds take about a second. <code class="docutils literal notranslate"><span class="pre">--no-build</span></code> disables all of this.</p></li>
+<li><p><strong>Prepare hook</strong> — if the solution ships a <code class="docutils literal notranslate"><span class="pre">prepare.py</span></code>, deploy runs it
+<em>inside the built image</em> (<code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">run</span></code>, with <code class="docutils literal notranslate"><span class="pre">--gpus</span> <span class="pre">all</span></code> when
+available) before compiling, because its outputs (calibration files, model
+weights, …) get baked into the compiled node parameters. The solution
+directory and every resolved mount (see step 5) are volume-mounted into the
+container at their host paths, so all paths in the config resolve
+identically. Skip with <code class="docutils literal notranslate"><span class="pre">--no-prepare</span></code>. Hooks are expected to be
+idempotent (skip finished steps), so re-running deploy is cheap.</p></li>
+<li><p><strong>Compile</strong> — deploy calls your <code class="docutils literal notranslate"><span class="pre">build_flow()</span></code> factory and compiles the
+graph to node specs. If the graph’s dependencies import on the operator
+machine this happens in-process; otherwise deploy runs
+<code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">videoflow.compile</span></code> inside the solution image and reads the
+specs back as JSON (the same serialization the provision Job uses). Either
+way the operator machine only needs <code class="docutils literal notranslate"><span class="pre">videoflow[deploy]</span></code> — never the ML
+stack.</p></li>
+<li><p><strong>Mounts</strong> — hostPath volumes from the repeatable <code class="docutils literal notranslate"><span class="pre">--mount</span>
+<span class="pre">/abs/path[:/container/path][:ro]</span></code> flag plus the solution template’s
+<code class="docutils literal notranslate"><span class="pre">x-mounts</span></code> are added to <em>every</em> node workload (Jobs, Deployments,
+StatefulSets — not the provision Job). The single-path form mounts the same
+absolute path on both sides, which is what a flow compiled against local
+files needs: the paths baked into node params must resolve identically
+inside the pods.</p></li>
+<li><p><strong>Cluster mechanics</strong> — deploy classifies the cluster kubectl points at
+(<code class="docutils literal notranslate"><span class="pre">k3s</span></code> / <code class="docutils literal notranslate"><span class="pre">kind</span></code> / <code class="docutils literal notranslate"><span class="pre">minikube</span></code> / <code class="docutils literal notranslate"><span class="pre">docker-desktop</span></code> / generic remote)
+from the kubectl context and node labels, then:</p>
+<ul class="simple">
+<li><p>loads every locally-built image into the cluster with the right mechanism
+(<code class="docutils literal notranslate"><span class="pre">kind</span> <span class="pre">load</span> <span class="pre">docker-image</span></code> / <code class="docutils literal notranslate"><span class="pre">minikube</span> <span class="pre">image</span> <span class="pre">load</span></code> /
+<code class="docutils literal notranslate"><span class="pre">docker</span> <span class="pre">save</span> <span class="pre">|</span> <span class="pre">k3s</span> <span class="pre">ctr</span> <span class="pre">images</span> <span class="pre">import</span></code>; docker-desktop needs nothing).
+A remote cluster with a locally-built image is a hard error with push
+instructions — pods there can never see your local docker daemon.</p></li>
+<li><p>warns when hostPath mounts will not see your local filesystem (kind and
+minikube nodes are VMs/containers with their own filesystem) and what to
+do about it.</p></li>
+<li><p>for flows with GPU nodes, preflights what the generated GPU manifests need —
+a node labeled <code class="docutils literal notranslate"><span class="pre">videoflow.io/gpu-pool=true</span></code>, <strong>enough allocatable units of
+each requested GPU resource to cover the whole flow’s demand</strong> (every replica
+claims its own devices exclusively; a partially-schedulable flow stalls), and
+a <code class="docutils literal notranslate"><span class="pre">--gpu-runtime-class</span></code> where the NVIDIA runtime is an opt-in RuntimeClass —
+and prints copy-pasteable fix commands. These are warnings by default;
+<code class="docutils literal notranslate"><span class="pre">--strict-preflight</span></code> turns them into a non-zero exit before anything is
+applied. See <a class="reference internal" href="gpu-sharing.html"><span class="doc">GPU sharing: running more GPU nodes than you have GPUs</span></a> for running more GPU nodes than you have
+GPUs.</p></li>
+</ul>
+</li>
+<li><p><strong>Broker infra</strong> — with no <code class="docutils literal notranslate"><span class="pre">--nats</span></code>, deploy creates the namespace if
+needed and applies a dev NATS JetStream (and, when <code class="docutils literal notranslate"><span class="pre">--blob-redis-url</span></code> is
+also omitted, a dev Redis for the large-payload blob store) into it, waits
+for the rollout, and derives the in-cluster URLs
+(<code class="docutils literal notranslate"><span class="pre">nats://nats.&lt;ns&gt;.svc:4222</span></code>, <code class="docutils literal notranslate"><span class="pre">redis://redis.&lt;ns&gt;.svc:6379/0</span></code>). A
+pre-existing <code class="docutils literal notranslate"><span class="pre">nats</span></code>/<code class="docutils literal notranslate"><span class="pre">redis</span></code> Service in the namespace is <strong>reused and
+never owned</strong>; only components deploy itself created are labeled
+<code class="docutils literal notranslate"><span class="pre">videoflow.io/infra</span></code> and torn down later. For production, bring your own
+broker (the official NATS Helm chart) and pass <code class="docutils literal notranslate"><span class="pre">--nats</span></code>.</p></li>
+<li><p><strong>Apply &amp; run</strong> — the manifests are applied in two phases (broker
+provisioning Job first, then workers). A BATCH flow then runs to
+completion: deploy waits, dumps the logs of any failed node, and tears down
+the run’s workloads, broker streams, <em>and</em> the infra it created in step 7
+(<code class="docutils literal notranslate"><span class="pre">--keep</span></code> keeps everything for debugging; <code class="docutils literal notranslate"><span class="pre">--keep-infra</span></code> keeps just
+NATS/Redis so the next deploy reuses them). A REALTIME flow is left running
+and deploy prints the matching <code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">teardown</span></code> command.</p></li>
+</ol>
+<p><code class="docutils literal notranslate"><span class="pre">--dry-run</span></code> prints all manifests to stdout — including the dev-infra
+manifests whenever the broker would have been auto-provisioned — and
+<code class="docutils literal notranslate"><span class="pre">--render-only</span></code> writes them plus a <code class="docutils literal notranslate"><span class="pre">kustomization.yaml</span></code> to <code class="docutils literal notranslate"><span class="pre">--output</span></code>
+for a later <code class="docutils literal notranslate"><span class="pre">kubectl</span> <span class="pre">apply</span> <span class="pre">-k</span></code>. Neither touches the cluster.</p>
+</section>
+<section id="prerequisites">
+<h2>Prerequisites<a class="headerlink" href="#prerequisites" title="Link to this heading"></a></h2>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">docker</span></code> and <code class="docutils literal notranslate"><span class="pre">kubectl</span></code> on the operator machine, kubectl configured
+against the target cluster.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">pip</span> <span class="pre">install</span> <span class="pre">&quot;videoflow[deploy]&quot;</span></code> — the graph’s own dependencies are <em>not</em>
+required on the operator machine (see step 4).</p></li>
+<li><p>For GPU flows: cluster nodes with the NVIDIA device plugin and the
+<code class="docutils literal notranslate"><span class="pre">videoflow.io/gpu-pool=true</span></code> label (deploy tells you the exact commands if
+they are missing).</p></li>
+</ul>
+</section>
+<section id="building-the-image-manually">
+<h2>Building the image manually<a class="headerlink" href="#building-the-image-manually" title="Link to this heading"></a></h2>
+<p>Videoflow ships a single <code class="docutils literal notranslate"><span class="pre">videoflow-base</span></code> image (framework + broker client +
+the built-in nodes’ dependencies: OpenCV, ffmpeg, Redis). Solution images build
+<strong>on top of it</strong>, adding your dependencies and your node package so the worker
+can import your node classes by their module path:</p>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="c1"># Dockerfile (see docker/user-image.example.Dockerfile)</span>
+<span class="n">FROM</span> <span class="n">videoflow</span><span class="o">-</span><span class="n">base</span><span class="p">:</span><span class="n">latest</span>
+<span class="n">RUN</span> <span class="n">pip</span> <span class="n">install</span> <span class="n">torch</span> <span class="n">my</span><span class="o">-</span><span class="n">libs</span>        <span class="c1"># your dependencies</span>
+<span class="n">COPY</span> <span class="o">.</span> <span class="o">.</span> <span class="o">&amp;&amp;</span> <span class="n">RUN</span> <span class="n">pip</span> <span class="n">install</span> <span class="o">.</span>        <span class="c1"># your package</span>
+</pre></div>
+</div>
+<div class="highlight-default notranslate"><div class="highlight"><pre><span></span><span class="o">./</span><span class="n">docker</span><span class="o">/</span><span class="n">build</span><span class="o">-</span><span class="n">images</span><span class="o">.</span><span class="n">sh</span> <span class="n">ghcr</span><span class="o">.</span><span class="n">io</span><span class="o">/</span><span class="n">acme</span> <span class="n">v1</span>     <span class="c1"># build+tag videoflow-base</span>
+<span class="n">docker</span> <span class="n">push</span> <span class="n">ghcr</span><span class="o">.</span><span class="n">io</span><span class="o">/</span><span class="n">acme</span><span class="o">/</span><span class="n">videoflow</span><span class="o">-</span><span class="n">base</span><span class="p">:</span><span class="n">v1</span>
+<span class="n">docker</span> <span class="n">build</span> <span class="o">-</span><span class="n">t</span> <span class="n">ghcr</span><span class="o">.</span><span class="n">io</span><span class="o">/</span><span class="n">acme</span><span class="o">/</span><span class="n">app</span><span class="p">:</span><span class="n">v1</span> <span class="o">.</span>        <span class="c1"># your image, FROM videoflow-base</span>
+<span class="n">docker</span> <span class="n">push</span> <span class="n">ghcr</span><span class="o">.</span><span class="n">io</span><span class="o">/</span><span class="n">acme</span><span class="o">/</span><span class="n">app</span><span class="p">:</span><span class="n">v1</span>
+</pre></div>
+</div>
+<p>A pure built-in flow can just deploy with <code class="docutils literal notranslate"><span class="pre">--image</span> <span class="pre">videoflow-base:latest</span></code>.</p>
+</section>
+<section id="option-reference">
+<h2>Option reference<a class="headerlink" href="#option-reference" title="Link to this heading"></a></h2>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">--config</span> <span class="pre">PATH</span></code> / <code class="docutils literal notranslate"><span class="pre">--non-interactive</span></code></dt><dd><p>Explicit solution config; never prompt (fail listing missing inputs).</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--image</span></code> / <code class="docutils literal notranslate"><span class="pre">--image-override</span> <span class="pre">NAME=REF</span></code> / <code class="docutils literal notranslate"><span class="pre">--no-build</span></code> / <code class="docutils literal notranslate"><span class="pre">--build-context</span> <span class="pre">PATH</span></code></dt><dd><p><code class="docutils literal notranslate"><span class="pre">--image</span></code> is the default image for every node that didn’t declare its own
+<code class="docutils literal notranslate"><span class="pre">image=</span></code> and disables auto-build. <code class="docutils literal notranslate"><span class="pre">--image-override</span></code> sets the image for
+one node and wins over both (repeatable). <code class="docutils literal notranslate"><span class="pre">--build-context</span></code> overrides the
+git-root build context.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--image-pull-policy</span> <span class="pre">{Always,IfNotPresent,Never}</span></code></dt><dd><p><code class="docutils literal notranslate"><span class="pre">imagePullPolicy</span></code> for every container, workers and the provision Job alike.
+Defaults to <code class="docutils literal notranslate"><span class="pre">IfNotPresent</span></code>, which is what lets a locally built image run:
+deploy loads it into the cluster itself, so there is nothing to pull. Left to
+Kubernetes’ own inference, a <code class="docutils literal notranslate"><span class="pre">:latest</span></code> tag — the tag auto-build produces —
+would default to <code class="docutils literal notranslate"><span class="pre">Always</span></code> and the pod would try to pull from a registry that
+has never seen the image, landing in <code class="docutils literal notranslate"><span class="pre">ImagePullBackOff</span></code>. Use <code class="docutils literal notranslate"><span class="pre">Always</span></code> only
+when every image comes from a registry the nodes can reach.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--no-prepare</span></code></dt><dd><p>Skip the solution’s <code class="docutils literal notranslate"><span class="pre">prepare.py</span></code> hook.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--mount</span> <span class="pre">HOST[:CONTAINER][:ro]</span></code></dt><dd><p>hostPath volume added to every node workload and to the prep/compile
+containers. Absolute paths; single-path form mounts the same path on both
+sides. Repeatable; solution <code class="docutils literal notranslate"><span class="pre">x-mounts</span></code> are added automatically.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--nats</span></code> / <code class="docutils literal notranslate"><span class="pre">--blob-redis-url</span></code></dt><dd><p>Bring-your-own broker / blob store; omitting them auto-provisions dev
+equivalents in <code class="docutils literal notranslate"><span class="pre">--namespace</span></code> (see step 7).</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--keep</span></code> / <code class="docutils literal notranslate"><span class="pre">--keep-infra</span></code></dt><dd><p>After a BATCH run, keep everything / keep just the auto-provisioned
+NATS+Redis.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--flow-id</span></code></dt><dd><p>A stable identifier used to name all resources. Reuse the same value to
+redeploy/update the same logical flow.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--run-id</span></code></dt><dd><p>Per-run id that scopes this run’s broker streams (auto-generated
+otherwise). A new run id gives fresh streams; reuse it to target the same
+run.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--autoscaling</span></code> / <code class="docutils literal notranslate"><span class="pre">--max-replicas</span></code></dt><dd><p>Emit a KEDA <code class="docutils literal notranslate"><span class="pre">ScaledObject</span></code> per processor that scales on broker backlog,
+using <code class="docutils literal notranslate"><span class="pre">nb_tasks</span></code> as the minimum replica count.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">--dry-run</span></code> / <code class="docutils literal notranslate"><span class="pre">--render-only</span></code> / <code class="docutils literal notranslate"><span class="pre">--output</span></code></dt><dd><p>Manifest generation without touching the cluster (see above).</p>
+</dd>
+</dl>
+</section>
+<section id="other-cli-commands">
+<h2>Other CLI commands<a class="headerlink" href="#other-cli-commands" title="Link to this heading"></a></h2>
+<dl class="simple">
+<dt><code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">explain</span> <span class="pre">my_flow.py</span></code></dt><dd><p>Print a human-readable summary of the compiled graph — nodes, replicas, image
+families, partitioning, subjects, and the DLQ stream — without touching a cluster.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">provision</span> <span class="pre">my_flow.py</span> <span class="pre">--nats</span> <span class="pre">...</span></code></dt><dd><p>Create the flow’s broker streams and durable consumers up front. This normally
+happens automatically (a generated init Job on Kubernetes, or the local engine
+before it spawns workers), but is exposed for manual/debug use.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">videoflow</span> <span class="pre">teardown</span> <span class="pre">--flow-id</span> <span class="pre">...</span> <span class="pre">--run-id</span> <span class="pre">...</span> <span class="pre">--nats</span> <span class="pre">...</span> <span class="pre">[--namespace</span> <span class="pre">...]</span> <span class="pre">[--infra]</span></code></dt><dd><p>Stop a run (control-channel signal) and delete its broker streams; with
+<code class="docutils literal notranslate"><span class="pre">--namespace</span></code> it also <code class="docutils literal notranslate"><span class="pre">kubectl</span> <span class="pre">delete</span></code>s the flow’s workloads, and with
+<code class="docutils literal notranslate"><span class="pre">--infra</span></code> it deletes auto-provisioned NATS/Redis (only resources labeled
+<code class="docutils literal notranslate"><span class="pre">videoflow.io/infra</span></code> — a bring-your-own broker is never touched). This is
+the escape hatch for REALTIME flows deployed with auto-infra.</p>
+</dd>
+<dt><code class="docutils literal notranslate"><span class="pre">python</span> <span class="pre">-m</span> <span class="pre">videoflow.compile</span> <span class="pre">graph.py[:factory]</span></code></dt><dd><p>Compile a graph to a JSON specs document on stdout — what deploy runs inside
+the solution image when the graph can’t be imported on the operator machine.</p>
+</dd>
+</dl>
+</section>
+<section id="how-graph-concepts-map-onto-kubernetes">
+<h2>How graph concepts map onto Kubernetes<a class="headerlink" href="#how-graph-concepts-map-onto-kubernetes" title="Link to this heading"></a></h2>
+<table class="docutils align-default">
+<thead>
+<tr class="row-odd"><th class="head"><p>Concept</p></th>
+<th class="head"><p>Behavior</p></th>
+</tr>
+</thead>
+<tbody>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">flow_type=REALTIME</span></code></p></td>
+<td><p>broker keeps only the freshest message per edge</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">flow_type=BATCH</span></code></p></td>
+<td><p>at-least-once, loss-free delivery (interest retention +
+backpressure); failures retry then dead-letter to a DLQ</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">ProcessorNode(nb_tasks=N)</span></code></p></td>
+<td><p>N Deployment replicas (competing consumers)</p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">ProcessorNode(...,</span> <span class="pre">partition_by=)</span></code></p></td>
+<td><p>N StatefulSet replicas, partitioned by key (scales joins);
+not autoscaled</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">device_type='gpu'</span></code></p></td>
+<td><p>pod requests <code class="docutils literal notranslate"><span class="pre">gpu_count</span></code> x <code class="docutils literal notranslate"><span class="pre">nvidia.com/gpu</span></code> (or
+<code class="docutils literal notranslate"><span class="pre">gpu_resource_name</span></code>) + GPU-pool nodeSelector; exclusive —
+see <a class="reference internal" href="gpu-sharing.html"><span class="doc">GPU sharing: running more GPU nodes than you have GPUs</span></a> (<code class="docutils literal notranslate"><span class="pre">--gpu-mode</span> <span class="pre">shared</span></code> omits the
+request so pods share the physical GPUs)</p></td>
+</tr>
+<tr class="row-odd"><td><p>finite producer (<code class="docutils literal notranslate"><span class="pre">is_finite=True</span></code>)</p></td>
+<td><p>a Kubernetes <strong>Job</strong></p></td>
+</tr>
+<tr class="row-even"><td><p>infinite producer / processor /
+consumer</p></td>
+<td><p>a Kubernetes <strong>Deployment</strong></p></td>
+</tr>
+<tr class="row-odd"><td><p><code class="docutils literal notranslate"><span class="pre">flow.stop()</span></code></p></td>
+<td><p>control-channel signal, then the workloads are torn down</p></td>
+</tr>
+<tr class="row-even"><td><p><code class="docutils literal notranslate"><span class="pre">--mount</span></code> / solution <code class="docutils literal notranslate"><span class="pre">x-mounts</span></code></p></td>
+<td><p>hostPath volume + volumeMount on every node workload</p></td>
+</tr>
+</tbody>
+</table>
+</section>
+<section id="observability">
+<h2>Observability<a class="headerlink" href="#observability" title="Link to this heading"></a></h2>
+<p>Every worker pod exposes an HTTP endpoint (port 8080) with:</p>
+<ul class="simple">
+<li><p><code class="docutils literal notranslate"><span class="pre">/readyz</span></code> — readiness: turns healthy only after the node’s <code class="docutils literal notranslate"><span class="pre">open()</span></code> completes,
+so a pod whose model is still loading is not sent traffic.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/healthz</span></code> — liveness: a heartbeat updated on every loop iteration; a stalled
+worker is restarted.</p></li>
+<li><p><code class="docutils literal notranslate"><span class="pre">/metrics</span></code> — Prometheus metrics for per-node processing time.</p></li>
+</ul>
+<p>The generated Deployments/Jobs reference the readiness and liveness probes
+automatically. See <a class="reference internal" href="../user-documentation/debugging-flow-applications.html"><span class="doc">Debugging flow applications</span></a>.</p>
+</section>
+</section>
+
+
+           </div>
+          </div>
+          <footer><div class="rst-footer-buttons" role="navigation" aria-label="Footer">
+        <a href="distributed-execution.html" class="btn btn-neutral float-left" title="Distributed execution" accesskey="p" rel="prev"><span class="fa fa-arrow-circle-left" aria-hidden="true"></span> Previous</a>
+        <a href="gpu-sharing.html" class="btn btn-neutral float-right" title="GPU sharing: running more GPU nodes than you have GPUs" accesskey="n" rel="next">Next <span class="fa fa-arrow-circle-right" aria-hidden="true"></span></a>
+    </div>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

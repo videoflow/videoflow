@@ -1,0 +1,404 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.runtime.health &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.runtime.health</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.runtime.health</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">A tiny stdlib HTTP server exposing Kubernetes health probes and Prometheus</span>
+<span class="sd">metrics for a running worker, plus an ``InstrumentedMessenger`` that feeds it.</span>
+
+<span class="sd">Endpoints (default port 8080):</span>
+<span class="sd">  /readyz   200 once the node has started processing (see readiness note below), else 503</span>
+<span class="sd">  /healthz  200 while the run loop is beating, 503 if it has stalled</span>
+<span class="sd">  /metrics  Prometheus text exposition of per-node processing metrics</span>
+
+<span class="sd">Kept dependency-free (no prometheus_client) so the base image stays lean; the</span>
+<span class="sd">metrics text format is simple enough to emit by hand.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">logging</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">threading</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">time</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">http.server</span><span class="w"> </span><span class="kn">import</span> <span class="n">BaseHTTPRequestHandler</span><span class="p">,</span> <span class="n">ThreadingHTTPServer</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..core.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">Messenger</span>
+
+<span class="n">logger</span> <span class="o">=</span> <span class="n">logging</span><span class="o">.</span><span class="n">getLogger</span><span class="p">(</span><span class="n">__package__</span><span class="p">)</span>
+
+<span class="n">DEFAULT_HEALTH_PORT</span> <span class="o">=</span> <span class="mi">8080</span>
+
+<span class="c1"># If the run loop hasn&#39;t beaten within this many seconds, liveness fails and</span>
+<span class="c1"># Kubernetes restarts the pod (e.g. a wedged broker connection).</span>
+<span class="n">LIVENESS_STALL_SECONDS</span> <span class="o">=</span> <span class="mi">60</span>
+
+<span class="nd">@dataclass</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">_MetricAggregate</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    The running aggregate behind one observed metric: how many observations have</span>
+<span class="sd">    arrived and their running total. Rendered as the Prometheus summary pair</span>
+<span class="sd">    ``videoflow_&lt;metric&gt;_count`` / ``videoflow_&lt;metric&gt;_sum``, hence the two fields</span>
+<span class="sd">    and no others — this is a fixed-shape record, not a bag of metric keys.</span>
+
+<span class="sd">    ``total`` starts as a float so a metric&#39;s ``_sum`` renders as ``0.0`` rather</span>
+<span class="sd">    than ``0`` on the (unreachable in practice) zero-observation path, and so the</span>
+<span class="sd">    accumulation is float arithmetic from the first observation on.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">count</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
+    <span class="n">total</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span>
+
+<div class="viewcode-block" id="HealthState">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">HealthState</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Thread-safe holder for readiness/liveness/metrics, shared between the run loop (via the messenger) and the HTTP handler.&#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">node_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_node_name</span> <span class="o">=</span> <span class="n">node_name</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Lock</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_ready</span> <span class="o">=</span> <span class="kc">False</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_last_beat</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span>
+        <span class="c1"># metric name -&gt; its running aggregate. Arbitrary keys, fixed-shape values.</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_metrics</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">_MetricAggregate</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+        <span class="c1"># counter name -&gt; int (rendered as videoflow_&lt;name&gt;_total)</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_counters</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<div class="viewcode-block" id="HealthState.mark_ready">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.mark_ready">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">mark_ready</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_ready</span> <span class="o">=</span> <span class="kc">True</span></div>
+
+
+<div class="viewcode-block" id="HealthState.beat">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.beat">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">beat</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_last_beat</span> <span class="o">=</span> <span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="HealthState.observe">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.observe">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">observe</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">metric</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">if</span> <span class="n">value</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="n">m</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metrics</span><span class="o">.</span><span class="n">setdefault</span><span class="p">(</span><span class="n">metric</span><span class="p">,</span> <span class="n">_MetricAggregate</span><span class="p">())</span>
+            <span class="n">m</span><span class="o">.</span><span class="n">count</span> <span class="o">+=</span> <span class="mi">1</span>
+            <span class="n">m</span><span class="o">.</span><span class="n">total</span> <span class="o">+=</span> <span class="n">value</span></div>
+
+
+<div class="viewcode-block" id="HealthState.incr">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.incr">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">incr</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">counter</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">amount</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">1</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_counters</span><span class="p">[</span><span class="n">counter</span><span class="p">]</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_counters</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">counter</span><span class="p">,</span> <span class="mi">0</span><span class="p">)</span> <span class="o">+</span> <span class="n">amount</span></div>
+
+
+<div class="viewcode-block" id="HealthState.is_ready">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.is_ready">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_ready</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_ready</span></div>
+
+
+<div class="viewcode-block" id="HealthState.is_live">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.is_live">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">is_live</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="k">return</span> <span class="p">(</span><span class="n">time</span><span class="o">.</span><span class="n">time</span><span class="p">()</span> <span class="o">-</span> <span class="bp">self</span><span class="o">.</span><span class="n">_last_beat</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">LIVENESS_STALL_SECONDS</span></div>
+
+
+<div class="viewcode-block" id="HealthState.render_metrics">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthState.render_metrics">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">render_metrics</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">with</span> <span class="bp">self</span><span class="o">.</span><span class="n">_lock</span><span class="p">:</span>
+            <span class="n">lines</span> <span class="o">=</span> <span class="p">[]</span>
+            <span class="n">safe_node</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_node_name</span><span class="o">.</span><span class="n">replace</span><span class="p">(</span><span class="s1">&#39;&quot;&#39;</span><span class="p">,</span> <span class="s1">&#39;&#39;</span><span class="p">)</span>
+            <span class="n">labels</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="se">{{</span><span class="s1">node=&quot;</span><span class="si">{</span><span class="n">safe_node</span><span class="si">}</span><span class="s1">&quot;</span><span class="se">}}</span><span class="s1">&#39;</span>
+            <span class="k">for</span> <span class="n">metric</span><span class="p">,</span> <span class="n">m</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_metrics</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;videoflow_</span><span class="si">{</span><span class="n">metric</span><span class="si">}</span><span class="s1">_count</span><span class="si">{</span><span class="n">labels</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">count</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;videoflow_</span><span class="si">{</span><span class="n">metric</span><span class="si">}</span><span class="s1">_sum</span><span class="si">{</span><span class="n">labels</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">m</span><span class="o">.</span><span class="n">total</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="k">for</span> <span class="n">counter</span><span class="p">,</span> <span class="n">value</span> <span class="ow">in</span> <span class="bp">self</span><span class="o">.</span><span class="n">_counters</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+                <span class="n">lines</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;videoflow_</span><span class="si">{</span><span class="n">counter</span><span class="si">}</span><span class="s1">_total</span><span class="si">{</span><span class="n">labels</span><span class="si">}</span><span class="s1"> </span><span class="si">{</span><span class="n">value</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="k">return</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">lines</span><span class="p">)</span> <span class="o">+</span> <span class="s1">&#39;</span><span class="se">\n</span><span class="s1">&#39;</span></div>
+</div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_make_handler</span><span class="p">(</span><span class="n">state</span> <span class="p">:</span> <span class="n">HealthState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">type</span><span class="p">:</span>
+    <span class="k">class</span><span class="w"> </span><span class="nc">Handler</span><span class="p">(</span><span class="n">BaseHTTPRequestHandler</span><span class="p">):</span>
+        <span class="k">def</span><span class="w"> </span><span class="nf">log_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="o">*</span><span class="n">args</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">pass</span>  <span class="c1"># silence per-request stderr logging</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">_respond</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">code</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">body</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">content_type</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;text/plain&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="n">payload</span> <span class="o">=</span> <span class="n">body</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">send_response</span><span class="p">(</span><span class="n">code</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">send_header</span><span class="p">(</span><span class="s1">&#39;Content-Type&#39;</span><span class="p">,</span> <span class="n">content_type</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">send_header</span><span class="p">(</span><span class="s1">&#39;Content-Length&#39;</span><span class="p">,</span> <span class="nb">str</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">payload</span><span class="p">)))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">end_headers</span><span class="p">()</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">wfile</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+
+        <span class="k">def</span><span class="w"> </span><span class="nf">do_GET</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">if</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/readyz&#39;</span><span class="p">:</span>
+                <span class="n">ok</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">is_ready</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_respond</span><span class="p">(</span><span class="mi">200</span> <span class="k">if</span> <span class="n">ok</span> <span class="k">else</span> <span class="mi">503</span><span class="p">,</span> <span class="s1">&#39;ready&#39;</span> <span class="k">if</span> <span class="n">ok</span> <span class="k">else</span> <span class="s1">&#39;not-ready&#39;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/healthz&#39;</span><span class="p">:</span>
+                <span class="n">ok</span> <span class="o">=</span> <span class="n">state</span><span class="o">.</span><span class="n">is_live</span><span class="p">()</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_respond</span><span class="p">(</span><span class="mi">200</span> <span class="k">if</span> <span class="n">ok</span> <span class="k">else</span> <span class="mi">503</span><span class="p">,</span> <span class="s1">&#39;ok&#39;</span> <span class="k">if</span> <span class="n">ok</span> <span class="k">else</span> <span class="s1">&#39;stalled&#39;</span><span class="p">)</span>
+            <span class="k">elif</span> <span class="bp">self</span><span class="o">.</span><span class="n">path</span> <span class="o">==</span> <span class="s1">&#39;/metrics&#39;</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_respond</span><span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="n">state</span><span class="o">.</span><span class="n">render_metrics</span><span class="p">())</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="bp">self</span><span class="o">.</span><span class="n">_respond</span><span class="p">(</span><span class="mi">404</span><span class="p">,</span> <span class="s1">&#39;not found&#39;</span><span class="p">)</span>
+
+    <span class="k">return</span> <span class="n">Handler</span>
+
+<div class="viewcode-block" id="HealthServer">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthServer">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">HealthServer</span><span class="p">:</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">state</span> <span class="p">:</span> <span class="n">HealthState</span><span class="p">,</span> <span class="n">port</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_HEALTH_PORT</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="n">state</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_httpd</span> <span class="o">=</span> <span class="n">ThreadingHTTPServer</span><span class="p">((</span><span class="s1">&#39;0.0.0.0&#39;</span><span class="p">,</span> <span class="n">port</span><span class="p">),</span> <span class="n">_make_handler</span><span class="p">(</span><span class="n">state</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Thread</span><span class="p">(</span><span class="n">target</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_httpd</span><span class="o">.</span><span class="n">serve_forever</span><span class="p">,</span> <span class="n">daemon</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span>
+
+<div class="viewcode-block" id="HealthServer.start">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthServer.start">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">start</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_thread</span><span class="o">.</span><span class="n">start</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="HealthServer.stop">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.HealthServer.stop">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">stop</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_httpd</span><span class="o">.</span><span class="n">shutdown</span><span class="p">()</span></div>
+</div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">InstrumentedMessenger</span><span class="p">(</span><span class="n">Messenger</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Wraps a real ``Messenger`` and updates a ``HealthState`` as messages flow,</span>
+<span class="sd">    without any change to the ``Task`` classes. Readiness note: the node is marked</span>
+<span class="sd">    ready on its first messenger activity (first send or receive), which happens</span>
+<span class="sd">    only after ``node.open()`` has returned inside ``NodeTask.run()`` — so a slow</span>
+<span class="sd">    model-loading ``open()`` correctly keeps the pod un-ready until it finishes.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">inner</span> <span class="p">:</span> <span class="n">Messenger</span><span class="p">,</span> <span class="n">state</span> <span class="p">:</span> <span class="n">HealthState</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span> <span class="o">=</span> <span class="n">inner</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span> <span class="o">=</span> <span class="n">state</span>
+
+<div class="viewcode-block" id="InstrumentedMessenger.publish_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.publish_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_message</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">message</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">mark_ready</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">beat</span><span class="p">()</span>
+        <span class="k">if</span> <span class="n">metadata</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="s1">&#39;proctime_seconds&#39;</span><span class="p">,</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;proctime&#39;</span><span class="p">))</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">observe</span><span class="p">(</span><span class="s1">&#39;actual_proctime_seconds&#39;</span><span class="p">,</span> <span class="n">metadata</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;actual_proctime&#39;</span><span class="p">))</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="s1">&#39;messages_published&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">publish_message</span><span class="p">(</span><span class="n">message</span><span class="p">,</span> <span class="n">metadata</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.publish_stop_signal">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.publish_stop_signal">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">publish_stop_signal</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">publish_stop_signal</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.check_for_termination">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.check_for_termination">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">check_for_termination</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">beat</span><span class="p">()</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">check_for_termination</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.receive_message">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.receive_message">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">receive_message</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">mark_ready</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">beat</span><span class="p">()</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="s1">&#39;messages_received&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">receive_message</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.ack_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.ack_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">ack_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="s1">&#39;messages_processed&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">ack_inputs</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.fail_inputs">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.fail_inputs">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">fail_inputs</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">exc</span> <span class="p">:</span> <span class="ne">BaseException</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_state</span><span class="o">.</span><span class="n">incr</span><span class="p">(</span><span class="s1">&#39;messages_failed&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">fail_inputs</span><span class="p">(</span><span class="n">exc</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.set_output_partition_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.set_output_partition_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_partition_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">set_output_partition_key</span><span class="p">(</span><span class="n">value</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.set_output_event_timestamp">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.set_output_event_timestamp">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">set_output_event_timestamp</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">value</span> <span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">set_output_event_timestamp</span><span class="p">(</span><span class="n">value</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.last_input_key">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.last_input_key">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_key</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">last_input_key</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.last_input_info">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.last_input_info">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">last_input_info</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">dict</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">last_input_info</span><span class="p">()</span></div>
+
+
+<div class="viewcode-block" id="InstrumentedMessenger.close">
+<a class="viewcode-back" href="../../../apidocs/videoflow.runtime.html#videoflow.runtime.health.InstrumentedMessenger.close">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">close</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">_inner</span><span class="o">.</span><span class="n">close</span><span class="p">()</span></div>
+</div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>

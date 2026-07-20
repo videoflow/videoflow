@@ -1,0 +1,811 @@
+
+
+<!DOCTYPE html>
+<html class="writer-html5" lang="en" data-content_root="../../../">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>videoflow.wire.serialization &mdash; videoflow 1.0.0 documentation</title>
+      <link rel="stylesheet" type="text/css" href="../../../_static/pygments.css?v=b86133f3" />
+      <link rel="stylesheet" type="text/css" href="../../../_static/css/theme.css?v=9edc463e" />
+
+  
+      <script src="../../../_static/jquery.js?v=5d32c60e"></script>
+      <script src="../../../_static/_sphinx_javascript_frameworks_compat.js?v=2cd50e6c"></script>
+      <script src="../../../_static/documentation_options.js?v=8d563738"></script>
+      <script src="../../../_static/doctools.js?v=fd6eb6e6"></script>
+      <script src="../../../_static/sphinx_highlight.js?v=6ffebe34"></script>
+    <script src="../../../_static/js/theme.js"></script>
+    <link rel="index" title="Index" href="../../../genindex.html" />
+    <link rel="search" title="Search" href="../../../search.html" />
+<!-- Global site tag (gtag.js) - Google Analytics -->
+<script async src="https://www.googletagmanager.com/gtag/js?id=UA-141408927-1"></script>
+<script>
+  window.dataLayer = window.dataLayer || [];
+  function gtag(){dataLayer.push(arguments);}
+  gtag('js', new Date());
+
+  gtag('config', 'UA-141408927-1');
+</script>
+
+</head>
+
+<body class="wy-body-for-nav"> 
+  <div class="wy-grid-for-nav">
+    <nav data-toggle="wy-nav-shift" class="wy-nav-side">
+      <div class="wy-side-scroll">
+        <div class="wy-side-nav-search" >
+
+          
+          
+          <a href="../../../index.html" class="icon icon-home">
+            videoflow
+          </a>
+<div role="search">
+  <form id="rtd-search-form" class="wy-form" action="../../../search.html" method="get">
+    <input type="text" name="q" placeholder="Search docs" aria-label="Search docs" />
+    <input type="hidden" name="check_keywords" value="yes" />
+    <input type="hidden" name="area" value="default" />
+  </form>
+</div>
+        </div><div class="wy-menu wy-menu-vertical" data-spy="affix" role="navigation" aria-label="Navigation menu">
+              <p class="caption" role="heading"><span class="caption-text">First steps</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/installing-videoflow.html">Installing Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/getting-started-with-videoflow.html">Getting started with Videoflow</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../first-steps/how-to-contribute.html">How to contribute</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Core concepts</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/nodes-and-flows.html">Nodes and Flows</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/writing-your-own-components.html">Writing your own components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/batch-versus-realtime-mode.html">Batch versus realtime mode</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/task-allocation.html">Scaling and node allocation</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/time-synchronized-joins.html">Time-synchronized joins</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/common-patterns.html">Common flow patterns</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Distributed execution</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/distributed-execution.html">Distributed execution</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/deploying-to-kubernetes.html">Deploying to Kubernetes</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/gpu-sharing.html">GPU sharing: running more GPU nodes than you have GPUs</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../distributed/language-agnostic-components.html">Language-agnostic components</a></li>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/debugging-flow-applications.html">Debugging flow applications</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Under the hood</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../user-documentation/advanced-flowing.html">Under the hood</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">Computer vision recipes</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../computer-vision-recipes/object-tracking-sample-application.html">Object tracking sample application</a></li>
+</ul>
+<p class="caption" role="heading"><span class="caption-text">API documentation</span></p>
+<ul>
+<li class="toctree-l1"><a class="reference internal" href="../../../apidocs/modules.html">videoflow</a></li>
+</ul>
+
+        </div>
+      </div>
+    </nav>
+
+    <section data-toggle="wy-nav-shift" class="wy-nav-content-wrap"><nav class="wy-nav-top" aria-label="Mobile navigation menu" >
+          <i data-toggle="wy-nav-top" class="fa fa-bars"></i>
+          <a href="../../../index.html">videoflow</a>
+      </nav>
+
+      <div class="wy-nav-content">
+        <div class="rst-content">
+          <div role="navigation" aria-label="Page navigation">
+  <ul class="wy-breadcrumbs">
+      <li><a href="../../../index.html" class="icon icon-home" aria-label="Home"></a></li>
+          <li class="breadcrumb-item"><a href="../../index.html">Module code</a></li>
+      <li class="breadcrumb-item active">videoflow.wire.serialization</li>
+      <li class="wy-breadcrumbs-aside">
+      </li>
+  </ul>
+  <hr/>
+</div>
+          <div role="main" class="document" itemscope="itemscope" itemtype="http://schema.org/Article">
+           <div itemprop="articleBody">
+             
+  <h1>Source code for videoflow.wire.serialization</h1><div class="highlight"><pre>
+<span></span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">Wire format used to move messages between nodes over the message broker</span>
+<span class="sd">(``videoflow.messaging.nats_messenger.NATSMessenger``). Not used by anything</span>
+<span class="sd">running purely in a single local process — it&#39;s the boundary format for bytes</span>
+<span class="sd">that cross a network/process boundary.</span>
+
+<span class="sd">The wire is a single, language-neutral protobuf envelope (``videoflow.v1.Envelope``,</span>
+<span class="sd">envelope version 4). Its payload is a typed protobuf message:</span>
+
+<span class="sd">- ``Tensor`` for arrays, including video frames;</span>
+<span class="sd">- ``Value`` for structured scalars/maps/lists — and a ``Value`` may nest a ``Tensor``</span>
+<span class="sd">  (``tensor_value``), so a mixed container like a ``(frame_index, frame)`` tuple has a</span>
+<span class="sd">  neutral encoding (``spec/PROTOCOL.md`` WIRE-15);</span>
+<span class="sd">- any vendor proto by its fully-qualified name.</span>
+
+<span class="sd">Arbitrary Python objects are **never** put on the wire: there is no code-executing</span>
+<span class="sd">fallback codec, because deserializing attacker-controlled bytes that way is remote</span>
+<span class="sd">code execution (see ``spec/rfcs/0001``). A payload type with no built-in encoding</span>
+<span class="sd">registers one via ``register_payload_encoder``; an unknown ``payload_type`` on decode</span>
+<span class="sd">is handed back as opaque ``RawPayload`` bytes and never deserialized.</span>
+
+<span class="sd">``decode_envelope`` reads the envelope; a legacy msgpack (v2/v3) envelope is refused</span>
+<span class="sd">with a clear error rather than decoded. Runs are version-homogeneous — streams are</span>
+<span class="sd">run-scoped — so a single run never mixes versions.</span>
+<span class="sd">&#39;&#39;&#39;</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">__future__</span><span class="w"> </span><span class="kn">import</span> <span class="n">absolute_import</span><span class="p">,</span> <span class="n">division</span><span class="p">,</span> <span class="n">print_function</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">os</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">uuid</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">Callable</span><span class="p">,</span> <span class="n">Optional</span><span class="p">,</span> <span class="n">Tuple</span><span class="p">,</span> <span class="n">TypeGuard</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">google.protobuf.message</span><span class="w"> </span><span class="kn">import</span> <span class="n">Message</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">..utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">plugins</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">..v1</span><span class="w"> </span><span class="kn">import</span> <span class="n">envelope_pb2</span><span class="p">,</span> <span class="n">payloads_pb2</span><span class="p">,</span> <span class="n">value_pb2</span>
+
+<span class="c1"># -- payload types / versions ----------------------------------------------</span>
+
+<span class="c1">#: v4 protobuf payload-type identifiers (the ``payload_type`` field of an</span>
+<span class="c1">#: ``Envelope``). Proto messages use their descriptor FQN; these three are the ones</span>
+<span class="c1">#: the codec special-cases. Any other FQN round-trips as an opaque ``RawPayload``.</span>
+<span class="n">PAYLOAD_TENSOR</span> <span class="o">=</span> <span class="s1">&#39;videoflow.v1.Tensor&#39;</span>
+<span class="n">PAYLOAD_VALUE</span> <span class="o">=</span> <span class="s1">&#39;videoflow.v1.Value&#39;</span>
+<span class="n">PAYLOAD_BLOBREF</span> <span class="o">=</span> <span class="s1">&#39;videoflow.v1.BlobRef&#39;</span>
+
+<span class="c1">#: The sole envelope version: a language-neutral ``videoflow.v1.Envelope`` (protobuf).</span>
+<span class="c1">#: Overridable per run via ``VF_ENVELOPE_VERSION`` only to a version this build speaks.</span>
+<span class="n">DEFAULT_ENVELOPE_VERSION</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;VF_ENVELOPE_VERSION&#39;</span><span class="p">,</span> <span class="s1">&#39;4&#39;</span><span class="p">))</span>
+
+<span class="c1">#: Versions this build can *emit*.</span>
+<span class="n">EMITTABLE_ENVELOPE_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="mi">4</span><span class="p">,)</span>
+
+<span class="c1">#: Versions this build can *decode*. The legacy msgpack wire (v2/v3) has been removed;</span>
+<span class="c1">#: such envelopes are refused on decode.</span>
+<span class="n">COMPATIBLE_ENVELOPE_VERSIONS</span> <span class="o">=</span> <span class="p">(</span><span class="mi">4</span><span class="p">,)</span>
+
+<span class="c1">#: Message kinds carried in the envelope ``type`` field. ``data`` is a normal</span>
+<span class="c1">#: payload; ``eos`` is an end-of-stream marker with no payload.</span>
+<span class="n">MSG_TYPE_DATA</span> <span class="o">=</span> <span class="s1">&#39;data&#39;</span>
+<span class="n">MSG_TYPE_EOS</span> <span class="o">=</span> <span class="s1">&#39;eos&#39;</span>
+
+<span class="n">_PROTO_MSG_TYPE</span> <span class="o">=</span> <span class="p">{</span>
+    <span class="n">MSG_TYPE_DATA</span><span class="p">:</span> <span class="n">envelope_pb2</span><span class="o">.</span><span class="n">MSG_TYPE_DATA</span><span class="p">,</span>
+    <span class="n">MSG_TYPE_EOS</span><span class="p">:</span> <span class="n">envelope_pb2</span><span class="o">.</span><span class="n">MSG_TYPE_EOS</span><span class="p">,</span>
+<span class="p">}</span>
+<span class="n">_PROTO_MSG_TYPE_REV</span> <span class="o">=</span> <span class="p">{</span><span class="n">v</span><span class="p">:</span> <span class="n">k</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">_PROTO_MSG_TYPE</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+
+<div class="viewcode-block" id="derive_message_id">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.derive_message_id">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">derive_message_id</span><span class="p">(</span><span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">producer_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">trace_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">seq</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">msg_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Deterministic, content-derived message id. Two publishes of the *same logical</span>
+<span class="sd">    message* (e.g. a processor that crashed after publishing but is re-run and</span>
+<span class="sd">    recomputes the same output for the same input group) produce the same id, so</span>
+<span class="sd">    JetStream&#39;s ``Nats-Msg-Id`` de-duplication drops the retry copy. It is</span>
+<span class="sd">    therefore essential that the inputs here are stable across retries — in</span>
+<span class="sd">    particular ``seq`` must be carried forward from the input group, not a local</span>
+<span class="sd">    wall-clock or attempt counter.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">raw</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">flow_id</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">run_id</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">producer_name</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">trace_id</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">seq</span><span class="si">}</span><span class="s1">:</span><span class="si">{</span><span class="n">msg_type</span><span class="si">}</span><span class="s1">&#39;</span>
+    <span class="k">return</span> <span class="n">hashlib</span><span class="o">.</span><span class="n">sha256</span><span class="p">(</span><span class="n">raw</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="s1">&#39;utf-8&#39;</span><span class="p">))</span><span class="o">.</span><span class="n">hexdigest</span><span class="p">()[:</span><span class="mi">32</span><span class="p">]</span></div>
+
+
+<span class="c1">#: Payloads whose serialized size (in bytes) exceeds this threshold are written to</span>
+<span class="c1">#: a BlobStore instead of being inlined in the broker message. Large uncompressed</span>
+<span class="c1">#: video frames (a 1080p RGB frame is ~6.2MB) would otherwise blow past a typical</span>
+<span class="c1">#: broker&#39;s per-message size limit (NATS defaults to a 1MB `max_payload`).</span>
+<span class="n">MAX_INLINE_PAYLOAD_BYTES</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;VIDEOFLOW_MAX_INLINE_PAYLOAD_BYTES&#39;</span><span class="p">,</span> <span class="mi">512</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">))</span>
+
+<span class="c1">#: Blob lifetime when nothing plumbs an explicit TTL. Serialization is flow-type</span>
+<span class="c1">#: agnostic, so the flow-aware defaults (3600s realtime / 86400s batch, BLOB-7) live</span>
+<span class="c1">#: with the messenger that knows the flow type; this is only the fallback.</span>
+<span class="n">DEFAULT_BLOB_TTL_SECONDS</span> <span class="o">=</span> <span class="mi">3600</span>
+
+<div class="viewcode-block" id="BlobStore">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.BlobStore">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">BlobStore</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Interface for the external blob store used for payloads over \</span>
+<span class="sd">        ``MAX_INLINE_PAYLOAD_BYTES``. Not tied to any particular broker — Redis is a \</span>
+<span class="sd">        convenient default (large string values, simple TTL-based expiry) even when \</span>
+<span class="sd">        NATS is the primary messaging broker.</span>
+
+<span class="sd">    Reclamation (RFC 0002): ``put_with_readers``/``release`` default to TTL-only \</span>
+<span class="sd">        behaviour so a subclass that only implements ``put``/``get`` keeps working; \</span>
+<span class="sd">        a store that can refcount overrides both.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+<div class="viewcode-block" id="BlobStore.put">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.BlobStore.put">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_BLOB_TTL_SECONDS</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Stores ``data`` and returns an opaque reference string that ``get()`` can resolve later.&#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;BlobStore subclass must implement put()&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BlobStore.get">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.BlobStore.get">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;Resolves a reference previously returned by ``put()`` back into bytes.&#39;&#39;&#39;</span>
+        <span class="k">raise</span> <span class="ne">NotImplementedError</span><span class="p">(</span><span class="s1">&#39;BlobStore subclass must implement get()&#39;</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BlobStore.put_with_readers">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.BlobStore.put_with_readers">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">put_with_readers</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">readers</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_BLOB_TTL_SECONDS</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">        Stores ``data`` expecting exactly ``readers`` downstream reads, enabling the \</span>
+<span class="sd">            store to reclaim the blob once every reader has released it (BLOB-5).</span>
+
+<span class="sd">        Default implementation ignores ``readers`` and delegates to ``put()`` — a \</span>
+<span class="sd">            store with no reclamation support degrades to plain TTL expiry.</span>
+<span class="sd">        &#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">ttl_seconds</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="BlobStore.release">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.BlobStore.release">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">release</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">        </span><span class="sd">&#39;&#39;&#39;One downstream reader is finished with ``ref`` (its message was acked, BLOB-6). Default no-op.&#39;&#39;&#39;</span>
+        <span class="k">return</span> <span class="kc">None</span></div>
+</div>
+
+
+<div class="viewcode-block" id="RedisBlobStore">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RedisBlobStore">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RedisBlobStore</span><span class="p">(</span><span class="n">BlobStore</span><span class="p">):</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Uses a Redis server purely as a large-value TTL cache, independent of whether Redis is used for messaging.&#39;&#39;&#39;</span>
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">url</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="kn">import</span><span class="w"> </span><span class="nn">redis</span>  <span class="c1"># optional dependency (extra): only this store needs it</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client</span> <span class="o">=</span> <span class="n">redis</span><span class="o">.</span><span class="n">Redis</span><span class="o">.</span><span class="n">from_url</span><span class="p">(</span><span class="n">url</span> <span class="ow">or</span> <span class="n">os</span><span class="o">.</span><span class="n">environ</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="s1">&#39;VIDEOFLOW_BLOB_REDIS_URL&#39;</span><span class="p">,</span> <span class="s1">&#39;redis://localhost:6379/0&#39;</span><span class="p">))</span>
+
+<div class="viewcode-block" id="RedisBlobStore.put">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RedisBlobStore.put">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">put</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_BLOB_TTL_SECONDS</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="sa">f</span><span class="s1">&#39;vf-blob-</span><span class="si">{</span><span class="n">uuid</span><span class="o">.</span><span class="n">uuid4</span><span class="p">()</span><span class="o">.</span><span class="n">hex</span><span class="si">}</span><span class="s1">&#39;</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="n">key</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="n">ex</span> <span class="o">=</span> <span class="n">ttl_seconds</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">key</span></div>
+
+
+<div class="viewcode-block" id="RedisBlobStore.get">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RedisBlobStore.get">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+        <span class="n">data</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">data</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">KeyError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Blob </span><span class="si">{</span><span class="n">ref</span><span class="si">}</span><span class="s1"> not found (expired or never existed)&#39;</span><span class="p">)</span>
+        <span class="c1"># redis-py types get() more broadly than what we store (always bytes here).</span>
+        <span class="k">return</span> <span class="n">data</span>  <span class="c1"># type: ignore[return-value]</span></div>
+
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">_refcount_key</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="s1">&#39;vf-blobrc-&#39;</span> <span class="o">+</span> <span class="n">ref</span><span class="o">.</span><span class="n">removeprefix</span><span class="p">(</span><span class="s1">&#39;vf-blob-&#39;</span><span class="p">)</span>
+
+<div class="viewcode-block" id="RedisBlobStore.put_with_readers">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RedisBlobStore.put_with_readers">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">put_with_readers</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">data</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">readers</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">DEFAULT_BLOB_TTL_SECONDS</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="c1"># Blob first, counter second: a crash in between leaves a counterless blob,</span>
+        <span class="c1"># which release() treats as TTL-only — the safe direction (BLOB-5).</span>
+        <span class="n">key</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">data</span><span class="p">,</span> <span class="n">ttl_seconds</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">readers</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">set</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_refcount_key</span><span class="p">(</span><span class="n">key</span><span class="p">),</span> <span class="n">readers</span><span class="p">,</span> <span class="n">ex</span> <span class="o">=</span> <span class="n">ttl_seconds</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">key</span></div>
+
+
+<div class="viewcode-block" id="RedisBlobStore.release">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RedisBlobStore.release">[docs]</a>
+    <span class="k">def</span><span class="w"> </span><span class="nf">release</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">ref</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">rc</span> <span class="o">=</span> <span class="bp">self</span><span class="o">.</span><span class="n">_refcount_key</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+        <span class="c1"># The EXISTS guard is load-bearing: releasing a blob written without a</span>
+        <span class="c1"># counter (older publisher, VF_BLOB_READERS unset, or counter expired) must</span>
+        <span class="c1"># not DECR-create a negative key and delete a blob other readers still need.</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">exists</span><span class="p">(</span><span class="n">rc</span><span class="p">):</span>
+            <span class="k">return</span>
+        <span class="k">if</span> <span class="nb">int</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">decr</span><span class="p">(</span><span class="n">rc</span><span class="p">))</span> <span class="o">&lt;=</span> <span class="mi">0</span><span class="p">:</span>
+            <span class="c1"># Two single-key UNLINKs, not one multi-key call: the blob and counter</span>
+            <span class="c1"># keys hash to different slots on Redis Cluster.</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">ref</span><span class="p">)</span>
+            <span class="bp">self</span><span class="o">.</span><span class="n">_client</span><span class="o">.</span><span class="n">unlink</span><span class="p">(</span><span class="n">rc</span><span class="p">)</span></div>
+</div>
+
+
+<span class="c1"># -- blob store selection --------------------------------------------------</span>
+<span class="c1">#</span>
+<span class="c1"># The store is chosen by the URL scheme of the configured blob URL, so adding one</span>
+<span class="c1"># (S3, MinIO, a filesystem store for tests) means registering a factory rather</span>
+<span class="c1"># than editing the worker&#39;s construction site.</span>
+
+<span class="n">BLOB_STORE_ENTRY_POINT_GROUP</span> <span class="o">=</span> <span class="s1">&#39;videoflow.blob_stores&#39;</span>
+
+<span class="n">_BLOB_STORE_SCHEMES</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="n">BlobStore</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_normalize_scheme</span><span class="p">(</span><span class="n">scheme</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Canonical form of a URL scheme. Registration and lookup must agree on this,</span>
+<span class="sd">    or a store registered as ``&#39;S3&#39;`` is unreachable from ``s3://bucket/key``</span>
+<span class="sd">    while still being listed as known.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="n">scheme</span><span class="o">.</span><span class="n">strip</span><span class="p">()</span><span class="o">.</span><span class="n">lower</span><span class="p">()</span>
+
+<div class="viewcode-block" id="register_blob_store">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.register_blob_store">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">register_blob_store</span><span class="p">(</span><span class="n">scheme</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">factory</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="nb">str</span><span class="p">],</span> <span class="n">BlobStore</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Registers a ``BlobStore`` factory for a URL scheme. ``factory`` receives the</span>
+<span class="sd">    full URL (not just the remainder) and returns a ready store.</span>
+
+<span class="sd">    Third-party packages may register either by calling this on import, or by</span>
+<span class="sd">    declaring an entry point in the ``videoflow.blob_stores`` group — the latter</span>
+<span class="sd">    is what lets a store be selected purely by configuration, with nothing in the</span>
+<span class="sd">    flow importing the package that provides it.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - scheme: URL scheme without the separator, e.g. ``&#39;s3&#39;``. Case-insensitive: \</span>
+<span class="sd">            normalized here to match how ``make_blob_store`` parses a URL, so \</span>
+<span class="sd">            ``register_blob_store(&#39;S3&#39;, ...)`` is reachable from ``s3://bucket/key``.</span>
+<span class="sd">        - factory: callable taking the blob URL and returning a ``BlobStore``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">_BLOB_STORE_SCHEMES</span><span class="p">[</span><span class="n">_normalize_scheme</span><span class="p">(</span><span class="n">scheme</span><span class="p">)]</span> <span class="o">=</span> <span class="n">factory</span></div>
+
+
+<div class="viewcode-block" id="registered_blob_store_schemes">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.registered_blob_store_schemes">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">registered_blob_store_schemes</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;The URL schemes a blob store is currently registered for, sorted.&#39;&#39;&#39;</span>
+    <span class="k">return</span> <span class="nb">sorted</span><span class="p">(</span><span class="n">_BLOB_STORE_SCHEMES</span><span class="p">)</span></div>
+
+
+<div class="viewcode-block" id="make_blob_store">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.make_blob_store">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">make_blob_store</span><span class="p">(</span><span class="n">url</span> <span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">BlobStore</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Builds the blob store for ``url``, dispatching on its scheme.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - url: blob store URL, e.g. ``redis://localhost:6379/0``.</span>
+
+<span class="sd">    - Returns: a ready ``BlobStore``.</span>
+
+<span class="sd">    - Raises:</span>
+<span class="sd">        - ValueError: the URL has no scheme, or no store is registered for it. \</span>
+<span class="sd">            The message names the known schemes and ``register_blob_store``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">scheme</span> <span class="o">=</span> <span class="n">_normalize_scheme</span><span class="p">(</span><span class="n">url</span><span class="o">.</span><span class="n">split</span><span class="p">(</span><span class="s1">&#39;://&#39;</span><span class="p">,</span> <span class="mi">1</span><span class="p">)[</span><span class="mi">0</span><span class="p">])</span> <span class="k">if</span> <span class="s1">&#39;://&#39;</span> <span class="ow">in</span> <span class="n">url</span> <span class="k">else</span> <span class="s1">&#39;&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">scheme</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">&#39;Blob store URL must include a scheme, got </span><span class="si">{</span><span class="n">url</span><span class="si">!r}</span><span class="s1">. &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;Known schemes: </span><span class="si">{</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">registered_blob_store_schemes</span><span class="p">())</span><span class="si">}</span><span class="s1">.&#39;</span>
+        <span class="p">)</span>
+    <span class="k">if</span> <span class="n">scheme</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_BLOB_STORE_SCHEMES</span><span class="p">:</span>
+        <span class="c1"># A scheme we do not know may belong to an installed-but-unimported</span>
+        <span class="c1"># plugin; consult entry points once before giving up.</span>
+        <span class="n">plugins</span><span class="o">.</span><span class="n">load_plugin_group</span><span class="p">(</span><span class="n">BLOB_STORE_ENTRY_POINT_GROUP</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">scheme</span> <span class="ow">not</span> <span class="ow">in</span> <span class="n">_BLOB_STORE_SCHEMES</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s1">&#39;No blob store registered for URL scheme </span><span class="si">{</span><span class="n">scheme</span><span class="si">!r}</span><span class="s1"> (from </span><span class="si">{</span><span class="n">url</span><span class="si">!r}</span><span class="s1">). &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;Known schemes: </span><span class="si">{</span><span class="s2">&quot;, &quot;</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">registered_blob_store_schemes</span><span class="p">())</span><span class="si">}</span><span class="s1">. &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;Register one with videoflow.wire.serialization.register_blob_store(&#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">scheme</span><span class="si">!r}</span><span class="s1">, factory), or declare a &#39;</span>
+            <span class="sa">f</span><span class="s1">&#39;</span><span class="si">{</span><span class="n">BLOB_STORE_ENTRY_POINT_GROUP</span><span class="si">!r}</span><span class="s1"> entry point.&#39;</span>
+        <span class="p">)</span>
+    <span class="k">return</span> <span class="n">_BLOB_STORE_SCHEMES</span><span class="p">[</span><span class="n">scheme</span><span class="p">](</span><span class="n">url</span><span class="p">)</span></div>
+
+
+<span class="c1"># Every scheme redis-py&#39;s from_url accepts. The worker used to hand VF_BLOB_REDIS_URL</span>
+<span class="c1"># straight to RedisBlobStore whatever its scheme, so all three must stay registered</span>
+<span class="c1"># or scheme dispatch would silently drop support for a URL that used to work.</span>
+<span class="n">register_blob_store</span><span class="p">(</span><span class="s1">&#39;redis&#39;</span><span class="p">,</span> <span class="n">RedisBlobStore</span><span class="p">)</span>
+<span class="n">register_blob_store</span><span class="p">(</span><span class="s1">&#39;rediss&#39;</span><span class="p">,</span> <span class="n">RedisBlobStore</span><span class="p">)</span>   <span class="c1"># TLS</span>
+<span class="n">register_blob_store</span><span class="p">(</span><span class="s1">&#39;unix&#39;</span><span class="p">,</span> <span class="n">RedisBlobStore</span><span class="p">)</span>     <span class="c1"># Unix domain socket</span>
+
+<span class="c1"># ==========================================================================</span>
+<span class="c1"># v4 — protobuf payload codec (the language-neutral wire)</span>
+<span class="c1"># ==========================================================================</span>
+
+<div class="viewcode-block" id="RawPayload">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.RawPayload">[docs]</a>
+<span class="k">class</span><span class="w"> </span><span class="nc">RawPayload</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    An opaque, already-encoded payload: a ``payload_type`` FQN and its raw bytes.</span>
+<span class="sd">    Produced when decoding a message whose ``payload_type`` is not registered (so a</span>
+<span class="sd">    forwarding/storing node need not understand it), and accepted by the encoder so</span>
+<span class="sd">    such a payload can be re-published losslessly (PROTOCOL.md WIRE-9).</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="vm">__slots__</span> <span class="o">=</span> <span class="p">(</span><span class="s1">&#39;payload_type&#39;</span><span class="p">,</span> <span class="s1">&#39;data&#39;</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__init__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">payload_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">payload_type</span> <span class="o">=</span> <span class="n">payload_type</span>
+        <span class="bp">self</span><span class="o">.</span><span class="n">data</span> <span class="o">=</span> <span class="n">data</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="fm">__repr__</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+        <span class="k">return</span> <span class="sa">f</span><span class="s1">&#39;RawPayload(</span><span class="si">{</span><span class="bp">self</span><span class="o">.</span><span class="n">payload_type</span><span class="si">!r}</span><span class="s1">, </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="bp">self</span><span class="o">.</span><span class="n">data</span><span class="p">)</span><span class="si">}</span><span class="s1"> bytes)&#39;</span></div>
+
+
+<span class="c1">#: FQN -&gt; protobuf message class, for decoding registered well-known / vendor types.</span>
+<span class="c1">#: Tensor/Value/BlobRef are handled specially (converted to ndarray / python / a</span>
+<span class="c1">#: blob resolve); other registered types decode to their proto message instance.</span>
+<span class="n">_PAYLOAD_REGISTRY</span> <span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">type</span><span class="p">[</span><span class="n">Message</span><span class="p">]]</span> <span class="o">=</span> <span class="p">{}</span>
+
+<div class="viewcode-block" id="register_payload_type">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.register_payload_type">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">register_payload_type</span><span class="p">(</span><span class="n">message_cls</span> <span class="p">:</span> <span class="nb">type</span><span class="p">[</span><span class="n">Message</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Register a protobuf message class so envelopes carrying its FQN decode to an</span>
+<span class="sd">    instance of it (rather than an opaque ``RawPayload``). The well-known videoflow</span>
+<span class="sd">    types are pre-registered; vendors register their own payload messages.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">_PAYLOAD_REGISTRY</span><span class="p">[</span><span class="n">message_cls</span><span class="o">.</span><span class="n">DESCRIPTOR</span><span class="o">.</span><span class="n">full_name</span><span class="p">]</span> <span class="o">=</span> <span class="n">message_cls</span></div>
+
+
+<span class="k">for</span> <span class="n">_m</span> <span class="ow">in</span> <span class="p">(</span><span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tensor</span><span class="p">,</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Frame</span><span class="p">,</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Detections</span><span class="p">,</span>
+        <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tracks</span><span class="p">,</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">BlobRef</span><span class="p">,</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">Value</span><span class="p">):</span>
+    <span class="n">register_payload_type</span><span class="p">(</span><span class="n">_m</span><span class="p">)</span>
+
+<span class="c1">#: Entry-point group for third-party payload codecs. Registration normally happens</span>
+<span class="c1">#: as a side effect of importing the component module (the worker imports it via</span>
+<span class="c1">#: ``VF_NODE_CLASS`` anyway); the group covers host-side tools such as</span>
+<span class="c1">#: ``videoflow debug decode``, which must understand a vendor payload without</span>
+<span class="c1">#: knowing which package defines it.</span>
+<span class="n">PAYLOAD_ENTRY_POINT_GROUP</span> <span class="o">=</span> <span class="s1">&#39;videoflow.payload_types&#39;</span>
+
+<span class="c1">#: Encode rules, consulted in registration order by ``isinstance``. The encode-side</span>
+<span class="c1">#: complement of ``_PAYLOAD_REGISTRY``: that one makes a *received* FQN decode to a</span>
+<span class="c1">#: class, this one gives an *outgoing* Python object a wire type.</span>
+<span class="n">_PAYLOAD_ENCODERS</span> <span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">type</span><span class="p">,</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]]]]</span> <span class="o">=</span> <span class="p">[]</span>
+
+<div class="viewcode-block" id="register_payload_encoder">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.register_payload_encoder">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">register_payload_encoder</span><span class="p">(</span><span class="n">python_type</span> <span class="p">:</span> <span class="nb">type</span><span class="p">,</span>
+                            <span class="n">encoder</span> <span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Any</span><span class="p">],</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]])</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Registers an encode rule mapping instances of ``python_type`` to a</span>
+<span class="sd">    ``(payload_type, serialized_bytes)`` pair on the v4 wire — the encode-side</span>
+<span class="sd">    complement of ``register_payload_type``.</span>
+
+<span class="sd">    Rules are checked in registration order, and only *after* every built-in</span>
+<span class="sd">    check (ndarray, ``RawPayload``, protobuf message, and the JSON-like types that</span>
+<span class="sd">    become ``Value``). That ordering is deliberate and worth preserving: it lets a</span>
+<span class="sd">    vendor type get a real wire type instead of a ``TypeError``, while making it</span>
+<span class="sd">    impossible for any registration — even one matching ``object`` — to change how a</span>
+<span class="sd">    built-in payload encodes. Those mappings are fixed by ``spec/PROTOCOL.md`` §4.4</span>
+<span class="sd">    and proven by the golden vectors, so they are not an extension point. This is the</span>
+<span class="sd">    only way to give a type with no built-in encoding a place on the wire — there is</span>
+<span class="sd">    no code-executing fallback (see ``spec/rfcs/0001``).</span>
+
+<span class="sd">    The corollary: a type that is *already* encodable (a ``dict`` subclass, say)</span>
+<span class="sd">    is encoded as the built-in it resembles, and its registered rule never runs.</span>
+
+<span class="sd">    Pair this with ``register_payload_type`` (or a decoder that understands the</span>
+<span class="sd">    ``payload_type`` string) so the receiving side can decode what you emit.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - python_type: the type to match with ``isinstance``.</span>
+<span class="sd">        - encoder: callable taking the payload and returning \</span>
+<span class="sd">            ``(payload_type, serialized_bytes)``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">_PAYLOAD_ENCODERS</span><span class="o">.</span><span class="n">append</span><span class="p">((</span><span class="n">python_type</span><span class="p">,</span> <span class="n">encoder</span><span class="p">))</span></div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_encode_registered_payload</span><span class="p">(</span><span class="n">payload</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;The first registered encode rule matching ``payload``, or None.&#39;&#39;&#39;</span>
+    <span class="k">for</span> <span class="n">python_type</span><span class="p">,</span> <span class="n">encoder</span> <span class="ow">in</span> <span class="n">_PAYLOAD_ENCODERS</span><span class="p">:</span>
+        <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">python_type</span><span class="p">):</span>
+            <span class="k">return</span> <span class="n">encoder</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="k">return</span> <span class="kc">None</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_value_to_proto</span><span class="p">(</span><span class="n">v</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">allow_tensor</span> <span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">True</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">Value</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Encodes a JSON-like Python value to a ``videoflow.v1.Value``. A nested numpy \</span>
+<span class="sd">        ndarray becomes a ``tensor_value`` (WIRE-15), so a structured container that \</span>
+<span class="sd">        mixes arrays with scalars — e.g. a ``(frame_index, frame)`` tuple — has a \</span>
+<span class="sd">        neutral encoding. ``allow_tensor=False`` forbids nested arrays; it is used for \</span>
+<span class="sd">        the envelope metadata map, which is for small scalars, not payload arrays.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">out</span> <span class="o">=</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">Value</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">v</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">null_value</span> <span class="o">=</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">NULL_VALUE</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">bool</span><span class="p">):</span>  <span class="c1"># bool before int (bool is a subclass of int)</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">bool_value</span> <span class="o">=</span> <span class="n">v</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">int</span><span class="p">):</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">int_value</span> <span class="o">=</span> <span class="n">v</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">float</span><span class="p">):</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">double_value</span> <span class="o">=</span> <span class="n">v</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">string_value</span> <span class="o">=</span> <span class="n">v</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="p">(</span><span class="nb">bytes</span><span class="p">,</span> <span class="nb">bytearray</span><span class="p">)):</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">bytes_value</span> <span class="o">=</span> <span class="nb">bytes</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">generic</span><span class="p">):</span>  <span class="c1"># numpy scalar -&gt; python scalar</span>
+        <span class="k">return</span> <span class="n">_value_to_proto</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">item</span><span class="p">(),</span> <span class="n">allow_tensor</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+        <span class="k">if</span> <span class="ow">not</span> <span class="n">allow_tensor</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+                <span class="s1">&#39;Cannot put a numpy ndarray in message metadata: metadata is for small &#39;</span>
+                <span class="s1">&#39;scalars/strings, not payload arrays. Send the array as the payload (or a &#39;</span>
+                <span class="s1">&#39;field of the payload) instead.&#39;</span><span class="p">)</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">tensor_value</span><span class="o">.</span><span class="n">CopyFrom</span><span class="p">(</span><span class="n">_ndarray_to_tensor</span><span class="p">(</span><span class="n">v</span><span class="p">))</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="p">(</span><span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">)):</span>
+        <span class="n">out</span><span class="o">.</span><span class="n">list_value</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">extend</span><span class="p">(</span><span class="n">_value_to_proto</span><span class="p">(</span><span class="n">x</span><span class="p">,</span> <span class="n">allow_tensor</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">v</span><span class="p">)</span>
+    <span class="k">elif</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="nb">dict</span><span class="p">):</span>
+        <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">v</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+            <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">k</span><span class="p">,</span> <span class="nb">str</span><span class="p">):</span>
+                <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Value map keys must be strings, got </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">k</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>
+            <span class="n">out</span><span class="o">.</span><span class="n">map_value</span><span class="o">.</span><span class="n">fields</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">CopyFrom</span><span class="p">(</span><span class="n">_value_to_proto</span><span class="p">(</span><span class="n">val</span><span class="p">,</span> <span class="n">allow_tensor</span><span class="p">))</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Cannot encode </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">v</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1"> as videoflow.v1.Value&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">out</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_value_from_proto</span><span class="p">(</span><span class="n">v</span> <span class="p">:</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">Value</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+    <span class="n">kind</span> <span class="o">=</span> <span class="n">v</span><span class="o">.</span><span class="n">WhichOneof</span><span class="p">(</span><span class="s1">&#39;kind&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="ow">is</span> <span class="kc">None</span> <span class="ow">or</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;null_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;bool_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">bool_value</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;int_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">int_value</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;double_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">double_value</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;string_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">string_value</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;bytes_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">v</span><span class="o">.</span><span class="n">bytes_value</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;list_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="n">_value_from_proto</span><span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="k">for</span> <span class="n">x</span> <span class="ow">in</span> <span class="n">v</span><span class="o">.</span><span class="n">list_value</span><span class="o">.</span><span class="n">values</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;map_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">_value_from_proto</span><span class="p">(</span><span class="n">val</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">val</span> <span class="ow">in</span> <span class="n">v</span><span class="o">.</span><span class="n">map_value</span><span class="o">.</span><span class="n">fields</span><span class="o">.</span><span class="n">items</span><span class="p">()}</span>
+    <span class="k">if</span> <span class="n">kind</span> <span class="o">==</span> <span class="s1">&#39;tensor_value&#39;</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_tensor_to_ndarray</span><span class="p">(</span><span class="n">v</span><span class="o">.</span><span class="n">tensor_value</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Unknown Value kind: </span><span class="si">{</span><span class="n">kind</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span>  <span class="c1"># pragma: no cover</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_ndarray_to_tensor</span><span class="p">(</span><span class="n">arr</span> <span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tensor</span><span class="p">:</span>
+    <span class="n">arr</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">ascontiguousarray</span><span class="p">(</span><span class="n">arr</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tensor</span><span class="p">(</span><span class="n">shape</span> <span class="o">=</span> <span class="nb">list</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">shape</span><span class="p">),</span> <span class="n">dtype</span> <span class="o">=</span> <span class="nb">str</span><span class="p">(</span><span class="n">arr</span><span class="o">.</span><span class="n">dtype</span><span class="p">),</span> <span class="n">data</span> <span class="o">=</span> <span class="n">arr</span><span class="o">.</span><span class="n">tobytes</span><span class="p">())</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_tensor_to_ndarray</span><span class="p">(</span><span class="n">t</span> <span class="p">:</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tensor</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">data</span><span class="p">,</span> <span class="n">dtype</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">dtype</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">dtype</span><span class="p">))</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="nb">list</span><span class="p">(</span><span class="n">t</span><span class="o">.</span><span class="n">shape</span><span class="p">))</span>
+
+<span class="c1"># Any generated message — well-known or vendor — can be a payload: they all derive from</span>
+<span class="c1"># the protobuf runtime&#39;s Message base, so isinstance covers what the old structural</span>
+<span class="c1"># DESCRIPTOR/SerializeToString probe did, and narrows the type for callers.</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_proto_message</span><span class="p">(</span><span class="n">obj</span> <span class="p">:</span> <span class="nb">object</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">TypeGuard</span><span class="p">[</span><span class="n">Message</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">obj</span><span class="p">,</span> <span class="n">Message</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_encode_payload_v4</span><span class="p">(</span><span class="n">payload</span> <span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">]:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;Encodes a payload to ``(payload_type, bytes)`` without blob offload (§4.4).&#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">ndarray</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">PAYLOAD_TENSOR</span><span class="p">,</span> <span class="n">_ndarray_to_tensor</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">RawPayload</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">payload</span><span class="o">.</span><span class="n">payload_type</span><span class="p">,</span> <span class="n">payload</span><span class="o">.</span><span class="n">data</span>
+    <span class="k">if</span> <span class="n">_is_proto_message</span><span class="p">(</span><span class="n">payload</span><span class="p">):</span>
+        <span class="k">return</span> <span class="n">payload</span><span class="o">.</span><span class="n">DESCRIPTOR</span><span class="o">.</span><span class="n">full_name</span><span class="p">,</span> <span class="n">payload</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">()</span>
+    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="p">(</span><span class="nb">bool</span><span class="p">,</span> <span class="nb">int</span><span class="p">,</span> <span class="nb">float</span><span class="p">,</span> <span class="nb">str</span><span class="p">,</span> <span class="nb">bytes</span><span class="p">,</span> <span class="nb">bytearray</span><span class="p">,</span> <span class="nb">list</span><span class="p">,</span> <span class="nb">tuple</span><span class="p">,</span> <span class="nb">dict</span><span class="p">,</span> <span class="n">np</span><span class="o">.</span><span class="n">generic</span><span class="p">))</span> <span class="ow">or</span> <span class="n">payload</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">PAYLOAD_VALUE</span><span class="p">,</span> <span class="n">_value_to_proto</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">()</span>
+    <span class="c1"># Vendor encode rules sit after *every* built-in check, so registering one can</span>
+    <span class="c1"># never change how a built-in payload encodes.</span>
+    <span class="n">registered</span> <span class="o">=</span> <span class="n">_encode_registered_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">registered</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">registered</span>
+    <span class="k">raise</span> <span class="ne">TypeError</span><span class="p">(</span>
+        <span class="sa">f</span><span class="s1">&#39;Cannot encode payload of type </span><span class="si">{</span><span class="nb">type</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">.</span><span class="vm">__name__</span><span class="si">}</span><span class="s1"> for the wire. &#39;</span>
+        <span class="s1">&#39;Send a numpy ndarray, a videoflow.v1 payload, a protobuf message, or a &#39;</span>
+        <span class="s1">&#39;JSON-like scalar/list/dict (which may nest ndarrays); or register an encoder &#39;</span>
+        <span class="s1">&#39;with videoflow.wire.serialization.register_payload_encoder so the type gets a &#39;</span>
+        <span class="s1">&#39;neutral wire encoding. (Arbitrary Python objects are not accepted on the wire; &#39;</span>
+        <span class="s1">&#39;see spec/rfcs/0001.)&#39;</span>
+    <span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_decode_payload_v4</span><span class="p">(</span><span class="n">payload_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">buf</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">payload_type</span> <span class="o">==</span> <span class="n">PAYLOAD_BLOBREF</span><span class="p">:</span>
+        <span class="n">ref</span> <span class="o">=</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">BlobRef</span><span class="p">()</span>
+        <span class="n">ref</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">blob_store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Payload is a BlobRef but no blob_store was configured to resolve it.&#39;</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_decode_payload_v4</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">inner_payload_type</span><span class="p">,</span> <span class="n">blob_store</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">ref</span><span class="o">.</span><span class="n">ref</span><span class="p">),</span> <span class="n">blob_store</span> <span class="o">=</span> <span class="n">blob_store</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">payload_type</span> <span class="o">==</span> <span class="n">PAYLOAD_TENSOR</span><span class="p">:</span>
+        <span class="n">t</span> <span class="o">=</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">Tensor</span><span class="p">()</span>
+        <span class="n">t</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_tensor_to_ndarray</span><span class="p">(</span><span class="n">t</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">payload_type</span> <span class="o">==</span> <span class="n">PAYLOAD_VALUE</span><span class="p">:</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="n">value_pb2</span><span class="o">.</span><span class="n">Value</span><span class="p">()</span>
+        <span class="n">v</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">_value_from_proto</span><span class="p">(</span><span class="n">v</span><span class="p">)</span>
+    <span class="bp">cls</span> <span class="o">=</span> <span class="n">_PAYLOAD_REGISTRY</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">payload_type</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">cls</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="c1"># An unregistered FQN may belong to an installed-but-unimported package.</span>
+        <span class="c1"># A worker normally imports the component that registers it, but host-side</span>
+        <span class="c1"># tools (``videoflow debug decode``) have no such import; consult entry</span>
+        <span class="c1"># points once before falling back to opaque bytes.</span>
+        <span class="n">plugins</span><span class="o">.</span><span class="n">load_plugin_group</span><span class="p">(</span><span class="n">PAYLOAD_ENTRY_POINT_GROUP</span><span class="p">)</span>
+        <span class="bp">cls</span> <span class="o">=</span> <span class="n">_PAYLOAD_REGISTRY</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">payload_type</span><span class="p">)</span>
+    <span class="k">if</span> <span class="bp">cls</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">msg</span> <span class="o">=</span> <span class="bp">cls</span><span class="p">()</span>
+        <span class="n">msg</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">msg</span>
+    <span class="c1"># Unknown type: hand back opaque bytes so a forwarding node can re-emit them.</span>
+    <span class="k">return</span> <span class="n">RawPayload</span><span class="p">(</span><span class="n">payload_type</span><span class="p">,</span> <span class="n">buf</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_encode_envelope_v4</span><span class="p">(</span><span class="n">producer_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">trace_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                        <span class="n">seq</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">msg_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">payload</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+                        <span class="n">span_id</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">parent_span_id</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">replica_id</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span>
+                        <span class="n">event_ts</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">blob_readers</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                        <span class="n">blob_ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">envelope_pb2</span><span class="o">.</span><span class="n">Envelope</span><span class="p">(</span>
+        <span class="n">v</span> <span class="o">=</span> <span class="mi">4</span><span class="p">,</span>
+        <span class="nb">type</span> <span class="o">=</span> <span class="n">_PROTO_MSG_TYPE</span><span class="p">[</span><span class="n">msg_type</span><span class="p">],</span>
+        <span class="n">producer_name</span> <span class="o">=</span> <span class="n">producer_name</span><span class="p">,</span>
+        <span class="n">flow_id</span> <span class="o">=</span> <span class="n">flow_id</span><span class="p">,</span>
+        <span class="n">run_id</span> <span class="o">=</span> <span class="n">run_id</span><span class="p">,</span>
+        <span class="n">trace_id</span> <span class="o">=</span> <span class="n">trace_id</span><span class="p">,</span>
+        <span class="n">seq</span> <span class="o">=</span> <span class="n">seq</span><span class="p">,</span>
+        <span class="n">span_id</span> <span class="o">=</span> <span class="n">span_id</span> <span class="ow">or</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+        <span class="n">parent_span_id</span> <span class="o">=</span> <span class="n">parent_span_id</span> <span class="ow">or</span> <span class="s1">&#39;&#39;</span><span class="p">,</span>
+        <span class="n">replica_id</span> <span class="o">=</span> <span class="n">replica_id</span><span class="p">,</span>
+    <span class="p">)</span>
+    <span class="k">if</span> <span class="n">event_ts</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">event_ts</span> <span class="o">=</span> <span class="n">event_ts</span>
+    <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="p">(</span><span class="n">metadata</span> <span class="ow">or</span> <span class="p">{})</span><span class="o">.</span><span class="n">items</span><span class="p">():</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">metadata</span><span class="p">[</span><span class="n">k</span><span class="p">]</span><span class="o">.</span><span class="n">CopyFrom</span><span class="p">(</span><span class="n">_value_to_proto</span><span class="p">(</span><span class="n">v</span><span class="p">,</span> <span class="n">allow_tensor</span> <span class="o">=</span> <span class="kc">False</span><span class="p">))</span>
+
+    <span class="k">if</span> <span class="n">msg_type</span> <span class="o">==</span> <span class="n">MSG_TYPE_EOS</span><span class="p">:</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">payload_type</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="sa">b</span><span class="s1">&#39;&#39;</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="n">payload_type</span><span class="p">,</span> <span class="n">payload_buf</span> <span class="o">=</span> <span class="n">_encode_payload_v4</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
+        <span class="c1"># Blob offload: over the inline threshold, stash the encoded bytes and carry</span>
+        <span class="c1"># a small BlobRef in their place (PROTOCOL.md §13).</span>
+        <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">payload_buf</span><span class="p">)</span> <span class="o">&gt;</span> <span class="n">MAX_INLINE_PAYLOAD_BYTES</span><span class="p">:</span>
+            <span class="k">if</span> <span class="n">blob_store</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+                    <span class="sa">f</span><span class="s1">&#39;Payload of </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">payload_buf</span><span class="p">)</span><span class="si">}</span><span class="s1"> bytes exceeds MAX_INLINE_PAYLOAD_BYTES &#39;</span>
+                    <span class="sa">f</span><span class="s1">&#39;(</span><span class="si">{</span><span class="n">MAX_INLINE_PAYLOAD_BYTES</span><span class="si">}</span><span class="s1">) and no blob_store was configured to offload &#39;</span>
+                    <span class="s1">&#39;it to. Configure VIDEOFLOW_BLOB_REDIS_URL or pass a BlobStore.&#39;</span><span class="p">)</span>
+            <span class="n">ttl</span> <span class="o">=</span> <span class="n">blob_ttl_seconds</span> <span class="k">if</span> <span class="n">blob_ttl_seconds</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">DEFAULT_BLOB_TTL_SECONDS</span>
+            <span class="c1"># Reader-counted put (BLOB-5) enables delete-after-last-ack; without a</span>
+            <span class="c1"># count the blob is TTL-only exactly as before.</span>
+            <span class="k">if</span> <span class="n">blob_readers</span> <span class="ow">is</span> <span class="ow">not</span> <span class="kc">None</span> <span class="ow">and</span> <span class="n">blob_readers</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">:</span>
+                <span class="n">ref</span> <span class="o">=</span> <span class="n">blob_store</span><span class="o">.</span><span class="n">put_with_readers</span><span class="p">(</span><span class="n">payload_buf</span><span class="p">,</span> <span class="n">blob_readers</span><span class="p">,</span> <span class="n">ttl</span><span class="p">)</span>
+            <span class="k">else</span><span class="p">:</span>
+                <span class="n">ref</span> <span class="o">=</span> <span class="n">blob_store</span><span class="o">.</span><span class="n">put</span><span class="p">(</span><span class="n">payload_buf</span><span class="p">,</span> <span class="n">ttl</span><span class="p">)</span>
+            <span class="n">blobref</span> <span class="o">=</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">BlobRef</span><span class="p">(</span><span class="n">ref</span> <span class="o">=</span> <span class="n">ref</span><span class="p">,</span> <span class="n">inner_payload_type</span> <span class="o">=</span> <span class="n">payload_type</span><span class="p">,</span> <span class="n">size</span> <span class="o">=</span> <span class="nb">len</span><span class="p">(</span><span class="n">payload_buf</span><span class="p">))</span>
+            <span class="n">payload_type</span><span class="p">,</span> <span class="n">payload_buf</span> <span class="o">=</span> <span class="n">PAYLOAD_BLOBREF</span><span class="p">,</span> <span class="n">blobref</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">()</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">payload_type</span> <span class="o">=</span> <span class="n">payload_type</span>
+        <span class="n">env</span><span class="o">.</span><span class="n">payload</span> <span class="o">=</span> <span class="n">payload_buf</span>
+    <span class="k">return</span> <span class="n">env</span><span class="o">.</span><span class="n">SerializeToString</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_decode_envelope_v4</span><span class="p">(</span><span class="n">buf</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+    <span class="n">env</span> <span class="o">=</span> <span class="n">envelope_pb2</span><span class="o">.</span><span class="n">Envelope</span><span class="p">()</span>
+    <span class="n">env</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">buf</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">env</span><span class="o">.</span><span class="n">v</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Unsupported protobuf envelope version </span><span class="si">{</span><span class="n">env</span><span class="o">.</span><span class="n">v</span><span class="si">!r}</span><span class="s1">; expected 4&#39;</span><span class="p">)</span>
+    <span class="n">msg_type</span> <span class="o">=</span> <span class="n">_PROTO_MSG_TYPE_REV</span><span class="o">.</span><span class="n">get</span><span class="p">(</span><span class="n">env</span><span class="o">.</span><span class="n">type</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">msg_type</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Unspecified/unknown envelope message type </span><span class="si">{</span><span class="n">env</span><span class="o">.</span><span class="n">type</span><span class="si">!r}</span><span class="s1">&#39;</span><span class="p">)</span>
+    <span class="n">is_stop_signal</span> <span class="o">=</span> <span class="n">msg_type</span> <span class="o">==</span> <span class="n">MSG_TYPE_EOS</span>
+    <span class="c1"># Surface the blob ref (if any) so the messenger can release it after the</span>
+    <span class="c1"># message is acked (BLOB-6). Re-parsing the tiny BlobRef here is cheaper than a</span>
+    <span class="c1"># second full-envelope parse at the messenger layer.</span>
+    <span class="n">blob_ref</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">is_stop_signal</span> <span class="ow">and</span> <span class="n">env</span><span class="o">.</span><span class="n">payload_type</span> <span class="o">==</span> <span class="n">PAYLOAD_BLOBREF</span><span class="p">:</span>
+        <span class="n">_br</span> <span class="o">=</span> <span class="n">payloads_pb2</span><span class="o">.</span><span class="n">BlobRef</span><span class="p">()</span>
+        <span class="n">_br</span><span class="o">.</span><span class="n">ParseFromString</span><span class="p">(</span><span class="n">env</span><span class="o">.</span><span class="n">payload</span><span class="p">)</span>
+        <span class="n">blob_ref</span> <span class="o">=</span> <span class="n">_br</span><span class="o">.</span><span class="n">ref</span>
+    <span class="n">message</span> <span class="o">=</span> <span class="kc">None</span> <span class="k">if</span> <span class="n">is_stop_signal</span> <span class="k">else</span> <span class="n">_decode_payload_v4</span><span class="p">(</span><span class="n">env</span><span class="o">.</span><span class="n">payload_type</span><span class="p">,</span> <span class="n">env</span><span class="o">.</span><span class="n">payload</span><span class="p">,</span> <span class="n">blob_store</span> <span class="o">=</span> <span class="n">blob_store</span><span class="p">)</span>
+    <span class="k">return</span> <span class="p">{</span>
+        <span class="s1">&#39;producer_name&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">producer_name</span><span class="p">,</span>
+        <span class="s1">&#39;flow_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">flow_id</span><span class="p">,</span>
+        <span class="s1">&#39;run_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">run_id</span><span class="p">,</span>
+        <span class="s1">&#39;trace_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">trace_id</span><span class="p">,</span>
+        <span class="s1">&#39;seq&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">seq</span><span class="p">,</span>
+        <span class="s1">&#39;event_ts&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">event_ts</span> <span class="k">if</span> <span class="n">env</span><span class="o">.</span><span class="n">HasField</span><span class="p">(</span><span class="s1">&#39;event_ts&#39;</span><span class="p">)</span> <span class="k">else</span> <span class="kc">None</span><span class="p">,</span>
+        <span class="s1">&#39;type&#39;</span><span class="p">:</span> <span class="n">msg_type</span><span class="p">,</span>
+        <span class="s1">&#39;is_stop_signal&#39;</span><span class="p">:</span> <span class="n">is_stop_signal</span><span class="p">,</span>
+        <span class="s1">&#39;span_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">span_id</span><span class="p">,</span>
+        <span class="s1">&#39;parent_span_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">parent_span_id</span><span class="p">,</span>
+        <span class="s1">&#39;replica_id&#39;</span><span class="p">:</span> <span class="n">env</span><span class="o">.</span><span class="n">replica_id</span><span class="p">,</span>
+        <span class="s1">&#39;metadata&#39;</span><span class="p">:</span> <span class="p">{</span><span class="n">k</span><span class="p">:</span> <span class="n">_value_from_proto</span><span class="p">(</span><span class="n">v</span><span class="p">)</span> <span class="k">for</span> <span class="n">k</span><span class="p">,</span> <span class="n">v</span> <span class="ow">in</span> <span class="n">env</span><span class="o">.</span><span class="n">metadata</span><span class="o">.</span><span class="n">items</span><span class="p">()},</span>
+        <span class="s1">&#39;message&#39;</span><span class="p">:</span> <span class="n">message</span><span class="p">,</span>
+        <span class="s1">&#39;blob_ref&#39;</span><span class="p">:</span> <span class="n">blob_ref</span><span class="p">,</span>
+    <span class="p">}</span>
+
+<span class="c1"># ==========================================================================</span>
+<span class="c1"># version-dispatching public API</span>
+<span class="c1"># ==========================================================================</span>
+
+<div class="viewcode-block" id="encode_envelope">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.encode_envelope">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">encode_envelope</span><span class="p">(</span><span class="n">producer_name</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">flow_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">run_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">trace_id</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+                    <span class="n">seq</span> <span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">msg_type</span> <span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">metadata</span> <span class="p">:</span> <span class="nb">dict</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span> <span class="n">payload</span> <span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+                    <span class="n">span_id</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">parent_span_id</span> <span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;&#39;</span><span class="p">,</span> <span class="n">replica_id</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+                    <span class="n">event_ts</span> <span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">version</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span> <span class="n">blob_readers</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+                    <span class="n">blob_ttl_seconds</span> <span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Encodes a full wire message and returns the bytes to publish to a broker subject.</span>
+
+<span class="sd">    - Arguments:</span>
+<span class="sd">        - msg_type: ``MSG_TYPE_DATA`` or ``MSG_TYPE_EOS``. EOS carries no payload.</span>
+<span class="sd">        - run_id: the per-run identifier that scopes this flow execution.</span>
+<span class="sd">        - span_id / parent_span_id: hex ids for log/trace correlation (optional).</span>
+<span class="sd">        - replica_id: index of the emitting replica (0 for single-task nodes); \</span>
+<span class="sd">            distinguishes EOS markers from different replicas of one node.</span>
+<span class="sd">        - event_ts: event time of the message in epoch seconds — when the \</span>
+<span class="sd">            underlying real-world event was captured — minted by the producer and \</span>
+<span class="sd">            carried forward unchanged; time-aligned joins group on it.</span>
+<span class="sd">        - version: envelope version to emit. The only supported version is ``4`` \</span>
+<span class="sd">            (protobuf); defaults to ``DEFAULT_ENVELOPE_VERSION``.</span>
+<span class="sd">        - blob_readers: how many downstream reads an offloaded payload will receive; \</span>
+<span class="sd">            enables refcounted blob reclamation (BLOB-5). ``None`` ⇒ TTL-only blobs.</span>
+<span class="sd">        - blob_ttl_seconds: TTL for an offloaded payload (and its counter); \</span>
+<span class="sd">            ``None`` ⇒ ``DEFAULT_BLOB_TTL_SECONDS``.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="n">version</span> <span class="o">=</span> <span class="n">DEFAULT_ENVELOPE_VERSION</span> <span class="k">if</span> <span class="n">version</span> <span class="ow">is</span> <span class="kc">None</span> <span class="k">else</span> <span class="n">version</span>
+    <span class="k">if</span> <span class="n">version</span> <span class="o">==</span> <span class="mi">4</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">_encode_envelope_v4</span><span class="p">(</span><span class="n">producer_name</span><span class="p">,</span> <span class="n">flow_id</span><span class="p">,</span> <span class="n">run_id</span><span class="p">,</span> <span class="n">trace_id</span><span class="p">,</span> <span class="n">seq</span><span class="p">,</span> <span class="n">msg_type</span><span class="p">,</span>
+                                <span class="n">metadata</span><span class="p">,</span> <span class="n">payload</span><span class="p">,</span> <span class="n">span_id</span><span class="p">,</span> <span class="n">parent_span_id</span><span class="p">,</span> <span class="n">replica_id</span><span class="p">,</span>
+                                <span class="n">event_ts</span><span class="p">,</span> <span class="n">blob_store</span><span class="p">,</span> <span class="n">blob_readers</span> <span class="o">=</span> <span class="n">blob_readers</span><span class="p">,</span>
+                                <span class="n">blob_ttl_seconds</span> <span class="o">=</span> <span class="n">blob_ttl_seconds</span><span class="p">)</span>
+    <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="sa">f</span><span class="s1">&#39;Cannot emit envelope version </span><span class="si">{</span><span class="n">version</span><span class="si">!r}</span><span class="s1">; emittable: </span><span class="si">{</span><span class="n">EMITTABLE_ENVELOPE_VERSIONS</span><span class="si">}</span><span class="s1">&#39;</span><span class="p">)</span></div>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">_is_msgpack_map</span><span class="p">(</span><span class="n">first_byte</span> <span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="c1"># The removed legacy v2/v3 wire was a msgpack map at top level: fixmap (0x80-0x8f)</span>
+    <span class="c1"># for our 12-14 fields, or map16/map32 (0xde/0xdf). A v4 protobuf envelope starts</span>
+    <span class="c1"># with a field tag (field 1 ``v`` =&gt; 0x08) and never lands in these ranges, so this</span>
+    <span class="c1"># cheaply recognizes a legacy envelope in order to refuse it with a clear error.</span>
+    <span class="k">return</span> <span class="mh">0x80</span> <span class="o">&lt;=</span> <span class="n">first_byte</span> <span class="o">&lt;=</span> <span class="mh">0x8f</span> <span class="ow">or</span> <span class="n">first_byte</span> <span class="ow">in</span> <span class="p">(</span><span class="mh">0xde</span><span class="p">,</span> <span class="mh">0xdf</span><span class="p">)</span>
+
+<div class="viewcode-block" id="decode_envelope">
+<a class="viewcode-back" href="../../../apidocs/videoflow.wire.html#videoflow.wire.serialization.decode_envelope">[docs]</a>
+<span class="k">def</span><span class="w"> </span><span class="nf">decode_envelope</span><span class="p">(</span><span class="n">buf</span> <span class="p">:</span> <span class="nb">bytes</span><span class="p">,</span> <span class="n">blob_store</span> <span class="p">:</span> <span class="n">BlobStore</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">:</span>
+<span class="w">    </span><span class="sd">&#39;&#39;&#39;</span>
+<span class="sd">    Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \</span>
+<span class="sd">        ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` when absent), \</span>
+<span class="sd">        ``type``, ``is_stop_signal`` (derived: True iff ``type == MSG_TYPE_EOS``), \</span>
+<span class="sd">        ``span_id``, ``parent_span_id``, ``replica_id``, ``metadata``, \</span>
+<span class="sd">        ``message`` (the fully decoded payload — ``None`` for EOS), and \</span>
+<span class="sd">        ``blob_ref`` (the blob store reference the payload was resolved from, or \</span>
+<span class="sd">        ``None`` when the payload was inline — lets the caller release the blob \</span>
+<span class="sd">        after the message is acked, BLOB-6). Only the protobuf \</span>
+<span class="sd">        v4 envelope is supported; a legacy msgpack (v2/v3) envelope is refused.</span>
+<span class="sd">    &#39;&#39;&#39;</span>
+    <span class="k">if</span> <span class="ow">not</span> <span class="n">buf</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s1">&#39;Cannot decode an empty envelope buffer&#39;</span><span class="p">)</span>
+    <span class="k">if</span> <span class="n">_is_msgpack_map</span><span class="p">(</span><span class="n">buf</span><span class="p">[</span><span class="mi">0</span><span class="p">]):</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span>
+            <span class="s1">&#39;Refusing to decode a legacy msgpack (v2/v3) envelope: that wire has been &#39;</span>
+            <span class="s1">&#39;removed. Re-emit the message on the protobuf v4 wire.&#39;</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_decode_envelope_v4</span><span class="p">(</span><span class="n">buf</span><span class="p">,</span> <span class="n">blob_store</span> <span class="o">=</span> <span class="n">blob_store</span><span class="p">)</span></div>
+
+</pre></div>
+
+           </div>
+          </div>
+          <footer>
+
+  <hr/>
+
+  <div role="contentinfo">
+    <p>&#169; Copyright 2019-2026, Jadiel de Armas.</p>
+  </div>
+
+  Built with <a href="https://www.sphinx-doc.org/">Sphinx</a> using a
+    <a href="https://github.com/readthedocs/sphinx_rtd_theme">theme</a>
+    provided by <a href="https://readthedocs.org">Read the Docs</a>.
+   
+
+</footer>
+        </div>
+      </div>
+    </section>
+  </div>
+  <script>
+      jQuery(function () {
+          SphinxRtdTheme.Navigation.enable(true);
+      });
+  </script> 
+
+</body>
+</html>
