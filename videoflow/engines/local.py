@@ -25,7 +25,6 @@ import nats  # noqa: F401  (import guard: fail fast if the broker client is miss
 
 from ..core.compiler import (
     NodeSpec,
-    has_native_components,
     specs_from_tasks_data,
     validate_wire_compatibility,
 )
@@ -110,13 +109,12 @@ class LocalProcessEngine(ExecutionEngine):
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
                 specs : List[NodeSpec] | None = None,
-                allow_pickle : bool = False, local_docker_nats_url : str | None = None,
+                local_docker_nats_url : str | None = None,
                 python_path : list | None = None, inherit_python_path : bool = True,
                 default_image : str | None = None) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         self._specs = specs
-        self._allow_pickle = allow_pickle
         # Fallback image for a native component that declares none — the solution image
         # run-local auto-builds. A node's own image= still wins.
         self._default_image = default_image
@@ -148,13 +146,11 @@ class LocalProcessEngine(ExecutionEngine):
         else:
             specs = specs_from_tasks_data(tasks_data)
 
-        # Resolve the whole-run wire version: a flow with any remote component must
-        # use the protobuf wire (v4+) so native and non-Python workers agree.
-        # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
+        # The whole-run wire version: the single language-neutral protobuf envelope (v4).
+        # Deferred: serialization imports the optional `protobuf` deps at module scope.
         from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
-        base = DEFAULT_ENVELOPE_VERSION
-        envelope_version = 4 if (has_native_components(specs) and base < 4) else base
-        validate_wire_compatibility(specs, envelope_version, self._allow_pickle)
+        envelope_version = DEFAULT_ENVELOPE_VERSION
+        validate_wire_compatibility(specs, envelope_version)
 
         # Provision streams + durable consumers up front. Required for BATCH: under
         # interest retention, a message published before its consumer exists is lost.
@@ -178,7 +174,7 @@ class LocalProcessEngine(ExecutionEngine):
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
-                                self._allow_pickle, self._python_path)
+                                self._python_path)
                 cmd, run_env = self._launch_command(spec, env)
                 proc = subprocess.Popen(cmd, env = run_env)
                 self._procs.append((spec.name, replica_idx, proc))
@@ -295,7 +291,7 @@ class LocalProcessEngine(ExecutionEngine):
 
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
-                allow_pickle : bool = False, python_path : list | None = None) -> dict:
+                python_path : list | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -328,8 +324,6 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
     if blob_redis_url:
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
-    if allow_pickle:
-        env['VF_ALLOW_PICKLE'] = '1'
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:

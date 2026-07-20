@@ -217,7 +217,7 @@ delete them, do not add code to them, and do not repoint the things that referen
 | `videoflow.provision` | Rendered into every flow's init Job, including manifests already applied in clusters |
 | `videoflow.compile` | Spawned inside solution images by the host CLI, which may be a different version |
 | `videoflow.cli` | Backs the `videoflow` console script; installed entry points outlive the source tree |
-| `videoflow.serialization` | The module path a pickled payload records for its class — a DLQ'd message must still decode |
+| `videoflow.serialization` | Frozen public re-export of the wire codec; external importers may have pinned this module path |
 
 `tests/test_shims.py` enforces this. Edit the real modules under `runtime/`, `deploy/` and
 `wire/` instead.

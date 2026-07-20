@@ -32,11 +32,17 @@ def _from_typed(t : dict):
         return t['s']
     if 'b64' in t:
         return base64.b64decode(t['b64'])
+    if 'tensor' in t:
+        return _tensor_from_desc(t['tensor'])
     if 'list' in t:
         return [_from_typed(x) for x in t['list']]
     if 'map' in t:
         return {k: _from_typed(v) for k, v in t['map'].items()}
     raise ValueError(f'bad typed value: {t}')
+
+def _tensor_from_desc(td : dict) -> np.ndarray:
+    return np.frombuffer(base64.b64decode(td['data_b64']),
+                         dtype = np.dtype(td['dtype'])).reshape(td['shape'])
 
 def _assert_typed_equal(actual, typed_desc : dict) -> None:
     '''Compare a decoded value to a typed descriptor, enforcing int-vs-float type.'''
@@ -61,6 +67,9 @@ def _assert_typed_equal(actual, typed_desc : dict) -> None:
         assert set(actual.keys()) == set(typed_desc['map'].keys())
         for k, t in typed_desc['map'].items():
             _assert_typed_equal(actual[k], t)
+    elif 'tensor' in typed_desc:
+        assert isinstance(actual, np.ndarray)
+        assert np.array_equal(actual, _tensor_from_desc(typed_desc['tensor']))
     else:
         raise ValueError(f'bad typed descriptor: {typed_desc}')
 
@@ -117,6 +126,34 @@ def test_message_id_vector(vec):
                             vec['trace_id'], vec['seq'], vec['msg_type'])
     assert got == vec['expected_id']
     assert len(got) == 32
+
+def _load_reject():
+    with open(os.path.join(VECTORS, 'reject', 'manifest.json')) as f:
+        return json.load(f)
+
+@pytest.mark.parametrize('case', _load_reject(), ids = lambda c: c['name'])
+def test_reject_vector(case):
+    '''
+    Negative fixtures: a conformant decoder MUST refuse legacy-wire bytes, and MUST
+    keep an unrecognized payload_type opaque (never deserializing it). This is the
+    cross-SDK contract behind the removal of the code-executing codec.
+    '''
+    with open(os.path.join(VECTORS, 'reject', case['file']), 'rb') as f:
+        buf = f.read()
+    expect = case['expect']
+    if 'reject' in expect:
+        with pytest.raises(ValueError) as ei:
+            s.decode_envelope(buf)
+        needle = expect['reject'].get('message_contains')
+        if needle:
+            assert needle in str(ei.value)
+    elif 'opaque' in expect:
+        d = s.decode_envelope(buf)
+        assert isinstance(d['message'], s.RawPayload)
+        assert d['message'].payload_type == expect['opaque']['payload_type']
+        assert d['message'].data == base64.b64decode(expect['opaque']['data_b64'])
+    else:
+        raise ValueError(f'bad reject expectation: {expect}')
 
 if __name__ == '__main__':
     pytest.main([__file__])

@@ -138,6 +138,42 @@
     }
   },
   {
+    "name": "data_value_nested_tensor",
+    "file": "data_value_nested_tensor.bin",
+    "version": 4,
+    "type": "data",
+    "producer_name": "cam",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "cam:1",
+    "seq": 2,
+    "event_ts": null,
+    "replica_id": 0,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "value": {
+        "list": [
+          {
+            "i": 7
+          },
+          {
+            "tensor": {
+              "shape": [
+                2,
+                3,
+                3
+              ],
+              "dtype": "uint8",
+              "data_b64": "AAECAwQFBgcICQoLDA0ODxAR"
+            }
+          }
+        ]
+      }
+    }
+  },
+  {
     "name": "eos",
     "file": "eos.bin",
     "version": 4,

@@ -15,8 +15,9 @@ Everything you must satisfy for a node to work in a distributed run, not just on
 | `OneTaskProcessorNode` | `process(*inputs)` | Forces `nb_tasks = 1`. Use for stateful nodes: trackers, aggregators. |
 | `ConsumerNode` | `consume(item)` | A `Leaf` — cannot have children. |
 
-Producers are deliberately *not* generators: generators can't be pickled, and the runtime is
-multiprocess.
+Producers are deliberately *not* generators: a node is shipped to its worker as
+`(class path, get_params())` and rebuilt with `type(node)(**get_params())`, and a generator has no
+such reconstructable form (the runtime is multiprocess).
 
 Wiring is by call: `child(parent_a, parent_b)`. A node can only be called once.
 

@@ -57,15 +57,16 @@ scenario ↔ requirement cross-index the conformance kit (`conformance/`) will c
 |---|---|---|
 | WIRE-1 versioning/homogeneous run | ✓ test (v3) → P1 (v4) | `test_serialization.py::test_wrong_version_rejected`, `test_v2_envelope_decodes_without_event_ts` |
 | WIRE-2 version pin / VF-Env header | P1 | `test_serialization_v4.py` |
-| WIRE-3 reject unknown version | ✓ test | `test_serialization.py::test_wrong_version_rejected` |
+| WIRE-3 reject unknown/legacy version | ✓ test | `test_serialization.py::test_legacy_msgpack_envelope_rejected`; `test_serialization_v4.py::test_legacy_msgpack_envelope_refused` |
 | WIRE-4 carry-forward fields | ~ partial | `test_time_sync.py` (seq/event_ts min); ☐ metadata carry scenario |
 | WIRE-5/6 data/eos types | ✓ test | `test_serialization.py::test_stop_signal_round_trip` |
 | WIRE-7 Tensor codec | ✓ test (raw-ndarray) → P1 | `test_serialization.py::test_ndarray_round_trip` |
 | WIRE-8 well-known payloads | P1 | `test_golden_vectors.py` |
 | WIRE-9 vendor extension / opaque passthrough | P1 | `test_serialization_v4.py` |
 | WIRE-10 Value for structured | P1 | `test_serialization_v4.py` |
-| WIRE-11 pickle legacy-gated | P1 | `test_serialization.py::test_arbitrary_object_round_trip` today; gating in P1 |
+| WIRE-11 *(withdrawn, RFC 0001)* | ✓ test | codec removed; `test_serialization_v4.py::test_arbitrary_payload_type_is_inert_on_decode` (unknown type stays opaque) |
 | WIRE-12 Value int/double distinct | P1 | `test_serialization_v4.py` |
+| WIRE-15 Value nests Tensor | ✓ test | `test_serialization_v4.py::test_nested_tensor_container_roundtrips` |
 
 ## §5 Message id & dedup
 
@@ -102,7 +103,7 @@ scenario ↔ requirement cross-index the conformance kit (`conformance/`) will c
 | DELIV-6 realtime fail drops | ✓ test | `test_ack_semantics.py::test_realtime_failure_drops_without_dlq` |
 | DELIV-7 batch NAK redelivery | ✓ test | `test_ack_semantics.py::test_nak_redelivers_up_to_max_deliver` |
 | DELIV-8 DLQ on exhaustion + headers | ✓ test | `test_ack_semantics.py::test_dlq_on_exhausted_retries` |
-| DELIV-9 poison/undecodable term | ☐ conformance | `_pull_loop` decode-fail path untested |
+| DELIV-9 poison/undecodable term | ~ partial | decode-refusal tested (`test_serialization*.py` legacy-msgpack + inert unknown-type); `_pull_loop` term() wiring still integration-only |
 
 ## §8 Join / grouping
 

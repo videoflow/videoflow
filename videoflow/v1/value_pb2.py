@@ -22,9 +22,10 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from videoflow.v1 import payloads_pb2 as videoflow_dot_v1_dot_payloads__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18videoflow/v1/value.proto\x12\x0cvideoflow.v1\"\x8c\x02\n\x05Value\x12-\n\nnull_value\x18\x01 \x01(\x0e\x32\x17.videoflow.v1.NullValueH\x00\x12\x16\n\x0c\x64ouble_value\x18\x02 \x01(\x01H\x00\x12\x13\n\tint_value\x18\x03 \x01(\x12H\x00\x12\x16\n\x0cstring_value\x18\x04 \x01(\tH\x00\x12\x15\n\x0b\x62ytes_value\x18\x05 \x01(\x0cH\x00\x12\x14\n\nbool_value\x18\x06 \x01(\x08H\x00\x12-\n\nlist_value\x18\x07 \x01(\x0b\x32\x17.videoflow.v1.ListValueH\x00\x12+\n\tmap_value\x18\x08 \x01(\x0b\x32\x16.videoflow.v1.MapValueH\x00\x42\x06\n\x04kind\"0\n\tListValue\x12#\n\x06values\x18\x01 \x03(\x0b\x32\x13.videoflow.v1.Value\"\x82\x01\n\x08MapValue\x12\x32\n\x06\x66ields\x18\x01 \x03(\x0b\x32\".videoflow.v1.MapValue.FieldsEntry\x1a\x42\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.videoflow.v1.Value:\x02\x38\x01*\x1b\n\tNullValue\x12\x0e\n\nNULL_VALUE\x10\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x18videoflow/v1/value.proto\x12\x0cvideoflow.v1\x1a\x1bvideoflow/v1/payloads.proto\"\xba\x02\n\x05Value\x12-\n\nnull_value\x18\x01 \x01(\x0e\x32\x17.videoflow.v1.NullValueH\x00\x12\x16\n\x0c\x64ouble_value\x18\x02 \x01(\x01H\x00\x12\x13\n\tint_value\x18\x03 \x01(\x12H\x00\x12\x16\n\x0cstring_value\x18\x04 \x01(\tH\x00\x12\x15\n\x0b\x62ytes_value\x18\x05 \x01(\x0cH\x00\x12\x14\n\nbool_value\x18\x06 \x01(\x08H\x00\x12-\n\nlist_value\x18\x07 \x01(\x0b\x32\x17.videoflow.v1.ListValueH\x00\x12+\n\tmap_value\x18\x08 \x01(\x0b\x32\x16.videoflow.v1.MapValueH\x00\x12,\n\x0ctensor_value\x18\t \x01(\x0b\x32\x14.videoflow.v1.TensorH\x00\x42\x06\n\x04kind\"0\n\tListValue\x12#\n\x06values\x18\x01 \x03(\x0b\x32\x13.videoflow.v1.Value\"\x82\x01\n\x08MapValue\x12\x32\n\x06\x66ields\x18\x01 \x03(\x0b\x32\".videoflow.v1.MapValue.FieldsEntry\x1a\x42\n\x0b\x46ieldsEntry\x12\x0b\n\x03key\x18\x01 \x01(\t\x12\"\n\x05value\x18\x02 \x01(\x0b\x32\x13.videoflow.v1.Value:\x02\x38\x01*\x1b\n\tNullValue\x12\x0e\n\nNULL_VALUE\x10\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,14 +34,14 @@ if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_MAPVALUE_FIELDSENTRY']._loaded_options = None
   _globals['_MAPVALUE_FIELDSENTRY']._serialized_options = b'8\001'
-  _globals['_NULLVALUE']._serialized_start=496
-  _globals['_NULLVALUE']._serialized_end=523
-  _globals['_VALUE']._serialized_start=43
-  _globals['_VALUE']._serialized_end=311
-  _globals['_LISTVALUE']._serialized_start=313
-  _globals['_LISTVALUE']._serialized_end=361
-  _globals['_MAPVALUE']._serialized_start=364
-  _globals['_MAPVALUE']._serialized_end=494
-  _globals['_MAPVALUE_FIELDSENTRY']._serialized_start=428
-  _globals['_MAPVALUE_FIELDSENTRY']._serialized_end=494
+  _globals['_NULLVALUE']._serialized_start=571
+  _globals['_NULLVALUE']._serialized_end=598
+  _globals['_VALUE']._serialized_start=72
+  _globals['_VALUE']._serialized_end=386
+  _globals['_LISTVALUE']._serialized_start=388
+  _globals['_LISTVALUE']._serialized_end=436
+  _globals['_MAPVALUE']._serialized_start=439
+  _globals['_MAPVALUE']._serialized_end=569
+  _globals['_MAPVALUE_FIELDSENTRY']._serialized_start=503
+  _globals['_MAPVALUE_FIELDSENTRY']._serialized_end=569
 # @@protoc_insertion_point(module_scope)

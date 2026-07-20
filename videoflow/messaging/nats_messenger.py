@@ -153,12 +153,10 @@ class NATSMessenger(Messenger):
                 replica_id : int = 0, ack_wait : int = 60, max_retries : int = 3,
                 eos_quiescence_ms : int = 500, nb_tasks : int = 1,
                 partition_by : str | None = None, join_policy : dict | None = None,
-                envelope_version : int | None = None, allow_pickle : bool = False) -> None:
+                envelope_version : int | None = None) -> None:
         self._node = node
-        # Wire version this node emits (msgpack v3 or protobuf v4) and whether the
-        # legacy Python-only pickle payload codec is permitted (§4 of PROTOCOL.md).
+        # Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).
         self._envelope_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
-        self._allow_pickle = allow_pickle
         self._parent_names = list(parent_names)
         self._nats_url = nats_url
         self._flow_id = flow_id
@@ -520,7 +518,6 @@ class NATSMessenger(Messenger):
             node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
             metadata, message, replica_id = self._replica_id, event_ts = event_ts,
             blob_store = self._blob_store, version = self._envelope_version,
-            allow_pickle = self._allow_pickle,
         )
         if msg_type == MSG_TYPE_EOS:
             subject = eos_subject_for(self._flow_id, self._run_id, node_name)

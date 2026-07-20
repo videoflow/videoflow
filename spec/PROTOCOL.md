@@ -88,8 +88,7 @@ depend on any other configuration channel for routing.
 | `VF_HEALTH_PORT` | no | `0` (local) / `8080` (k8s) | Health server port; `0` disables it (§12). |
 | `VF_BLOB_REDIS_URL` | no | unset | Enables the external blob store for large payloads (§13). |
 | `VF_STRUCTURED_LOGS` | no | unset | Truthy ⇒ JSON structured logs. Cosmetic; not protocol. |
-| `VF_ENVELOPE_VERSION` | no | see §4.1 | Wire envelope version to emit/accept for this run (Phase 1+). |
-| `VF_ALLOW_PICKLE` | no | `0` | Whether the Python-only pickle payload codec is permitted this run (§4.4). Non-Python SDKs ignore it (they never emit or accept pickle). |
+| `VF_ENVELOPE_VERSION` | no | see §4.1 | Wire envelope version to emit/accept for this run. The only supported version is 4. |
 
 - **ENV-1**: A worker MUST read `VF_NODE_NAME`, `VF_NODE_KIND`, `VF_FLOW_ID`,
   `VF_RUN_ID`, `VF_NATS_URL`, and `VF_PARENT_NAMES` and fail fast with a clear
@@ -203,17 +202,18 @@ payload. Reference: `videoflow/wire/serialization.py`; the versioned IDL lives i
 
 ### 4.1 Versioning
 
-- **WIRE-1**: the envelope carries an integer `v`. Protocol v1 targets **envelope
-  v4** (protobuf, §4.2). The current shipping build additionally emits/accepts
-  envelope **v3** (msgpack) and decodes **v2**; these are being retired (see
-  Phase 1 of the migration plan). A run is **version-homogeneous**: streams are
-  run-scoped (`NAME-3`), so one run never mixes envelope versions.
-- **WIRE-2**: the emit/accept version for a run is pinned by `VF_ENVELOPE_VERSION`.
-  A worker MUST refuse to start if asked for a version it cannot speak. When
-  present, a `VF-Env: <v>` NATS header SHOULD accompany each message so tooling
-  can identify the format without decoding.
-- **WIRE-3**: a decoder MUST reject an envelope whose `v` it does not support,
-  with a clear error, rather than silently misparsing.
+- **WIRE-1**: the envelope carries an integer `v`. Protocol v1's sole wire is
+  **envelope v4** (protobuf, §4.2). The earlier msgpack envelopes (**v3**, and
+  **v2**) — which carried a Python-only, code-executing payload codec — have been
+  removed (see RFC 0001); a decoder MUST refuse them rather than parse them. A run
+  is **version-homogeneous**: streams are run-scoped (`NAME-<run>`), so one run
+  never mixes envelope versions.
+- **WIRE-2**: the emit/accept version for a run is pinned by `VF_ENVELOPE_VERSION`
+  (only `4` is supported). A worker MUST refuse to start if asked for a version it
+  cannot speak. When present, a `VF-Env: <v>` NATS header SHOULD accompany each
+  message so tooling can identify the format without decoding.
+- **WIRE-3**: a decoder MUST reject an envelope whose `v` it does not support (and
+  any pre-v4 msgpack envelope), with a clear error, rather than silently misparsing.
 
 ### 4.2 Envelope fields
 
@@ -267,20 +267,23 @@ is the wire encoding; these are the semantics every version preserves):
 - **WIRE-10** (structured values): scalars, lists, and string-keyed maps that are
   not tensors are encoded as `videoflow.v1.Value` (§4.5), `payload_type =
   videoflow.v1.Value`.
-- **WIRE-11** (pickle, legacy, Python-only): `payload_type = x-python-pickle` is a
-  Python `pickle` payload. It is permitted **only** when `VF_ALLOW_PICKLE` is set
-  for the run, and the control plane MUST reject a flow that both enables pickle
-  and contains any non-Python (remote) component (§ mixed-flow rule, Phase 2). A
-  non-Python SDK MUST NOT emit pickle and MAY treat receipt of it as an opaque
-  undecodable payload.
+- **WIRE-11** *(withdrawn — see RFC 0001)*: the legacy Python-only, code-executing
+  payload codec has been removed. A payload with no built-in encoding uses a
+  registered vendor encoder (WIRE-9); an unrecognized `payload_type` MUST be carried
+  through opaquely and MUST NOT be deserialized (see WIRE-9).
 
 ### 4.5 The `Value` type
 
 - **WIRE-12**: `videoflow.v1.Value` is a self-describing union over: double,
-  signed 64-bit integer, string, bytes, bool, null, ordered list of `Value`, and
-  string-keyed map of `Value`. It MUST round-trip integers and doubles distinctly
-  (an int64 id MUST NOT be silently coerced to a double). This is why `Value` is
-  used rather than a JSON-object type.
+  signed 64-bit integer, string, bytes, bool, null, ordered list of `Value`,
+  string-keyed map of `Value`, and a nested `Tensor` (WIRE-15). It MUST round-trip
+  integers and doubles distinctly (an int64 id MUST NOT be silently coerced to a
+  double). This is why `Value` is used rather than a JSON-object type.
+- **WIRE-15**: a `Value` MAY hold a `Tensor` (`tensor_value`), so a structured
+  container — a list/tuple or string-keyed map that mixes arrays with scalars, e.g.
+  a `(frame_index, frame)` tuple — has a neutral encoding. A *bare* ndarray payload
+  is still a top-level `Tensor` (WIRE-7), not a `Value`; only an array *nested inside*
+  a container travels as `tensor_value`.
 
 ---
 

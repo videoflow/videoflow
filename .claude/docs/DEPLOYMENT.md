@@ -81,7 +81,7 @@ its outputs are baked into the compiled specs.
 
 `--dry-run` / `--render-only` never touch the cluster. Other flags worth knowing:
 `--image-override name=ref`, `--mount`, `--namespace`, `--autoscaling`, `--gpu-mode`,
-`--strict-preflight`, `--envelope-version`, `--allow-pickle`, `--image-pull-policy`.
+`--strict-preflight`, `--envelope-version`, `--image-pull-policy`.
 
 Every rendered container carries an explicit `imagePullPolicy`, defaulting to `IfNotPresent`
 (`DEFAULT_IMAGE_PULL_POLICY` in [images.py](../../videoflow/deploy/images.py)). This is

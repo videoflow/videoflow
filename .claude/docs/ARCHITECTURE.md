@@ -107,11 +107,13 @@ Implemented by `TraceGroupAssembler` / `TimeGroupAssembler` in
 
 ## Wire format
 
-[`serialization.py`](../../videoflow/wire/serialization.py). Envelope versions 2/3 are msgpack (with an
-opt-in, Python-only pickle payload codec behind `VF_ALLOW_PICKLE`); version 4 is protobuf
-(`videoflow.v1.Envelope`) and is language-neutral. `decode_envelope` auto-detects from the leading
-byte, so mixed-version runs decode correctly. Default emit version is 3
-(`VF_ENVELOPE_VERSION`); native (non-Python) components force 4.
+[`serialization.py`](../../videoflow/wire/serialization.py). The sole wire is envelope version 4, the
+language-neutral protobuf `videoflow.v1.Envelope`. Payloads are `Tensor` (arrays), `Value`
+(structured scalars/lists/maps — which may nest a `Tensor`, so mixed containers encode neutrally),
+a well-known/vendor proto, or opaque `RawPayload` bytes for an unknown type. There is no
+code-executing codec: arbitrary Python objects register a neutral encoder via
+`register_payload_encoder` (see [`spec/rfcs/0001`](../../spec/rfcs/0001-v4-only-wire.md)).
+The earlier msgpack envelopes (v2/v3) are removed; `decode_envelope` refuses them.
 
 Large payloads can spill to an external blob store (Redis) via `VF_BLOB_REDIS_URL`.
 

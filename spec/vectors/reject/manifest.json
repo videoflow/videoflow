@@ -1,0 +1,21 @@
+[
+  {
+    "name": "legacy_msgpack",
+    "file": "legacy_msgpack.bin",
+    "expect": {
+      "reject": {
+        "message_contains": "msgpack"
+      }
+    }
+  },
+  {
+    "name": "unknown_payload_type",
+    "file": "unknown_payload_type.bin",
+    "expect": {
+      "opaque": {
+        "payload_type": "vendor.acme.Unknown",
+        "data_b64": "gAV3b3VsZC1oYXZlLWV4ZWN1dGVkLWlmLWRlc2VyaWFsaXplZA=="
+      }
+    }
+  }
+]

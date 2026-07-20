@@ -63,11 +63,12 @@ See ``spec/DISTRIBUTION.md`` for the reference grammar and publishing model.
 The wire protocol and spec
 --------------------------
 
-Cross-language interop runs over a **protobuf envelope (wire v4)** with well-known
-payload types (``Tensor``, ``Frame``, ``Detections``, ``Tracks``, ``BlobRef``,
-``Value``). Pure Python flows are unaffected — they keep using the msgpack wire by
-default; a flow that contains any remote or native component automatically upgrades to
-v4. A mixed flow that would need Python pickle on the wire is a hard compile error.
+Every flow runs over one language-neutral **protobuf envelope (wire v4)** with
+well-known payload types (``Tensor``, ``Frame``, ``Detections``, ``Tracks``,
+``BlobRef``, ``Value``). A ``Value`` may nest a ``Tensor``, so a mixed container such
+as a ``(frame_index, frame)`` tuple is carried without any Python-specific codec. A
+payload type with no built-in encoding registers one with ``register_payload_encoder``;
+arbitrary Python objects are never put on the wire (see ``spec/rfcs/0001``).
 
 The normative contract lives in the ``spec/`` directory: ``spec/PROTOCOL.md`` (protocol
 v1 — every requirement an SDK must implement, with stable IDs), the protobuf IDL under

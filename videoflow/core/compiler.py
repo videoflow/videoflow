@@ -217,45 +217,30 @@ def has_native_components(specs : List[NodeSpec]) -> bool:
     '''Whether any node is a native (non-Python) component — the ones that force the protobuf wire.'''
     return any(s.is_native for s in specs)
 
-def validate_wire_compatibility(specs : List[NodeSpec], envelope_version : Optional[int],
-                                allow_pickle : bool) -> None:
+def validate_wire_compatibility(specs : List[NodeSpec], envelope_version : Optional[int]) -> None:
     '''
-    A flow containing any native (non-Python) component cannot use the Python-only
-    pickle codec and must use the language-neutral protobuf wire (envelope v4+).
-    Enforced at compile/deploy time so the failure is actionable, not a decode crash
-    inside a vendor container. (PROTOCOL.md §4.4 WIRE-11.) Python components loaded
-    from a descriptor are unaffected — they speak whatever wire the run uses.
+    The wire is the single language-neutral protobuf envelope (version 4) for every
+    flow. Reject an explicit pin to any other version at compile/deploy time so the
+    failure is actionable here rather than a worker refusing to start. (PROTOCOL.md §4.)
     '''
-    if not has_native_components(specs):
-        return
-    native = [s.name for s in specs if s.is_native]
-    if allow_pickle:
+    if envelope_version is not None and envelope_version != 4:
+        native = [s.name for s in specs if s.is_native]
+        hint = f' Native components {native} require it.' if native else ''
         raise ValueError(
-            f'Flow contains native components {native} but allow_pickle is set. Pickle is '
-            'Python-only and cannot cross to a non-Python component. Disable pickle.')
-    if envelope_version is None or envelope_version < 4:
-        raise ValueError(
-            f'Flow contains native components {native} which require the protobuf wire '
-            f'(envelope v4+), but the resolved envelope version is {envelope_version}. '
-            'Set VF_ENVELOPE_VERSION=4 for this flow.')
+            f'Envelope version {envelope_version} is not supported; the only wire is the '
+            f'protobuf v4 envelope.{hint} Remove the version pin or set VF_ENVELOPE_VERSION=4.')
 
-def compile_flow(flow : Flow, envelope_version : Optional[int] = None,
-                allow_pickle : bool = False) -> List[NodeSpec]:
+def compile_flow(flow : Flow, envelope_version : Optional[int] = None) -> List[NodeSpec]:
     '''
     - Arguments:
         - flow: a built ``videoflow.core.flow.Flow`` (do NOT call ``.run()`` on it first).
-        - envelope_version / allow_pickle: the wire settings this flow will deploy \
-            with, used to reject an incompatible mix (remote components on the \
-            pickle/msgpack wire). Defaults read the ambient ``DEFAULT_ENVELOPE_VERSION``.
+        - envelope_version: the wire version this flow will deploy with. The only \
+            supported version is ``4`` (protobuf); an explicit incompatible pin is \
+            rejected. Defaults to the ambient ``DEFAULT_ENVELOPE_VERSION``.
 
     - Returns:
         - list of ``NodeSpec``, one per node in the flow's topological sort.
     '''
     specs = specs_from_tasks_data(flow.tasks_data())
-    if has_native_components(specs):
-        # A flow with a native component automatically uses the protobuf wire (v4):
-        # default to it when the caller didn't pin a version. An *explicit*
-        # incompatible pin (v3, or allow_pickle) still fails the check below.
-        ev = 4 if envelope_version is None else envelope_version
-        validate_wire_compatibility(specs, ev, allow_pickle)
+    validate_wire_compatibility(specs, envelope_version)
     return specs

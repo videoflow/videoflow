@@ -40,8 +40,8 @@ message Envelope {
   map<string, Value> metadata = 12;     // arbitrary per-message metadata
 
   // Identifies how `payload` is encoded: a proto FQN (e.g. "videoflow.v1.Tensor"),
-  // "videoflow.v1.BlobRef" for an offloaded large payload, or "x-python-pickle"
-  // (legacy, Python-only, gated). Empty payload for MSG_TYPE_EOS. (PROTOCOL.md §4.4)
+  // or "videoflow.v1.BlobRef" for an offloaded large payload. An unknown FQN is
+  // carried through opaquely. Empty payload for MSG_TYPE_EOS. (PROTOCOL.md §4.4)
   string payload_type = 13;
   bytes payload = 14;
 }

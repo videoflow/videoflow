@@ -96,6 +96,7 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.6",
     "pre-commit>=3.5",
+    "grpcio-tools>=1.68",   # provides grpc_tools.protoc for scripts/gen-proto.sh
     "types-PyYAML",
     "types-requests",
 ]

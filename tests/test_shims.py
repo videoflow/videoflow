@@ -5,10 +5,10 @@ These five paths are frozen public contract: ``videoflow.worker`` is the
 ENTRYPOINT of the published base images (inherited by every contrib component
 image), ``videoflow.provision`` is rendered into the init Job of every deployed
 flow, ``videoflow.compile`` is spawned inside solution images by the host CLI,
-``videoflow.cli`` backs the console script, and ``videoflow.serialization`` is
-the module path a pickled payload records for its class. None can be retargeted
-retroactively, so this file exists to make deleting or hollowing one a test
-failure rather than a field incident.
+``videoflow.cli`` backs the console script, and ``videoflow.serialization`` is a
+frozen re-export of the wire codec that external importers may have pinned. None
+can be retargeted retroactively, so this file exists to make deleting or hollowing
+one a test failure rather than a field incident.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -77,22 +77,6 @@ def test_shim_is_runnable_as_module(shim_path):
     combined = proc.stdout + proc.stderr
     assert 'ModuleNotFoundError' not in combined, combined
     assert 'ImportError' not in combined, combined
-
-
-def test_pickled_payload_resolves_through_old_path():
-    '''
-    A dead-lettered pickle payload records ``videoflow.serialization.RawPayload``
-    as its class path; unpickling must still find it there.
-    '''
-    import pickle
-
-    import videoflow.serialization as old
-    import videoflow.wire.serialization as new
-
-    assert old.RawPayload is new.RawPayload
-    restored = pickle.loads(pickle.dumps(old.RawPayload('vendor.acme.Widget', b'\x01')))
-    assert restored.payload_type == 'vendor.acme.Widget'
-    assert restored.data == b'\x01'
 
 
 def test_provision_command_literal_is_unchanged():

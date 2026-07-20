@@ -1,19 +1,17 @@
+'''
+Round-trip tests for the public wire API (``encode_envelope`` / ``decode_envelope``),
+which speaks the single protobuf v4 envelope. Codec-level behaviors live in
+tests/test_serialization_v4.py.
+'''
 import numpy as np
 import pytest
 
 from videoflow.wire.serialization import (
-    CODEC_EXTERNAL_REF,
-    CODEC_PICKLE,
-    CODEC_RAW_NDARRAY,
-    MAX_INLINE_PAYLOAD_BYTES,
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
-    BlobStore,
     decode_envelope,
-    decode_payload,
     derive_message_id,
     encode_envelope,
-    encode_payload,
 )
 
 
@@ -31,12 +29,15 @@ def test_ndarray_round_trip():
     assert out['replica_id'] == 2
     assert out['metadata'] == {'proctime': 0.1}
 
-def test_arbitrary_object_round_trip():
-    payload = (np.zeros((2, 2)), {'boxes': [1, 2, 3], 'label': 'cat'})
+def test_heterogeneous_container_round_trip():
+    # A container that mixes an ndarray with scalars/dicts encodes neutrally on the
+    # v4 wire (a Value nesting a Tensor) — no code-executing codec involved.
+    payload = (7, np.zeros((2, 2)), {'boxes': [1, 2, 3], 'label': 'cat'})
     buf = encode_envelope('nodeB', 'flow1', 'run1', 'trace-2', 1, MSG_TYPE_DATA, None, payload)
     out = decode_envelope(buf)
-    assert out['message'][1]['label'] == 'cat'
-    assert np.array_equal(out['message'][0], payload[0])
+    assert out['message'][0] == 7
+    assert np.array_equal(out['message'][1], payload[1])
+    assert out['message'][2]['label'] == 'cat'
 
 def test_stop_signal_round_trip():
     buf = encode_envelope('nodeA', 'flow1', 'run1', '', 99, MSG_TYPE_EOS, None, None)
@@ -54,11 +55,12 @@ def test_message_id_is_deterministic_and_type_sensitive():
     assert a != c and a != d  # different seq / type → different id
     assert len(a) == 32
 
-def test_wrong_version_rejected():
+def test_legacy_msgpack_envelope_rejected():
+    # The removed v2/v3 msgpack wire must be refused on decode, not silently parsed.
     import msgpack
-    bad = msgpack.packb({'v': 999, 'type': MSG_TYPE_DATA}, use_bin_type = True)
+    legacy = msgpack.packb({'v': 999, 'type': MSG_TYPE_DATA}, use_bin_type = True)
     with pytest.raises(ValueError):
-        decode_envelope(bad)
+        decode_envelope(legacy)
 
 def test_event_ts_round_trip():
     ts = 1721234567.123456
@@ -69,52 +71,6 @@ def test_event_ts_round_trip():
     # Unstamped messages carry None, not a fabricated time.
     buf = encode_envelope('n', 'flow1', 'run1', 't', 1, MSG_TYPE_DATA, None, 1)
     assert decode_envelope(buf)['event_ts'] is None
-
-def test_v2_envelope_decodes_without_event_ts():
-    # A v2 (pre-event_ts) envelope from an older build still decodes.
-    import msgpack
-    v2 = msgpack.packb({
-        'v': 2, 'type': MSG_TYPE_DATA, 'producer_name': 'n', 'flow_id': 'f',
-        'run_id': 'r', 'trace_id': 't', 'seq': 1, 'span_id': '',
-        'parent_span_id': '', 'replica_id': 0, 'metadata': None,
-        'payload_codec': CODEC_PICKLE, 'payload': __import__('pickle').dumps(7),
-    }, use_bin_type = True)
-    out = decode_envelope(v2)
-    assert out['message'] == 7
-    assert out['event_ts'] is None
-
-def test_codec_selection():
-    codec, _ = encode_payload(np.zeros((3, 3)))
-    assert codec == CODEC_RAW_NDARRAY
-    codec, _ = encode_payload({'a': 1})
-    assert codec == CODEC_PICKLE
-
-class _FakeBlobStore(BlobStore):
-    def __init__(self):
-        self._store = {}
-
-    def put(self, data, ttl_seconds = 3600):
-        ref = f'ref-{len(self._store)}'
-        self._store[ref] = data
-        return ref
-
-    def get(self, ref):
-        return self._store[ref]
-
-def test_large_payload_uses_blob_store():
-    big = np.zeros((1024, 1024), dtype = np.uint8)  # 1MB, over the default 512KB threshold
-    assert big.nbytes > MAX_INLINE_PAYLOAD_BYTES
-    blob_store = _FakeBlobStore()
-    codec, buf = encode_payload(big, blob_store = blob_store)
-    assert codec == CODEC_EXTERNAL_REF
-    assert len(blob_store._store) == 1
-    decoded = decode_payload(codec, buf, blob_store = blob_store)
-    assert np.array_equal(decoded, big)
-
-def test_large_payload_without_blob_store_raises():
-    big = np.zeros((1024, 1024), dtype = np.uint8)
-    with pytest.raises(ValueError):
-        encode_payload(big)
 
 if __name__ == "__main__":
     pytest.main([__file__])

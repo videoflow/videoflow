@@ -66,7 +66,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str | None = None,
                 image_overrides : dict | None = None, blob_redis_url : str | None = None,
                 specs : list | None = None,
-                kubectl : str = 'kubectl', envelope_version : int | None = None, allow_pickle : bool = False,
+                kubectl : str = 'kubectl', envelope_version : int | None = None,
                 provision_image : str | None = None, autoscaling : bool = False, max_replicas : int = 10,
                 nats_monitoring_endpoint : str | None = None, mounts : list[Mount] | None = None,
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
@@ -80,7 +80,6 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._specs = specs
         self._kubectl = kubectl
         self._envelope_version = envelope_version
-        self._allow_pickle = allow_pickle
         self._provision_image = provision_image
         self._autoscaling = autoscaling
         self._max_replicas = max_replicas
@@ -114,7 +113,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             default_image = self._default_image, image_overrides = self._image_overrides,
             blob_redis_url = self._blob_redis_url, autoscaling = self._autoscaling,
             max_replicas = self._max_replicas, nats_monitoring_endpoint = self._nats_monitoring_endpoint,
-            envelope_version = self._envelope_version, allow_pickle = self._allow_pickle,
+            envelope_version = self._envelope_version,
             provision_image = self._provision_image, mounts = self._mounts,
             gpu_runtime_class = self._gpu_runtime_class, gpu_mode = self._gpu_mode,
             gpu_resource_name = self._gpu_resource_name,

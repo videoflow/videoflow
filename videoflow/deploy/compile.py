@@ -99,10 +99,9 @@ def load_flow(target : str) -> Flow:
     factory = getattr(module, factory_name)
     return factory()
 
-def compile_to_dict(target : str, envelope_version : Optional[int] = None,
-                    allow_pickle : bool = False) -> dict:
+def compile_to_dict(target : str, envelope_version : Optional[int] = None) -> dict:
     flow = load_flow(target)
-    specs = compile_flow(flow, envelope_version = envelope_version, allow_pickle = allow_pickle)
+    specs = compile_flow(flow, envelope_version = envelope_version)
     return {
         'flow_id': flow.flow_id,
         'flow_type': flow.flow_type,
@@ -120,11 +119,9 @@ def main(argv : Optional[List[str]] = None) -> None:
                                  description = 'Compile a graph module to a JSON specs document on stdout.')
     ap.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
     ap.add_argument('--envelope-version', type = int, default = None)
-    ap.add_argument('--allow-pickle', action = 'store_true')
     args = ap.parse_args(argv)
     try:
-        document = compile_to_dict(args.graph, envelope_version = args.envelope_version,
-                                   allow_pickle = args.allow_pickle)
+        document = compile_to_dict(args.graph, envelope_version = args.envelope_version)
     except ValueError as e:
         raise SystemExit(str(e)) from e
     json.dump(document, sys.stdout)

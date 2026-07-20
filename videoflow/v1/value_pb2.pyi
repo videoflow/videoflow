@@ -1,3 +1,4 @@
+from videoflow.v1 import payloads_pb2 as _payloads_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
@@ -13,7 +14,7 @@ class NullValue(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
 NULL_VALUE: NullValue
 
 class Value(_message.Message):
-    __slots__ = ("null_value", "double_value", "int_value", "string_value", "bytes_value", "bool_value", "list_value", "map_value")
+    __slots__ = ("null_value", "double_value", "int_value", "string_value", "bytes_value", "bool_value", "list_value", "map_value", "tensor_value")
     NULL_VALUE_FIELD_NUMBER: _ClassVar[int]
     DOUBLE_VALUE_FIELD_NUMBER: _ClassVar[int]
     INT_VALUE_FIELD_NUMBER: _ClassVar[int]
@@ -22,6 +23,7 @@ class Value(_message.Message):
     BOOL_VALUE_FIELD_NUMBER: _ClassVar[int]
     LIST_VALUE_FIELD_NUMBER: _ClassVar[int]
     MAP_VALUE_FIELD_NUMBER: _ClassVar[int]
+    TENSOR_VALUE_FIELD_NUMBER: _ClassVar[int]
     null_value: NullValue
     double_value: float
     int_value: int
@@ -30,7 +32,8 @@ class Value(_message.Message):
     bool_value: bool
     list_value: ListValue
     map_value: MapValue
-    def __init__(self, null_value: _Optional[_Union[NullValue, str]] = ..., double_value: _Optional[float] = ..., int_value: _Optional[int] = ..., string_value: _Optional[str] = ..., bytes_value: _Optional[bytes] = ..., bool_value: _Optional[bool] = ..., list_value: _Optional[_Union[ListValue, _Mapping]] = ..., map_value: _Optional[_Union[MapValue, _Mapping]] = ...) -> None: ...
+    tensor_value: _payloads_pb2.Tensor
+    def __init__(self, null_value: _Optional[_Union[NullValue, str]] = ..., double_value: _Optional[float] = ..., int_value: _Optional[int] = ..., string_value: _Optional[str] = ..., bytes_value: _Optional[bytes] = ..., bool_value: _Optional[bool] = ..., list_value: _Optional[_Union[ListValue, _Mapping]] = ..., map_value: _Optional[_Union[MapValue, _Mapping]] = ..., tensor_value: _Optional[_Union[_payloads_pb2.Tensor, _Mapping]] = ...) -> None: ...
 
 class ListValue(_message.Message):
     __slots__ = ("values",)

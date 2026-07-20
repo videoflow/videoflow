@@ -385,18 +385,18 @@ drops (a lost sibling frame must not stall the join).</p>
 <h2 id="s6">6&nbsp;&nbsp;The wire format</h2>
 <p>Bytes that cross a process boundary use a self-describing envelope carrying routing identity
 (producer, flow, run, trace, seq, replica), an event timestamp, tracing spans, metadata, and the
-payload. Two encodings coexist deliberately:</p>
+payload. There is one encoding:</p>
 <ul>
-<li><b>v3 — msgpack</b> [30] (default emit): compact and fast for Python-to-Python edges;
-ndarrays use a raw buffer codec, everything else falls back to pickle.</li>
 <li><b>v4 — protobuf</b> [29]: a language-neutral <code>videoflow.v1.Envelope</code> whose payload is
 a typed message — <code>Tensor</code> for arrays and frames, <code>Value</code> for structured
-data, any vendor proto by fully-qualified name. This is the encoding non-Python components
-implement, and a graph containing one forces v4 for the whole run; a mixed flow that would
-need pickle on the wire is a compile error.</li>
+data (a <code>Value</code> may nest a <code>Tensor</code>, so a mixed container such as a
+<code>(frame_index, frame)</code> tuple is carried without any Python-specific codec), or any
+vendor proto by fully-qualified name. A payload type with no built-in encoding registers a neutral
+encoder; arbitrary Python objects are never put on the wire, because deserializing untrusted bytes
+that way is remote code execution. An earlier msgpack encoding, whose non-array fallback was such a
+codec, was removed.</li>
 </ul>
-<p>The decoder auto-detects the version from the leading byte (a msgpack map and a protobuf
-field tag occupy disjoint ranges), so mixed-version tooling needs no out-of-band hint. Payloads
+<p>The decoder accepts only v4 and refuses the removed legacy encoding. Payloads
 above 512&nbsp;KiB spill to an external blob store (Redis [26] by default, scheme-registered
 factories for others) and the envelope carries only a reference — the claim-check pattern from
 the enterprise-integration literature [27, 28]. NATS defaults to a 1&nbsp;MB message cap [23],

@@ -541,8 +541,9 @@ class ProducerNode(Node):
         Each time the ``next()`` method is called, it produces a new input.
 
     It would have been more natural to implement the ``ProducerNode`` as a generator, \
-        but generators cannot be pickled, and hence you cannot easily work with generators \
-        in a multiprocessing setting.
+        but a node is shipped to its worker as ``(class path, get_params())`` and rebuilt \
+        there with ``type(node)(**get_params())`` — a generator has no such reconstructable \
+        form, so it cannot cross into the worker process.
 
     - Arguments:
         - is_finite (bool): True (the default) if a call to ``next()`` will eventually \

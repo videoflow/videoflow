@@ -27,8 +27,7 @@ the original graph-building script.
                         The store is chosen by the URL's scheme (redis:// and
                         rediss:// built in; others via register_blob_store), so the
                         name is historical rather than a restriction to Redis.
-    VF_ENVELOPE_VERSION optional; wire envelope version to emit (3 msgpack | 4 protobuf)
-    VF_ALLOW_PICKLE     optional; '1' permits the legacy Python-only pickle payload codec
+    VF_ENVELOPE_VERSION optional; wire envelope version to emit (only 4, protobuf)
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -139,7 +138,6 @@ def run_from_env() -> None:
     if envelope_version not in EMITTABLE_ENVELOPE_VERSIONS:
         raise ValueError(f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this '
                         f'build (supported: {EMITTABLE_ENVELOPE_VERSIONS})')
-    allow_pickle = os.environ.get('VF_ALLOW_PICKLE', '0') == '1'
 
     blob_store = None
     # Env var name is historical: any registered URL scheme works, not just Redis.
@@ -160,7 +158,7 @@ def run_from_env() -> None:
         ack_wait = ack_wait, max_retries = max_retries,
         eos_quiescence_ms = eos_quiescence_ms, nb_tasks = nb_tasks,
         partition_by = partition_by, join_policy = join_policy,
-        envelope_version = envelope_version, allow_pickle = allow_pickle,
+        envelope_version = envelope_version,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local

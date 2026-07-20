@@ -280,7 +280,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         nats_url = nats_url, namespace = args.namespace, default_image = image,
         image_overrides = overrides, blob_redis_url = blob_redis_url, specs = specs,
         kubectl = args.kubectl, envelope_version = args.envelope_version,
-        allow_pickle = args.allow_pickle, provision_image = args.provision_image,
+        provision_image = args.provision_image,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
         mounts = mounts, gpu_runtime_class = args.gpu_runtime_class,
         gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
@@ -373,8 +373,6 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
         compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
         if args.envelope_version is not None:
             compile_cmd += ['--envelope-version', str(args.envelope_version)]
-        if args.allow_pickle:
-            compile_cmd.append('--allow-pickle')
         try:
             out = run_in_image(image, compile_cmd, mounts = container_mounts,
                                workdir = graph_dir, gpus = gpus, capture = True)
@@ -390,8 +388,7 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
 
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     try:
-        specs = compile_flow(flow, envelope_version = args.envelope_version,
-                             allow_pickle = args.allow_pickle)
+        specs = compile_flow(flow, envelope_version = args.envelope_version)
     except ValueError as e:
         raise SystemExit(str(e)) from e
     return flow.flow_id, flow.flow_type, specs
@@ -423,7 +420,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_typ
             namespace = args.namespace, default_image = args.image,
             image_overrides = overrides, blob_redis_url = blob_redis_url,
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
-            envelope_version = args.envelope_version, allow_pickle = args.allow_pickle,
+            envelope_version = args.envelope_version,
             provision_image = args.provision_image, mounts = mounts,
             gpu_runtime_class = args.gpu_runtime_class, gpu_mode = args.gpu_mode,
             gpu_resource_name = args.gpu_resource_name,
@@ -586,7 +583,6 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         except RuntimeError as e:
             raise SystemExit(str(e)) from e
     engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
-                                allow_pickle = args.allow_pickle,
                                 local_docker_nats_url = args.local_docker_nats_url,
                                 default_image = image)
     try:
@@ -762,7 +758,7 @@ def _format_payload(message : Any) -> str:
         return 'None (EOS or empty)'
     if isinstance(message, np.ndarray):
         return f'ndarray shape={tuple(message.shape)} dtype={message.dtype}'
-    # optional dep: serialization imports msgpack at module scope
+    # optional dep: serialization imports protobuf at module scope
     from ..wire.serialization import RawPayload
     if isinstance(message, RawPayload):
         return f'RawPayload type={message.payload_type} ({len(message.data)} bytes, opaque)'
@@ -773,7 +769,7 @@ def _format_payload(message : Any) -> str:
     return repr(message)[:200]
 
 def _print_decoded(buf : bytes, headers : dict | None = None) -> None:
-    # optional dep: serialization imports msgpack at module scope
+    # optional dep: serialization imports protobuf at module scope
     from ..wire.serialization import decode_envelope
     d = decode_envelope(buf)
     if headers:
@@ -937,11 +933,8 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument('--max-replicas', type = int, default = 10,
                         help = 'Upper bound for autoscaled processors (default 10).')
     deploy.add_argument('--envelope-version', type = int, default = None,
-                        help = 'Wire envelope version (3 msgpack | 4 protobuf). A flow with any '
-                               'remote component is forced to 4. Defaults to the build default.')
-    deploy.add_argument('--allow-pickle', action = 'store_true',
-                        help = 'Permit the legacy Python-only pickle payload codec (rejected for '
-                               'flows containing remote components).')
+                        help = 'Wire envelope version. The only supported version is 4 (protobuf); '
+                               'defaults to the build default.')
     deploy.add_argument('--provision-image', default = None,
                         help = 'Image the provision init Job runs on (needs videoflow + broker client). '
                                'Set this when --image is a non-Python vendor image.')
@@ -984,8 +977,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--keep-infra', action = 'store_true',
                     help = 'Leave auto-started NATS/Redis containers running afterwards (faster '
                            'reruns; they are reused when present).')
-    run.add_argument('--allow-pickle', action = 'store_true',
-                    help = 'Permit the legacy Python-only pickle payload codec.')
     run.add_argument('--local-docker-nats-url', default = None,
                     help = 'NATS URL a docker-run remote component connects to '
                            '(default rewrites localhost -> host.docker.internal).')

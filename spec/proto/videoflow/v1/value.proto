@@ -1,13 +1,21 @@
 // videoflow.v1.Value — a self-describing dynamic value used for message metadata
-// and for structured (non-tensor, non-vendor-proto) payloads on the wire.
+// and for structured payloads on the wire.
 //
 // Why not google.protobuf.Value / Struct: those are JSON-shaped and coerce every
 // number to a double, which silently corrupts the int64 identifiers vendors put in
 // metadata. Value keeps integers and doubles distinct (PROTOCOL.md WIRE-12) and can
 // carry raw bytes.
+//
+// Value can also nest a Tensor (`tensor_value`), so a structured container — a
+// list/tuple or string-keyed map that mixes arrays with scalars, e.g. a
+// (frame_index, frame) tuple — has a neutral, code-execution-free encoding on the
+// v4 wire (PROTOCOL.md WIRE-15). A bare ndarray payload stays a top-level Tensor;
+// only ndarrays nested inside a container travel as tensor_value.
 syntax = "proto3";
 
 package videoflow.v1;
+
+import "videoflow/v1/payloads.proto";
 
 // A null marker distinguishable from an unset oneof (proto3 oneof tracks presence).
 enum NullValue {
@@ -24,6 +32,7 @@ message Value {
     bool bool_value = 6;
     ListValue list_value = 7;
     MapValue map_value = 8;
+    Tensor tensor_value = 9;   // a nested array inside a structured container (WIRE-15)
   }
 }
 

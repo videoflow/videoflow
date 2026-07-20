@@ -1,9 +1,10 @@
 '''
-Unit tests for the v4 (protobuf) wire codec in videoflow.wire.serialization, alongside
-the untouched v2/v3 msgpack path (tests/test_serialization.py). Covers the codec
-behaviors an SDK must reproduce: tensor/value/proto/pickle payload selection,
+Unit tests for the v4 (protobuf) wire codec in videoflow.wire.serialization — the
+single, language-neutral wire. Covers the codec behaviors an SDK must reproduce:
+tensor/value/proto payload selection, a Value nesting a Tensor (mixed containers),
 the int-vs-double distinction, EOS, event_ts presence, blob offload, opaque
-passthrough of unknown types, version selection, and the decode auto-discriminator.
+passthrough of unknown types (so a code-executing payload can never run on decode),
+version selection, and refusal of the removed legacy msgpack wire.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -15,12 +16,12 @@ from videoflow.wire import serialization as s
 
 
 def _rt(payload, *, metadata = None, msg_type = None, event_ts = None,
-        version = 4, allow_pickle = False, blob_store = None):
+        version = 4, blob_store = None):
     '''Encode then decode one envelope; return the decoded dict.'''
     buf = s.encode_envelope('node', 'flow', 'run', 'trace', 7,
                             msg_type or s.MSG_TYPE_DATA, metadata or {}, payload,
                             event_ts = event_ts, version = version,
-                            allow_pickle = allow_pickle, blob_store = blob_store)
+                            blob_store = blob_store)
     return s.decode_envelope(buf, blob_store = blob_store)
 
 
@@ -80,21 +81,20 @@ def test_unknown_payload_type_passes_through_opaquely():
     assert d['message'].data == b'\x01\x02\x03'
 
 
-class _PickleOnly:
-    '''Module-level (so it is picklable) and not ndarray/proto/Value-encodable.'''
+class _Unencodable:
+    '''A custom object with no neutral (ndarray/proto/Value) encoding and no registered encoder.'''
     def __init__(self, x = 5):
         self.x = x
 
-    def __eq__(self, other):
-        return isinstance(other, _PickleOnly) and other.x == self.x
 
-
-def test_pickle_is_gated():
-    with pytest.raises(TypeError, match = 'pickle'):
-        _rt(_PickleOnly(), allow_pickle = False)
-    # With the gate open it round-trips (legacy Python-only path).
-    d = _rt(_PickleOnly(9), allow_pickle = True)
-    assert isinstance(d['message'], _PickleOnly) and d['message'].x == 9
+def test_unencodable_object_raises_with_no_escape_hatch():
+    # There is no code-executing fallback: an object the wire can't encode is a hard
+    # TypeError, and the message points at register_payload_encoder (never pickle).
+    with pytest.raises(TypeError) as ei:
+        _rt(_Unencodable())
+    msg = str(ei.value)
+    assert 'register_payload_encoder' in msg
+    assert 'pickle' not in msg.lower()
 
 
 class _FakeBlobStore(s.BlobStore):
@@ -129,11 +129,38 @@ def test_large_payload_without_blob_store_raises():
         s.encode_envelope('n', 'f', 'r', 't', 1, s.MSG_TYPE_DATA, {}, big, version = 4)
 
 
-def test_decode_auto_discriminates_v3_and_v4():
-    arr = np.arange(6, dtype = np.int16)
-    for version in (3, 4):
-        d = _rt(arr, version = version)
-        assert np.array_equal(d['message'], arr)
+def test_nested_tensor_container_roundtrips():
+    # The real producer shape: a (frame_index, frame) tuple, plus a dict/list mixing
+    # arrays with scalars. All encode neutrally (Value nesting a Tensor), no pickle.
+    frame = np.arange(24, dtype = np.uint8).reshape(2, 3, 4)
+    d = _rt((7, frame))
+    assert d['message'][0] == 7 and np.array_equal(d['message'][1], frame)
+    d = _rt({'frame': frame, 'n': 3, 'labels': ['a', 'b']})
+    assert d['message']['n'] == 3 and d['message']['labels'] == ['a', 'b']
+    assert np.array_equal(d['message']['frame'], frame)
+    d = _rt([frame, frame])
+    assert all(np.array_equal(x, frame) for x in d['message'])
+
+
+def test_ndarray_in_metadata_is_rejected():
+    # Metadata is for small scalars/strings, not payload arrays.
+    with pytest.raises(TypeError, match = 'metadata'):
+        _rt(np.zeros(1), metadata = {'bad': np.zeros(3)})
+
+
+def test_arbitrary_payload_type_is_inert_on_decode():
+    # Security regression: a message whose payload_type is unknown (as a legacy
+    # code-executing marker now would be) decodes to opaque bytes and is never
+    # deserialized/executed — the decoder hands back exactly what came in.
+    from videoflow.v1 import envelope_pb2
+    marker = 'x-python-' + 'pickle'  # the historically dangerous marker, now just unknown
+    body = b'\x80\x05would-have-executed'
+    env = envelope_pb2.Envelope(v = 4, type = envelope_pb2.MSG_TYPE_DATA,
+                                producer_name = 'attacker', flow_id = 'f', run_id = 'r',
+                                trace_id = 't', seq = 1, payload_type = marker, payload = body)
+    d = s.decode_envelope(env.SerializeToString())
+    assert isinstance(d['message'], s.RawPayload)
+    assert d['message'].payload_type == marker and d['message'].data == body
 
 
 def test_v4_leading_byte_is_not_a_msgpack_map():
@@ -141,7 +168,17 @@ def test_v4_leading_byte_is_not_a_msgpack_map():
     assert not s._is_msgpack_map(buf[0])
 
 
+def test_legacy_msgpack_envelope_refused():
+    # The removed v2/v3 msgpack wire must be refused on decode, not silently parsed.
+    import msgpack
+    legacy = msgpack.packb({'v': 3, 'type': s.MSG_TYPE_DATA}, use_bin_type = True)
+    with pytest.raises(ValueError, match = 'msgpack'):
+        s.decode_envelope(legacy)
+
+
 def test_unsupported_emit_version_rejected():
+    with pytest.raises(ValueError, match = 'emit'):
+        s.encode_envelope('n', 'f', 'r', 't', 1, s.MSG_TYPE_DATA, {}, np.zeros(1), version = 3)
     with pytest.raises(ValueError, match = 'emit'):
         s.encode_envelope('n', 'f', 'r', 't', 1, s.MSG_TYPE_DATA, {}, np.zeros(1), version = 99)
 

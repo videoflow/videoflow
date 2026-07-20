@@ -2,10 +2,10 @@
 Vendor payload codecs on the v4 wire (videoflow.wire.serialization).
 
 ``register_payload_type`` already made *decoding* a vendor FQN pluggable;
-encoding was a hard isinstance ladder, so a vendor type could only travel as
-pickle (Python-only) or not at all. These tests pin the encode-side registry and,
-importantly, the ordering guarantee: registering an encoder must not be able to
-change how a built-in payload encodes.
+encoding was a hard isinstance ladder, so a vendor type had no neutral wire
+encoding at all. These tests pin the encode-side registry and, importantly, the
+ordering guarantee: registering an encoder must not be able to change how a
+built-in payload encodes.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -45,18 +45,10 @@ def test_registered_encoder_gives_a_vendor_type_a_real_wire_type(registry_sandbo
     buf = registry_sandbox.encode_envelope('n', 'f', 'r', 't', 1, s.MSG_TYPE_DATA, {},
                                            _Widget(42), version = 4)
     decoded = registry_sandbox.decode_envelope(buf)
-    # Without a matching decoder the payload comes back opaque, not pickled.
+    # Without a matching decoder the payload comes back opaque (never deserialized).
     assert isinstance(decoded['message'], s.RawPayload)
     assert decoded['message'].payload_type == 'vendor.acme.Widget'
     assert decoded['message'].data == b'42'
-
-
-def test_encoder_runs_without_the_pickle_gate(registry_sandbox):
-    '''The point of the registry: a vendor type travels on a Python-free wire.'''
-    registry_sandbox.register_payload_encoder(_Widget, _encode_widget)
-    buf = registry_sandbox.encode_envelope('n', 'f', 'r', 't', 1, s.MSG_TYPE_DATA, {},
-                                           _Widget(7), version = 4, allow_pickle = False)
-    assert s.PAYLOAD_PICKLE.encode() not in buf
 
 
 @pytest.mark.parametrize('payload,expected_type', [

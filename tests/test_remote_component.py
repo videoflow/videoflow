@@ -148,11 +148,11 @@ def test_python_component_singleton_and_env():
                                 default_image = 'ghcr.io/videoflow/contrib-tracker-sort:0.1')
     cm = next(m for m in manifests if m['kind'] == 'ConfigMap'
             and m['data'].get('VF_NODE_NAME', '').startswith('tracker-sort'))
-    # Python component: both the class (for the worker) and the component ref; wire
-    # stays the default (v3) because nothing native is present.
+    # Python component: both the class (for the worker) and the component ref; the
+    # wire is the default protobuf v4 envelope (the only wire).
     assert cm['data']['VF_NODE_CLASS'].endswith('KalmanFilterBoundingBoxTracker')
     assert 'VF_COMPONENT_REF' in cm['data']
-    assert cm['data']['VF_ENVELOPE_VERSION'] == '3'
+    assert cm['data']['VF_ENVELOPE_VERSION'] == '4'
 
 
 def _remote_flow():
@@ -177,17 +177,16 @@ def test_remote_node_compiles_to_spec():
     assert has_remote_components(specs)
 
 
-def test_mixed_flow_rejects_pickle_and_old_wire():
+def test_wire_compatibility_requires_v4():
     specs = compile_flow(_remote_flow(), envelope_version = 4)
-    with pytest.raises(ValueError, match = 'pickle'):
-        validate_wire_compatibility(specs, 4, allow_pickle = True)
+    # Any non-v4 pin is rejected; v4 (and the None default) are fine.
     with pytest.raises(ValueError, match = 'protobuf|envelope'):
-        validate_wire_compatibility(specs, 3, allow_pickle = False)
-    # v4 + no pickle is fine.
-    validate_wire_compatibility(specs, 4, allow_pickle = False)
+        validate_wire_compatibility(specs, 3)
+    validate_wire_compatibility(specs, 4)
+    validate_wire_compatibility(specs, None)
 
 
-def test_compile_flow_rejects_remote_on_v3():
+def test_compile_flow_rejects_non_v4_pin():
     with pytest.raises(ValueError, match = 'protobuf|envelope'):
         compile_flow(_remote_flow(), envelope_version = 3)
 
