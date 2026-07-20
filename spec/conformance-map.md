@@ -176,6 +176,9 @@ scenario ↔ requirement cross-index the conformance kit (`conformance/`) will c
 | BLOB-2 no store → error | ✓ test | `test_serialization.py::test_large_payload_without_blob_store_raises` |
 | BLOB-3 resolve inner codec | ✓ test | `test_serialization.py::test_large_payload_uses_blob_store` (round-trip) |
 | BLOB-4 Redis interop | ~ partial | `RedisBlobStore`; ☐ cross-language scenario |
+| BLOB-5 reader-counted put | ✓ test | `test_blob_refcount.py::test_put_with_readers_writes_counter`; integration `test_blob_reclamation.py` |
+| BLOB-6 release only on successful ack | ✓ test | `test_blob_refcount.py` (ack/nak/term discipline); integration `test_blob_reclamation.py` |
+| BLOB-7 TTL backstop + flow-type default | ✓ test | `test_blob_refcount.py::test_release_without_counter_is_noop`; messenger TTL default test |
 
 ## §14 Idempotency
 

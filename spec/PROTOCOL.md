@@ -87,6 +87,8 @@ depend on any other configuration channel for routing.
 | `VF_EOS_QUIESCENCE_MS` | no | `500` | Drain quiescence window before honoring EOS (§9). |
 | `VF_HEALTH_PORT` | no | `0` (local) / `8080` (k8s) | Health server port; `0` disables it (§12). |
 | `VF_BLOB_REDIS_URL` | no | unset | Enables the external blob store for large payloads (§13). |
+| `VF_BLOB_READERS` | no | unset | Downstream read count of this node's published messages; enables refcounted blob reclamation (`BLOB-5`). Unset ⇒ TTL-only blobs. |
+| `VF_BLOB_TTL_SECONDS` | no | unset | Blob (and counter) TTL override. Unset ⇒ flow-type default: 3600 realtime / 86400 batch (`BLOB-7`). |
 | `VF_STRUCTURED_LOGS` | no | unset | Truthy ⇒ JSON structured logs. Cosmetic; not protocol. |
 | `VF_ENVELOPE_VERSION` | no | see §4.1 | Wire envelope version to emit/accept for this run. The only supported version is 4. |
 
@@ -644,11 +646,38 @@ Reference: `videoflow/wire/serialization.py`.
 - **BLOB-2** (no store): if the threshold is exceeded and no store is configured,
   the encode MUST fail with a clear error (never silently truncate or over-send).
 - **BLOB-3** (resolve): decoding a `BlobRef` fetches `ref` from the store and
-  decodes the inner payload as `inner_payload_type`. `ref` is opaque; the reference
-  Redis store uses keys `vf-blob-<uuid>` with a TTL (default 3600s).
+  decodes the inner payload as `inner_payload_type`. `ref` is opaque to consumers;
+  the reference Redis store uses keys `vf-blob-<uuid>` with a TTL (`BLOB-7`). The
+  store additionally maintains a companion reclamation counter per blob (`BLOB-5`)
+  whose key naming is internal to the store.
 - **BLOB-4** (interop): the blob store is the same for all languages in a flow; the
   ref is a plain string. An SDK MUST support at least the Redis store to interoperate
   with flows that offload.
+- **BLOB-5** (reader-counted put, RFC 0002): when the deployment supplies the number
+  of downstream reads each published message receives (`VF_BLOB_READERS`, computed at
+  compile time as the sum over consuming children of `nb_tasks` for a partitioned
+  child and 1 otherwise), the publisher SHOULD write, in the same store and with the
+  same TTL as the blob, a counter key initialized to that count (reference store:
+  blob `vf-blob-<uuid>` → counter `vf-blobrc-<uuid>`). The blob MUST be written
+  before its counter, so an interrupted put degrades to a counterless (TTL-only)
+  blob. A publisher without the count MUST write the blob without a counter (plain
+  `BLOB-3` semantics).
+- **BLOB-6** (release on ack, RFC 0002): a reader that resolved a `BlobRef` MUST
+  decrement the blob's counter at most once per delivered message, and only after
+  the broker acknowledgment of that message succeeds. It MUST NOT decrement on nak,
+  term, or dead-letter (a redelivery or DLQ inspection re-reads the blob). It MUST
+  NOT decrement — or create — a counter key that does not exist. When a decrement
+  observes a value ≤ 0, the reader SHOULD delete both the blob and the counter.
+- **BLOB-7** (TTL backstop, RFC 0002): the TTL remains on both keys and is the
+  authoritative upper bound on blob lifetime; refcounted deletion is an optimization
+  for the common path (REALTIME eviction, crashed readers, and dead-lettered
+  messages all leave counts that never reach zero). The TTL is chosen by the
+  publisher and MUST exceed the worst-case publish-to-final-ack latency of the flow
+  type. Reference defaults: 3600s for REALTIME (delivery is near-immediate; the TTL
+  bounds only leaks) and 86400s for BATCH (a full Interest-retention backlog can
+  legitimately delay a first read past an hour; a too-short TTL is silent data
+  loss). Override via `VF_BLOB_TTL_SECONDS`. A decoder MUST tolerate a missing blob
+  exactly as before (the delivery fails to decode and is terminated).
 
 ---
 

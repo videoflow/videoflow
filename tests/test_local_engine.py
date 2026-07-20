@@ -77,6 +77,22 @@ def test_worker_env_without_python_path_is_untouched(monkeypatch):
     assert 'PYTHONPATH' not in env
 
 
+def test_worker_env_carries_blob_reclamation_vars():
+    specs = compile_flow(_flow())
+    # The compiler stamps a reader count on every spec; the env carries it so the
+    # worker can refcount its published blobs (PROTOCOL.md BLOB-5).
+    env = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert env['VF_BLOB_READERS'] == str(specs[0].blob_readers)
+    assert 'VF_BLOB_TTL_SECONDS' not in env   # unset ⇒ flow-type default (BLOB-7)
+    env_ttl = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,
+                          blob_ttl_seconds = 120)
+    assert env_ttl['VF_BLOB_TTL_SECONDS'] == '120'
+    # A legacy spec (no reader count) omits the var: reclamation off, not miscounted.
+    specs[0].blob_readers = None
+    env_legacy = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_BLOB_READERS' not in env_legacy
+
+
 def test_workers_get_the_graph_dir_on_pythonpath(tmp_path, monkeypatch):
     '''
     The regression test for the original bug: load_flow puts the graph's directory

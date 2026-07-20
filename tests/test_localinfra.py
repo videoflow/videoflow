@@ -59,6 +59,10 @@ def test_starts_missing_components_with_labels_and_ports(monkeypatch):
     assert '6379:6379' in redis_run and localinfra.REDIS_IMAGE in redis_run
     # Persistence off — the blob store is transport, not storage.
     assert '--appendonly' in redis_run and 'no' in redis_run
+    # Memory capped with volatile-lru: every videoflow key has a TTL, so under
+    # pressure Redis evicts old blobs instead of eating the host.
+    assert '--maxmemory' in redis_run and '4gb' in redis_run
+    assert '--maxmemory-policy' in redis_run and 'volatile-lru' in redis_run
     assert urls['redis'] == localinfra.DEFAULT_REDIS_URL
 
 

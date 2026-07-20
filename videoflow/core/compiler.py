@@ -47,6 +47,10 @@ class NodeSpec:
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
             deploy-time default/override supplies it — see ``videoflow.deploy.images``).
+        - blob_readers: how many downstream reads each message this node publishes \
+            receives (Σ over children of ``nb_tasks`` if partitioned else 1); drives \
+            refcounted blob reclamation (PROTOCOL.md BLOB-5). 0 for leaves; ``None`` \
+            when unknown (a legacy spec), which disables reclamation.
 
     The field order below *is* the constructor signature — callers pass these
     positionally (``NodeSpec('n', 'pkg.Cls', {}, [], 'processor', ...)``), so
@@ -81,6 +85,8 @@ class NodeSpec:
     # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
     gpu_count : int = 1
     gpu_resource_name : Optional[str] = None
+    # Appended last (field order is the constructor signature — see class docstring).
+    blob_readers : Optional[int] = None
 
     @property
     def is_remote(self) -> bool:
@@ -112,6 +118,7 @@ class NodeSpec:
             'descriptor': self.descriptor,
             'command': self.command,
             'protocol_version': self.protocol_version,
+            'blob_readers': self.blob_readers,
         }
 
     @classmethod
@@ -125,6 +132,7 @@ class NodeSpec:
             component_ref = d.get('component_ref'), descriptor = d.get('descriptor'),
             command = d.get('command'), protocol_version = d.get('protocol_version'),
             gpu_count = d.get('gpu_count', 1), gpu_resource_name = d.get('gpu_resource_name'),
+            blob_readers = d.get('blob_readers'),
         )
 
 def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
@@ -183,6 +191,15 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             command = command,
             protocol_version = protocol_version,
         ))
+    # Second pass, once every child's spec exists: how many broker consumers read
+    # each message this node publishes. Mirrors ``topology.provision_flow``'s
+    # durable arithmetic — a partitioned child (partition_by set, nb_tasks > 1)
+    # binds one durable per replica and every replica decodes every message; a
+    # non-partitioned child's replicas compete on a single shared durable.
+    for spec in specs:
+        spec.blob_readers = sum(
+            (child.nb_tasks if (child.partition_by and child.nb_tasks > 1) else 1)
+            for child in specs if spec.name in child.parents)
     return specs
 
 def _validate_remote_node(node : RemoteNodeMixin, parent_names : List[str]) -> None:

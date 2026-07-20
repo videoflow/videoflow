@@ -106,14 +106,20 @@ class LocalProcessEngine(ExecutionEngine):
         - default_image: image used for a native component that declares no \
             ``image=`` — the solution image ``run-local`` auto-builds. A node's own \
             ``image=`` still wins.
+        - blob_ttl_seconds: TTL override for offloaded payloads (PROTOCOL.md \
+            BLOB-7); ``None`` lets workers pick the flow-type default \
+            (3600s realtime / 86400s batch).
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
                 specs : List[NodeSpec] | None = None,
                 local_docker_nats_url : str | None = None,
                 python_path : list | None = None, inherit_python_path : bool = True,
-                default_image : str | None = None) -> None:
+                default_image : str | None = None,
+                blob_ttl_seconds : int | None = None) -> None:
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
+        # Blob TTL override (BLOB-7); None ⇒ workers use the flow-type default.
+        self._blob_ttl_seconds = blob_ttl_seconds
         self._specs = specs
         # Fallback image for a native component that declares none — the solution image
         # run-local auto-builds. A node's own image= still wins.
@@ -174,7 +180,7 @@ class LocalProcessEngine(ExecutionEngine):
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
-                                self._python_path)
+                                self._python_path, blob_ttl_seconds = self._blob_ttl_seconds)
                 cmd, run_env = self._launch_command(spec, env)
                 proc = subprocess.Popen(cmd, env = run_env)
                 self._procs.append((spec.name, replica_idx, proc))
@@ -291,7 +297,8 @@ class LocalProcessEngine(ExecutionEngine):
 
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
-                python_path : list | None = None) -> dict:
+                python_path : list | None = None,
+                blob_ttl_seconds : int | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -324,6 +331,11 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
     if blob_redis_url:
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
+    if spec.blob_readers is not None:
+        # Enables refcounted blob reclamation (PROTOCOL.md BLOB-5); absent ⇒ TTL-only.
+        env['VF_BLOB_READERS'] = str(spec.blob_readers)
+    if blob_ttl_seconds is not None:
+        env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:

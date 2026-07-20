@@ -70,6 +70,7 @@ class EnvelopeEntry:
     span_id : Any = None
     parent_span_id : Any = None
     replica_id : int = 0
+    blob_ref : str | None = None
 
     @classmethod
     def from_decoded(cls, decoded : dict[str, Any]) -> 'EnvelopeEntry':
@@ -102,6 +103,7 @@ class EnvelopeEntry:
             span_id = decoded.get('span_id'),
             parent_span_id = decoded.get('parent_span_id'),
             replica_id = decoded.get('replica_id', 0),
+            blob_ref = decoded.get('blob_ref'),
         )
 
 @dataclass(slots = True)

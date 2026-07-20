@@ -278,7 +278,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     from ..engines.kubernetes import KubernetesExecutionEngine
     engine = KubernetesExecutionEngine(
         nats_url = nats_url, namespace = args.namespace, default_image = image,
-        image_overrides = overrides, blob_redis_url = blob_redis_url, specs = specs,
+        image_overrides = overrides, blob_redis_url = blob_redis_url,
+        blob_ttl_seconds = args.blob_ttl_seconds, specs = specs,
         kubectl = args.kubectl, envelope_version = args.envelope_version,
         provision_image = args.provision_image,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
@@ -419,6 +420,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_typ
             specs, flow_id, flow_type, nats_url, run_id,
             namespace = args.namespace, default_image = args.image,
             image_overrides = overrides, blob_redis_url = blob_redis_url,
+            blob_ttl_seconds = args.blob_ttl_seconds,
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
             envelope_version = args.envelope_version,
             provision_image = args.provision_image, mounts = mounts,
@@ -584,7 +586,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
             raise SystemExit(str(e)) from e
     engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
                                 local_docker_nats_url = args.local_docker_nats_url,
-                                default_image = image)
+                                default_image = image,
+                                blob_ttl_seconds = args.blob_ttl_seconds)
     try:
         try:
             flow.run(engine, run_id = args.run_id)
@@ -919,6 +922,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help = 'Default container image ref for nodes that do not declare their own '
                                '(e.g. ghcr.io/acme/app:v1). Build it FROM videoflow-base with your code + deps.')
     deploy.add_argument('--blob-redis-url', default = None, help = 'Redis URL for the large-payload blob store.')
+    deploy.add_argument('--blob-ttl-seconds', type = int, default = None,
+                        help = 'TTL for offloaded payloads in the blob store. Default: flow-type '
+                               'default (3600 realtime / 86400 batch). Must exceed the worst-case '
+                               'publish-to-ack latency of the flow (PROTOCOL.md BLOB-7).')
     deploy.add_argument('--image-override', action = 'append', metavar = 'NAME=IMAGE',
                         help = 'Override the container image for one node (wins over --image and the node\'s '
                                'own image=). Repeatable.')
@@ -960,6 +967,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--blob-redis-url', default = None,
                     help = 'Redis URL for the large-payload blob store (default: '
                            '$VIDEOFLOW_BLOB_REDIS_URL, else auto-provisioned alongside NATS).')
+    run.add_argument('--blob-ttl-seconds', type = int, default = None,
+                    help = 'TTL for offloaded payloads in the blob store. Default: flow-type '
+                           'default (3600 realtime / 86400 batch).')
     run.add_argument('--run-id', default = None,
                     help = 'Per-run id that scopes this run\'s broker streams (auto-generated if omitted).')
     run.add_argument('--config', default = None,

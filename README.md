@@ -114,7 +114,7 @@ ships a `config.template.yaml`, runs its `prepare.py` hook, starts a dev broker 
 none is listening, spawns one worker subprocess per node, waits for the flow to
 finish, reports any node that exited non-zero, and stops only the containers it
 started. Overrides: `--nats`, `--config`, `--no-prepare`, `--no-infra`,
-`--keep-infra`, `--blob-redis-url`, `--run-id`.
+`--keep-infra`, `--blob-redis-url`, `--blob-ttl-seconds`, `--run-id`.
 
 Running the script directly still works when you have a broker up:
 

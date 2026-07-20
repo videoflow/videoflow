@@ -155,3 +155,15 @@ enable it by pointing workers at a Redis instance. Both ``videoflow deploy`` and
 respectively) unless you pass ``--blob-redis-url``; the ``docker-compose.yml``
 also includes one, and ``run-local`` additionally honors
 ``$VIDEOFLOW_BLOB_REDIS_URL``.
+
+Offloaded payloads are reclaimed automatically: each blob carries a reference count
+of its downstream readers, and the last reader to acknowledge its message deletes
+the blob — so the store's steady-state size tracks the in-flight backlog, not the
+flow's throughput. A TTL remains on every key as the backstop for messages that are
+never acknowledged (a realtime flow evicting stale frames, a crashed worker, a
+dead-lettered message): one hour for realtime flows and 24 hours for batch flows,
+whose backlog can legitimately delay a payload's first read well past an hour.
+Override it with ``--blob-ttl-seconds`` on ``deploy``/``run-local`` if your batch
+flows drain slower than that. The provisioned Redis runs with ``maxmemory 4gb`` and
+``volatile-lru`` eviction, so under memory pressure the oldest payloads are evicted
+rather than the server growing without bound.

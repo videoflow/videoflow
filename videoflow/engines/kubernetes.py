@@ -45,6 +45,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
             (e.g. ``ghcr.io/acme/app:v1``, built FROM ``videoflow-base`` with your code).
         - image_overrides: optional mapping of node name to image ref (wins over both).
         - blob_redis_url: optional Redis URL for the large-payload blob store.
+        - blob_ttl_seconds: TTL override for offloaded payloads (PROTOCOL.md \
+            BLOB-7); ``None`` lets workers pick the flow-type default.
         - specs: optional precompiled ``NodeSpec`` list; compiled from tasks_data if omitted.
         - kubectl: kubectl binary name/path.
         - mounts: optional ``Mount`` records (see ``manifests.parse_mounts``) — hostPath \
@@ -65,6 +67,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
     '''
     def __init__(self, nats_url : str, namespace : str = 'default', default_image : str | None = None,
                 image_overrides : dict | None = None, blob_redis_url : str | None = None,
+                blob_ttl_seconds : int | None = None,
                 specs : list | None = None,
                 kubectl : str = 'kubectl', envelope_version : int | None = None,
                 provision_image : str | None = None, autoscaling : bool = False, max_replicas : int = 10,
@@ -77,6 +80,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._default_image = default_image
         self._image_overrides = image_overrides
         self._blob_redis_url = blob_redis_url
+        self._blob_ttl_seconds = blob_ttl_seconds
         self._specs = specs
         self._kubectl = kubectl
         self._envelope_version = envelope_version
@@ -111,7 +115,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
         manifests = render_manifests(
             specs, flow_id, flow_type, self._nats_url, run_id, namespace = self._namespace,
             default_image = self._default_image, image_overrides = self._image_overrides,
-            blob_redis_url = self._blob_redis_url, autoscaling = self._autoscaling,
+            blob_redis_url = self._blob_redis_url, blob_ttl_seconds = self._blob_ttl_seconds,
+            autoscaling = self._autoscaling,
             max_replicas = self._max_replicas, nats_monitoring_endpoint = self._nats_monitoring_endpoint,
             envelope_version = self._envelope_version,
             provision_image = self._provision_image, mounts = self._mounts,

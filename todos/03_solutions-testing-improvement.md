@@ -1,0 +1,1 @@
+Explore a plan that modifies the solution testing agent so that it does not do so many preliminary things but instead goes straight into videoflow run-local and videoflow deploy instead, so that the building of dockerfiles happens right with that command and not in the preliminaries.

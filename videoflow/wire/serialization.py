@@ -87,14 +87,23 @@ def derive_message_id(flow_id : str, run_id : str, producer_name : str,
 #: broker's per-message size limit (NATS defaults to a 1MB `max_payload`).
 MAX_INLINE_PAYLOAD_BYTES = int(os.environ.get('VIDEOFLOW_MAX_INLINE_PAYLOAD_BYTES', 512 * 1024))
 
+#: Blob lifetime when nothing plumbs an explicit TTL. Serialization is flow-type
+#: agnostic, so the flow-aware defaults (3600s realtime / 86400s batch, BLOB-7) live
+#: with the messenger that knows the flow type; this is only the fallback.
+DEFAULT_BLOB_TTL_SECONDS = 3600
+
 class BlobStore:
     '''
     Interface for the external blob store used for payloads over \
         ``MAX_INLINE_PAYLOAD_BYTES``. Not tied to any particular broker — Redis is a \
         convenient default (large string values, simple TTL-based expiry) even when \
         NATS is the primary messaging broker.
+
+    Reclamation (RFC 0002): ``put_with_readers``/``release`` default to TTL-only \
+        behaviour so a subclass that only implements ``put``/``get`` keeps working; \
+        a store that can refcount overrides both.
     '''
-    def put(self, data : bytes, ttl_seconds : int = 3600) -> str:
+    def put(self, data : bytes, ttl_seconds : int = DEFAULT_BLOB_TTL_SECONDS) -> str:
         '''Stores ``data`` and returns an opaque reference string that ``get()`` can resolve later.'''
         raise NotImplementedError('BlobStore subclass must implement put()')
 
@@ -102,13 +111,27 @@ class BlobStore:
         '''Resolves a reference previously returned by ``put()`` back into bytes.'''
         raise NotImplementedError('BlobStore subclass must implement get()')
 
+    def put_with_readers(self, data : bytes, readers : int, ttl_seconds : int = DEFAULT_BLOB_TTL_SECONDS) -> str:
+        '''
+        Stores ``data`` expecting exactly ``readers`` downstream reads, enabling the \
+            store to reclaim the blob once every reader has released it (BLOB-5).
+
+        Default implementation ignores ``readers`` and delegates to ``put()`` — a \
+            store with no reclamation support degrades to plain TTL expiry.
+        '''
+        return self.put(data, ttl_seconds)
+
+    def release(self, ref : str) -> None:
+        '''One downstream reader is finished with ``ref`` (its message was acked, BLOB-6). Default no-op.'''
+        return None
+
 class RedisBlobStore(BlobStore):
     '''Uses a Redis server purely as a large-value TTL cache, independent of whether Redis is used for messaging.'''
     def __init__(self, url : str | None = None) -> None:
         import redis  # optional dependency (extra): only this store needs it
         self._client = redis.Redis.from_url(url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL', 'redis://localhost:6379/0'))
 
-    def put(self, data : bytes, ttl_seconds : int = 3600) -> str:
+    def put(self, data : bytes, ttl_seconds : int = DEFAULT_BLOB_TTL_SECONDS) -> str:
         key = f'vf-blob-{uuid.uuid4().hex}'
         self._client.set(key, data, ex = ttl_seconds)
         return key
@@ -119,6 +142,30 @@ class RedisBlobStore(BlobStore):
             raise KeyError(f'Blob {ref} not found (expired or never existed)')
         # redis-py types get() more broadly than what we store (always bytes here).
         return data  # type: ignore[return-value]
+
+    def _refcount_key(self, ref : str) -> str:
+        return 'vf-blobrc-' + ref.removeprefix('vf-blob-')
+
+    def put_with_readers(self, data : bytes, readers : int, ttl_seconds : int = DEFAULT_BLOB_TTL_SECONDS) -> str:
+        # Blob first, counter second: a crash in between leaves a counterless blob,
+        # which release() treats as TTL-only — the safe direction (BLOB-5).
+        key = self.put(data, ttl_seconds)
+        if readers > 0:
+            self._client.set(self._refcount_key(key), readers, ex = ttl_seconds)
+        return key
+
+    def release(self, ref : str) -> None:
+        rc = self._refcount_key(ref)
+        # The EXISTS guard is load-bearing: releasing a blob written without a
+        # counter (older publisher, VF_BLOB_READERS unset, or counter expired) must
+        # not DECR-create a negative key and delete a blob other readers still need.
+        if not self._client.exists(rc):
+            return
+        if int(self._client.decr(rc)) <= 0:
+            # Two single-key UNLINKs, not one multi-key call: the blob and counter
+            # keys hash to different slots on Redis Cluster.
+            self._client.unlink(ref)
+            self._client.unlink(rc)
 
 # -- blob store selection --------------------------------------------------
 #
@@ -419,7 +466,9 @@ def _decode_payload_v4(payload_type : str, buf : bytes, blob_store : BlobStore |
 def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_id : str,
                         seq : int, msg_type : str, metadata : dict | None, payload : Any,
                         span_id : str | None, parent_span_id : str | None, replica_id : int,
-                        event_ts : float | None, blob_store : BlobStore | None) -> bytes:
+                        event_ts : float | None, blob_store : BlobStore | None,
+                        blob_readers : int | None = None,
+                        blob_ttl_seconds : int | None = None) -> bytes:
     env = envelope_pb2.Envelope(
         v = 4,
         type = _PROTO_MSG_TYPE[msg_type],
@@ -450,7 +499,13 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
                     f'Payload of {len(payload_buf)} bytes exceeds MAX_INLINE_PAYLOAD_BYTES '
                     f'({MAX_INLINE_PAYLOAD_BYTES}) and no blob_store was configured to offload '
                     'it to. Configure VIDEOFLOW_BLOB_REDIS_URL or pass a BlobStore.')
-            ref = blob_store.put(payload_buf)
+            ttl = blob_ttl_seconds if blob_ttl_seconds is not None else DEFAULT_BLOB_TTL_SECONDS
+            # Reader-counted put (BLOB-5) enables delete-after-last-ack; without a
+            # count the blob is TTL-only exactly as before.
+            if blob_readers is not None and blob_readers > 0:
+                ref = blob_store.put_with_readers(payload_buf, blob_readers, ttl)
+            else:
+                ref = blob_store.put(payload_buf, ttl)
             blobref = payloads_pb2.BlobRef(ref = ref, inner_payload_type = payload_type, size = len(payload_buf))
             payload_type, payload_buf = PAYLOAD_BLOBREF, blobref.SerializeToString()
         env.payload_type = payload_type
@@ -466,6 +521,14 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
     if msg_type is None:
         raise ValueError(f'Unspecified/unknown envelope message type {env.type!r}')
     is_stop_signal = msg_type == MSG_TYPE_EOS
+    # Surface the blob ref (if any) so the messenger can release it after the
+    # message is acked (BLOB-6). Re-parsing the tiny BlobRef here is cheaper than a
+    # second full-envelope parse at the messenger layer.
+    blob_ref : str | None = None
+    if not is_stop_signal and env.payload_type == PAYLOAD_BLOBREF:
+        _br = payloads_pb2.BlobRef()
+        _br.ParseFromString(env.payload)
+        blob_ref = _br.ref
     message = None if is_stop_signal else _decode_payload_v4(env.payload_type, env.payload, blob_store = blob_store)
     return {
         'producer_name': env.producer_name,
@@ -481,6 +544,7 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
         'replica_id': env.replica_id,
         'metadata': {k: _value_from_proto(v) for k, v in env.metadata.items()},
         'message': message,
+        'blob_ref': blob_ref,
     }
 
 # ==========================================================================
@@ -491,7 +555,8 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
                     seq : int, msg_type : str, metadata : dict | None, payload : Any,
                     span_id : str = '', parent_span_id : str = '', replica_id : int = 0,
                     event_ts : float | None = None, blob_store : BlobStore | None = None,
-                    version : int | None = None) -> bytes:
+                    version : int | None = None, blob_readers : int | None = None,
+                    blob_ttl_seconds : int | None = None) -> bytes:
     '''
     Encodes a full wire message and returns the bytes to publish to a broker subject.
 
@@ -506,12 +571,17 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
             carried forward unchanged; time-aligned joins group on it.
         - version: envelope version to emit. The only supported version is ``4`` \
             (protobuf); defaults to ``DEFAULT_ENVELOPE_VERSION``.
+        - blob_readers: how many downstream reads an offloaded payload will receive; \
+            enables refcounted blob reclamation (BLOB-5). ``None`` ⇒ TTL-only blobs.
+        - blob_ttl_seconds: TTL for an offloaded payload (and its counter); \
+            ``None`` ⇒ ``DEFAULT_BLOB_TTL_SECONDS``.
     '''
     version = DEFAULT_ENVELOPE_VERSION if version is None else version
     if version == 4:
         return _encode_envelope_v4(producer_name, flow_id, run_id, trace_id, seq, msg_type,
                                 metadata, payload, span_id, parent_span_id, replica_id,
-                                event_ts, blob_store)
+                                event_ts, blob_store, blob_readers = blob_readers,
+                                blob_ttl_seconds = blob_ttl_seconds)
     raise ValueError(f'Cannot emit envelope version {version!r}; emittable: {EMITTABLE_ENVELOPE_VERSIONS}')
 
 def _is_msgpack_map(first_byte : int) -> bool:
@@ -526,8 +596,11 @@ def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
     Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \
         ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` when absent), \
         ``type``, ``is_stop_signal`` (derived: True iff ``type == MSG_TYPE_EOS``), \
-        ``span_id``, ``parent_span_id``, ``replica_id``, ``metadata``, and \
-        ``message`` (the fully decoded payload — ``None`` for EOS). Only the protobuf \
+        ``span_id``, ``parent_span_id``, ``replica_id``, ``metadata``, \
+        ``message`` (the fully decoded payload — ``None`` for EOS), and \
+        ``blob_ref`` (the blob store reference the payload was resolved from, or \
+        ``None`` when the payload was inline — lets the caller release the blob \
+        after the message is acked, BLOB-6). Only the protobuf \
         v4 envelope is supported; a legacy msgpack (v2/v3) envelope is refused.
     '''
     if not buf:

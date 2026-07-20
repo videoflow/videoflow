@@ -42,6 +42,62 @@ def test_spec_params_are_json_serializable():
     for s in compile_flow(_demo_flow()):
         json.dumps(s.params)  # must not raise
 
+def test_blob_readers_counts_downstream_broker_consumers():
+    # Mirrors provision_flow's durable arithmetic (PROTOCOL.md BLOB-5): one durable
+    # per non-partitioned child (replicas compete), one per replica of a
+    # partitioned child (each replica decodes every message).
+    specs = {s.name: s for s in compile_flow(_demo_flow())}
+    # producer → identity (nb_tasks=2 but NOT partitioned: replicas compete) = 1
+    assert specs['producer'].blob_readers == 1
+    # identity → identity1 + joined = 2 children, neither partitioned
+    assert specs['identity'].blob_readers == 2
+    assert specs['identity1'].blob_readers == 1
+    assert specs['joined'].blob_readers == 1
+    # leaf publishes nothing
+    assert specs['printer'].blob_readers == 0
+
+def test_blob_readers_counts_each_partitioned_replica():
+    p = IntProducer(0, 5, name = 'p')
+    fan = IdentityProcessor(name = 'fan', nb_tasks = 3, partition_by = 'trace_id')(p)
+    plain = IdentityProcessor(name = 'plain')(p)
+    printer = CommandlineConsumer(name = 'printer')(fan)
+    printer2 = CommandlineConsumer(name = 'printer2')(plain)
+    flow = Flow([printer, printer2], flow_type = REALTIME, flow_id = 'demo')
+    specs = {s.name: s for s in compile_flow(flow)}
+    # partitioned child contributes nb_tasks reads; plain sibling contributes 1.
+    assert specs['p'].blob_readers == 4
+
+def test_blob_readers_round_trips_and_legacy_specs_default_to_none():
+    from videoflow.core.compiler import NodeSpec
+    spec = compile_flow(_demo_flow())[1]
+    clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+    assert clone.blob_readers == spec.blob_readers
+    # A spec serialized before RFC 0002 has no blob_readers key: reclamation off.
+    old = {k: v for k, v in spec.to_dict().items() if k != 'blob_readers'}
+    assert NodeSpec.from_dict(old).blob_readers is None
+
+def test_blob_env_vars_reach_the_configmaps():
+    specs = compile_flow(_demo_flow())
+    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, blob_redis_url = 'redis://r:6379/0',
+                                blob_ttl_seconds = 300)
+    node_cms = {m['data']['VF_NODE_NAME']: m['data'] for m in manifests
+                if m['kind'] == 'ConfigMap' and 'VF_NODE_NAME' in m.get('data', {})}
+    # Per-node env carries the compile-time reader count (VF_BLOB_READERS)...
+    assert node_cms['producer']['VF_BLOB_READERS'] == '1'
+    assert node_cms['identity']['VF_BLOB_READERS'] == '2'
+    assert node_cms['printer']['VF_BLOB_READERS'] == '0'
+    # ...and the shared broker ConfigMap carries the TTL override (BLOB-7).
+    broker_cm = next(m for m in manifests if m['kind'] == 'ConfigMap'
+                     and 'VF_NATS_URL' in m.get('data', {}))
+    assert broker_cm['data']['VF_BLOB_TTL_SECONDS'] == '300'
+    # Without an override the var is absent — workers use the flow-type default.
+    manifests_no_ttl = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
+                                        default_image = IMG)
+    broker_cm2 = next(m for m in manifests_no_ttl if m['kind'] == 'ConfigMap'
+                      and 'VF_NATS_URL' in m.get('data', {}))
+    assert 'VF_BLOB_TTL_SECONDS' not in broker_cm2['data']
+
 def test_resolve_image_order():
     # override > node image= > --image default; raises if none.
     assert resolve_image('n', 'node-img', 'default-img', {'n': 'ovr'}) == 'ovr'

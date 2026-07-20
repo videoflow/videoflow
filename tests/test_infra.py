@@ -27,9 +27,14 @@ def test_manifest_shapes_and_labels():
         assert m['metadata']['namespace'] == 'ns1'
         assert m['metadata']['labels'][infra.LABEL_INFRA] in ('nats', 'redis')
         assert m['metadata']['labels'][LABEL_MANAGED_BY] == 'videoflow'
-    # Redis runs as a cache/transport: persistence explicitly off.
-    args = redis[('Deployment', 'redis')]['spec']['template']['spec']['containers'][0]['args']
-    assert args == ['--save', '', '--appendonly', 'no']
+    # Redis runs as a cache/transport: persistence explicitly off, memory capped
+    # with volatile-lru so a long run evicts TTL'd blobs instead of OOMing the node.
+    container = redis[('Deployment', 'redis')]['spec']['template']['spec']['containers'][0]
+    assert container['args'] == ['--save', '', '--appendonly', 'no',
+                                 '--maxmemory', '4gb', '--maxmemory-policy', 'volatile-lru']
+    # The container limit sits above maxmemory (fragmentation headroom); without a
+    # limit there is no cgroup boundary and the *node* absorbs any overrun.
+    assert container['resources']['limits']['memory'] == '5Gi'
     conf = nats[('ConfigMap', 'nats-config')]['data']['nats.conf']
     assert 'max_payload: 8MB' in conf and 'jetstream' in conf
 

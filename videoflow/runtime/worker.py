@@ -27,6 +27,11 @@ the original graph-building script.
                         The store is chosen by the URL's scheme (redis:// and
                         rediss:// built in; others via register_blob_store), so the
                         name is historical rather than a restriction to Redis.
+    VF_BLOB_READERS     optional; how many downstream reads each message this node
+                        publishes receives — enables refcounted blob reclamation
+                        (PROTOCOL.md BLOB-5). Unset ⇒ blobs are TTL-only.
+    VF_BLOB_TTL_SECONDS optional; TTL for offloaded payloads (PROTOCOL.md BLOB-7).
+                        Unset ⇒ flow-type default (3600 realtime / 86400 batch).
     VF_ENVELOPE_VERSION optional; wire envelope version to emit (only 4, protobuf)
 '''
 from __future__ import absolute_import, division, print_function
@@ -146,6 +151,14 @@ def run_from_env() -> None:
         # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
         from ..wire.serialization import make_blob_store
         blob_store = make_blob_store(blob_redis_url)
+    # Absent ⇒ None ⇒ refcounted reclamation off — the safe default for a manifest
+    # rendered by an older CLI (a default of 1 would delete fan-out blobs after the
+    # first child's ack while siblings still need them).
+    blob_readers_env = os.environ.get('VF_BLOB_READERS')
+    blob_readers = int(blob_readers_env) if blob_readers_env else None
+    # Absent ⇒ None ⇒ the messenger picks the flow-type default (BLOB-7).
+    blob_ttl_env = os.environ.get('VF_BLOB_TTL_SECONDS')
+    blob_ttl_seconds = int(blob_ttl_env) if blob_ttl_env else None
 
     node = build_node_from_env()
     # The node's own name comes from the env, not from whatever get_params captured
@@ -158,7 +171,8 @@ def run_from_env() -> None:
         ack_wait = ack_wait, max_retries = max_retries,
         eos_quiescence_ms = eos_quiescence_ms, nb_tasks = nb_tasks,
         partition_by = partition_by, join_policy = join_policy,
-        envelope_version = envelope_version,
+        envelope_version = envelope_version, blob_readers = blob_readers,
+        blob_ttl_seconds = blob_ttl_seconds,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local

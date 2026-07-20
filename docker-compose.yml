@@ -16,5 +16,11 @@ services:
 
   redis:
     image: redis:7
+    # Same settings the CLI provisioners use: persistence off (the blob store is
+    # transport, not storage) and a memory cap with volatile-lru eviction — every
+    # videoflow key carries a TTL, so under pressure Redis drops the oldest blobs
+    # instead of growing unbounded (redis default: unlimited + noeviction).
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "4gb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6379:6379"

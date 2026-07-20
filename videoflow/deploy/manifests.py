@@ -162,6 +162,10 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    if spec.blob_readers is not None:
+        # Downstream read count of this node's messages — enables refcounted blob
+        # reclamation (PROTOCOL.md BLOB-5). Omitted (legacy spec) ⇒ TTL-only blobs.
+        env['VF_BLOB_READERS'] = str(spec.blob_readers)
     return env
 
 def _is_partitioned(spec : NodeSpec) -> bool:
@@ -327,10 +331,15 @@ def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str
         'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version),
     }
 
-def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str] = None) -> dict:
+def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str] = None,
+                   blob_ttl_seconds : Optional[int] = None) -> dict:
     data = {'VF_NATS_URL': nats_url}
     if blob_redis_url:
         data['VF_BLOB_REDIS_URL'] = blob_redis_url
+    if blob_ttl_seconds is not None:
+        # Blob TTL override (PROTOCOL.md BLOB-7). Absent ⇒ workers use the
+        # flow-type default (3600s realtime / 86400s batch).
+        data['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -578,6 +587,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     run_id : str, namespace : str = 'default',
                     default_image : Optional[str] = None, image_overrides : Optional[dict] = None,
                     blob_redis_url : Optional[str] = None,
+                    blob_ttl_seconds : Optional[int] = None,
                     autoscaling : bool = False, max_replicas : int = 10,
                     nats_monitoring_endpoint : Optional[str] = None,
                     envelope_version : Optional[int] = None,
@@ -591,6 +601,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
 
     - run_id: per-run identifier stamped into each node's env (scopes broker streams).
+    - blob_ttl_seconds: TTL override for offloaded payloads (``--blob-ttl-seconds``, \
+        PROTOCOL.md BLOB-7); ``None`` lets workers pick the flow-type default.
     - default_image: image ref used for any node that didn't declare its own (``--image``).
     - image_overrides: mapping of node name to image ref (``--image-override``).
     - autoscaling: if True, emit a KEDA ScaledObject per processor node.
@@ -655,7 +667,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     # (correct only when that node is a Python worker — hence the override exists).
     init_image = provision_image or default_image or images_by_name[specs[0].name]
 
-    nats_cm = nats_configmap(flow_id, nats_url, blob_redis_url)
+    nats_cm = nats_configmap(flow_id, nats_url, blob_redis_url, blob_ttl_seconds = blob_ttl_seconds)
     nats_cm_name = nats_cm['metadata']['name']
 
     manifests = [nats_cm, network_policy(flow_id)]

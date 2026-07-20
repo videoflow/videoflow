@@ -115,7 +115,16 @@ code-executing codec: arbitrary Python objects register a neutral encoder via
 `register_payload_encoder` (see [`spec/rfcs/0001`](../../spec/rfcs/0001-v4-only-wire.md)).
 The earlier msgpack envelopes (v2/v3) are removed; `decode_envelope` refuses them.
 
-Large payloads can spill to an external blob store (Redis) via `VF_BLOB_REDIS_URL`.
+Large payloads can spill to an external blob store (Redis) via `VF_BLOB_REDIS_URL`. Blobs are
+**refcounted** (RFC 0002, `BLOB-5..7`): the compiler counts each node's downstream readers into
+`NodeSpec.blob_readers` → `VF_BLOB_READERS`, the publisher writes a companion `vf-blobrc-*`
+counter, and each reader decrements it on successful ack — the last one deletes the blob. The
+TTL (3600s realtime / 86400s batch, `VF_BLOB_TTL_SECONDS` to override) stays on both keys as
+the backstop for everything acks can't cover: REALTIME eviction, crashes, dead-letters. The
+BATCH TTL is deliberately long — an Interest-retention backlog can delay a blob's first read
+past an hour, and refcounting is what makes that affordable. Never release on nak/term/DLQ.
+`BlobStore.put_with_readers`/`release` default to TTL-only/no-op, so third-party stores
+registered via `register_blob_store` keep working unchanged.
 
 The normative contract, with stable requirement IDs, is [`spec/PROTOCOL.md`](../../spec/PROTOCOL.md).
 Golden vectors in `spec/vectors/` are replayed by `tests/test_golden_vectors.py` — an observable

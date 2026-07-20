@@ -57,6 +57,13 @@ from .topology import (
 logger = logging.getLogger(__package__)
 
 _FETCH_TIMEOUT_SECONDS = 1.0
+# Flow-type blob TTL defaults (BLOB-7). REALTIME delivery is near-immediate (the
+# stream holds one message and never redelivers), so the TTL bounds only leaked
+# blobs. A BATCH Interest-retention backlog can legitimately delay a blob's *first*
+# read past an hour, so a short TTL there is silent data loss; refcounted
+# reclamation (BLOB-5/6) is what makes the long TTL affordable.
+DEFAULT_BLOB_TTL_REALTIME_SECONDS = 3600
+DEFAULT_BLOB_TTL_BATCH_SECONDS = 86400
 # Small prefetch: un-acked messages parked here age against ack_wait, so we keep
 # few in flight and let the server-side max_ack_pending bound the rest.
 _QUEUE_MAXSIZE = 4
@@ -77,9 +84,12 @@ class _AckHandle:
     point of Phase-2 at-least-once delivery is that these are called only *after*
     the node has processed the message (and published its output), never before.
     '''
-    def __init__(self, msg : Msg, messenger : 'NATSMessenger') -> None:
+    def __init__(self, msg : Msg, messenger : 'NATSMessenger', blob_ref : str | None = None) -> None:
         self._msg = msg
         self._m = messenger
+        # Blob store reference the message's payload was resolved from, released
+        # after a successful ack (BLOB-6); None for inline payloads and EOS.
+        self._blob_ref = blob_ref
         self._resolved = False
 
     @property
@@ -109,6 +119,11 @@ class _AckHandle:
             self._run(self._msg.ack())
         except Exception:
             logger.debug('ack failed (message may have been redelivered/evicted)', exc_info = True)
+        else:
+            # Release only on ack *success*: a failed ack can mean the broker
+            # redelivers, and a redelivery re-reads the blob (BLOB-6). nak/term
+            # never release for the same reason.
+            self._m._release_blob(self._blob_ref)
 
     def nak(self, delay : float | None = None) -> None:
         if self._resolved:
@@ -142,6 +157,12 @@ class NATSMessenger(Messenger):
             output stream.
         - blob_store: optional ``videoflow.wire.serialization.BlobStore`` for payloads \
             over the inline size threshold.
+        - blob_readers (int): how many downstream reads each message this node \
+            publishes receives (Σ over children of ``nb_tasks`` if partitioned else 1, \
+            computed by the compiler); enables refcounted blob reclamation (BLOB-5). \
+            ``None`` disables it (blobs are TTL-only).
+        - blob_ttl_seconds (int): TTL for offloaded payloads; ``None`` picks the \
+            flow-type default (3600s realtime / 86400s batch, BLOB-7).
         - join_policy (dict): serialized ``videoflow.core.policies.JoinPolicy`` \
             controlling how multi-parent input groups are formed (by trace id or \
             by event time) and expired; defaults per flow type when unset. The \
@@ -153,7 +174,8 @@ class NATSMessenger(Messenger):
                 replica_id : int = 0, ack_wait : int = 60, max_retries : int = 3,
                 eos_quiescence_ms : int = 500, nb_tasks : int = 1,
                 partition_by : str | None = None, join_policy : dict | None = None,
-                envelope_version : int | None = None) -> None:
+                envelope_version : int | None = None, blob_readers : int | None = None,
+                blob_ttl_seconds : int | None = None) -> None:
         self._node = node
         # Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).
         self._envelope_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
@@ -163,6 +185,13 @@ class NATSMessenger(Messenger):
         self._flow_type = flow_type
         self._run_id = run_id
         self._blob_store = blob_store
+        # Downstream read count for refcounted blob reclamation (BLOB-5): None means
+        # the deployment didn't supply one, so blobs stay TTL-only.
+        self._blob_readers = blob_readers
+        # Publisher-chosen blob TTL (BLOB-7): explicit override, else flow-type default.
+        self._blob_ttl_seconds = (blob_ttl_seconds if blob_ttl_seconds is not None
+                            else (DEFAULT_BLOB_TTL_REALTIME_SECONDS if flow_type == REALTIME
+                                else DEFAULT_BLOB_TTL_BATCH_SECONDS))
         self._replica_id = replica_id
         self._ack_wait = ack_wait
         self._max_deliver = max_deliver_for(flow_type, max_retries)
@@ -353,11 +382,18 @@ class NATSMessenger(Messenger):
                         await msg.ack()
                     except Exception:
                         pass
+                    else:
+                        # This replica read the blob during decode even though it
+                        # skips processing, so its ack counts as one release
+                        # (BLOB-6). Called directly, not via a handle: _AckHandle
+                        # bridges *from another thread* into this loop and would
+                        # deadlock called from the loop itself.
+                        self._release_blob(entry.blob_ref)
                     continue
                 # Ack-after-process: the handle is queued *unacked*. It is resolved
                 # only once the task calls ack_inputs()/fail_inputs() (data), or
                 # immediately in receive_message() for stop markers.
-                handle = _AckHandle(msg, self)
+                handle = _AckHandle(msg, self, blob_ref = entry.blob_ref)
                 self._register_handle(handle)
                 await self._parent_queues[parent_name].put((entry, handle))
 
@@ -402,6 +438,19 @@ class NATSMessenger(Messenger):
                         await h._msg.in_progress()
                     except Exception:
                         pass
+
+    def _release_blob(self, blob_ref : str | None) -> None:
+        '''
+        Decrement-and-maybe-delete a blob after its message was successfully acked \
+            (BLOB-6). Failure is logged and swallowed: the TTL backstop (BLOB-7) \
+            reclaims anything a failed release leaks.
+        '''
+        if blob_ref is None or self._blob_store is None:
+            return
+        try:
+            self._blob_store.release(blob_ref)
+        except Exception:
+            logger.debug(f'blob release failed for {blob_ref}', exc_info = True)
 
     def _register_handle(self, handle : _AckHandle) -> None:
         with self._live_lock:
@@ -518,6 +567,7 @@ class NATSMessenger(Messenger):
             node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
             metadata, message, replica_id = self._replica_id, event_ts = event_ts,
             blob_store = self._blob_store, version = self._envelope_version,
+            blob_readers = self._blob_readers, blob_ttl_seconds = self._blob_ttl_seconds,
         )
         if msg_type == MSG_TYPE_EOS:
             subject = eos_subject_for(self._flow_id, self._run_id, node_name)

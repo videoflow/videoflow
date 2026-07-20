@@ -92,7 +92,14 @@ def nats_manifests(namespace : str) -> list:
     ]
 
 def redis_manifests(namespace : str) -> list:
-    '''Single-replica Redis for the large-payload blob store. Persistence off: it is transport, not storage.'''
+    '''
+    Single-replica Redis for the large-payload blob store. Persistence off: it is
+    transport, not storage. Memory is capped with volatile-lru eviction — every key
+    videoflow writes carries a TTL (PROTOCOL.md BLOB-7), so under pressure Redis
+    evicts our oldest blobs instead of growing until the node OOMs (the redis:7
+    default is unlimited memory with noeviction). The container limit sits above
+    maxmemory to leave headroom for allocator fragmentation.
+    '''
     labels = _infra_labels('redis')
     return [
         {
@@ -108,8 +115,13 @@ def redis_manifests(namespace : str) -> list:
                         'containers': [{
                             'name': 'redis',
                             'image': 'redis:7-alpine',
-                            'args': ['--save', '', '--appendonly', 'no'],
+                            'args': ['--save', '', '--appendonly', 'no',
+                                     '--maxmemory', '4gb', '--maxmemory-policy', 'volatile-lru'],
                             'ports': [{'containerPort': 6379, 'name': 'client'}],
+                            'resources': {
+                                'requests': {'memory': '512Mi', 'cpu': '100m'},
+                                'limits': {'memory': '5Gi'},
+                            },
                         }],
                     },
                 },

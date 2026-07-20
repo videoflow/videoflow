@@ -82,8 +82,12 @@ def _docker_run_argv(component : str) -> list:
         # compose-managed broker and starting our own are equivalent.
         argv += ['-p', '4222:4222', '-p', '8222:8222', NATS_IMAGE, '-js', '-m', '8222']
     else:
-        # Persistence off: the blob store is transport, not storage.
-        argv += ['-p', '6379:6379', REDIS_IMAGE, '--save', '', '--appendonly', 'no']
+        # Persistence off: the blob store is transport, not storage. Memory capped
+        # with volatile-lru (every videoflow key has a TTL, BLOB-7) so a leaky or
+        # long run evicts old blobs instead of eating the host (redis default is
+        # unlimited + noeviction).
+        argv += ['-p', '6379:6379', REDIS_IMAGE, '--save', '', '--appendonly', 'no',
+                 '--maxmemory', '4gb', '--maxmemory-policy', 'volatile-lru']
     return argv
 
 def _start(component : str) -> None:
