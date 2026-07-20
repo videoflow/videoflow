@@ -3,6 +3,9 @@
 ![Videoflow](assets/videoflow_logo_small.png)
 
 [![license](https://img.shields.io/github/license/mashape/apistatus.svg?maxAge=2592000)](https://github.com/videoflow/videoflow/blob/master/LICENSE)
+[![documentation](https://img.shields.io/badge/docs-videoflow.github.io-blue.svg)](https://videoflow.github.io/videoflow/index.html)
+
+📖 **[Documentation](https://videoflow.github.io/videoflow/index.html)**
 
 **Videoflow** is a Python framework for building **distributed** video and stream
 processing pipelines. You describe your pipeline once as a directed acyclic graph
