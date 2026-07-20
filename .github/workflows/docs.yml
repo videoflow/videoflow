@@ -1,0 +1,77 @@
+# Build the Sphinx site and publish it to GitHub Pages (https://videoflow.github.io/videoflow/).
+#
+# The built HTML is deliberately NOT committed to the repo: this workflow rebuilds it from
+# docs/source/ on every push to master and hands the result straight to Pages, so there is no
+# generated-output diff to review and no way for the published site to drift from the sources.
+#
+# Two path filters, not one. `docs/**` is the obvious trigger, but the API reference is
+# generated from the package itself by sphinxcontrib-apidoc + autodoc, so editing a docstring
+# under videoflow/ changes the site without touching docs/ at all. Both paths must be watched.
+#
+# Pull requests build but do not deploy — that catches a docs build broken by a bad docstring
+# or a missing toctree entry before it reaches master, without granting PRs deploy rights.
+name: Docs
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'docs/**'
+      - 'videoflow/**'
+      - 'scripts/build-docs.sh'
+      - '.github/workflows/docs.yml'
+  pull_request:
+    paths:
+      - 'docs/**'
+      - 'videoflow/**'
+      - 'scripts/build-docs.sh'
+      - '.github/workflows/docs.yml'
+  # Lets you republish without an empty commit (e.g. after changing Pages settings).
+  workflow_dispatch:
+
+# Least privilege: the default GITHUB_TOKEN is read-only here except for the two scopes
+# deploy-pages needs — `pages` to publish and `id-token` for its OIDC handshake.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race. Queued runs are not cancelled (`cancel-in-progress: false`)
+# because cancelling a half-finished Pages deployment can leave the site on a partial upload.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Same script used locally, so a green CI build means `./scripts/build-docs.sh` works too.
+      - name: Build docs
+        run: ./scripts/build-docs.sh
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/public
+
+  deploy:
+    # Deploying from a PR would publish unreviewed content to the live site.
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

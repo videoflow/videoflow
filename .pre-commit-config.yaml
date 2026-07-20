@@ -10,11 +10,7 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
-        # docs/public/ is Sphinx output, rewritten wholesale by the docs hook below.
-        # Reformatting it only produces churn the next build undoes.
-        exclude: ^docs/public/
       - id: end-of-file-fixer
-        exclude: ^docs/public/
       - id: check-yaml
         # k8s manifests bundle several resources per file with `---` separators.
         args: [--allow-multiple-documents]
@@ -44,18 +40,6 @@ repos:
         language: system
         types: [python]
         files: ^videoflow/
-        pass_filenames: false
-
-      # docs/public/ is the published HTML (Firebase Hosting serves it) and is
-      # committed, so it has to be rebuilt in the same commit that changes the
-      # sources it was generated from. `files:` limits this to docs/source/ edits;
-      # `pass_filenames: false` because sphinx-build takes the source tree, not a
-      # file list. The rebuilt output is staged so it lands in this commit.
-      - id: docs
-        name: sphinx docs (docs/source -> docs/public)
-        entry: bash -c './scripts/build-docs.sh && git add docs/public'
-        language: system
-        files: ^docs/source/
         pass_filenames: false
 
       - id: pytest

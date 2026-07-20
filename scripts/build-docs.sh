@@ -2,26 +2,26 @@
 #
 # Build the Sphinx site into docs/public/.
 #
-# docs/public/ is the *published* directory (it is what Firebase Hosting serves), so
-# unlike docs/build/ it is committed to the repo. The pre-commit hook in
-# .pre-commit-config.yaml runs this whenever docs/source/ changes and stages the
-# result, which keeps the published HTML from drifting behind the sources.
+# This is what .github/workflows/docs.yml runs before handing docs/public/ to GitHub Pages,
+# and it is also how you preview the site locally — same script both places, so a build that
+# works here works in CI. The output is gitignored: the published site is rebuilt from source
+# on every push to master, never committed.
 #
 # Two details worth keeping:
 #
-#   * The output directory is wiped first. Sphinx never deletes pages whose source
-#     was removed, so an incremental build into a committed directory would keep
-#     serving stale pages forever. A cold build takes a few seconds — not worth the
-#     ambiguity.
-#   * Doctrees go to docs/.doctrees (gitignored), not the default docs/public/.doctrees.
-#     They are ~4MB of build-cache pickles that have no business in a hosting root.
+#   * The output directory is wiped first. Sphinx never deletes pages whose source was
+#     removed, so an incremental build would keep a stale page alive across renames and
+#     deletions. A cold build takes a few seconds — not worth the ambiguity.
+#   * Doctrees go to docs/.doctrees, not the default docs/public/.doctrees. They are ~4MB of
+#     build-cache pickles that would otherwise be uploaded to Pages as part of the site.
 #
-# Sphinx is not a project dependency — it is only needed to build the docs — so it is
-# pulled in per-run from docs/source/requirements.txt on top of the project environment.
-# The project env is required as well: autodoc imports videoflow itself (the heavy
-# optional deps are mocked in conf.py, but the package must be importable).
+# Sphinx is not a project dependency — it is only needed to build the docs — so it is pulled
+# in per-run from docs/source/requirements.txt on top of the project environment. The project
+# env is required as well: sphinxcontrib-apidoc + autodoc import videoflow itself to generate
+# the API reference (the heavy optional deps are mocked in conf.py, but the package must be
+# importable).
 #
-# Usage: ./scripts/build-docs.sh
+# Usage: ./scripts/build-docs.sh    then open docs/public/index.html
 set -euo pipefail
 
 cd "$(dirname "$0")/.."

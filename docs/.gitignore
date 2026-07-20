@@ -67,10 +67,13 @@ ENV/
 env.bak/
 venv.bak/
 
+public/
+
 dev.db-journal
 
 # Auto-generated API docs (sphinxcontrib-apidoc)
 apidocs/
 
-# Sphinx build cache (the published HTML in docs/public/ IS committed; this is not)
+# Sphinx build cache. The site itself (public/, above) is rebuilt from docs/source/ by
+# .github/workflows/docs.yml on every push to master, so neither belongs in the repo.
 .doctrees/
