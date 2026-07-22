@@ -73,16 +73,23 @@ class GpuStrategy:
         raise NotImplementedError('GpuStrategy subclass must implement pod_resources()')
 
     def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
-                        gpu_runtime_class : Optional[str] = None) -> List[str]:
+                        gpu_runtime_class : Optional[str] = None,
+                        max_per_pod : Optional[dict[str, int]] = None) -> List[str]:
         '''
         Strategy-specific preflight problems, each a string naming its fix. The
         flavor-independent checks (cluster reachable, a labeled GPU node) are run
         by ``cluster.gpu_preflight`` before this is called.
 
+        Third-party strategies should tolerate future keyword inputs (accept
+        ``**kwargs``): new preflight inputs arrive as keywords with ``None``
+        defaults, as ``max_per_pod`` did (RFC 0003).
+
         - Arguments:
             - demand: extended-resource name -> units the flow requests, or None \
                 to skip capacity comparison.
             - gpu_runtime_class: the ``--gpu-runtime-class`` value, if given.
+            - max_per_pod: extended-resource name -> the largest single-pod claim \
+                (``manifests.gpu_max_per_pod``), or None to skip per-node checks.
         '''
         return []
 
@@ -116,11 +123,12 @@ class ExclusiveGpu(GpuStrategy):
         return {'limits': {resolve_gpu_resource(spec, gpu_resource_name): spec.gpu_count}}
 
     def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
-                        gpu_runtime_class : Optional[str] = None) -> List[str]:
+                        gpu_runtime_class : Optional[str] = None,
+                        max_per_pod : Optional[dict[str, int]] = None) -> List[str]:
         # Function-level: cluster.py imports this module at module scope (for
         # SHARED_NEEDS_RUNTIME_CLASS and get_gpu_mode), so importing it back at
         # module scope here would be a cycle.
-        from .cluster import allocatable_gpus, nvidia_runtimeclass
+        from .cluster import allocatable_gpus, max_allocatable_gpus_per_node, nvidia_runtimeclass
 
         problems = []
         for resource in sorted(demand) if demand else [DEFAULT_GPU_RESOURCE]:
@@ -140,6 +148,30 @@ class ExclusiveGpu(GpuStrategy):
                     f'Pending and the flow will stall. Reduce GPU nodes/replicas, enable '
                     f'device-plugin time-slicing, or deploy with --gpu-mode shared '
                     f'(dev clusters; see the GPU sharing docs)')
+        # Per-pod bound (RFC 0003): all of one replica's gpu_count devices must sit
+        # on ONE host, so the cluster total above is necessary but not sufficient.
+        for resource, per_pod in sorted((max_per_pod or {}).items()):
+            if per_pod <= 1:
+                continue
+            # Anchored: a real MIG resource is nvidia.com/mig-<profile>, so 'mig-'
+            # must start the final /-segment. A name merely containing 'mig-' (e.g.
+            # a renamed time-sliced resource — deliberately not name-detected,
+            # RFC 0003) falls through to the largest-node check below.
+            if resource.rsplit('/', 1)[-1].startswith('mig-'):
+                problems.append(
+                    f'a node requests {per_pod} x {resource} in one pod, but MIG slices are '
+                    f'hardware-isolated partitions that a model cannot span — gpu_count > 1 '
+                    f'against a MIG profile can never satisfy the visibility contract. Request '
+                    f'whole GPUs (drop gpu_resource_name) or use a single larger MIG profile.')
+                continue
+            biggest = max_allocatable_gpus_per_node(kubectl, resource)
+            # biggest == 0 means the resource is unadvertised, already reported above.
+            if biggest and per_pod > biggest:
+                problems.append(
+                    f'a node requests {per_pod} x {resource} in a single pod but the largest '
+                    f'cluster node has only {biggest} allocatable — all of one replica\'s GPUs '
+                    f'must sit on one Kubernetes host, so the cluster total is irrelevant. '
+                    f'Fix: add a node with >= {per_pod} GPUs, or reduce gpu_count.')
         if not gpu_runtime_class:
             nvidia_rc = nvidia_runtimeclass(kubectl)
             if nvidia_rc:
@@ -168,19 +200,30 @@ class SharedGpu(GpuStrategy):
         return {}
 
     def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
-                        gpu_runtime_class : Optional[str] = None) -> List[str]:
+                        gpu_runtime_class : Optional[str] = None,
+                        max_per_pod : Optional[dict[str, int]] = None) -> List[str]:
         # Function-level to break the same cycle as in ExclusiveGpu above.
         from .cluster import nvidia_runtimeclass
 
+        problems = []
+        # Advisory, not fatal: device_map-style loading over all visible devices
+        # genuinely works on a shared dev box — it's the reservation and isolation
+        # that are absent, not the devices.
+        if max_per_pod and any(count > 1 for count in max_per_pod.values()):
+            problems.append(
+                'gpu_count > 1 is ignored under --gpu-mode shared: shared pods carry no '
+                'resource limit and every pod already sees every device on its host — the '
+                'count is neither reserved nor isolated. Use --gpu-mode exclusive for a '
+                'real multi-GPU grant (RFC 0003).')
         # Capacity math and the device plugin are irrelevant without a resource
         # limit; the RuntimeClass is escalated instead, because in shared mode it is
         # the only thing granting device access at all.
         if gpu_runtime_class:
-            return []
+            return problems
         nvidia_rc = nvidia_runtimeclass(kubectl)
         if not nvidia_rc:
-            return []
-        return [f'{SHARED_NEEDS_RUNTIME_CLASS}: shared pods carry no '
+            return problems
+        return problems + [f'{SHARED_NEEDS_RUNTIME_CLASS}: shared pods carry no '
                 f'GPU resource limit, so the RuntimeClass is the only thing that '
                 f'injects the device — without it every GPU pod runs device-less. '
                 f'Fix: deploy with --gpu-runtime-class {nvidia_rc}']

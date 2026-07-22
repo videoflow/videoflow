@@ -94,7 +94,13 @@ What ``videoflow deploy`` does, step by step
    the run's workloads, broker streams, *and* the infra it created in step 7
    (``--keep`` keeps everything for debugging; ``--keep-infra`` keeps just
    NATS/Redis so the next deploy reuses them). A REALTIME flow is left running
-   and deploy prints the matching ``videoflow teardown`` command.
+   and deploy prints the matching ``videoflow teardown`` command — but only
+   after a bounded rollout check: deploy waits for every pod to become Ready
+   (i.e. ``open()`` completed), and if a pod crash-loops, is OOM-killed, cannot
+   pull its image, or sits unschedulable past a grace period, it dumps the pod
+   logs and exits non-zero, leaving the flow running for inspection. A pod that
+   is merely still loading when the check's deadline (~150 s, sized to the
+   startup-probe window) expires is reported as a warning, not a failure.
 
 ``--dry-run`` prints all manifests to stdout — including the dev-infra
 manifests whenever the broker would have been auto-provisioned — and

@@ -156,7 +156,10 @@ def test_preflight_uses_a_registered_strategys_checks(monkeypatch, registry_sand
     class _Picky(gpu.GpuStrategy):
         name = 'picky'
 
-        def preflight_problems(self, kubectl = 'kubectl', demand = None, gpu_runtime_class = None):
+        # **kwargs is the documented pattern for third-party strategies: new
+        # preflight inputs arrive as keywords (max_per_pod did, RFC 0003).
+        def preflight_problems(self, kubectl = 'kubectl', demand = None, gpu_runtime_class = None,
+                            **kwargs):
             return ['picky mode says no']
 
     registry_sandbox.register_gpu_mode(_Picky())

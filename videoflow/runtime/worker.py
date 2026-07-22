@@ -32,6 +32,12 @@ the original graph-building script.
                         (PROTOCOL.md BLOB-5). Unset ⇒ blobs are TTL-only.
     VF_BLOB_TTL_SECONDS optional; TTL for offloaded payloads (PROTOCOL.md BLOB-7).
                         Unset ⇒ flow-type default (3600 realtime / 86400 batch).
+    VF_GPU_COUNT        optional; whole GPUs granted to this worker (GPU nodes
+                        only, RFC 0003). Visible devices are exactly 0..count-1.
+                        Informational — a Python node's own gpu_count param is
+                        authoritative; native components read this.
+    VF_GPU_RESOURCE_NAME optional; extended-resource name the GPUs were requested
+                        as, e.g. a MIG profile (RFC 0003).
     VF_ENVELOPE_VERSION optional; wire envelope version to emit (only 4, protobuf)
 '''
 from __future__ import absolute_import, division, print_function

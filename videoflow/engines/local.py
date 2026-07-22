@@ -30,6 +30,7 @@ from ..core.compiler import (
 )
 from ..core.engine import ExecutionEngine
 from ..messaging.topology import control_subject_for, delete_run_streams, provision_flow_sync
+from ..utils.system import visible_physical_gpus
 
 logger = logging.getLogger(__package__)
 
@@ -176,11 +177,16 @@ class LocalProcessEngine(ExecutionEngine):
                 f'`docker compose up -d`, or `nats-server -js` — or point --nats at a '
                 f'running server.') from e
 
+        # Only probe the host's GPUs (nvidia-smi) when the flow actually has GPU
+        # nodes — a CPU-only flow must not depend on the probe in any way.
+        gpu_assignment = (assign_local_gpus(specs, visible_physical_gpus())
+                        if any(s.device_type == 'gpu' for s in specs) else {})
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
-                                self._python_path, blob_ttl_seconds = self._blob_ttl_seconds)
+                                self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
+                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)))
                 cmd, run_env = self._launch_command(spec, env)
                 proc = subprocess.Popen(cmd, env = run_env)
                 self._procs.append((spec.name, replica_idx, proc))
@@ -295,10 +301,46 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
+def assign_local_gpus(specs : List[NodeSpec],
+                    host_gpus : list[int]) -> dict[tuple[str, int], list[int]]:
+    '''
+    Deterministic device assignment for a local run: walking specs in order, each
+    replica of each GPU node takes the next ``gpu_count`` ordinals from
+    ``host_gpus`` — the local twin of the exclusive Kubernetes grant (RFC 0003),
+    so a worker's ``CUDA_VISIBLE_DEVICES`` shows exactly its granted devices.
+
+    When demand exceeds ``len(host_gpus)`` the walk wraps around (duplicates
+    within one replica are collapsed) and a single warning is logged: sharing
+    devices is fine for dev, but the same flow will not schedule that way on
+    Kubernetes. An empty ``host_gpus`` returns an empty mapping — no env gets
+    set, so CPU-fallback GPU nodes on a GPU-less machine behave exactly as before.
+    '''
+    if not host_gpus:
+        return {}
+    assignment : dict[tuple[str, int], list[int]] = {}
+    cursor = 0
+    demand = 0
+    for spec in specs:
+        if spec.device_type != 'gpu':
+            continue
+        for replica_idx in range(spec.nb_tasks):
+            devices = [host_gpus[(cursor + i) % len(host_gpus)] for i in range(spec.gpu_count)]
+            cursor += spec.gpu_count
+            demand += spec.gpu_count
+            # dict.fromkeys collapses wrap-around duplicates while keeping order.
+            assignment[(spec.name, replica_idx)] = list(dict.fromkeys(devices))
+    if demand > len(host_gpus):
+        logger.warning(
+            f'local GPU demand ({demand} device claims) exceeds the {len(host_gpus)} visible '
+            f'device(s) — workers will share devices. Fine for dev; the same flow will not '
+            f'schedule this way on Kubernetes.')
+    return assignment
+
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
                 python_path : list | None = None,
-                blob_ttl_seconds : int | None = None) -> dict:
+                blob_ttl_seconds : int | None = None,
+                gpu_devices : list[int] | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -336,6 +378,16 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
+    if spec.device_type == 'gpu':
+        # The worker's GPU grant (RFC 0003): informational for native components,
+        # which never see the Python node's reconstruction params.
+        env['VF_GPU_COUNT'] = str(spec.gpu_count)
+        if spec.gpu_resource_name:
+            env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
+    if gpu_devices:
+        # Cooperative masking: the worker sees exactly its granted devices, so the
+        # visibility contract holds locally too (see assign_local_gpus).
+        env['CUDA_VISIBLE_DEVICES'] = ','.join(str(d) for d in gpu_devices)
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:

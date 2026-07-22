@@ -209,12 +209,14 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
         # optional dep: manifests imports yaml at module scope
-        from .manifests import _is_partitioned, gpu_demand
+        from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod
         # Whole-flow demand per extended resource: every replica of a GPU node claims
-        # its own gpu_count devices, so a partially-schedulable flow deadlocks.
+        # its own gpu_count devices, so a partially-schedulable flow deadlocks. The
+        # per-pod maximum bounds single-node schedulability for multi-GPU nodes.
         demand = gpu_demand(specs, default_resource = args.gpu_resource_name)
         problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
-                                 demand = demand, gpu_mode = args.gpu_mode)
+                                 demand = demand, gpu_mode = args.gpu_mode,
+                                 max_per_pod = gpu_max_per_pod(specs, default_resource = args.gpu_resource_name))
         if args.gpu_mode == 'shared':
             pods = sum(s.nb_tasks for s in gpu_specs)
             physical = allocatable_gpus(args.kubectl)
@@ -308,15 +310,25 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
     if flow_type != BATCH:
-        # A REALTIME deploy returns immediately, so an unschedulable node would fail
-        # silently (producers keep publishing, frames evicted, downstream output never
-        # appears). One bounded check turns that into a visible warning.
-        for problem in engine.schedulability_report():
+        # A REALTIME deploy returns immediately, so a broken node would fail
+        # silently (producers keep publishing, frames evicted, downstream output
+        # never appears). One bounded rollout check turns an unschedulable or
+        # crash-looping pod into a log dump and a non-zero exit.
+        report = engine.rollout_report()
+        for problem in report.warnings:
             print(f'WARNING: {problem}', file = sys.stderr)
-        # Deliberately no gpu_strategy.cleanup() here: the flow keeps running after
-        # this returns, so any cluster state prepare() set up must persist for the
-        # flow's lifetime. Teardown is the end of a REALTIME run, so the mode is
-        # carried in the printed command for `teardown` to undo it there.
+        # Deliberately no gpu_strategy.cleanup() here (on either path): the flow
+        # keeps running after this returns — including on failure, where the
+        # crash-looping pod is the debugging evidence. Any cluster state
+        # prepare() set up must persist for the flow's lifetime. Teardown is the
+        # end of a REALTIME run, so the mode is carried in the printed command
+        # for `teardown` to undo it there.
+        if report.failing:
+            engine.dump_failed_logs(sorted({node for node, _ in report.failing}))
+            print('Failing pods were left running for inspection. Tear the flow down with:')
+            print(teardown_cmd)
+            raise SystemExit('Flow applied but not healthy: '
+                             + '; '.join(detail for _, detail in report.failing))
         print('REALTIME flow is running. Tear it down with:')
         print(teardown_cmd)
         return
@@ -674,7 +686,7 @@ def _cmd_explain(args : argparse.Namespace) -> None:
     # what explain prints is exactly what deploy will request.
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
-        from .manifests import gpu_demand  # optional dep: manifests imports yaml at module scope
+        from .manifests import gpu_demand, gpu_max_per_pod  # optional dep: manifests imports yaml at module scope
         default_resource = args.gpu_resource_name
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')
@@ -684,6 +696,14 @@ def _cmd_explain(args : argparse.Namespace) -> None:
         for resource, units in sorted(demand.items()):
             lines.append(f'  total: {units} x {resource} — the cluster needs at least this '
                          f'allocatable (or deploy with --gpu-mode shared / time-slicing)')
+        # One-node bound (RFC 0003): all of one replica's gpu_count devices must sit
+        # on a single host, so the totals above can be satisfiable while the biggest
+        # pod never schedules. Noise at 1 device — only printed for multi-GPU pods.
+        for resource, per_pod in sorted(gpu_max_per_pod(specs, default_resource = default_resource).items()):
+            if per_pod > 1:
+                lines.append(f'  largest single pod: {per_pod} x {resource} — all {per_pod} devices '
+                             f'must sit on one cluster node; deploy\'s preflight checks the largest '
+                             f'node\'s allocatable, not just the total')
     lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
     print('\n'.join(lines))
 

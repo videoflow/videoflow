@@ -14,7 +14,7 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH
-from videoflow.engines.local import LocalProcessEngine, _worker_env, inherited_python_path
+from videoflow.engines.local import LocalProcessEngine, _worker_env, assign_local_gpus, inherited_python_path
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
 
@@ -91,6 +91,71 @@ def test_worker_env_carries_blob_reclamation_vars():
     specs[0].blob_readers = None
     env_legacy = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
     assert 'VF_BLOB_READERS' not in env_legacy
+
+
+def _gpu_flow_specs(gpu_count = 2, nb_tasks = 1):
+    p = IntProducer(0, 3, name = 'producer')
+    from videoflow.core.constants import GPU
+    a = IdentityProcessor(name = 'work', device_type = GPU, gpu_count = gpu_count,
+                        nb_tasks = nb_tasks, partition_by = 'trace_id' if nb_tasks > 1 else None)(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    return compile_flow(Flow([out], flow_type = BATCH, flow_id = 'demo'))
+
+
+def test_assign_local_gpus_gives_each_replica_a_disjoint_block():
+    specs = _gpu_flow_specs(gpu_count = 2, nb_tasks = 2)
+    assignment = assign_local_gpus(specs, [0, 1, 2, 3])
+    assert assignment == {('work', 0): [0, 1], ('work', 1): [2, 3]}
+
+
+def test_assign_local_gpus_wraps_and_warns_when_oversubscribed(caplog):
+    import logging
+    specs = _gpu_flow_specs(gpu_count = 2, nb_tasks = 2)
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.engines'):
+        assignment = assign_local_gpus(specs, [0, 1, 2])
+    assert assignment[('work', 0)] == [0, 1]
+    assert assignment[('work', 1)] == [2, 0]   # wrapped: shares device 0
+    assert any('will share devices' in r.message for r in caplog.records)
+    # A single replica bigger than the host collapses duplicates rather than
+    # repeating a device in CUDA_VISIBLE_DEVICES.
+    assert assign_local_gpus(_gpu_flow_specs(gpu_count = 2), [0])[('work', 0)] == [0]
+
+
+def test_assign_local_gpus_no_host_gpus_assigns_nothing():
+    assert assign_local_gpus(_gpu_flow_specs(), []) == {}
+
+
+def test_worker_env_sets_gpu_grant_and_cuda_visible_devices():
+    specs = {s.name: s for s in _gpu_flow_specs(gpu_count = 2)}
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,
+                      gpu_devices = [1, 2])
+    assert env['CUDA_VISIBLE_DEVICES'] == '1,2'
+    assert env['VF_GPU_COUNT'] == '2'
+    assert 'VF_GPU_RESOURCE_NAME' not in env   # none declared
+    # CPU nodes carry neither the grant nor a device mask.
+    cpu_env = _worker_env(specs['producer'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_GPU_COUNT' not in cpu_env and 'CUDA_VISIBLE_DEVICES' not in cpu_env
+
+
+def test_engine_partitions_gpus_across_workers(monkeypatch):
+    monkeypatch.setattr('videoflow.engines.local.visible_physical_gpus', lambda: [0, 1])
+    envs = []
+    def fake_popen(cmd, env = None, **kwargs):
+        envs.append(env or {})
+        return _FakeProc()
+    monkeypatch.setattr(subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync', lambda *a, **kw: None)
+    engine = LocalProcessEngine()
+    monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    p = IntProducer(0, 3, name = 'producer')
+    from videoflow.core.constants import GPU
+    a = IdentityProcessor(name = 'work', device_type = GPU, gpu_count = 2)(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    flow = Flow([out], flow_type = BATCH, flow_id = 'demo')
+    engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
+    by_node = {e['VF_NODE_NAME']: e for e in envs}
+    assert by_node['work']['CUDA_VISIBLE_DEVICES'] == '0,1'
+    assert 'CUDA_VISIBLE_DEVICES' not in by_node['producer']
 
 
 def test_workers_get_the_graph_dir_on_pythonpath(tmp_path, monkeypatch):

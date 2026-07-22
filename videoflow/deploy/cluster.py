@@ -278,6 +278,21 @@ def allocatable_gpus(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return sum(int(v) for v in out.split() if v.isdigit())
 
+def max_allocatable_gpus_per_node(kubectl : str = 'kubectl',
+                                resource : str = 'nvidia.com/gpu') -> int:
+    '''
+    The largest allocatable count of one GPU extended resource on any single node
+    (0 when no node advertises it or the cluster is unreachable). The per-pod
+    schedulability bound, complementing ``allocatable_gpus``: total capacity
+    answers "will the whole flow schedule", this answers "can any single node
+    host the biggest pod" — all of a pod's ``gpu_count`` devices must come from
+    one node, so a flow can pass the total-capacity check and still never schedule.
+    '''
+    path = resource.replace('.', '\\.')
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-o',
+                       'jsonpath={.items[*].status.allocatable.' + path + '}')
+    return max((int(v) for v in out.split() if v.isdigit()), default = 0)
+
 def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
     '''
     The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers
@@ -293,7 +308,8 @@ def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
 
 def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] = None,
                   demand : Optional[dict] = None,
-                  gpu_mode : str = 'exclusive') -> List[str]:
+                  gpu_mode : str = 'exclusive',
+                  max_per_pod : Optional[dict] = None) -> List[str]:
     '''
     Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
     labeled ``videoflow.io/gpu-pool=true``; in exclusive mode, enough allocatable
@@ -312,6 +328,9 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
             limit, so the capacity/device-plugin checks are skipped; the RuntimeClass \
             check is escalated instead, because in shared mode the runtime class is \
             the only thing granting device access at all.
+        - max_per_pod: dict of extended-resource name -> largest single-pod claim \
+            (``manifests.gpu_max_per_pod``), or None to skip the per-node capacity \
+            and MIG-combination checks (RFC 0003).
     '''
     problems = []
     # An unreachable cluster makes every check below come back empty, which would
@@ -330,5 +349,6 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
     # math only means something with a resource limit, and the RuntimeClass check is
     # merely advisory in exclusive mode but fatal in shared. The strategy owns both.
     problems.extend(get_gpu_mode(gpu_mode).preflight_problems(
-        kubectl = kubectl, demand = demand, gpu_runtime_class = gpu_runtime_class))
+        kubectl = kubectl, demand = demand, gpu_runtime_class = gpu_runtime_class,
+        max_per_pod = max_per_pod))
     return problems

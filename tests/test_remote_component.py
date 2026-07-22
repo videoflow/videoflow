@@ -69,6 +69,42 @@ def test_no_image_for_device_rejected():
         component(desc, device_type = 'cpu')
 
 
+def _gpu_descriptor(count = 2, resource_name = None):
+    gpu = {'count': count}
+    if resource_name is not None:
+        gpu['resourceName'] = resource_name
+    return _descriptor(runtime = {'images': {'cpu': 'x:cpu', 'gpu': 'x:gpu'}},
+                    device = ['cpu', 'gpu'], resources = {'gpu': gpu})
+
+
+def test_component_defaults_gpu_count_from_descriptor():
+    node = component(_gpu_descriptor(count = 2, resource_name = 'nvidia.com/mig-3g.40gb'), device_type = 'gpu')
+    assert node.gpu_count == 2
+    assert node.gpu_resource_name == 'nvidia.com/mig-3g.40gb'
+
+
+def test_explicit_gpu_count_overrides_descriptor():
+    node = component(_gpu_descriptor(count = 4), device_type = 'gpu', gpu_count = 1)
+    assert node.gpu_count == 1
+
+
+def test_cpu_device_with_multi_gpu_count_is_rejected():
+    with pytest.raises(ValueError, match = "device_type='gpu'"):
+        component(_gpu_descriptor(count = 2), device_type = 'cpu')
+    # gpu_count=1 override makes the cpu run legal again.
+    node = component(_gpu_descriptor(count = 2), device_type = 'cpu', gpu_count = 1)
+    assert node.gpu_count == 1
+
+
+def test_descriptor_gpu_count_reaches_nodespec():
+    prod = _NativeProducer()
+    proc = component(_gpu_descriptor(count = 2), device_type = 'gpu')(prod)
+    cons = _NativeConsumer()(proc)
+    specs = compile_flow(Flow([cons]), envelope_version = 4)
+    remote = next(s for s in specs if s.is_remote)
+    assert remote.gpu_count == 2 and remote.device_type == 'gpu'
+
+
 def test_singleton_cannot_replicate():
     desc = _descriptor(constraints = {'singleton': True})
     with pytest.raises(ValueError, match = 'singleton'):

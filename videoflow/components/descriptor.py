@@ -53,6 +53,11 @@ class ComponentDescriptor:
         constraints = spec.get('constraints', {}) or {}
         self.partitionable : bool = constraints.get('partitionable', False)
         self.singleton : bool = constraints.get('singleton', False)
+        # spec.resources.gpu (RFC 0003): the component's default GPU request. A
+        # graph-side gpu_count= overrides it — a default, not a floor.
+        gpu = ((spec.get('resources') or {}).get('gpu')) or {}
+        self.gpu_count : int = gpu.get('count', 1)
+        self.gpu_resource_name : Optional[str] = gpu.get('resourceName')
 
     @classmethod
     def from_dict(cls, raw : dict, source : str | None = None) -> 'ComponentDescriptor':
@@ -129,6 +134,9 @@ _VALID_DEVICES = ('cpu', 'gpu')
 
 def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     where = f' ({source})' if source else ''
+    # Cross-field GPU check first: JSON Schema cannot express "count > 1 requires
+    # the gpu device type", so it runs regardless of jsonschema availability.
+    _validate_gpu_resources(raw.get('spec') or {}, where)
     # Prefer full JSON Schema validation when jsonschema is available.
     try:
         import jsonschema  # optional dependency (extra): full validation only when installed
@@ -162,6 +170,19 @@ def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     devices = spec.get('device') or []
     if not devices or any(d not in _VALID_DEVICES for d in devices):
         raise ValueError(f'component descriptor{where}: spec.device must be a non-empty subset of {_VALID_DEVICES}')
+
+def _validate_gpu_resources(spec : dict, where : str) -> None:
+    '''Validate ``spec.resources.gpu`` (RFC 0003): count is an integer >= 1 and a multi-GPU component supports the gpu device.'''
+    gpu = ((spec.get('resources') or {}).get('gpu')) or {}
+    count = gpu.get('count', 1)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError(f'component descriptor{where}: spec.resources.gpu.count must be an integer >= 1, got {count!r}')
+    resource_name = gpu.get('resourceName')
+    if resource_name is not None and (not isinstance(resource_name, str) or not resource_name):
+        raise ValueError(f'component descriptor{where}: spec.resources.gpu.resourceName must be a non-empty string')
+    if count > 1 and 'gpu' not in (spec.get('device') or []):
+        raise ValueError(f"component descriptor{where}: spec.resources.gpu.count > 1 requires 'gpu' in spec.device "
+                        f"— add gpu to the device list or drop the resources.gpu block")
 
 # -- minimal params validation (JSON Schema subset) ------------------------
 

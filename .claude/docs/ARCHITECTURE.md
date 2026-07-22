@@ -168,7 +168,7 @@ These were considered and rejected. The reasoning matters more than the verdict 
 changes, so should the decision.
 
 - **Execution engine registry.** Blocked on a real prerequisite, not on effort: the CLI-facing
-  lifecycle (`wait_for_completion`, `teardown`, `dump_failed_logs`, `schedulability_report`) is
+  lifecycle (`wait_for_completion`, `teardown`, `dump_failed_logs`, `rollout_report`) is
   not part of the `ExecutionEngine` ABC, and the two engines' constructors share no signature. A
   registry over that is worthless. Unify the lifecycle into the ABC when a third engine actually
   exists, and do both together.

@@ -354,7 +354,10 @@ COPY . . && RUN pip install .
 
 Keep the image's CUDA minor version compatible with the host driver — a driver
 too old for the image's CUDA runtime is the most common cause of a pod that
-schedules onto a GPU and then dies with a CUDA initialization error.
+schedules onto a GPU and then dies with a CUDA initialization error. Deploy
+catches this instead of reporting success: for a REALTIME flow it waits for
+every pod to become Ready and, on a crash-loop or OOM kill, dumps the pod logs
+and exits non-zero (the flow is left running for inspection).
 
 **6. Deploy.** Nothing GPU-specific is needed on the command line; the device
 requests come from the graph:
@@ -405,7 +408,10 @@ kubectl get node <gpu-node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 
 `renameByDefault: false` keeps the resource named `nvidia.com/gpu`, so **no
 Videoflow change is needed** — the same manifests just schedule.
 `failRequestsGreaterThanOne: true` rejects `gpu_count > 1`, which is meaningless
-against slices of one card.
+against slices of one card. The same logic applies to MIG: slices are
+hardware-isolated partitions, so a model can never span two of them —
+`gpu_count > 1` against a MIG profile is flagged by deploy's preflight. A model
+that needs multiple GPUs needs whole exclusive devices (see below).
 
 **Size `replicas` from measured VRAM, not by guessing.** Time-slicing hands out
 scheduling slots, not memory: co-tenants share the whole 24 GB (or whatever the
@@ -436,8 +442,9 @@ exclusively, so `nb_tasks` above the node's allocatable count (physical GPUs, or
 the advertised units when time-slicing from step 7 is on) leaves the extra
 replicas unschedulable.
 
-**More GPU nodes than GPUs.** Locally all node subprocesses share the machine's
-GPU freely; on Kubernetes each GPU replica claims a whole exclusive device, so a
+**More GPU nodes than GPUs.** Locally each GPU worker gets its own
+`CUDA_VISIBLE_DEVICES` block, wrapping around (with a warning) when there are more
+claims than devices; on Kubernetes each GPU replica claims a whole exclusive device, so a
 graph with N GPU nodes needs N allocatable GPUs — the rest stay `Pending` and the
 flow stalls. Videoflow surfaces this instead of hanging: `videoflow explain`
 prints the flow's GPU demand, deploy's preflight compares it against the cluster
@@ -451,6 +458,27 @@ every GPU pod co-schedules and shares the devices exactly like a local run (dev
 clusters only: no memory isolation). Per-node `gpu_count=` / `gpu_resource_name=`
 (e.g. a MIG profile) and `--gpu-resource-name` cover clusters with other resource
 shapes; see `docs/source/distributed/gpu-sharing.rst` for the full recipes.
+
+**Models larger than one GPU.** A node whose model doesn't fit on one device asks
+for more with `gpu_count`:
+
+```python
+captioner = VlmCaptioner(device_type = GPU, gpu_count = 2, name = 'captioner')(frames)
+```
+
+The pod then requests `nvidia.com/gpu: 2` and Kubernetes grants both whole
+devices to that one worker, on one host. Inside the worker the contract is
+simple: **the visible GPUs are exactly the granted GPUs, `cuda:0..N-1`, with
+`N == gpu_count`** — true on Kubernetes (device plugin) and under `run-local`
+(the engine partitions `CUDA_VISIBLE_DEVICES`). How the model spreads across
+them is the node's own `open()`: `device_map='auto'` for Hugging Face models,
+a `tensor_parallel_size` for engines that take one, or explicit `.to('cuda:1')`
+placement for multi-model nodes. A component can declare its need in its
+`component.yaml` (`spec: {resources: {gpu: {count: 2}}}`) so graph authors don't
+have to pass `gpu_count=` by hand. Two things to know: all `gpu_count` devices
+must fit on **one** cluster node (preflight checks the largest node, not just the
+total — prefer NVLink-connected GPUs for tensor parallelism), and sliced GPUs
+don't qualify (MIG and time-sliced units can't be combined into one model).
 
 ### How graph concepts map onto the broker and Kubernetes
 

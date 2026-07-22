@@ -83,6 +83,33 @@ def test_bad_descriptor_shapes_rejected():
             ComponentDescriptor.from_dict(d)
 
 
+def test_descriptor_resources_gpu_parses_count_and_resource_name():
+    d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2, 'resourceName': 'nvidia.com/mig-3g.40gb'}}))
+    assert d.gpu_count == 2
+    assert d.gpu_resource_name == 'nvidia.com/mig-3g.40gb'
+
+
+def test_descriptor_without_resources_defaults_to_one_gpu():
+    d = ComponentDescriptor.from_dict(_desc())
+    assert d.gpu_count == 1 and d.gpu_resource_name is None
+
+
+def test_descriptor_rejects_bad_gpu_resources():
+    for resources in [
+        {'gpu': {'count': 0}},
+        {'gpu': {'count': 1.5}},
+        {'gpu': {'count': True}},
+        {'gpu': {'resourceName': ''}},
+    ]:
+        with pytest.raises(ValueError, match = 'resources.gpu'):
+            ComponentDescriptor.from_dict(_desc(resources = resources))
+
+
+def test_descriptor_rejects_multi_gpu_without_gpu_device():
+    with pytest.raises(ValueError, match = "requires 'gpu' in spec.device"):
+        ComponentDescriptor.from_dict(_desc(device = ['cpu'], resources = {'gpu': {'count': 2}}))
+
+
 def test_input_accepts_defaults_false():
     d = ComponentDescriptor.from_dict(_desc(io = {
         'inputs': [

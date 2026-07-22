@@ -70,6 +70,13 @@ DELETABLE_KINDS = _CORE_DELETABLE_KINDS + _CRD_DELETABLE_KINDS
 # completed Job objects (and their pods) after this many seconds.
 _BATCH_JOB_TTL_SECONDS = 600
 
+# Startup-probe window: period × threshold is how long a worker gets to finish
+# ``open()`` (slow model loads) before the kubelet kills the container. The
+# rollout watchdog in engines/kubernetes.py derives its deadline from these, so a
+# probe change automatically retunes the post-apply check.
+STARTUP_PROBE_PERIOD_SECONDS = 2
+STARTUP_PROBE_FAILURE_THRESHOLD = 60
+
 _DNS1123_RE = re.compile(r'[^a-z0-9-]+')
 
 def k8s_name(*parts : object) -> str:
@@ -166,6 +173,13 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
         # Downstream read count of this node's messages — enables refcounted blob
         # reclamation (PROTOCOL.md BLOB-5). Omitted (legacy spec) ⇒ TTL-only blobs.
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
+    if spec.device_type == 'gpu':
+        # The worker's GPU grant (RFC 0003): informational for native components,
+        # which never see the Python node's reconstruction params. Visible devices
+        # are exactly 0..count-1 under the exclusive GPU mode.
+        env['VF_GPU_COUNT'] = str(spec.gpu_count)
+        if spec.gpu_resource_name:
+            env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
     return env
 
 def _is_partitioned(spec : NodeSpec) -> bool:
@@ -209,6 +223,34 @@ def gpu_demand(specs : List[NodeSpec],
         resource = resolve_gpu_resource(spec, default_resource)
         demand[resource] = demand.get(resource, 0) + spec.nb_tasks * spec.gpu_count
     return demand
+
+def gpu_max_per_pod(specs : List[NodeSpec],
+                    default_resource : Optional[str] = None) -> dict[str, int]:
+    '''
+    The largest single-pod claim per extended-resource name — ``gpu_demand``'s
+    sibling and the other half of preflight's input. Total demand answers "will
+    the whole flow schedule"; this answers "can any single node host the biggest
+    pod": all of one replica's ``gpu_count`` devices must sit on one Kubernetes
+    host, so a flow can satisfy the total and still never schedule (RFC 0003).
+
+    Same ``dict[str, int]``-not-dataclass shape as ``gpu_demand``, for the same
+    reason: the keys are open-ended cluster-defined extended-resource names.
+
+    - Arguments:
+        - specs: the compiled flow. Non-GPU nodes contribute nothing.
+        - default_resource: as on ``gpu_demand``.
+
+    - Returns:
+        - resource name -> the largest ``gpu_count`` any one replica requests. \
+            Empty when no node requests a GPU.
+    '''
+    largest : dict[str, int] = {}
+    for spec in specs:
+        if spec.device_type != 'gpu':
+            continue
+        resource = resolve_gpu_resource(spec, default_resource)
+        largest[resource] = max(largest.get(resource, 0), spec.gpu_count)
+    return largest
 
 def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
               nats_configmap : str, mounts : Optional[List[Mount]] = None,
@@ -285,7 +327,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     # tens of seconds) without letting the liveness probe kill the pod meanwhile.
     container['startupProbe'] = {
         'httpGet': {'path': '/readyz', 'port': 8080},
-        'periodSeconds': 2, 'failureThreshold': 60,
+        'periodSeconds': STARTUP_PROBE_PERIOD_SECONDS,
+        'failureThreshold': STARTUP_PROBE_FAILURE_THRESHOLD,
     }
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
 

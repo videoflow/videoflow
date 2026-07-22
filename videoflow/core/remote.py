@@ -138,7 +138,7 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
             partition_by : Optional[str] = None,
             join_policy : Union[JoinPolicy, dict, None] = None,
             image : Optional[str] = None, is_finite : Optional[bool] = None,
-            metadata : bool = False, idempotent : bool = False, gpu_count : int = 1,
+            metadata : bool = False, idempotent : bool = False, gpu_count : Optional[int] = None,
             gpu_resource_name : Optional[str] = None) -> Node:
     '''
     Create a graph node backed by a language-agnostic component described by ``ref``
@@ -163,7 +163,11 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
         - image: explicit image ref override (else the descriptor's image for the device).
         - is_finite: producers only; defaults to the descriptor's ``finite``.
         - nb_tasks/partition_by/join_policy/metadata/idempotent: as on the native nodes.
-        - gpu_count/gpu_resource_name: processors only; as on ``ProcessorNode``.
+        - gpu_count/gpu_resource_name: processors only; as on ``ProcessorNode``. \
+            Resolution order: explicit argument, then the descriptor's \
+            ``spec.resources.gpu`` (RFC 0003), then 1/None. The descriptor value \
+            is a default, not a floor — a component with a hard minimum should \
+            verify in ``open()``.
     '''
     descriptor = ref if isinstance(ref, ComponentDescriptor) else load_descriptor(ref)
     component_ref = descriptor.source or (ref if isinstance(ref, str) else descriptor.name)
@@ -199,11 +203,19 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
         return RemoteProducer(component_ref, descriptor, validated_params,
                             is_finite = finite, name = name, image = resolved_image)
     if role == 'processor':
+        # RFC 0003 resolution: explicit argument → descriptor spec.resources.gpu →
+        # 1/None. The descriptor value is a default, not a floor.
+        resolved_gpu_count = descriptor.gpu_count if gpu_count is None else gpu_count
+        resolved_gpu_resource = gpu_resource_name if gpu_resource_name is not None else descriptor.gpu_resource_name
+        if resolved_gpu_count > 1 and device_type != 'gpu':
+            raise ValueError(f"component '{descriptor.name}': gpu_count={resolved_gpu_count} requires "
+                            f"device_type='gpu', got {device_type!r}. Pass device_type='gpu', or gpu_count=1 "
+                            "to override the descriptor's default.")
         return RemoteProcessor(component_ref, descriptor, validated_params,
                             nb_tasks = nb_tasks, device_type = device_type,
                             partition_by = partition_by, join_policy = policy,
                             name = name, image = resolved_image,
-                            gpu_count = gpu_count, gpu_resource_name = gpu_resource_name)
+                            gpu_count = resolved_gpu_count, gpu_resource_name = resolved_gpu_resource)
     if role == 'consumer':
         return RemoteConsumer(component_ref, descriptor, validated_params,
                             metadata = metadata, idempotent = idempotent,

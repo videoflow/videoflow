@@ -264,6 +264,35 @@ def test_gpu_shared_mode_omits_the_resource_limit_but_keeps_placement():
     assert 'nodeSelector' not in by_name['vf-g-c']['spec']['template']['spec']
     assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
 
+def test_gpu_max_per_pod_takes_the_max_not_the_sum():
+    from videoflow.deploy.manifests import gpu_demand, gpu_max_per_pod
+    producer = IntProducer(name = 'p')
+    small = IdentityProcessor(name = 'small', device_type = GPU, nb_tasks = 3)(producer)
+    big = IdentityProcessor(name = 'big', device_type = GPU, gpu_count = 4)(small)
+    printer = CommandlineConsumer(name = 'c')(big)
+    specs = compile_flow(Flow([printer], flow_type = REALTIME, flow_id = 'g'))
+    # Demand sums every replica's claim; max-per-pod is the biggest single claim.
+    assert gpu_demand(specs) == {'nvidia.com/gpu': 3 + 4}
+    assert gpu_max_per_pod(specs) == {'nvidia.com/gpu': 4}
+    # Both group by resolved resource name, honoring the deploy default.
+    assert gpu_max_per_pod(specs, default_resource = 'amd.com/gpu') == {'amd.com/gpu': 4}
+
+
+def test_env_pairs_carry_gpu_grant_for_gpu_nodes():
+    from videoflow.deploy.manifests import _env_pairs
+    specs = {s.name: s for s in compile_flow(_gpu_flow(gpu_count = 2, gpu_resource_name = 'amd.com/gpu'))}
+    env = _env_pairs(specs['g'], 'g', 'realtime', 'run1', 4)
+    assert env['VF_GPU_COUNT'] == '2'
+    assert env['VF_GPU_RESOURCE_NAME'] == 'amd.com/gpu'
+    # CPU nodes carry neither; a GPU node without a resource name only the count.
+    cpu_env = _env_pairs(specs['c'], 'g', 'realtime', 'run1', 4)
+    assert 'VF_GPU_COUNT' not in cpu_env and 'VF_GPU_RESOURCE_NAME' not in cpu_env
+    plain = {s.name: s for s in compile_flow(_gpu_flow())}
+    plain_env = _env_pairs(plain['g'], 'g', 'realtime', 'run1', 4)
+    assert plain_env['VF_GPU_COUNT'] == '1'
+    assert 'VF_GPU_RESOURCE_NAME' not in plain_env
+
+
 def test_invalid_gpu_mode_is_rejected():
     with pytest.raises(ValueError, match = 'gpu_mode'):
         render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',

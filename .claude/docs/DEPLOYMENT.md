@@ -77,7 +77,14 @@ its outputs are baked into the compiled specs.
 3. Compile — locally if the graph's dependencies import on the host, otherwise inside the image
    (specs round-trip as JSON, the same format as the specs ConfigMap).
 4. Provision the broker, apply manifests.
-5. For `BATCH`, wait for completion and tear down (`--keep` / `--keep-infra` to skip).
+5. For `BATCH`, wait for completion and tear down (`--keep` / `--keep-infra` to skip). For
+   `REALTIME`, run a bounded rollout check (`rollout_report` in
+   [engines/kubernetes.py](../../videoflow/engines/kubernetes.py)): wait until every pod is Ready
+   (`open()` completed) — early-exiting on a confirmed failure (crash-loop, OOM kill, image-pull
+   failure, or unschedulable past a grace period), in which case deploy dumps the pod logs and
+   exits non-zero, leaving the flow running for inspection. The deadline is derived from the
+   startup-probe window (~150s) so a probe kill of a slow `open()` is observable; a pod merely
+   still loading at the deadline is a warning, not a failure.
 
 `--dry-run` / `--render-only` never touch the cluster. Other flags worth knowing:
 `--image-override name=ref`, `--mount`, `--namespace`, `--autoscaling`, `--gpu-mode`,
@@ -132,6 +139,16 @@ Deploy preflights both the label and the taint — it warns but does not block.
 `gpu_resource_name` (per node) or `--gpu-resource-name` (per deploy) targets MIG profiles or
 renamed time-sliced resources. The full cluster-preparation walkthrough is in
 [`README.md`](../../README.md).
+
+Multi-GPU nodes (`gpu_count > 1`, RFC 0003): preflight additionally checks the **largest single
+node's** allocatable count (`cluster.max_allocatable_gpus_per_node` vs `manifests.gpu_max_per_pod`
+— all of one replica's devices must sit on one host, so the cluster total is not sufficient),
+flags `gpu_count > 1` against a `mig-` resource (slices can't be combined into one model), and
+warns that shared mode ignores the count. `run-local` partitions the host's visible devices into
+disjoint `CUDA_VISIBLE_DEVICES` blocks per GPU replica (wrap-around with a warning when
+oversubscribed; nothing is set on a GPU-less host). Non-goals, deliberately: injecting `--gpus`
+into the docker-run path for native components, and any local enforcement beyond cooperative
+`CUDA_VISIBLE_DEVICES` masking.
 
 ## Infrastructure ownership
 
