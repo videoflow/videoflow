@@ -220,20 +220,42 @@ def test_mix_preflight_requires_a_resolved_layout():
     assert len(problems) == 1 and 'resolve_specs' in problems[0]
 
 
-def test_mix_preflight_reports_unapplied_geometry_with_the_config(monkeypatch):
+def test_mix_preflight_reports_unapplied_geometry_when_no_manager_can_apply_it(monkeypatch):
     _a100_inventory(monkeypatch)
     strategy = gpu.MixGpu()
     strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10, nb_tasks = 2)])
-    # Cluster advertises no MIG slices yet: geometry not applied.
+    # Cluster advertises no MIG slices yet: geometry not applied. With no MIG
+    # manager present, nothing will apply it — so the shortfall is a real,
+    # blocking problem carrying the config to apply by hand.
     monkeypatch.setattr(cluster, 'allocatable_gpus', lambda kubectl, resource: 0)
     monkeypatch.setattr(cluster, 'nvidia_runtimeclass', lambda kubectl: None)
+    monkeypatch.setattr(strategy, '_mig_manager_pods', lambda kubectl: [])
     problems = strategy.preflight_problems()
     assert len(problems) == 1
     assert 'needs 2 x nvidia.com/mig-1g.10gb' in problems[0]
+    assert 'no GPU Operator MIG manager' in problems[0]
     assert 'mig-devices' in problems[0]          # the mig-parted config is embedded
     # Once the slices are advertised the same check is clean.
     monkeypatch.setattr(cluster, 'allocatable_gpus', lambda kubectl, resource: 2)
     assert strategy.preflight_problems(gpu_runtime_class = 'nvidia') == []
+
+
+def test_mix_preflight_defers_unapplied_geometry_to_prepare_when_manager_present(monkeypatch, caplog):
+    '''Bug #6: on a fresh cluster the geometry is never applied yet, so the slice
+    check must not block a first deploy (nor warn) when a MIG manager is present —
+    prepare() is about to apply exactly that. Otherwise --strict-preflight aborts
+    every first mix deploy.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10, nb_tasks = 2)])
+    monkeypatch.setattr(cluster, 'allocatable_gpus', lambda kubectl, resource: 0)
+    monkeypatch.setattr(cluster, 'nvidia_runtimeclass', lambda kubectl: None)
+    monkeypatch.setattr(strategy, '_mig_manager_pods',
+                        lambda kubectl: [('gpu-operator', 'mig-manager-abc')])
+    with caplog.at_level(logging.INFO, logger = 'videoflow.deploy'):
+        problems = strategy.preflight_problems()
+    assert problems == []                        # not a problem: strict mode proceeds
+    assert any('nvidia.com/mig-1g.10gb' in r.message for r in caplog.records)
 
 
 def test_mix_preflight_checks_spanner_capacity(monkeypatch):

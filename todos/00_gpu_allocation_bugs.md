@@ -18,15 +18,6 @@ in `todos/01_small_bugs.md`. Docs (README, gpu-sharing.rst, RFC) match the code.
 
 ## Design issues
 
-### 6. mix + `--strict-preflight` can never deploy
-Preflight runs before prepare ([cli.py:225](videoflow/deploy/cli.py#L225) vs
-[cli.py:310](videoflow/deploy/cli.py#L310)), and on a fresh cluster
-`MixGpu.preflight_problems` ([gpu.py:318-326](videoflow/deploy/gpu.py#L318))
-always reports "geometry is not applied yet" — so strict mode aborts every first
-deploy, and non-strict prints a scary WARNING on the happy path. When a MIG
-manager is present this shouldn't be a problem string at all (prepare is about
-to fix exactly that).
-
 ### 8. Geometry churn and busy-device restores
 prepare/cleanup run per deploy (BATCH `finally`, [cli.py:376](videoflow/deploy/cli.py#L376)),
 so back-to-back batch runs repartition + restore every time — each MIG
@@ -93,7 +84,10 @@ name/label, or clear-then-set.
    nodes and shrinks busy ones with MIG disallowed; mix preflights spanner
    demand against free whole-device capacity; mix pods carry owner-aware
    nodeAffinity).
-4. #6 — reclassify "not applied yet + manager present" as informational.
+4. ~~#6~~ — **done** (mix preflight treats unapplied geometry as informational
+   when a MIG manager is present to apply it — prepare() runs right after — and
+   keeps it a blocking problem carrying the by-hand config only when no manager
+   is present).
 5. The smaller items opportunistically.
 
 ## Verification

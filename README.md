@@ -507,7 +507,7 @@ running pods, and time-sliced or already-MIG'd nodes are excluded from
 planning, capacity checks count only *free* units, concurrent flows split the
 pool at node granularity, and only the last flow out restores the operator
 config (`videoflow teardown --flow-id <id> --gpu-mode mix` reverts just that
-flow's nodes). Without the MIG manager (or its ClusterPolicy), preflight prints
+flow's nodes). Without the MIG manager (or its ClusterPolicy), deploy prints
 the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
 `gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
 slices, so a node declares either a fraction of one device or whole devices.

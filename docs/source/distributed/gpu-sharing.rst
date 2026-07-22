@@ -128,7 +128,7 @@ units (allocatable minus what running pods hold), not raw allocatable:
    ``videoflow teardown --gpu-mode mix`` reverts the geometry, verifies the
    same state, and restores the policy — the pre-videoflow label and config
    name are recorded in cluster annotations, so teardown needs no state from
-   the deploy. Without a MIG manager or ClusterPolicy, preflight prints the
+   the deploy. Without a MIG manager or ClusterPolicy, deploy prints the
    exact config to apply by hand. Note: if ClusterPolicy is managed by GitOps
    (ArgoCD/Flux), the reconciler will revert videoflow's patch mid-run — keep
    ``migManager.config.name`` unmanaged, or run mix with a paused sync.

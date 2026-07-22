@@ -753,14 +753,31 @@ class MixGpu(ExclusiveGpu):
         # which prepare() is about to change (MIG'ing a card retires its
         # nvidia.com/gpu units and advertises slices instead) — so mix does its
         # own check: is the geometry this layout needs already advertised?
+        # "Not applied yet" is the expected state on a fresh cluster, not a
+        # problem: prepare() applies the geometry through the GPU Operator MIG
+        # manager immediately after preflight. So a shortfall only blocks when
+        # NO manager is present to apply it (prepare() would then fail with the
+        # config to apply by hand); with a manager it is informational and must
+        # not trip --strict-preflight on a first deploy. Manager presence is read
+        # at most once, and only when a shortfall actually shows up.
+        manager_present : Optional[bool] = None
         for resource, needed in sorted(layout.slice_demand.items()):
             advertised = allocatable_gpus(kubectl, resource)
-            if advertised < needed:
+            if advertised >= needed:
+                continue
+            if manager_present is None:
+                manager_present = bool(self._mig_manager_pods(kubectl))
+            if manager_present:
+                logger.info('mix preflight: the layout needs %d x %s; the cluster advertises '
+                            '%d today. prepare() will apply the MIG geometry via the GPU '
+                            'Operator MIG manager before the flow is scheduled.',
+                            needed, resource, advertised)
+            else:
                 problems.append(
                     f'the layout needs {needed} x {resource} but the cluster currently '
-                    f'advertises {advertised} — geometry is not applied yet. prepare() will '
-                    f'apply it via the GPU Operator MIG manager if present; otherwise apply '
-                    f'this nvidia-mig-parted config and retry:\n'
+                    f'advertises {advertised} and no GPU Operator MIG manager (pods labeled '
+                    f'app=nvidia-mig-manager) is present to apply it — apply this '
+                    f'nvidia-mig-parted config to the pool nodes and retry:\n'
                     + layout_to_mig_parted_config(layout))
         # Spanner demand is claimed exclusive-style, so the whole-device check
         # applies before prepare() too: applying geometry only *shrinks* whole-card
