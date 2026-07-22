@@ -132,21 +132,28 @@ guessing** if none apply:
 ## GPU
 
 The contract a GPU node produces in its manifest: `resources.limits: {nvidia.com/gpu: N}`, a
-`nodeSelector` on `videoflow.io/gpu-pool: "true"`, and a toleration for the `nvidia.com/gpu` taint.
-Deploy preflights both the label and the taint — it warns but does not block.
+`nodeSelector` on `videoflow.io/gpu-pool: "true"` (under mix, a required nodeAffinity instead:
+pool AND (unowned OR owned by this flow's `videoflow.io/gpu-owner` stamp)), and a toleration for
+the `nvidia.com/gpu` taint. Deploy preflights both the label and the taint — it warns but does not
+block. Every capacity/inventory read in `deploy/cluster.py` is pool-scoped, and capacity checks
+compare demand against **free** units (allocatable minus running pods' requests,
+`cluster.gpu_availability`/`gpu_units_in_use`) — the pool is multi-tenant.
 
 Two modes (`deploy/gpu.py` strategy registry). `exclusive` (default): units are whole physical
 devices, `gpu_count > 1` spans devices on one host, sharing is inexpressible. `mix`: nodes
 declaring `gpu_memory_gib` get solver-chosen exclusive MIG slices (`deploy/mig.py` computes the
-layout from GFD-label inventory; the strategy's `resolve_specs` hook stamps each sharer's profile
-into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry through the GPU
-Operator: merge the generated mig-parted config into the operator's, patch ClusterPolicy
-`migManager.config.name` at the merged copy, wait for the mig-manager DaemonSet rollout, label
-nodes `nvidia.com/mig.config` and wait for `mig.config.state=success` — teardown verifies the
-same state before restoring the policy, with restore records in node/ClusterPolicy annotations). The
-deploy-level `--gpu-resource-name` covers clusters advertising whole devices under another name;
-there is no node-level resource-name knob. The full cluster-preparation walkthrough is in
-[`README.md`](../../README.md).
+layout from GFD-label inventory after `gpu._partition_inventory` drops other flows' / time-sliced /
+pre-MIG'd nodes and marks busy ones spanner-only; the strategy's `resolve_specs` hook stamps each
+sharer's profile into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry
+through the GPU Operator: CAS-claim the target nodes with `videoflow.io/gpu-owner=<flow-id>`,
+merge the generated mig-parted config into the operator's — preserving other flows' published
+entries, resourceVersion-CAS publish — patch ClusterPolicy `migManager.config.name` at the merged
+copy, wait for the mig-manager DaemonSet rollout, label nodes `nvidia.com/mig.config` and wait for
+`mig.config.state=success` — teardown verifies the same state before restoring, restores only the
+named flow's nodes, and only the last flow out restores the policy and deletes the ConfigMap; the
+lifecycle hooks take `flow_id` as a keyword). The deploy-level `--gpu-resource-name` covers
+clusters advertising whole devices under another name; there is no node-level resource-name knob.
+The full cluster-preparation walkthrough is in [`README.md`](../../README.md).
 
 Multi-GPU nodes (`gpu_count > 1`, RFC 0003): preflight additionally checks the **largest single
 node's** allocatable count (`cluster.max_allocatable_gpus_per_node` vs `manifests.gpu_max_per_pod`

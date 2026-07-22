@@ -125,6 +125,57 @@ Local runs degrade `mix` to `exclusive` semantics: the local engine cannot
 address MIG slices (RFC 0003), so a sharer simply gets a whole card — which
 satisfies "at least `gpu_memory_gib`".
 
+### Multi-tenancy
+
+*Amended 2026-07-22:* the original inventory model assumed the whole cluster,
+pristine and exclusively videoflow's. The pool is now explicitly
+**multi-tenant** — several videoflow flows plus foreign GPU workloads:
+
+- **Inventory scope.** `gpu_inventory`, `allocatable_gpus` and
+  `max_allocatable_gpus_per_node` read only `videoflow.io/gpu-pool=true` nodes
+  (the pods' own nodeSelector), and inventory records carry the per-node facts
+  planning needs: time-slicing signals, existing MIG state (either strategy),
+  the owner stamp, and units held by running pods.
+- **Exclusion before solving.** The strategy — not the pure solver — excludes
+  nodes owned by another flow (quietly; that is normal), time-sliced or
+  foreign-MIG'd nodes (with a warning; those are pool misconfigurations), and
+  refuses outright a node still stamped by *this* flow (leftover geometry: its
+  GFD `gpu.count` no longer maps `card_index` to physical positions — the fix
+  is a teardown). Busy nodes shrink to their free cards with MIG disallowed:
+  repartitioning destroys running workloads, but scheduler-accounted whole-card
+  spanner claims stay safe. An infeasible layout lists every exclusion.
+- **Ownership.** `prepare()` claims each node it will partition with a
+  compare-and-swap `videoflow.io/gpu-owner=<k8s_name(flow_id)>` label (no
+  `--overwrite`; a lost race releases this deploy's claims and aborts).
+  `cleanup(flow_id)` reverts only owned nodes and releases the claim after each
+  node's geometry reverted; a bare `cleanup()` remains the global sweep. Mix
+  pods swap the pool nodeSelector for a required node affinity — (pool AND
+  unowned) OR (pool AND owned by this flow) — so the scheduler, not just the
+  planner, keeps flows off each other's slices.
+- **Shared config, last one out.** The published
+  `videoflow-mig-parted-config` is merged (operator base + other flows' live
+  `videoflow-*` entries + this layout) and written with resourceVersion
+  compare-and-swap; cleanup strips only this flow's entries and restores
+  `migManager.config.name` / deletes the map only when no other flow's entries
+  remain.
+- **Free-unit capacity.** Preflight (both modes) compares demand against
+  allocatable *minus* units requested by non-terminated pods, and mix also
+  preflights its spanner demand against free whole-device capacity.
+
+Residual races, accepted: a foreign GPU pod landing on a planned node between
+inventory read and geometry apply is disrupted (closing this needs admission
+control, which videoflow does not install), and a last-flow-out restore racing
+a new flow's prepare converges after a re-read with transient mig-manager
+rollout churn. The mix end-to-end path — including concurrent flows — still
+cannot be exercised on the time-sliced dev cluster; it needs a MIG-capable GPU
+Operator cluster.
+
+The lifecycle hooks (`resolve_specs`/`prepare`/`cleanup`) gained a `flow_id`
+keyword (None default). Per the documented contract, new lifecycle inputs
+arrive as keywords — third-party strategies should accept `**kwargs`; an
+override with the old exact signature breaks only if called with the new
+keyword, which the CLI now always passes.
+
 ### Environment
 
 No new environment rows. A sharer's worker sees `VF_GPU_COUNT=1` and

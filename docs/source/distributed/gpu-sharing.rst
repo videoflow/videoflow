@@ -101,7 +101,14 @@ fault isolation, driven by declared demand::
     videoflow deploy my_flow.py --gpu-mode mix --gpu-runtime-class nvidia
 
 At deploy time a layout solver runs against the pool's physical inventory (GPU
-Feature Discovery labels — GFD is required for mix):
+Feature Discovery labels — GFD is required for mix). Only nodes labeled
+``videoflow.io/gpu-pool=true`` are considered — the same label the pods
+schedule on — and the pool is treated as **multi-tenant**: nodes another flow
+has claimed, nodes whose devices are held by running pods, and misconfigured
+pool members (time-sliced, or carrying MIG geometry videoflow does not own) are
+excluded before solving, with the reasons listed if the remaining capacity
+cannot fit the flow. Capacity preflight likewise compares demand against *free*
+units (allocatable minus what running pods hold), not raw allocatable:
 
 1. Whole cards are reserved for the **spanners** — nodes with ``gpu_count``
    (declared or defaulted to 1) and no memory demand. These cards stay
@@ -125,6 +132,23 @@ Feature Discovery labels — GFD is required for mix):
    exact config to apply by hand. Note: if ClusterPolicy is managed by GitOps
    (ArgoCD/Flux), the reconciler will revert videoflow's patch mid-run — keep
    ``migManager.config.name`` unmanaged, or run mix with a paused sync.
+
+Several flows can run mix against one pool at the same time, split at **node
+granularity**: prepare() stamps every node it partitions with a
+``videoflow.io/gpu-owner=<flow-id>`` label (compare-and-swap, so two racing
+deploys cannot claim the same node), later deploys plan around owned nodes, and
+mix pods carry a node affinity that keeps them off other flows' nodes — so one
+flow's teardown can never revert geometry under another flow's pods. The shared
+``videoflow-mig-parted-config`` ConfigMap is merged, not overwritten, and only
+the **last flow out** restores ``migManager.config.name`` and deletes it.
+Teardown therefore needs ``--flow-id`` to know which nodes are its own (a
+teardown without one sweeps everything videoflow owns). Busy nodes are never
+repartitioned — MIG reconfiguration destroys whatever runs on the card, and
+Kubernetes does not expose which physical card a pod holds — but their free
+cards still serve whole-device spanners. One race stays open by design: a
+foreign GPU pod that lands on a planned node between inventory read and
+geometry apply will be disrupted; closing it needs admission control, which
+videoflow does not install.
 
 A node that declares nothing gets a whole physical device — a plain
 ``device_type=GPU`` node means the same thing in both modes, so flows do not

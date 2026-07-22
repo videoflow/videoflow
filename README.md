@@ -491,17 +491,24 @@ detector  = Detector(device_type = GPU, nb_tasks = 4, gpu_memory_gib = 10)(frame
 captioner = VlmCaptioner(device_type = GPU, gpu_count = 2)(frames)                   # 2 whole GPUs
 ```
 
-Deploying with `--gpu-mode mix` solves a card layout against the cluster's
-inventory (from GPU Feature Discovery labels): whole cards are reserved for the
-spanners, the sharers are packed into MIG slices of the smallest fitting profile
-(each an *exclusive* slice — the card is shared, the slice is not, with hard
-memory/fault isolation), and the geometry is applied through the GPU Operator's
-MIG manager: videoflow merges its generated `nvidia-mig-parted` entries into the
-operator's current config, points ClusterPolicy `migManager.config.name` at the
-merged copy for the run, and restores both the policy and each node's previous
-`nvidia.com/mig.config` label at teardown. Without the MIG manager (or its
-ClusterPolicy), preflight prints the exact `nvidia-mig-parted` config to apply
-by hand. `gpu_memory_gib` and
+Deploying with `--gpu-mode mix` solves a card layout against the pool's
+inventory (from GPU Feature Discovery labels; only nodes labeled
+`videoflow.io/gpu-pool=true` — the nodes the pods can schedule on): whole cards
+are reserved for the spanners, the sharers are packed into MIG slices of the
+smallest fitting profile (each an *exclusive* slice — the card is shared, the
+slice is not, with hard memory/fault isolation), and the geometry is applied
+through the GPU Operator's MIG manager: videoflow merges its generated
+`nvidia-mig-parted` entries into the operator's current config, points
+ClusterPolicy `migManager.config.name` at the merged copy for the run, and
+restores both the policy and each node's previous `nvidia.com/mig.config` label
+at teardown. The pool is treated as multi-tenant: nodes another flow claimed
+(stamped `videoflow.io/gpu-owner=<flow-id>`), nodes with devices held by
+running pods, and time-sliced or already-MIG'd nodes are excluded from
+planning, capacity checks count only *free* units, concurrent flows split the
+pool at node granularity, and only the last flow out restores the operator
+config (`videoflow teardown --flow-id <id> --gpu-mode mix` reverts just that
+flow's nodes). Without the MIG manager (or its ClusterPolicy), preflight prints
+the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
 `gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
 slices, so a node declares either a fraction of one device or whole devices.
 Under every other mode `gpu_memory_gib` is simply unused (the node gets a whole
