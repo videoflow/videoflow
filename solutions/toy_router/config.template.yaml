@@ -1,0 +1,38 @@
+# Toy-router config template. `videoflow deploy toy_router.py` reads this when
+# no config.yaml exists: it asks the x-questions below, writes config.yaml, and
+# hostPath-mounts the x-mounts paths into the prep container and the worker
+# pods. See config.example.yaml for what every knob means.
+work_dir: ./out
+seed: 7
+events: 300
+sensors: 6
+rate_fps: 100
+idempotent_sink: true
+enrich:
+  threshold: 50.0
+  lookup_ms: 1.0
+counter:
+  partitions: 3
+  partition_by: _partition_key
+
+# Inputs `videoflow deploy` asks for when generating config.yaml.
+x-questions:
+  - key: events
+    prompt: 'Number of events to produce'
+    type: int
+    default: 300
+  - key: counter.partitions
+    prompt: 'Partitioned replicas for the counter stage'
+    type: int
+    default: 3
+  - key: counter.partition_by
+    prompt: 'Routing key (_partition_key = sticky per sensor, trace_id = per lineage)'
+    type: choice
+    choices: [_partition_key, trace_id]
+    default: _partition_key
+
+# The work dir must be visible inside prep containers and worker pods at the
+# same absolute path: it holds expected_counts.json (written by prepare.py,
+# read by the ledger consumer) and receives ledger.jsonl and counts.json.
+x-mounts:
+  - '{work_dir}'

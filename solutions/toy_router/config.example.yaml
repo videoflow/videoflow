@@ -1,0 +1,41 @@
+# Toy-router configuration, fully documented. Copy to config.yaml and edit (or
+# let `videoflow deploy` / `videoflow run-local` generate one from
+# config.template.yaml by asking questions). Relative paths resolve against the
+# directory this file lives in.
+
+# Where every artifact lands: expected_counts.json (from prepare.py),
+# ledger.jsonl and counts.json. Mounted into the worker pods at the same
+# absolute path, so results appear on your machine.
+work_dir: ./out
+
+# The deterministic event stream: `events` messages spread over `sensors`
+# distinct keys, generated from `seed`. prepare.py walks the same PRNG, which
+# is how the expected totals exist before the flow runs.
+seed: 7
+events: 300
+sensors: 6
+
+# Producer pacing in messages per second (<= 0 = as fast as possible).
+rate_fps: 100
+
+# Construct the ledger consumer with idempotent=True: when the flow has a
+# Redis idempotency store (run-local and deploy provision one), its side
+# effects are deduplicated across broker redelivery.
+idempotent_sink: true
+
+enrich:
+  # Events with value >= threshold are bucketed 'high', the rest 'low'.
+  threshold: 50.0
+  # Simulated latency of the async lookup, per message.
+  lookup_ms: 1.0
+
+counter:
+  # Replicas of the stateful counter stage. Safe to replicate ONLY because the
+  # input is partitioned: hash(key) % partitions pins each key to one replica.
+  partitions: 3
+  # _partition_key routes by the sensor id the enricher stamps (sticky per
+  # sensor — counts.json shows exactly one replica per sensor). trace_id
+  # routes by lineage instead: totals stay correct (the ledger sums each
+  # replica's share) but one sensor's events spread across replicas, and
+  # counts.json shows it.
+  partition_by: _partition_key

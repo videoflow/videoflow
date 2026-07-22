@@ -127,6 +127,31 @@ python my_flow.py
 
 ---
 
+## Example solutions
+
+[`solutions/`](solutions) holds three complete, deployable applications built
+from core nodes only — no models, no footage, no extra dependencies. They are
+the fastest way to see the whole path (config, prep hook, image, broker, workers,
+teardown) actually work, and the best code to read after this README.
+
+| Solution | Flow type | What it demonstrates |
+|---|---|---|
+| [toy_calculator](solutions/toy_calculator) | BATCH | A diamond over a stream of integers: fan-out, a trace join, competing replicas, stateful aggregation, a two-parent consumer. The smallest complete solution. |
+| [toy_router](solutions/toy_router) | BATCH | Partitioned parallelism: `partition_by` pinning each key to one replica, an `async def process` node, an idempotent sink. |
+| [toy_fusion](solutions/toy_fusion) | REALTIME | Independent producers fused by event time — tolerance, lateness timeout, quorum, collect windows — with unbounded live sources. |
+
+```bash
+cd solutions/toy_calculator
+videoflow run-local toy_calculator.py     # or: videoflow deploy toy_calculator.py
+```
+
+Each writes a self-checking artifact (`report.json`, `counts.json`,
+`fusion_summary.json`) saying whether the distributed run computed the right
+answer — which is also how they serve as the framework's end-to-end test suite,
+run on every CI build by `tests/integration/test_toy_solutions.py`.
+
+---
+
 ## Deploying to Kubernetes
 
 On a dev cluster (k3s / kind / minikube / Docker Desktop), deploying is one

@@ -1,0 +1,49 @@
+# Toy-fusion configuration, fully documented. Copy to config.yaml and edit (or
+# let `videoflow deploy` / `videoflow run-local` generate one from
+# config.template.yaml by asking questions). Relative paths resolve against the
+# directory this file lives in.
+
+# Where the artifacts land: latest.json (atomically rewritten on every fused
+# moment) and fusion_summary.json (written when a bounded run drains). Mounted
+# into the worker pods at the same absolute path.
+work_dir: ./out
+
+# How many simulated cameras to run. Each is its own producer node, so this is
+# also the number of camera workers/pods.
+cameras: 2
+
+# Frames per second of every simulated camera.
+camera_fps: 10
+
+# Per-camera clock offset in milliseconds (camera i starts i * phase_step_ms
+# late). Keeps the cameras genuinely unsynchronized so the fusion tolerance is
+# doing real work; keep it well under the tolerance.
+phase_step_ms: 3.0
+
+# Sample rate of the simulated IMU — the fast, collect-joined parent.
+sensor_hz: 100
+
+# 0 (or null) = the sources never stop: the true realtime shape, where the
+# producers deploy as long-running Deployments and only teardown ends the run.
+# A positive number of seconds bounds the run so it finishes on its own —
+# right for local smoke tests.
+duration_s: 0
+
+# realtime = drop-when-full: a straggler must not stall live output. batch also
+# works (bounded runs only) and then nothing may be dropped.
+flow_type: realtime
+
+fusion:
+  # Camera frames whose event timestamps differ by at most this many
+  # milliseconds count as the same moment. Keep it under one frame period
+  # (100ms at 10 fps) and above phase_step_ms * (cameras - 1).
+  tolerance_ms: 15
+  # Lateness bound: how long after a moment's first frame a straggler may
+  # still arrive before the group is emitted with whoever is present.
+  timeout_s: 0.25
+  # Minimum cameras for a timed-out moment to still be emitted (missing
+  # cameras reach process() as None). Must be between 1 and cameras.
+  quorum: 1
+  # IMU samples within this many milliseconds of the moment are delivered as a
+  # list. The IMU never gates a moment and doesn't count toward the quorum.
+  sensor_window_ms: 40

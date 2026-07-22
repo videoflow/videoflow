@@ -1,0 +1,34 @@
+# Toy-fusion config template. `videoflow deploy toy_fusion.py` reads this when
+# no config.yaml exists: it asks the x-questions below, writes config.yaml, and
+# hostPath-mounts the x-mounts paths into the worker pods. See
+# config.example.yaml for what every knob means.
+work_dir: ./out
+cameras: 2
+camera_fps: 10
+phase_step_ms: 3.0
+sensor_hz: 100
+duration_s: 0
+flow_type: realtime
+fusion:
+  tolerance_ms: 15
+  timeout_s: 0.25
+  quorum: 1
+  sensor_window_ms: 40
+
+# Inputs `videoflow deploy` asks for when generating config.yaml.
+x-questions:
+  - key: cameras
+    prompt: 'Number of simulated cameras'
+    type: int
+    default: 2
+  - key: duration_s
+    prompt: 'Seconds to run (0 = run forever, the realtime default; teardown ends the run)'
+    type: float
+    default: 0
+
+# The work dir must be visible inside the worker pods at the same absolute
+# path: latest.json is rewritten there on every fused moment (its advancing
+# mtime is how you watch a realtime run), and fusion_summary.json lands there
+# when a bounded run drains.
+x-mounts:
+  - '{work_dir}'

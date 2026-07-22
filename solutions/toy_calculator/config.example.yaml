@@ -1,0 +1,45 @@
+# Toy-calculator configuration, fully documented. Copy to config.yaml and edit
+# (or let `videoflow deploy` / `videoflow run-local` generate one from
+# config.template.yaml by asking questions). Relative paths resolve against the
+# directory this file lives in.
+
+# Where every artifact lands: expected.json (from prepare.py), report.json,
+# pairs.jsonl, proctimes.jsonl. Mounted into the worker pods at the same
+# absolute path, so results appear on your machine.
+work_dir: ./out
+
+# The integer stream: start_value..end_value inclusive. The stream length is
+# what the final report's `count` must equal.
+start_value: 1
+end_value: 200
+
+# Producer pacing in messages per second (<= 0 = as fast as possible).
+producer_fps: 50
+
+# Pacing of the identity branch (<= 0 = no delay). A slightly slower branch
+# creates real skew between the two arms of the diamond, so the trace join is
+# visibly re-aligning messages rather than passing them through.
+delay_fps: 40
+
+# batch = loss-free, backpressured, runs to completion — what this toy is for.
+# realtime also works, but under pressure it may drop messages, and then the
+# report's matches_expected can legitimately be false.
+flow_type: batch
+
+square:
+  # Competing replicas for the stateless square stage. > 1 makes the branch
+  # finish out of order — the disorder the pair join re-aligns.
+  workers: 2
+
+join:
+  # JoinPolicy for the pair join. With `wait` (the batch default) a group waits
+  # indefinitely for its other half. `drop`/`error` + a timeout_s show what
+  # happens to incomplete groups instead: drop acks them away, error sends them
+  # to redelivery and eventually the DLQ.
+  timeout_s: null
+  missing: wait
+  # Cap on buffered incomplete groups (the oldest is evicted beyond it). The
+  # unpaced square branch runs ahead of the paced delay branch, so this must
+  # exceed (producer_fps - delay_fps) * stream duration or pairs get dropped —
+  # the policy's own default of 256 is deliberately overridden here.
+  max_pending: 100000
