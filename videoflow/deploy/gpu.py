@@ -938,14 +938,27 @@ class MixGpu(ExclusiveGpu):
                     f'against the remaining pool.')
 
     def _label_node_for_mig(self, kubectl : str, node : str) -> None:
-        previous = _kubectl_run(kubectl, 'get', 'node', node, '-o',
-                                'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config}')
-        recorded = _kubectl_run(kubectl, 'get', 'node', node, '-o',
-                                'jsonpath={.metadata.annotations.videoflow\\.io/mig-config-restore}')
-        if not recorded:
+        # A strict read: a failed one mistaken for "no annotation" would
+        # re-record and corrupt the restore value, so it must raise instead
+        # (which _kubectl_json's silence-tolerance would not).
+        info = json.loads(_kubectl_run(kubectl, 'get', 'node', node, '-o', 'json'))
+        meta = info.get('metadata') or {}
+        previous = (meta.get('labels') or {}).get(MIG_CONFIG_LABEL, '')
+        annotations = meta.get('annotations') or {}
+        if MIG_RESTORE_ANNOTATION not in annotations:
             # Idempotent across a retried prepare: only the first attempt records
-            # the pre-videoflow value ('' = the label was absent).
-            _kubectl_run(kubectl, 'annotate', 'node', node, '--overwrite',
+            # the pre-videoflow value ('' = the label was absent). Key presence,
+            # not value truthiness — the recorded value is legitimately '', and a
+            # jsonpath read cannot tell that apart from "no annotation".
+            if previous == f'videoflow-{node}':
+                # Our own label with no record (a prior run lost it): recording
+                # it as "previous" would make the geometry permanent — record
+                # "absent", like the ClusterPolicy twin in prepare().
+                logger.warning(f'node {node} already carries {MIG_CONFIG_LABEL}='
+                               f'videoflow-{node} with no restore record — cleanup '
+                               f'will remove the label and un-partition the cards')
+                previous = ''
+            _kubectl_run(kubectl, 'annotate', 'node', node,
                          f'{MIG_RESTORE_ANNOTATION}={previous}')
         _kubectl_run(kubectl, 'label', 'node', node, '--overwrite',
                      f'{MIG_CONFIG_LABEL}=videoflow-{node}')

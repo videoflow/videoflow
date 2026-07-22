@@ -87,6 +87,15 @@ def _operator_responses(config_name = 'default-mig-parted-config', annotations =
     }
 
 
+def _node_json(labels = None, annotations = None):
+    '''Canned ``get node gpu-a -o json`` payload: what prepare's record/label
+    step reads. _FakeKubectl matches first needle wins, and ``-o json`` is a
+    substring of the ``-o jsonpath=...`` owner-stamp and state-poll reads — so
+    those needles must be listed BEFORE this one in the responses dict.'''
+    return json.dumps({'metadata': {'name': 'gpu-a', 'labels': labels or {},
+                                    'annotations': annotations or {}}})
+
+
 # -- resolution ------------------------------------------------------------
 
 def test_resolve_specs_stamps_sharer_resources_and_leaves_spanners(monkeypatch):
@@ -280,9 +289,9 @@ def test_prepare_wires_the_config_through_cluster_policy(monkeypatch):
     responses = _operator_responses()
     responses.update({
         'mig\\.config\\.state': 'success',
+        'gpu-owner}': '',
         # The node had no previous mig.config label and no recorded restore value.
-        'mig\\.config}': '',
-        'mig-config-restore}': '',
+        'get node gpu-a -o json': _node_json(),
     })
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
@@ -310,7 +319,7 @@ def test_prepare_wires_the_config_through_cluster_policy(monkeypatch):
                      if 'label node gpu-a --overwrite nvidia.com/mig.config=videoflow-gpu-a' in c)
     assert patch_idx < rollout_idx < label_idx
     # ...and the node-side record/label protocol is unchanged.
-    assert any('annotate node gpu-a --overwrite videoflow.io/mig-config-restore=' in c
+    assert any('annotate node gpu-a videoflow.io/mig-config-restore=' in c
                for c in joined)
 
 
@@ -334,8 +343,8 @@ def test_prepare_records_an_absent_config_name_as_the_sentinel(monkeypatch):
     strategy = gpu.MixGpu()
     strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
     responses = _operator_responses(config_name = None)
-    responses.update({'mig\\.config\\.state': 'success',
-                      'mig\\.config}': '', 'mig-config-restore}': ''})
+    responses.update({'mig\\.config\\.state': 'success', 'gpu-owner}': '',
+                      'get node gpu-a -o json': _node_json()})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
     strategy.prepare(flow_id = 'flow1')
@@ -355,8 +364,8 @@ def test_prepare_leaves_an_existing_restore_record_alone(monkeypatch):
     responses = _operator_responses(
         config_name = 'videoflow-mig-parted-config',
         annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'custom-config'})
-    responses.update({'mig\\.config\\.state': 'success',
-                      'mig\\.config}': '', 'mig-config-restore}': ''})
+    responses.update({'mig\\.config\\.state': 'success', 'gpu-owner}': '',
+                      'get node gpu-a -o json': _node_json()})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
     strategy.prepare(flow_id = 'flow1')
@@ -364,6 +373,62 @@ def test_prepare_leaves_an_existing_restore_record_alone(monkeypatch):
     assert not any('annotate clusterpolicies' in c for c in joined)
     assert not any('patch clusterpolicies' in c for c in joined)   # already pointed at ours
     assert any('label node gpu-a' in c for c in joined)            # the rest still runs
+
+
+def test_retried_prepare_does_not_rerecord_the_restore_annotation(monkeypatch):
+    '''Bug #4: a second prepare without an intervening cleanup (redeploy after a
+    SIGKILL'd deploy) finds the node already labeled videoflow-gpu-a with '' (=
+    "label was absent") recorded. The value-truthiness guard re-recorded our own
+    label as the "previous" value, so cleanup restored it and the geometry
+    became permanent — the existing record must be left alone.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses(
+        config_name = 'videoflow-mig-parted-config',
+        annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'custom-config'})
+    responses.update({
+        'mig\\.config\\.state': 'success',
+        'gpu-owner}': 'flow1',                 # the claim is already ours
+        # The jsonpath needles describe the same node state as the JSON read:
+        # they are what the buggy value-truthiness code issued, so this test
+        # fails against it rather than being masked by a fallthrough response.
+        'mig\\.config}': 'videoflow-gpu-a',
+        'mig-config-restore}': '',
+        'get node gpu-a -o json': _node_json(
+            labels = {gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a'},
+            annotations = {gpu.MIG_RESTORE_ANNOTATION: ''}),
+    })
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    joined = fake.joined_calls()
+    assert not any('mig-config-restore=' in c for c in joined)
+    assert any('label node gpu-a --overwrite nvidia.com/mig.config=videoflow-gpu-a' in c
+               for c in joined)
+
+
+def test_prepare_never_records_its_own_label_as_previous(monkeypatch):
+    '''The label is ours but its record is gone (a prior run lost it): recording
+    videoflow-gpu-a as the "previous" value would make cleanup restore it and
+    the geometry permanent — '' ("absent") goes in instead, mirroring the
+    ClusterPolicy-side guard.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses()
+    responses.update({
+        'mig\\.config\\.state': 'success',
+        'gpu-owner}': '',
+        'get node gpu-a -o json': _node_json(
+            labels = {gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a'}),
+    })
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    recorded = [arg for c, _stdin in fake.calls for arg in c
+                if arg.startswith(f'{gpu.MIG_RESTORE_ANNOTATION}=')]
+    assert recorded == [f'{gpu.MIG_RESTORE_ANNOTATION}=']   # '' recorded, not our label
 
 
 def test_prepare_rollout_timeout_fails_before_labeling(monkeypatch):
@@ -415,8 +480,8 @@ def test_prepare_stamps_ownership_before_any_geometry(monkeypatch):
     strategy = gpu.MixGpu()
     strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
     responses = _operator_responses()
-    responses.update({'mig\\.config\\.state': 'success',
-                      'mig\\.config}': '', 'mig-config-restore}': ''})
+    responses.update({'mig\\.config\\.state': 'success', 'gpu-owner}': '',
+                      'get node gpu-a -o json': _node_json()})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
     strategy.prepare(flow_id = 'flow1')
@@ -488,7 +553,8 @@ def test_prepare_preserves_other_flows_published_entries(monkeypatch):
             {'metadata': {'resourceVersion': '41'},
              'data': {'config.yaml': _LIVE_MIG_CONFIG}}),
         'mig\\.config\\.state': 'success',
-        'mig\\.config}': '', 'mig-config-restore}': '',
+        'gpu-owner}': '',
+        'get node gpu-a -o json': _node_json(),
     })
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
@@ -514,7 +580,8 @@ def test_prepare_reretries_a_conflicted_publish(monkeypatch):
             {'metadata': {'resourceVersion': '41'},
              'data': {'config.yaml': _LIVE_MIG_CONFIG}}),
         'mig\\.config\\.state': 'success',
-        'mig\\.config}': '', 'mig-config-restore}': '',
+        'gpu-owner}': '',
+        'get node gpu-a -o json': _node_json(),
     })
 
     class _Conflicting(_FakeKubectl):

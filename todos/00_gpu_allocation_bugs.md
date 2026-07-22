@@ -16,20 +16,6 @@ interaction with the *real* cluster: how geometry is applied, how it is undone,
 and what the solver believes about the inventory. None of the findings below are
 in `todos/01_small_bugs.md`. Docs (README, gpu-sharing.rst, RFC) match the code.
 
-## Critical — mix mode cannot work / damages cluster state
-
-
-
-### 4. Retried prepare corrupts the restore record
-`_label_node_for_mig` ([gpu.py:407-418](videoflow/deploy/gpu.py#L407)) records
-"label was absent" as annotation value `''`, and its only-record-once guard is
-`if not recorded:` — but the jsonpath read returns `''` both for "no annotation"
-and "annotation = empty". Any second prepare without an intervening cleanup
-(second mix flow, redeploy after a SIGKILL'd deploy) re-records the **current**
-`videoflow-<node>` label as the "previous" value; cleanup then "restores" the
-videoflow label and the geometry becomes permanent. Needs a distinct sentinel
-(e.g. `__absent__`) or a key-presence check via `get -o json`.
-
 ## Design issues
 
 ### 6. mix + `--strict-preflight` can never deploy
