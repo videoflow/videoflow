@@ -225,6 +225,31 @@ def _gpu_flow(**gpu_kwargs):
     printer = CommandlineConsumer(name = 'c')(gpu)
     return Flow([printer], flow_type = REALTIME, flow_id = 'g')
 
+def test_mix_mode_gpu_pods_get_owner_aware_affinity():
+    '''Mix stamps MIG'd nodes with the owning flow's videoflow.io/gpu-owner label;
+    the pod must be schedulable onto unowned pool nodes OR nodes this flow owns —
+    never another flow's, whose teardown would revert the geometry under it.'''
+    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime',
+                                 'nats://x:4222', 'run1', default_image = IMG,
+                                 gpu_mode = 'mix')
+    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
+    pod = by_name['vf-g-g']['spec']['template']['spec']
+    assert 'nodeSelector' not in pod
+    terms = (pod['affinity']['nodeAffinity']
+             ['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms'])
+    assert [
+        {'matchExpressions': [
+            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
+            {'key': 'videoflow.io/gpu-owner', 'operator': 'DoesNotExist'},
+        ]},
+        {'matchExpressions': [
+            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
+            {'key': 'videoflow.io/gpu-owner', 'operator': 'In', 'values': ['g']},
+        ]},
+    ] == terms
+    # CPU pods carry neither the selector nor the affinity.
+    assert 'affinity' not in by_name['vf-g-c']['spec']['template']['spec']
+
 def test_gpu_count_reaches_the_pod_spec():
     flow = _gpu_flow(gpu_count = 2)
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',

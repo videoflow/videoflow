@@ -735,6 +735,10 @@ class MixGpu(ExclusiveGpu):
         nodes = layout.mig_nodes()
         if not nodes:
             return
+        if flow_id is None:
+            raise RuntimeError('mix prepare() needs a flow_id to stamp node ownership — the '
+                               'cluster may host other flows. Deploy through the videoflow '
+                               'CLI, which passes the flow id.')
         config = layout_to_mig_parted_config(layout)
         managers = self._mig_manager_pods(kubectl)
         if not managers:
@@ -751,6 +755,10 @@ class MixGpu(ExclusiveGpu):
                 'migManager.config.name and cannot reach a standalone mig-manager. Mount and '
                 'select this nvidia-mig-parted config yourself and redeploy:\n' + config)
         policy_name = (policy.get('metadata') or {}).get('name', '')
+        # Claim the nodes before any geometry work: a competing deploy planning
+        # against the same pool must see them as taken from here on, and losing
+        # the claim race must abort before anything was mutated.
+        self._stamp_node_owners(kubectl, nodes, flow_owner_value(flow_id))
         original = (((policy.get('spec') or {}).get('migManager') or {}).get('config') or {}).get('name')
         base_name = original or MIG_OPERATOR_DEFAULT_CONFIGMAP
         base = _operator_configmap_yaml(kubectl, namespace, base_name)
@@ -807,6 +815,42 @@ class MixGpu(ExclusiveGpu):
                 f'{MIG_APPLY_TIMEOUT_SECONDS}s — check the MIG manager logs '
                 f'(kubectl logs -n {namespace} -l app=nvidia-mig-manager).')
 
+    def _stamp_node_owners(self, kubectl : str, nodes : List[str], owner : str) -> None:
+        '''
+        Claims each node for this flow via ``GPU_OWNER_LABEL``, compare-and-swap:
+        the label is applied WITHOUT ``--overwrite``, so losing a race to a
+        concurrent deploy fails the label command instead of silently stealing
+        the node. On any loss, the nodes this call stamped are released and
+        prepare aborts — partial ownership would strand capacity another flow
+        already planned against.
+        '''
+        stamped : List[str] = []
+        for node in nodes:
+            current = _kubectl_run(kubectl, 'get', 'node', node, '-o',
+                                   'jsonpath={.metadata.labels.videoflow\\.io/gpu-owner}')
+            if current == owner:
+                continue                              # retried prepare: already ours
+            error : Optional[str] = None
+            if current:
+                error = f'it is owned by {current!r}'
+            else:
+                try:
+                    _kubectl_run(kubectl, 'label', 'node', node, f'{GPU_OWNER_LABEL}={owner}')
+                    stamped.append(node)
+                except RuntimeError as e:             # lost the no-overwrite race
+                    error = str(e)
+            if error:
+                for claimed in stamped:
+                    try:
+                        _kubectl_run(kubectl, 'label', 'node', claimed, f'{GPU_OWNER_LABEL}-')
+                    except RuntimeError as undo_error:
+                        logger.warning(f'could not release the owner stamp on {claimed}: '
+                                       f'{undo_error}')
+                raise RuntimeError(
+                    f'could not claim node {node} for this flow: {error} — another deploy '
+                    f'took it between planning and prepare. Re-run the deploy to plan '
+                    f'against the remaining pool.')
+
     def _label_node_for_mig(self, kubectl : str, node : str) -> None:
         previous = _kubectl_run(kubectl, 'get', 'node', node, '-o',
                                 'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config}')
@@ -835,9 +879,17 @@ class MixGpu(ExclusiveGpu):
         State lives entirely in the cluster, so this works from a teardown that
         shares nothing with the deploy that ran prepare — and is a no-op when
         prepare never ran.
+
+        With a ``flow_id``, only nodes stamped ``GPU_OWNER_LABEL=<this flow>``
+        are touched — other flows' geometry stays up. Without one, every node
+        videoflow owns is swept (the single-operator escape hatch, and the
+        pre-ownership behaviour). A node stamped but never restore-annotated —
+        prepare crashed between claiming and labeling — has no geometry to
+        revert, so its claim is simply released.
         '''
         listing = _kubectl_json(kubectl, 'get', 'nodes')
         nodes = (listing or {}).get('items') or []
+        owner = flow_owner_value(flow_id) if flow_id else None
         policy = _cluster_policy(kubectl)
         policy_name = ((policy or {}).get('metadata') or {}).get('name', '')
         current_name = ((((policy or {}).get('spec') or {}).get('migManager') or {})
@@ -847,18 +899,34 @@ class MixGpu(ExclusiveGpu):
         # stock all-disabled once an earlier partial cleanup restored it.
         disabled = MIG_DISABLED_CONFIG if current_name == MIG_CONFIGMAP_NAME else 'all-disabled'
         restored : dict[str, str] = {}     # node -> recorded previous label value
+        stamped : dict[str, bool] = {}     # node -> node carries our owner stamp
         unrestored = False
         for node in nodes:
             meta = node.get('metadata') or {}
+            labels = meta.get('labels') or {}
             annotations = meta.get('annotations') or {}
-            if MIG_RESTORE_ANNOTATION not in annotations:
-                continue
             name = meta.get('name', '')
+            node_owner = labels.get(GPU_OWNER_LABEL)
+            if owner is not None:
+                ours = node_owner == owner
+            else:
+                ours = node_owner is not None or MIG_RESTORE_ANNOTATION in annotations
+            if not ours:
+                continue
+            if MIG_RESTORE_ANNOTATION not in annotations:
+                # Orphan claim: prepare crashed between stamping and labeling, so
+                # no geometry was applied — just release the node.
+                try:
+                    _kubectl_run(kubectl, 'label', 'node', name, f'{GPU_OWNER_LABEL}-')
+                except RuntimeError as e:
+                    logger.warning(f'mix cleanup could not release the owner stamp on {name}: {e}')
+                continue
             previous = annotations[MIG_RESTORE_ANNOTATION]
             try:
                 _kubectl_run(kubectl, 'label', 'node', name, '--overwrite',
                              f'{MIG_CONFIG_LABEL}={previous or disabled}')
                 restored[name] = previous
+                stamped[name] = node_owner is not None
             except RuntimeError as e:
                 # Best-effort per node: one stuck node must not abort the rest.
                 unrestored = True
@@ -878,6 +946,9 @@ class MixGpu(ExclusiveGpu):
                     # has done its job, so the label itself can go now.
                     _kubectl_run(kubectl, 'label', 'node', name, f'{MIG_CONFIG_LABEL}-')
                 _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_RESTORE_ANNOTATION}-')
+                if stamped[name]:
+                    # Reverted and unrecorded: the node returns to the pool.
+                    _kubectl_run(kubectl, 'label', 'node', name, f'{GPU_OWNER_LABEL}-')
             except RuntimeError as e:
                 unrestored = True
                 logger.warning(f'mix cleanup could not finish restoring node {name}: {e}')

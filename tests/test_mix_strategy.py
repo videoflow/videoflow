@@ -268,7 +268,7 @@ def test_prepare_without_a_mig_manager_fails_with_the_config(monkeypatch):
     fake = _FakeKubectl({})                       # no mig-manager pods anywhere
     monkeypatch.setattr(subprocess, 'run', fake)
     with pytest.raises(RuntimeError) as excinfo:
-        strategy.prepare()
+        strategy.prepare(flow_id = 'flow1')
     assert 'nvidia-mig-manager' in str(excinfo.value)
     assert 'mig-devices' in str(excinfo.value)    # actionable: config included
 
@@ -286,7 +286,7 @@ def test_prepare_wires_the_config_through_cluster_policy(monkeypatch):
     })
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
-    strategy.prepare()
+    strategy.prepare(flow_id = 'flow1')
     joined = fake.joined_calls()
     # The published ConfigMap merges the operator's entries with videoflow's
     # (plus the disabled config cleanup points un-labeled nodes at)...
@@ -322,7 +322,7 @@ def test_prepare_without_a_cluster_policy_fails_with_the_config(monkeypatch):
                          'get clusterpolicies': json.dumps({'items': []})})
     monkeypatch.setattr(subprocess, 'run', fake)
     with pytest.raises(RuntimeError) as excinfo:
-        strategy.prepare()
+        strategy.prepare(flow_id = 'flow1')
     assert 'ClusterPolicy' in str(excinfo.value)
     assert 'mig-devices' in str(excinfo.value)     # actionable: config included
     joined = fake.joined_calls()
@@ -338,7 +338,7 @@ def test_prepare_records_an_absent_config_name_as_the_sentinel(monkeypatch):
                       'mig\\.config}': '', 'mig-config-restore}': ''})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
-    strategy.prepare()
+    strategy.prepare(flow_id = 'flow1')
     joined = fake.joined_calls()
     # No original to record: the sentinel goes in, and the merge base is the
     # operator's stock ConfigMap.
@@ -359,7 +359,7 @@ def test_prepare_leaves_an_existing_restore_record_alone(monkeypatch):
                       'mig\\.config}': '', 'mig-config-restore}': ''})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
-    strategy.prepare()
+    strategy.prepare(flow_id = 'flow1')
     joined = fake.joined_calls()
     assert not any('annotate clusterpolicies' in c for c in joined)
     assert not any('patch clusterpolicies' in c for c in joined)   # already pointed at ours
@@ -378,8 +378,10 @@ def test_prepare_rollout_timeout_fails_before_labeling(monkeypatch):
     monkeypatch.setattr(gpu, 'MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS', 0)
     monkeypatch.setattr(gpu.time, 'sleep', lambda seconds: None)
     with pytest.raises(RuntimeError, match = 'remount'):
-        strategy.prepare()
-    assert not any('label node' in c for c in fake.joined_calls())
+        strategy.prepare(flow_id = 'flow1')
+    # The owner stamp may land (it precedes the geometry), but no node may be
+    # pointed at a config the manager has not mounted yet.
+    assert not any('mig.config=videoflow-' in c for c in fake.joined_calls())
 
 
 def test_prepare_is_a_noop_without_mig_cards(monkeypatch):
@@ -388,13 +390,71 @@ def test_prepare_is_a_noop_without_mig_cards(monkeypatch):
     strategy.resolve_specs([_gpu_spec('span', gpu_count = 2)])
     fake = _FakeKubectl({})
     monkeypatch.setattr(subprocess, 'run', fake)
-    strategy.prepare()                             # whole cards only: nothing to apply
+    strategy.prepare(flow_id = 'flow1')            # whole cards only: nothing to apply
     assert fake.calls == []
 
 
 def test_prepare_before_resolve_is_a_lifecycle_error():
     with pytest.raises(RuntimeError, match = 'resolve_specs'):
         gpu.MixGpu().prepare()
+
+
+def test_prepare_with_mig_nodes_requires_a_flow_id(monkeypatch):
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    with pytest.raises(RuntimeError, match = 'flow_id'):
+        strategy.prepare()
+
+
+def test_prepare_stamps_ownership_before_any_geometry(monkeypatch):
+    '''The owner claim is the multi-tenant fence: it must land before the
+    ConfigMap or any mig.config label, without --overwrite (compare-and-swap),
+    and come off again in cleanup only after the node reverted.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses()
+    responses.update({'mig\\.config\\.state': 'success',
+                      'mig\\.config}': '', 'mig-config-restore}': ''})
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    joined = fake.joined_calls()
+    stamp_idx = next(i for i, c in enumerate(joined)
+                     if 'label node gpu-a videoflow.io/gpu-owner=flow1' in c)
+    assert '--overwrite' not in joined[stamp_idx]
+    apply_idx = next(i for i, (c, _stdin) in enumerate(fake.calls) if 'apply' in c)
+    mig_label_idx = next(i for i, c in enumerate(joined)
+                         if 'nvidia.com/mig.config=videoflow-gpu-a' in c)
+    assert stamp_idx < apply_idx < mig_label_idx
+
+
+def test_prepare_releases_its_claims_when_a_node_is_taken(monkeypatch):
+    '''Two deploys race for the same nodes: the loser must abort before touching
+    geometry and release whatever it had already stamped, or it would strand
+    capacity the winner planned against.'''
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 1, 80),
+               NodeInventory('gpu-b', 'NVIDIA-A100-SXM4-80GB', 1, 80))
+    strategy = gpu.MixGpu()
+    # 8 slices of 1g.10gb exceed one card (max 7): the layout spans both nodes.
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10, nb_tasks = 8)])
+    responses = _operator_responses()
+    responses.update({
+        'node gpu-a -o jsonpath={.metadata.labels.videoflow\\.io/gpu-owner}': '',
+        'node gpu-b -o jsonpath={.metadata.labels.videoflow\\.io/gpu-owner}': 'otherflow',
+    })
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    with pytest.raises(RuntimeError) as excinfo:
+        strategy.prepare(flow_id = 'flow1')
+    assert 'gpu-b' in str(excinfo.value) and 'otherflow' in str(excinfo.value)
+    joined = fake.joined_calls()
+    assert any('label node gpu-a videoflow.io/gpu-owner=flow1' in c for c in joined)
+    assert any('label node gpu-a videoflow.io/gpu-owner-' in c for c in joined)  # released
+    assert not any('apply' in c for c, _stdin in fake.calls)          # no geometry touched
+    assert not any('mig.config=videoflow-' in c for c in joined)
 
 
 def test_cleanup_restores_the_recorded_label_state(monkeypatch):
@@ -482,6 +542,42 @@ def test_cleanup_keeps_retry_state_when_the_revert_fails(monkeypatch, caplog):
     assert not any('delete configmap' in c for c in joined)
     assert any('gpu-a' in record.getMessage() and 'teardown' in record.getMessage()
                for record in caplog.records)
+
+
+def test_cleanup_scoped_to_a_flow_restores_only_its_nodes(monkeypatch):
+    '''Two flows share the pool: flow1's teardown must revert flow1's nodes and
+    release their claims, and leave flow2's geometry standing.'''
+    nodes = {'items': [
+        {'metadata': {'name': 'gpu-a',
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+        {'metadata': {'name': 'gpu-b',
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow2'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+        # Orphan claim: flow1's prepare crashed between stamping and labeling.
+        {'metadata': {'name': 'gpu-c',
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1'}, 'annotations': {}}},
+    ]}
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(
+            config_name = 'videoflow-mig-parted-config',
+            annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
+        'mig\\.config\\.state': 'success',
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup(flow_id = 'flow1')
+    joined = fake.joined_calls()
+    # gpu-a reverted, unrecorded and released.
+    assert any('label node gpu-a --overwrite nvidia.com/mig.config=videoflow-all-disabled' in c
+               for c in joined)
+    assert any('label node gpu-a videoflow.io/gpu-owner-' in c for c in joined)
+    # gpu-c had no geometry: only its claim is released.
+    assert any('label node gpu-c videoflow.io/gpu-owner-' in c for c in joined)
+    assert not any('gpu-c' in c and 'mig.config' in c for c in joined)
+    # flow2's node is untouched.
+    assert not any('gpu-b' in c and ('label' in c or 'annotate' in c) for c in joined)
 
 
 def test_cleanup_without_prepare_is_a_tolerant_noop(monkeypatch):

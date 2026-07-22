@@ -44,8 +44,10 @@ from ..core.constants import BATCH
 # GPU strategies were extracted, so external callers may still import it from here.
 from .gpu import (
     DEFAULT_GPU_RESOURCE,  # noqa: F401
+    GPU_OWNER_LABEL,
     GPU_POOL_LABEL,
     GPU_TAINT_KEY,
+    flow_owner_value,
     get_gpu_mode,
     resolve_gpu_resource,
 )
@@ -319,13 +321,34 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
 
     resources = {}
     node_selector = None
+    node_affinity = None
     tolerations = None
     runtime_class = None
     if spec.device_type == 'gpu':
         # Resolved here, not only in render_manifests: a direct workload()/_pod_spec
         # caller with a typo'd mode must get an error, not a silently wrong claim.
         resources.update(get_gpu_mode(gpu_mode).pod_resources(spec, gpu_resource_name))
-        node_selector = {GPU_POOL_LABEL: 'true'}
+        if gpu_mode == 'mix':
+            # Mix stamps the nodes it MIG's with the owning flow's GPU_OWNER_LABEL.
+            # The planner keeps flows on disjoint nodes, but only the scheduler can
+            # enforce that: two flows requesting the same MIG profile resource would
+            # otherwise let this flow's pods bind another flow's slices — whose
+            # teardown then reverts the geometry under them. So: unowned pool nodes
+            # OR pool nodes this flow owns.
+            node_affinity = {'requiredDuringSchedulingIgnoredDuringExecution': {
+                'nodeSelectorTerms': [
+                    {'matchExpressions': [
+                        {'key': GPU_POOL_LABEL, 'operator': 'In', 'values': ['true']},
+                        {'key': GPU_OWNER_LABEL, 'operator': 'DoesNotExist'},
+                    ]},
+                    {'matchExpressions': [
+                        {'key': GPU_POOL_LABEL, 'operator': 'In', 'values': ['true']},
+                        {'key': GPU_OWNER_LABEL, 'operator': 'In',
+                         'values': [flow_owner_value(flow_id)]},
+                    ]},
+                ]}}
+        else:
+            node_selector = {GPU_POOL_LABEL: 'true'}
         tolerations = [{
             'key': GPU_TAINT_KEY, 'operator': 'Exists', 'effect': 'NoSchedule',
         }]
@@ -382,6 +405,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
             {'name': m.name, 'hostPath': {'path': m.host_path}} for m in mounts]
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
+    if node_affinity:
+        pod_spec['affinity'] = {'nodeAffinity': node_affinity}
     if tolerations:
         pod_spec['tolerations'] = tolerations
     if runtime_class:
