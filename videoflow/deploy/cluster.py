@@ -15,10 +15,17 @@ from __future__ import absolute_import, division, print_function
 
 import json
 import subprocess
-from typing import Callable, List, Optional
+from dataclasses import dataclass, field
+from typing import AbstractSet, Callable, Dict, List, Optional
 
-from .gpu import get_gpu_mode
+from .gpu import GPU_OWNER_LABEL, GPU_POOL_LABEL, get_gpu_mode
 from .mig import NodeInventory
+
+#: Selector for the nodes GPU pods can actually schedule on (they carry the
+#: matching nodeSelector — see ``manifests._pod_spec``). Every capacity and
+#: inventory read below scopes to it: counting a GPU outside the pool would
+#: report capacity the flow's pods can never use.
+_POOL_SELECTOR : str = GPU_POOL_LABEL + '=true'
 
 K3S = 'k3s'
 KIND = 'kind'
@@ -269,29 +276,125 @@ def hostpath_warning(cluster : str) -> Optional[str]:
 
 def allocatable_gpus(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu') -> int:
     '''
-    Total allocatable units of one GPU extended resource across all nodes
-    (0 when no node advertises it or the cluster is unreachable).
+    Total allocatable units of one GPU extended resource across the pool's nodes
+    (0 when no pool node advertises it or the cluster is unreachable).
     '''
     # jsonpath needs the dots inside the key escaped: nvidia.com/gpu -> nvidia\.com/gpu
     path = resource.replace('.', '\\.')
-    out = _kubectl_out(kubectl, 'get', 'nodes', '-o',
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o',
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return sum(int(v) for v in out.split() if v.isdigit())
 
 def max_allocatable_gpus_per_node(kubectl : str = 'kubectl',
                                 resource : str = 'nvidia.com/gpu') -> int:
     '''
-    The largest allocatable count of one GPU extended resource on any single node
-    (0 when no node advertises it or the cluster is unreachable). The per-pod
-    schedulability bound, complementing ``allocatable_gpus``: total capacity
+    The largest allocatable count of one GPU extended resource on any single pool
+    node (0 when no pool node advertises it or the cluster is unreachable). The
+    per-pod schedulability bound, complementing ``allocatable_gpus``: total capacity
     answers "will the whole flow schedule", this answers "can any single node
     host the biggest pod" — all of a pod's ``gpu_count`` devices must come from
     one node, so a flow can pass the total-capacity check and still never schedule.
     '''
     path = resource.replace('.', '\\.')
-    out = _kubectl_out(kubectl, 'get', 'nodes', '-o',
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o',
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return max((int(v) for v in out.split() if v.isdigit()), default = 0)
+
+def gpu_units_in_use(kubectl : str = 'kubectl') -> Dict[str, Dict[str, int]]:
+    '''
+    Extended-resource units currently claimed by pods, as node name ->
+    resource -> units, summed over the ``resources.limits`` of every
+    non-terminated pod in the cluster (all namespaces — a foreign workload's
+    claim occupies a device just as much as ours). Extended resources always
+    carry a domain, so keys containing ``/`` are counted and native resources
+    (cpu, memory, hugepages-*) are not. Returns {} when the cluster is
+    unreachable: occupancy unknown reads as occupancy zero, which keeps this
+    read best-effort like everything else in the module — deploy-time safety
+    decisions layer their own checks on top.
+    '''
+    out = _kubectl_out(kubectl, 'get', 'pods', '-A', '-o', 'json')
+    if not out:
+        return {}
+    try:
+        pods = json.loads(out).get('items', [])
+    except ValueError:
+        return {}
+    used : Dict[str, Dict[str, int]] = {}
+    for pod in pods:
+        if (pod.get('status') or {}).get('phase') in ('Succeeded', 'Failed'):
+            continue
+        node = (pod.get('spec') or {}).get('nodeName')
+        if not node:
+            continue
+        for container in (pod.get('spec') or {}).get('containers') or []:
+            limits = (container.get('resources') or {}).get('limits') or {}
+            for name, value in limits.items():
+                if '/' not in name or not str(value).isdigit():
+                    continue
+                per_node = used.setdefault(node, {})
+                per_node[name] = per_node.get(name, 0) + int(value)
+    return used
+
+@dataclass
+class GpuAvailability:
+    '''
+    One GPU extended resource's pool capacity with occupancy subtracted:
+    what is allocatable per node, what running pods already claim, and the
+    derived free numbers preflight compares demand against. Raw allocatable
+    alone lies in a shared cluster — the scheduler will not grant units that
+    other workloads hold.
+    '''
+    per_node_allocatable : Dict[str, int] = field(default_factory = dict)
+    per_node_in_use : Dict[str, int] = field(default_factory = dict)
+
+    @property
+    def allocatable(self) -> int:
+        return sum(self.per_node_allocatable.values())
+
+    @property
+    def in_use(self) -> int:
+        return sum(self.per_node_in_use.get(n, 0) for n in self.per_node_allocatable)
+
+    @property
+    def free(self) -> int:
+        return max(0, self.allocatable - self.in_use)
+
+    @property
+    def max_free_on_node(self) -> int:
+        '''The per-pod bound: the most units any single node can still grant.'''
+        return max((count - self.per_node_in_use.get(node, 0)
+                    for node, count in self.per_node_allocatable.items()), default = 0)
+
+def gpu_availability(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu',
+                     in_use : Optional[Dict[str, Dict[str, int]]] = None,
+                     exclude_nodes : AbstractSet[str] = frozenset()) -> GpuAvailability:
+    '''
+    Pool-scoped availability of one GPU extended resource. ``in_use`` accepts a
+    pre-fetched ``gpu_units_in_use()`` result so a caller checking several
+    resources fetches the pod list once; None fetches it here. ``exclude_nodes``
+    drops nodes the caller has already ruled out (e.g. mix planning excluded
+    them as another flow's), so capacity math matches what will be planned.
+    '''
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'json')
+    if not out:
+        return GpuAvailability()
+    try:
+        nodes = json.loads(out).get('items', [])
+    except ValueError:
+        return GpuAvailability()
+    if in_use is None:
+        in_use = gpu_units_in_use(kubectl)
+    availability = GpuAvailability()
+    for node in nodes:
+        name = (node.get('metadata') or {}).get('name', '')
+        if not name or name in exclude_nodes:
+            continue
+        count = str(((node.get('status') or {}).get('allocatable') or {}).get(resource, '')).strip()
+        if not count.isdigit() or int(count) < 1:
+            continue
+        availability.per_node_allocatable[name] = int(count)
+        availability.per_node_in_use[name] = in_use.get(name, {}).get(resource, 0)
+    return availability
 
 def classify_gpu_resource(kubectl : str = 'kubectl',
                         resource : str = 'nvidia.com/gpu') -> str:
@@ -352,19 +455,27 @@ def classify_gpu_resource(kubectl : str = 'kubectl',
 
 def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
     '''
-    The pool's physical GPU inventory as ``NodeInventory`` records, read off
-    GPU Feature Discovery labels (``nvidia.com/gpu.count``, ``.product``,
-    ``.memory`` — the last in MiB). Nodes without those labels contribute
-    nothing: without GFD there is no inventory to lay out, and the mix strategy
-    reports that as its own preflight problem rather than guessing.
+    The videoflow pool's GPU inventory as ``NodeInventory`` records — only nodes
+    labeled ``videoflow.io/gpu-pool=true``, because that is the only place the
+    rendered pods can schedule and the only nodes mix mode may repartition.
+    Physical facts come off GPU Feature Discovery labels (``nvidia.com/gpu.count``,
+    ``.product``, ``.memory`` — the last in MiB); nodes without those labels
+    contribute nothing: without GFD there is no inventory to lay out, and the mix
+    strategy reports that as its own preflight problem rather than guessing.
+
+    Each record also carries the node's sharing/ownership state (time-slicing
+    signals, existing MIG geometry, the ``videoflow.io/gpu-owner`` stamp, units
+    in use by running pods). These are facts, not decisions: the cluster is
+    multi-tenant, and ``MixGpu`` decides which nodes are usable.
     '''
-    out = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'json')
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'json')
     if not out:
         return []
     try:
         nodes = json.loads(out).get('items', [])
     except ValueError:
         return []
+    used = gpu_units_in_use(kubectl)
     inventory = []
     for node in nodes:
         labels = (node.get('metadata') or {}).get('labels') or {}
@@ -375,9 +486,24 @@ def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
             continue
         name = (node.get('metadata') or {}).get('name', '')
         memory_gib = round(int(memory_mib) / 1024, 1) if memory_mib.isdigit() else 0.0
+        # Same three time-slicing signals classify_gpu_resource keys on.
+        replicas = str(labels.get('nvidia.com/gpu.replicas', '')).strip()
+        time_sliced = (labels.get('nvidia.com/gpu.sharing-strategy') == 'time-slicing'
+                       or str(product).endswith('-SHARED')
+                       or (replicas.isdigit() and int(replicas) > 1))
+        allocatable = (node.get('status') or {}).get('allocatable') or {}
+        # Carved geometry shows as mixed-strategy nvidia.com/mig-* resources, or —
+        # under single strategy — as a -MIG-<profile> suffix in the GFD product.
+        mig_partitioned = (any(key.startswith('nvidia.com/mig-') for key in allocatable)
+                           or '-MIG-' in str(product))
         inventory.append(NodeInventory(name = name, product = product,
                                        card_count = int(count),
-                                       memory_gib_per_card = memory_gib))
+                                       memory_gib_per_card = memory_gib,
+                                       time_sliced = time_sliced,
+                                       mig_config = labels.get('nvidia.com/mig.config'),
+                                       mig_partitioned = mig_partitioned,
+                                       owner = labels.get(GPU_OWNER_LABEL),
+                                       used_units = used.get(name, {})))
     return sorted(inventory, key = lambda n: n.name)
 
 def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
@@ -426,12 +552,12 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
     if _kubectl_out(kubectl, 'version', '-o', 'json') == '':
         return ['cannot reach the cluster — check that it is running and that '
                 'kubectl is pointed at the right context (kubectl config current-context)']
-    labeled = _kubectl_out(kubectl, 'get', 'nodes', '-l', 'videoflow.io/gpu-pool=true', '-o', 'name')
+    labeled = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'name')
     if not labeled:
         nodes = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'name').splitlines()
         example = nodes[0].removeprefix('node/') if nodes else '<node-name>'
-        problems.append(f'no node labeled videoflow.io/gpu-pool=true — GPU pods will stay '
-                        f'Pending. Fix: kubectl label node {example} videoflow.io/gpu-pool=true')
+        problems.append(f'no node labeled {_POOL_SELECTOR} — GPU pods will stay '
+                        f'Pending. Fix: kubectl label node {example} {_POOL_SELECTOR}')
     # Everything past this point depends on how the mode claims devices — capacity
     # math only means something with a resource limit, and the RuntimeClass check is
     # merely advisory in exclusive mode but fatal in shared. The strategy owns both.

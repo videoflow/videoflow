@@ -151,6 +151,22 @@ def test_empty_inventory_is_a_layout_error():
         solve_layout([], [_gpu_spec('share', gpu_memory_gib = 10)])
 
 
+def test_mig_disallowed_node_takes_spanners_but_never_partitions():
+    # A busy node (mix clears mig_allowed on it): repartitioning would destroy the
+    # running workload, but scheduler-accounted whole-card claims stay safe — so it
+    # behaves exactly like a non-MIG-capable card family.
+    busy = NodeInventory('gpu-busy', 'NVIDIA-A100-SXM4-80GB', 1, 80, mig_allowed = False)
+    layout = solve_layout([busy, _a100_80('gpu-a', 1)],
+                          [_gpu_spec('span'), _gpu_spec('share', gpu_memory_gib = 10)])
+    busy_card = next(c for c in layout.cards if c.node == 'gpu-busy')
+    a100_card = next(c for c in layout.cards if c.node == 'gpu-a')
+    assert not busy_card.is_mig                      # spanner soaked the busy node
+    assert a100_card.profiles == {'1g.10gb': 1}
+    # A sharer alone cannot use it at all.
+    with pytest.raises(LayoutError, match = 'MIG-capable'):
+        solve_layout([busy], [_gpu_spec('share', gpu_memory_gib = 10)])
+
+
 def test_failed_family_attempt_leaves_no_residue():
     # 24 GiB fits A30's 4g.24gb but two replicas exceed one A30 card (4 slices
     # each, 4 total) — the solver must roll back the A30 attempt cleanly and

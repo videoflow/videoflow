@@ -128,12 +128,35 @@ register_mig_table(MigTable('H100-94GB', ['H100', '94GB'], 7, [
 
 @dataclass
 class NodeInventory:
-    '''One GPU node's physical inventory, as read off GFD labels
-    (``cluster.gpu_inventory``).'''
+    '''
+    One GPU node's inventory as read off node labels and allocatable resources
+    (``cluster.gpu_inventory``): the physical facts (product, card count, memory)
+    plus the sharing/ownership state the mix strategy filters on before solving.
+    The fields past ``memory_gib_per_card`` are facts, not decisions — this module
+    never excludes a node; ``gpu.MixGpu`` partitions the inventory into usable and
+    excluded nodes and hands the solver only the usable ones.
+    '''
     name : str
     product : str
     card_count : int
     memory_gib_per_card : float
+    #: Units are shares of a device (``-SHARED`` product, time-slicing strategy,
+    #: or replicas > 1) — physical card positions are not addressable.
+    time_sliced : bool = False
+    #: The node's ``nvidia.com/mig.config`` label value, None when absent.
+    mig_config : Optional[str] = None
+    #: The node already carries carved MIG geometry (advertises ``nvidia.com/mig-*``
+    #: or its product names a MIG profile) — GFD's ``gpu.count`` then counts only
+    #: non-MIG cards, so ``card_index`` no longer maps to physical positions.
+    mig_partitioned : bool = False
+    #: ``videoflow.io/gpu-owner`` label value — the flow that MIG'd this node.
+    owner : Optional[str] = None
+    #: Extended-resource units currently requested by running pods, per resource.
+    used_units : Dict[str, int] = field(default_factory = dict)
+    #: Whether the solver may plan MIG geometry here. The mix strategy clears it
+    #: on busy nodes: repartitioning destroys running workloads, but whole-card
+    #: spanner claims are scheduler-accounted and remain safe.
+    mig_allowed : bool = True
 
 
 @dataclass
@@ -198,6 +221,10 @@ def solve_layout(inventory : List[NodeInventory], specs : List[NodeSpec]) -> Gpu
     Computes a feasible card layout for the flow's GPU demands, or raises
     ``LayoutError`` naming the demand that cannot be placed and the fix.
 
+    The inventory handed in is assumed to be already filtered to usable nodes —
+    the mix strategy excludes nodes owned by other flows, time-sliced or
+    pre-MIG'd nodes, and clears ``mig_allowed`` on busy ones before calling this.
+
     Deterministic (sorted walks throughout) so re-running against the same
     inventory reproduces the same geometry — which is what makes ``prepare()``
     idempotent and ``explain`` truthful about what deploy will do. Placement
@@ -215,7 +242,7 @@ def solve_layout(inventory : List[NodeInventory], specs : List[NodeSpec]) -> Gpu
     '''
     cards : List[_Card] = []
     for node in sorted(inventory, key = lambda n: n.name):
-        table = mig_table_for_product(node.product)
+        table = mig_table_for_product(node.product) if node.mig_allowed else None
         for index in range(node.card_count):
             cards.append(_Card(node.name, index, table))
     if not cards:

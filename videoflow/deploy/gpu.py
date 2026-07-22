@@ -43,6 +43,13 @@ DEFAULT_GPU_RESOURCE = 'nvidia.com/gpu'
 GPU_POOL_LABEL = 'videoflow.io/gpu-pool'
 GPU_TAINT_KEY = 'nvidia.com/gpu'
 
+#: Node label recording which flow owns a node's MIG geometry. The cluster is
+#: multi-tenant: mix's prepare() stamps it (compare-and-swap, no --overwrite)
+#: before partitioning, other flows exclude stamped nodes from planning and
+#: scheduling, and cleanup() restores only the nodes its flow stamped. The value
+#: is ``manifests.k8s_name(flow_id)`` — identical to the pods' flow-id label.
+GPU_OWNER_LABEL = 'videoflow.io/gpu-owner'
+
 GPU_STRATEGY_ENTRY_POINT_GROUP = 'videoflow.gpu_strategies'
 
 #: Marker prefix for a preflight problem that is fatal regardless of

@@ -135,7 +135,7 @@ def _fake_kubectl(monkeypatch, outputs):
 
 
 def test_preflight_delegates_capacity_math_to_the_strategy(monkeypatch):
-    _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true': 'node/gpu-box',
+    _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
                                 'allocatable': '2'})
     problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'exclusive')
     assert any('demands 9' in p for p in problems)
