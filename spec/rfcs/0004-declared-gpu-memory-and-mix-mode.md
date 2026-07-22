@@ -170,6 +170,24 @@ rollout churn. The mix end-to-end path — including concurrent flows — still
 cannot be exercised on the time-sliced dev cluster; it needs a MIG-capable GPU
 Operator cluster.
 
+### Per-run entry names
+
+*Amended 2026-07-22 (retry deadlock):* the MIG manager reacts only to
+`nvidia.com/mig.config` label *changes*, so the original fixed
+`videoflow-<node>` entry name deadlocked retries: a previous attempt's
+leftover `mig.config.state=failed` with the identical label value made every
+re-prepare a no-op relabel that re-read `failed` forever. Entry names (and so
+label values) now carry a per-run nonce — `videoflow-<node>-<nonce>`, clamped
+to the 63-char label-value limit by truncating long node names with a stable
+hash suffix — so a fresh apply is always a label change. Because the names are
+no longer reconstructible, each claimed node records its current entry name in
+the `videoflow.io/mig-entry` annotation (stamped before the ConfigMap publish);
+cleanup reads its entries off node labels and this annotation, prepare's merge
+drops the previous attempt's entries for its own nodes, and a cleanup that
+finds a node already sitting at its restore target with `state=failed` bounces
+it through a nonce'd alias of the `videoflow-all-disabled` entry (aliases are
+plumbing: they never count against last-one-out).
+
 The lifecycle hooks (`resolve_specs`/`prepare`/`cleanup`) gained a `flow_id`
 keyword (None default). Per the documented contract, new lifecycle inputs
 arrive as keywords — third-party strategies should accept `**kwargs`; an

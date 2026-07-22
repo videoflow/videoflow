@@ -96,6 +96,14 @@ def _node_json(labels = None, annotations = None):
                                     'annotations': annotations or {}}})
 
 
+def _fix_nonce(monkeypatch, value):
+    '''Pins the per-run nonce (uuid4().hex[:6]) so tests can assert the exact
+    per-run entry names prepare/cleanup generate.'''
+    class _Uuid:
+        hex = value + 'f' * 26
+    monkeypatch.setattr(gpu.uuid, 'uuid4', lambda: _Uuid())
+
+
 # -- resolution ------------------------------------------------------------
 
 def test_resolve_specs_stamps_sharer_resources_and_leaves_spanners(monkeypatch):
@@ -292,6 +300,19 @@ def test_mix_preflight_checks_spanner_capacity(monkeypatch):
 
 # -- prepare/cleanup lifecycle ---------------------------------------------
 
+def test_mig_config_name_is_nonced_and_clamped():
+    # Short names keep the readable form; long ones (EC2 FQDNs run to 253
+    # chars against the 63-char label-value cap) truncate with a stable hash.
+    assert gpu._mig_config_name('gpu-a', 'abc123') == 'videoflow-gpu-a-abc123'
+    long_a = 'ip-10-0-42-7.us-west-2.compute.internal.' + 'a' * 213
+    long_b = long_a[:-1] + 'b'
+    clamped_a = gpu._mig_config_name(long_a, 'abc123')
+    clamped_b = gpu._mig_config_name(long_b, 'abc123')
+    assert len(clamped_a) <= 63 and len(clamped_b) <= 63
+    assert clamped_a != clamped_b                          # prefix-sharing names stay distinct
+    assert clamped_a == gpu._mig_config_name(long_a, 'abc123')   # same node, same value
+
+
 def test_prepare_without_a_mig_manager_fails_with_the_config(monkeypatch):
     _a100_inventory(monkeypatch)
     strategy = gpu.MixGpu()
@@ -460,6 +481,7 @@ def test_prepare_rollout_timeout_fails_before_labeling(monkeypatch):
     # The DaemonSet never remounts videoflow's ConfigMap.
     responses = _operator_responses()
     responses['get daemonsets'] = _mig_manager_daemonset_json('default-mig-parted-config')
+    responses.update({'gpu-owner}': '', 'get node gpu-a -o json': _node_json()})
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
     monkeypatch.setattr(gpu, 'MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS', 0)
@@ -627,6 +649,54 @@ def test_prepare_reretries_a_conflicted_publish(monkeypatch):
     assert fake.replace_attempts == 2        # first conflicted, second landed
 
 
+def test_prepare_relabels_a_stuck_failed_node_under_a_fresh_name(monkeypatch):
+    '''Bug #10: a previous attempt left mig.config=<its per-run name> with
+    state=failed. Relabeling with the identical value is a no-op for the MIG
+    manager (it reacts to label *changes*), so prepare re-read 'failed' forever
+    — even after the operator fixed the config. The per-run nonce guarantees a
+    different value, and the failed attempt's entry must be dropped from the
+    merged map rather than leak until teardown.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    _fix_nonce(monkeypatch, 'fresh1')
+    stale_live = ('version: v1\n'
+                  'mig-configs:\n'
+                  '  videoflow-gpu-a-old999:\n'
+                  '    - devices: [0]\n'
+                  '      mig-enabled: true\n'
+                  '      mig-devices:\n'
+                  '        1g.10gb: 1\n')
+    responses = _operator_responses(
+        config_name = 'videoflow-mig-parted-config',
+        annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'})
+    responses.update({
+        'get configmap videoflow-mig-parted-config': json.dumps(
+            {'metadata': {'resourceVersion': '41'},
+             'data': {'config.yaml': stale_live}}),
+        'mig\\.config\\.state': 'success',
+        'gpu-owner}': 'flow1',                 # the failed attempt's claim is ours
+        'get node gpu-a -o json': _node_json(
+            labels = {gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a-old999',
+                      gpu.MIG_CONFIG_STATE_LABEL: 'failed'},
+            annotations = {gpu.MIG_RESTORE_ANNOTATION: '',
+                           gpu.MIG_ENTRY_ANNOTATION: 'videoflow-gpu-a-old999'}),
+    })
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    labeled = [arg for c, _stdin in fake.calls for arg in c
+               if arg.startswith(f'{gpu.MIG_CONFIG_LABEL}=')]
+    assert labeled == [f'{gpu.MIG_CONFIG_LABEL}=videoflow-gpu-a-fresh1']   # a change, never a no-op
+    published = next(stdin for c, stdin in fake.calls if c[1] == 'replace')
+    merged = json.loads(published)['data']['config.yaml']
+    assert 'videoflow-gpu-a-fresh1' in merged
+    assert 'videoflow-gpu-a-old999' not in merged          # stale entry dropped
+    stamps = [arg for c, _stdin in fake.calls for arg in c
+              if arg.startswith(f'{gpu.MIG_ENTRY_ANNOTATION}=')]
+    assert stamps == [f'{gpu.MIG_ENTRY_ANNOTATION}=videoflow-gpu-a-fresh1']
+
+
 def test_cleanup_restores_the_recorded_label_state(monkeypatch):
     nodes = {'items': [
         {'metadata': {'name': 'gpu-a',
@@ -755,14 +825,18 @@ def test_cleanup_is_not_last_out_while_other_flows_hold_geometry(monkeypatch):
     entry, and leave the ClusterPolicy pointer, its restore annotation and the
     ConfigMap standing — flow2's node labels must keep resolving in the mounted
     file until the last flow out.'''
+    # Entry names carry a per-run nonce, so cleanup must read them off the
+    # node's label/annotation — reconstruction from the node name cannot work.
     nodes = {'items': [
         {'metadata': {'name': 'gpu-a',
-                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1'},
-                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1',
+                                 gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a-abc123'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: '',
+                                      gpu.MIG_ENTRY_ANNOTATION: 'videoflow-gpu-a-abc123'}}},
     ]}
     live = ('version: v1\n'
             'mig-configs:\n'
-            '  videoflow-gpu-a:\n'
+            '  videoflow-gpu-a-abc123:\n'
             '    - devices: [0]\n'
             '      mig-enabled: true\n'
             '      mig-devices:\n'
@@ -790,10 +864,92 @@ def test_cleanup_is_not_last_out_while_other_flows_hold_geometry(monkeypatch):
     gpu.MixGpu().cleanup(flow_id = 'flow1')
     joined = fake.joined_calls()
     stripped = json.loads(next(stdin for c, stdin in fake.calls if c[1] == 'replace'))
-    assert 'videoflow-gpu-a' not in stripped['data']['config.yaml']
+    assert 'videoflow-gpu-a-abc123' not in stripped['data']['config.yaml']
     assert 'videoflow-gpu-z' in stripped['data']['config.yaml']
+    assert any(f'annotate node gpu-a {gpu.MIG_ENTRY_ANNOTATION}-' in c for c in joined)
     assert not any('patch clusterpolicies' in c for c in joined)
     assert not any('mig-config-name-restore-' in c for c in joined)
+    assert not any('delete configmap' in c for c in joined)
+
+
+def test_cleanup_bounces_a_node_stuck_failed_on_its_restore_target(monkeypatch):
+    '''The cleanup twin of bug #10: a retried teardown finds the node already
+    labeled with its restore target while state=failed. Rewriting the identical
+    value would never wake the manager — the node is bounced through a nonce'd
+    alias of the disabled entry first, so both writes are label changes.'''
+    _fix_nonce(monkeypatch, 'b0unce')
+    nodes = {'items': [
+        {'metadata': {'name': 'gpu-a',
+                      'labels': {gpu.MIG_CONFIG_LABEL: gpu.MIG_DISABLED_CONFIG,
+                                 gpu.MIG_CONFIG_STATE_LABEL: 'failed'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+    ]}
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(
+            config_name = 'videoflow-mig-parted-config',
+            annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
+        # The listing's stale 'failed' label is what triggers the bounce; the
+        # poll below is what both waits (alias, then target) read afterwards.
+        'mig\\.config\\.state': 'success',
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup()
+    alias = f'{gpu.MIG_DISABLED_CONFIG}-b0unce'
+    labeled = [arg for c, _stdin in fake.calls for arg in c
+               if arg.startswith(f'{gpu.MIG_CONFIG_LABEL}=')]
+    assert labeled == [f'{gpu.MIG_CONFIG_LABEL}={alias}',            # the bounce...
+                       f'{gpu.MIG_CONFIG_LABEL}={gpu.MIG_DISABLED_CONFIG}']  # ...then the restore
+    # The alias entry is published before the node is pointed at it, and the
+    # revert still completes: label removed, ConfigMap deleted as last one out.
+    published = next(stdin for c, stdin in fake.calls if c[1] in ('create', 'replace'))
+    assert alias in published
+    joined = fake.joined_calls()
+    assert any('label node gpu-a nvidia.com/mig.config-' in c for c in joined)
+    assert any('delete configmap videoflow-mig-parted-config' in c for c in joined)
+
+
+def test_cleanup_strips_an_orphans_entry_via_the_entry_annotation(monkeypatch):
+    '''An orphan claim (prepare crashed between publishing and labeling) has no
+    mig.config label, and nonce'd entry names cannot be reconstructed — the
+    MIG_ENTRY_ANNOTATION stamp is the only record, and the published entry must
+    still be stripped through it.'''
+    nodes = {'items': [
+        {'metadata': {'name': 'gpu-c',
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1'},
+                      'annotations': {gpu.MIG_ENTRY_ANNOTATION: 'videoflow-gpu-c-dead01'}}},
+    ]}
+    live = ('version: v1\n'
+            'mig-configs:\n'
+            '  videoflow-gpu-c-dead01:\n'
+            '    - devices: [0]\n'
+            '      mig-enabled: true\n'
+            '      mig-devices:\n'
+            '        1g.10gb: 1\n'
+            '  videoflow-gpu-z:\n'
+            '    - devices: [0]\n'
+            '      mig-enabled: true\n'
+            '      mig-devices:\n'
+            '        2g.20gb: 1\n')
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(
+            config_name = 'videoflow-mig-parted-config',
+            annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
+        'get configmap videoflow-mig-parted-config': json.dumps(
+            {'metadata': {'resourceVersion': '7'},
+             'data': {'config.yaml': live}}),
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup(flow_id = 'flow1')
+    joined = fake.joined_calls()
+    assert any('label node gpu-c videoflow.io/gpu-owner-' in c for c in joined)
+    assert any(f'annotate node gpu-c {gpu.MIG_ENTRY_ANNOTATION}-' in c for c in joined)
+    stripped = json.loads(next(stdin for c, stdin in fake.calls if c[1] == 'replace'))
+    assert 'videoflow-gpu-c-dead01' not in stripped['data']['config.yaml']
+    assert 'videoflow-gpu-z' in stripped['data']['config.yaml']   # not last out
     assert not any('delete configmap' in c for c in joined)
 
 

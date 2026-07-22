@@ -27,12 +27,23 @@ relabels while pods still hold the devices — the restore apply either fails
 silently or fights the kept workloads.
 
 
-### 10. Failed-state retry deadlock
+### 10. Failed-state retry deadlock — **resolved**
 prepare labels `videoflow-<node>`; if a previous attempt left that exact label
 with `state=failed`, relabeling with the same value is a no-op for the manager
 (it reacts to label *changes*), so prepare re-reads `failed` and raises forever
 — even after the operator fixed the config. Needs a per-run nonce in the config
 name/label, or clear-then-set.
+
+**Resolution:** per-run nonce in the entry name/label
+(`videoflow-<node>-<nonce>` via `_mig_config_name`, 63-char-clamped — which
+also fixes #14). Names are no longer reconstructible, so prepare stamps each
+claimed node's entry name in `videoflow.io/mig-entry` before publishing (an
+orphan's entry stays strippable), the merge drops the previous attempt's
+entries for this flow's own nodes, and cleanup reads its entries off node
+labels/annotations. The cleanup twin (retried teardown rewriting the same
+restore target against `state=failed`) is bounced through a nonce'd
+`videoflow-all-disabled-<nonce>` alias; aliases never count against
+last-one-out. RFC 0004 amended ("Per-run entry names").
 
 ## Smaller items
 
@@ -52,9 +63,8 @@ name/label, or clear-then-set.
     stale layout can drive preflight/prepare for a different flow in
     library/long-lived use. (`flow_id` is deliberately a per-call parameter,
     not cached, for exactly this reason.)
-14. **Label-value length** — `nvidia.com/mig.config=videoflow-<node>`: label
-    values cap at 63 chars, node names go to 253 (EC2 FQDNs) → `kubectl label`
-    fails mid-prepare. Truncate/hash.
+14. ~~**Label-value length**~~ — **done** with #10: `_mig_config_name` clamps
+    to 63 chars (truncated node prefix + stable hash + nonce).
 15. **Watchdog GPU hint misses MIG** —
     [kubernetes.py:399](videoflow/engines/kubernetes.py#L399) matches
     `'gpu' in message`; "Insufficient nvidia.com/mig-1g.10gb" doesn't contain
@@ -94,9 +104,11 @@ name/label, or clear-then-set.
 
 - Unit: `tests/test_mix_strategy.py` models the ClusterPolicy indirection, the
   multi-tenant partitioning rules, the CAS ownership stamps, concurrent-flow
-  ConfigMap merge/strip and last-one-out; `tests/test_cluster.py` covers the
-  pool-scoped reads and occupancy accounting. Still to add: a second prepare
-  without cleanup (#4).
+  ConfigMap merge/strip and last-one-out, the per-run nonce names (#10: a
+  stuck-failed node relabels under a fresh value; stale entries dropped from
+  the merge; the cleanup bounce; orphan strip via `videoflow.io/mig-entry`;
+  the 63-char clamp); `tests/test_cluster.py` covers the pool-scoped reads and
+  occupancy accounting. Still to add: a second prepare without cleanup (#4).
 - End-to-end: needs a real GPU Operator + MIG-capable cluster; the dev k3s box
   (time-sliced, no GPU Operator) cannot validate mix — stated in RFC 0004 as
   its test gap (multi-flow concurrency included).

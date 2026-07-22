@@ -125,6 +125,11 @@ units (allocatable minus what running pods hold), not raw allocatable:
    manager only reads the ConfigMap that field names), waits for the
    mig-manager DaemonSet to remount, then sets each node's
    ``nvidia.com/mig.config`` label and waits for ``mig.config.state=success``.
+   The label value (and matching config entry name) carries a per-run nonce —
+   ``videoflow-<node>-<nonce>``, clamped to the 63-character label limit — so
+   a retried deploy is always a label *change*: the MIG manager reacts only to
+   changes, and a leftover ``state=failed`` under the previous run's exact
+   value would otherwise deadlock every retry.
    ``videoflow teardown --gpu-mode mix`` reverts the geometry, verifies the
    same state, and restores the policy — the pre-videoflow label and config
    name are recorded in cluster annotations, so teardown needs no state from
