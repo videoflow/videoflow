@@ -34,13 +34,13 @@ def _register_recording_strategy(registry, events, prepare_error = None, cleanup
     class _Recording(gpu.GpuStrategy):
         name = 'recording'
 
-        def prepare(self, demand = None, kubectl = 'kubectl'):
-            events.append(('prepare', demand))
+        def prepare(self, demand = None, kubectl = 'kubectl', flow_id = None):
+            events.append(('prepare', demand, flow_id))
             if prepare_error:
                 raise prepare_error
 
-        def cleanup(self, kubectl = 'kubectl'):
-            events.append(('cleanup', None))
+        def cleanup(self, kubectl = 'kubectl', flow_id = None):
+            events.append(('cleanup', flow_id))
             if cleanup_error:
                 raise cleanup_error
 
@@ -68,8 +68,10 @@ def test_gpu_cleanup_reports_a_failing_cleanup_without_raising(registry_sandbox,
 def test_prepare_success_does_not_clean_up(registry_sandbox):
     events = []
     strategy = _register_recording_strategy(registry_sandbox, events)
-    cli._gpu_prepare(strategy, {'nvidia.com/gpu': 4}, 'kubectl')
-    assert events == [('prepare', {'nvidia.com/gpu': 4})]
+    cli._gpu_prepare(strategy, {'nvidia.com/gpu': 4}, 'kubectl', 'flow-1')
+    # The deploy's flow id reaches the hook: a multi-tenant strategy needs it to
+    # mark the cluster state it creates as this flow's.
+    assert events == [('prepare', {'nvidia.com/gpu': 4}, 'flow-1')]
 
 
 def test_failed_prepare_rolls_back_then_exits(registry_sandbox):
@@ -127,7 +129,8 @@ def test_teardown_calls_cleanup_for_the_named_mode(registry_sandbox, monkeypatch
                               namespace = None, kubectl = 'kubectl', infra = False,
                               gpu_mode = 'recording')
     cli._cmd_teardown(args)
-    assert ('cleanup', None) in events
+    # --flow-id scopes the cleanup: other flows may share the pool.
+    assert ('cleanup', 'f') in events
 
 
 def test_teardown_survives_an_unresolvable_gpu_mode(registry_sandbox, monkeypatch, capsys):

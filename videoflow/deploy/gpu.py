@@ -32,7 +32,7 @@ from typing import AbstractSet, Any, List, Optional
 
 from ..core.compiler import NodeSpec
 from ..utils import plugins
-from .mig import GpuLayout, layout_to_mig_parted_config, solve_layout
+from .mig import GpuLayout, LayoutError, NodeInventory, layout_to_mig_parted_config, solve_layout
 
 logger = logging.getLogger(__package__)
 
@@ -167,7 +167,8 @@ class GpuStrategy:
         return []
 
     def resolve_specs(self, specs : List[NodeSpec], kubectl : str = 'kubectl',
-                    default_resource : Optional[str] = None) -> List[NodeSpec]:
+                    default_resource : Optional[str] = None,
+                    flow_id : Optional[str] = None) -> List[NodeSpec]:
         '''
         The strategy's chance to decide names and geometry before anything is
         rendered or preflighted: called once per deploy, with the compiled specs,
@@ -176,27 +177,37 @@ class GpuStrategy:
         ``gpu_resource_name`` carries each sharer's solver-chosen MIG profile —
         after which the entire downstream pipeline runs unchanged.
 
+        Like ``preflight_problems``, new lifecycle inputs arrive as keywords with
+        ``None`` defaults (``flow_id`` did): third-party strategies should accept
+        ``**kwargs``. ``flow_id`` identifies the deploying flow so a multi-tenant
+        strategy can tell its own cluster state from another flow's.
+
         - Raises:
             - ValueError: the flow's demands cannot be laid out (``mix``'s \
                 ``LayoutError`` is one) — the deploy should stop before rendering.
         '''
         return specs
 
-    def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl') -> None:
+    def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl',
+                flow_id : Optional[str] = None) -> None:
         '''
         Cluster setup this strategy needs before a run's manifests are applied.
         Default: nothing. A strategy that mutates cluster state here is
-        responsible for restoring it in ``cleanup``.
+        responsible for restoring it in ``cleanup`` — and, in a multi-tenant
+        cluster, for marking that state with ``flow_id`` so concurrent flows
+        keep out of each other's way.
         '''
         return None
 
-    def cleanup(self, kubectl : str = 'kubectl') -> None:
+    def cleanup(self, kubectl : str = 'kubectl', flow_id : Optional[str] = None) -> None:
         '''
         Undoes ``prepare``. Must be idempotent and tolerant: it is called after a
         ``prepare`` that only partly succeeded, and — for a REALTIME flow, whose
         lifetime outlives the deploy command — from a later ``videoflow teardown``
         that passes ``--gpu-mode`` but shares no state with the deploy that ran
         ``prepare``. So it cannot assume ``prepare`` completed, or ran at all.
+        With a ``flow_id`` it must restore only that flow's state; without one it
+        may sweep everything videoflow owns (single-operator escape hatch).
         '''
         return None
 
@@ -508,6 +519,92 @@ def _wait_for_mig_state(kubectl : str, nodes : List[str],
     return states
 
 
+def flow_owner_value(flow_id : str) -> str:
+    '''The ``GPU_OWNER_LABEL`` value for a flow: ``manifests.k8s_name(flow_id)``,
+    so an arbitrary ``--flow-id`` charset becomes a legal <= 63-char label value —
+    the same value the flow's pods already carry in their flow-id label.'''
+    # Function-level: manifests imports yaml at module scope (optional dep).
+    from .manifests import k8s_name
+    return k8s_name(flow_id)
+
+
+def _partition_inventory(inventory : List[NodeInventory],
+                         flow_id : Optional[str]) -> tuple[List[NodeInventory], dict[str, str]]:
+    '''
+    Splits the pool into nodes mix may plan on and nodes it must not touch, with
+    a reason per excluded node. The cluster is multi-tenant, so exclusion is the
+    normal case, not an error: other flows own nodes, foreign workloads hold
+    devices. Per node, first matching rule wins:
+
+    1. Stamped with THIS flow's owner label — leftover geometry from a run that
+       was never cleaned up. Hard ``ValueError``: on a partially-MIG'd node
+       GFD's ``gpu.count`` no longer maps ``card_index`` to physical positions,
+       so replanning could repartition the wrong cards. The fix is a teardown.
+    2. Stamped by another flow (or by anyone, when this deploy has no flow id) —
+       excluded quietly; that flow's teardown will free it.
+    3. Time-sliced — its units are shares, not addressable cards; a misconfigured
+       pool member, excluded with a warning.
+    4. Already carrying MIG geometry videoflow does not own — same card-position
+       blindness as rule 1, but the fix is the operator's, not a teardown.
+    5. Busy (running pods hold devices) — repartitioning would destroy them, so
+       MIG is disallowed, but whole-card spanner claims are scheduler-accounted
+       and stay safe: the node survives with only its free cards.
+    '''
+    owner = flow_owner_value(flow_id) if flow_id else None
+    usable : List[NodeInventory] = []
+    excluded : dict[str, str] = {}
+    stale : List[NodeInventory] = []
+    for node in inventory:
+        if node.owner is not None and owner is not None and node.owner == owner:
+            stale.append(node)
+            continue
+        if node.owner is not None:
+            excluded[node.name] = f'owned by another videoflow flow ({GPU_OWNER_LABEL}={node.owner})'
+            logger.info('mix: skipping node %s — %s', node.name, excluded[node.name])
+            continue
+        if node.time_sliced:
+            excluded[node.name] = (f'time-sliced (product {node.product}) — mix partitions '
+                                   f'physical cards and cannot address shared units. Disable '
+                                   f'time-slicing on it, or remove it from the pool: '
+                                   f'kubectl label node {node.name} {GPU_POOL_LABEL}-')
+            logger.warning('mix: skipping node %s — %s', node.name, excluded[node.name])
+            continue
+        if node.mig_partitioned or node.mig_config not in (None, '', 'all-disabled',
+                                                           MIG_DISABLED_CONFIG):
+            evidence = (f'nvidia.com/mig.config={node.mig_config}' if node.mig_config
+                        else 'it advertises nvidia.com/mig-* resources')
+            excluded[node.name] = (f'already MIG-partitioned outside videoflow ({evidence}) — '
+                                   f'its gpu.count no longer maps card positions, so a generated '
+                                   f'layout could repartition the wrong cards. Clear its MIG '
+                                   f'geometry, or remove it from the pool: '
+                                   f'kubectl label node {node.name} {GPU_POOL_LABEL}-')
+            logger.warning('mix: skipping node %s — %s', node.name, excluded[node.name])
+            continue
+        busy_units = sum(node.used_units.values())
+        if busy_units >= node.card_count:
+            excluded[node.name] = (f'{busy_units} unit(s) in use by running pods across its '
+                                   f'{node.card_count} card(s) — no free cards to plan')
+            logger.info('mix: skipping node %s — %s', node.name, excluded[node.name])
+            continue
+        if busy_units:
+            # Repartitioning a busy node would destroy the running workloads, and
+            # which physical card a pod holds is not knowable from the API — so no
+            # MIG here, and only the free cards count for spanners.
+            usable.append(dataclasses.replace(node, card_count = node.card_count - busy_units,
+                                              mig_allowed = False))
+            continue
+        usable.append(node)
+    if stale:
+        names = ', '.join(sorted(n.name for n in stale))
+        raise ValueError(
+            f'node(s) {names} still carry this flow\'s MIG geometry '
+            f'({GPU_OWNER_LABEL}={owner}) from a previous run that was not cleaned up — '
+            f'their gpu.count no longer maps card positions, so replanning could repartition '
+            f'the wrong cards. Fix: videoflow teardown --flow-id {flow_id} --run-id <run-id> '
+            f'--nats <url> --namespace <ns> --gpu-mode mix, then redeploy.')
+    return usable, excluded
+
+
 class MixGpu(ExclusiveGpu):
     '''
     Declared-demand MIG partitioning (RFC 0004): sharers (``gpu_memory_gib``) get
@@ -519,19 +616,35 @@ class MixGpu(ExclusiveGpu):
     name = 'mix'
 
     def __init__(self) -> None:
-        # The layout is computed once per deploy in resolve_specs and reused by
-        # preflight/prepare in the same process. Solving is deterministic, so a
-        # recompute would agree — the cache only saves kubectl round-trips.
+        # The layout and the exclusion set are computed once per deploy in
+        # resolve_specs and reused by preflight/prepare in the same process.
+        # Solving is deterministic, so a recompute would agree — the cache only
+        # saves kubectl round-trips. flow_id is deliberately NOT cached: it is a
+        # per-call parameter, so a stale value cannot leak between deploys
+        # sharing this registered singleton.
         self._layout : Optional[GpuLayout] = None
+        self._excluded_nodes : dict[str, str] = {}
 
     def resolve_specs(self, specs : List[NodeSpec], kubectl : str = 'kubectl',
-                    default_resource : Optional[str] = None) -> List[NodeSpec]:
+                    default_resource : Optional[str] = None,
+                    flow_id : Optional[str] = None) -> List[NodeSpec]:
         # Function-level: same gpu <-> cluster cycle as in ExclusiveGpu.preflight_problems.
         from .cluster import gpu_inventory
 
         if not any(s.device_type == 'gpu' for s in specs):
             return specs
-        layout = solve_layout(gpu_inventory(kubectl), specs)   # raises LayoutError (a ValueError)
+        usable, excluded = _partition_inventory(gpu_inventory(kubectl), flow_id)
+        self._excluded_nodes = excluded
+        try:
+            layout = solve_layout(usable, specs)   # raises LayoutError (a ValueError)
+        except LayoutError as e:
+            if excluded:
+                # Shrunken capacity must never fail silently: the operator sees
+                # which pool nodes were ruled out and why, at the failure point.
+                detail = '\n'.join(f'  - {node}: {reason}'
+                                   for node, reason in sorted(excluded.items()))
+                raise LayoutError(f'{e}\nNodes excluded from mix planning:\n{detail}') from e
+            raise
         self._layout = layout
         resolved = []
         for spec in specs:
@@ -575,7 +688,8 @@ class MixGpu(ExclusiveGpu):
         whole = {resource: units for resource, units in sorted((demand or {}).items())
                  if resource not in layout.slice_demand}
         if whole:
-            problems.extend(_capacity_problems(kubectl, whole))
+            problems.extend(_capacity_problems(kubectl, whole,
+                                               exclude_nodes = frozenset(self._excluded_nodes)))
         if not gpu_runtime_class:
             nvidia_rc = nvidia_runtimeclass(kubectl)
             if nvidia_rc:
@@ -599,7 +713,8 @@ class MixGpu(ExclusiveGpu):
             return []
         return [tuple(line.split()) for line in proc.stdout.strip().splitlines() if line.split()]
 
-    def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl') -> None:
+    def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl',
+                flow_id : Optional[str] = None) -> None:
         '''
         Applies the layout's MIG geometry through the GPU Operator: merge the
         generated mig-parted config into the operator's current one, publish
@@ -705,7 +820,7 @@ class MixGpu(ExclusiveGpu):
         _kubectl_run(kubectl, 'label', 'node', node, '--overwrite',
                      f'{MIG_CONFIG_LABEL}=videoflow-{node}')
 
-    def cleanup(self, kubectl : str = 'kubectl') -> None:
+    def cleanup(self, kubectl : str = 'kubectl', flow_id : Optional[str] = None) -> None:
         '''
         Restores every node carrying ``MIG_RESTORE_ANNOTATION`` to its recorded
         pre-videoflow ``nvidia.com/mig.config`` value — a node whose label was

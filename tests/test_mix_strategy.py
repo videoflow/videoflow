@@ -119,6 +119,91 @@ def test_resolve_specs_surfaces_layout_errors(monkeypatch):
         gpu.MixGpu().resolve_specs([_gpu_spec('span', gpu_count = 2, nb_tasks = 2)])
 
 
+# -- multi-tenant inventory partitioning -----------------------------------
+
+def _inventory(monkeypatch, *nodes):
+    monkeypatch.setattr(cluster, 'gpu_inventory', lambda kubectl = 'kubectl': list(nodes))
+
+
+def test_resolve_specs_excludes_other_flows_nodes(monkeypatch):
+    '''Multi-tenant pool: a node another flow MIG'd is simply not ours — planning
+    proceeds on the rest, and when that falls short the exclusion is named.'''
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 2, 80, owner = 'other'),
+               NodeInventory('gpu-b', 'NVIDIA-A100-SXM4-80GB', 1, 80))
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)], flow_id = 'mine')
+    assert {c.node for c in strategy._layout.cards} == {'gpu-b'}
+    # Infeasible on what remains: the error lists the excluded node and why.
+    with pytest.raises(LayoutError) as excinfo:
+        gpu.MixGpu().resolve_specs([_gpu_spec('span', gpu_count = 2)], flow_id = 'mine')
+    assert 'Nodes excluded from mix planning' in str(excinfo.value)
+    assert 'gpu-a: owned by another videoflow flow' in str(excinfo.value)
+
+
+def test_resolve_specs_refuses_this_flows_leftover_geometry(monkeypatch):
+    '''A node still stamped with OUR owner label means a previous run died before
+    cleanup: its gpu.count no longer maps card positions, so replanning is unsafe
+    and the fix is a teardown, not an exclusion.'''
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 2, 80,
+                             owner = gpu.flow_owner_value('mine')))
+    with pytest.raises(ValueError, match = 'teardown --flow-id mine'):
+        gpu.MixGpu().resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)],
+                                   flow_id = 'mine')
+
+
+def test_resolve_specs_excludes_time_sliced_and_foreign_mig_nodes(monkeypatch):
+    _inventory(monkeypatch,
+               NodeInventory('sliced', 'NVIDIA-A100-SXM4-80GB-SHARED', 2, 80,
+                             time_sliced = True),
+               NodeInventory('migd', 'NVIDIA-A100-SXM4-80GB', 2, 80,
+                             mig_config = 'all-1g.10gb'),
+               NodeInventory('carved', 'NVIDIA-A100-SXM4-80GB', 2, 80,
+                             mig_partitioned = True))
+    with pytest.raises(LayoutError) as excinfo:
+        gpu.MixGpu().resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    message = str(excinfo.value)
+    assert 'sliced: time-sliced' in message
+    assert 'migd' in message and 'all-1g.10gb' in message
+    assert 'carved' in message and 'nvidia.com/mig-*' in message
+    assert 'videoflow.io/gpu-pool-' in message      # the copy-pasteable fix
+
+
+def test_resolve_specs_accepts_the_disabled_config_labels(monkeypatch):
+    '''The GPU Operator's stock default labels pristine nodes all-disabled (and a
+    crashed videoflow cleanup can leave videoflow-all-disabled): both mean "no
+    geometry" and must not be refused.'''
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 1, 80,
+                             mig_config = 'all-disabled'),
+               NodeInventory('gpu-b', 'NVIDIA-A100-SXM4-80GB', 1, 80,
+                             mig_config = gpu.MIG_DISABLED_CONFIG))
+    resolved = gpu.MixGpu().resolve_specs(
+        [_gpu_spec('share', gpu_memory_gib = 10, nb_tasks = 2)])
+    assert resolved[0].gpu_resource_name == 'nvidia.com/mig-1g.10gb'
+
+
+def test_resolve_specs_shrinks_busy_nodes_to_their_free_cards(monkeypatch):
+    '''Running pods hold 1 of gpu-a's 2 cards: the free card can still take a
+    spanner, but MIG geometry is off the table — repartitioning would destroy
+    the running workloads, and which physical card they hold is unknowable.'''
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 2, 80,
+                             used_units = {'nvidia.com/gpu': 1}))
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('span')])
+    assert [c.node for c in strategy._layout.cards] == ['gpu-a']   # the one free card
+    with pytest.raises(LayoutError, match = 'MIG-capable'):
+        gpu.MixGpu().resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    # Fully busy: excluded outright, and the error says why.
+    _inventory(monkeypatch,
+               NodeInventory('gpu-a', 'NVIDIA-A100-SXM4-80GB', 2, 80,
+                             used_units = {'nvidia.com/gpu': 2}))
+    with pytest.raises(LayoutError, match = 'no free cards'):
+        gpu.MixGpu().resolve_specs([_gpu_spec('span')])
+
+
 # -- preflight -------------------------------------------------------------
 
 def test_mix_preflight_requires_a_resolved_layout():

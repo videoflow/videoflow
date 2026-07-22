@@ -74,21 +74,24 @@ def _load_flow(target : str) -> Flow:
     '''
     return load_flow(target)
 
-def _gpu_cleanup(gpu_strategy : GpuStrategy | None, kubectl : str) -> None:
+def _gpu_cleanup(gpu_strategy : GpuStrategy | None, kubectl : str,
+                 flow_id : str | None = None) -> None:
     '''
     Runs a GPU strategy's ``cleanup()``, best-effort. Called from error paths and
     teardown, so a failure to undo the reconfiguration must be reported but must
     not mask the original error or abort the rest of teardown. A ``None`` strategy
-    (no GPU nodes, or an unknown mode) is a no-op.
+    (no GPU nodes, or an unknown mode) is a no-op. ``flow_id`` scopes the cleanup
+    to this flow's cluster state — other flows may be running against the same pool.
     '''
     if gpu_strategy is None:
         return
     try:
-        gpu_strategy.cleanup(kubectl = kubectl)
+        gpu_strategy.cleanup(kubectl = kubectl, flow_id = flow_id)
     except Exception as e:                            # noqa: BLE001 — see docstring
         print(f'WARNING: GPU mode {gpu_strategy.name!r} cleanup failed: {e}', file = sys.stderr)
 
-def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str) -> None:
+def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str,
+                 flow_id : str | None = None) -> None:
     '''
     Runs a GPU strategy's ``prepare()``, rolling back if it does not complete.
 
@@ -103,9 +106,9 @@ def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str) -> No
             rollback.
     '''
     try:
-        gpu_strategy.prepare(demand = demand, kubectl = kubectl)
+        gpu_strategy.prepare(demand = demand, kubectl = kubectl, flow_id = flow_id)
     except BaseException as e:
-        _gpu_cleanup(gpu_strategy, kubectl)
+        _gpu_cleanup(gpu_strategy, kubectl, flow_id)
         if isinstance(e, (RuntimeError, ValueError)):
             raise SystemExit(f'GPU mode {gpu_strategy.name!r} could not prepare '
                              f'the cluster: {e}') from e
@@ -214,7 +217,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # demand math, preflight, manifests, env — consumes the resolved specs.
         try:
             specs = get_gpu_mode(args.gpu_mode).resolve_specs(
-                specs, kubectl = args.kubectl, default_resource = args.gpu_resource_name)
+                specs, kubectl = args.kubectl, default_resource = args.gpu_resource_name,
+                flow_id = flow_id)
         except ValueError as e:
             raise SystemExit(str(e)) from e
         gpu_specs = [s for s in specs if s.device_type == 'gpu']
@@ -307,7 +311,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     gpu_strategy = None
     if gpu_specs:
         gpu_strategy = get_gpu_mode(args.gpu_mode)
-        _gpu_prepare(gpu_strategy, demand, args.kubectl)
+        _gpu_prepare(gpu_strategy, demand, args.kubectl, flow_id)
     try:
         engine.allocate_and_run_tasks(None, flow_id, flow_type, run_id)
     except BaseException as e:
@@ -315,7 +319,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # established, so prepare()'s reconfiguration has no user and must be
         # undone — including on a Ctrl-C during the provision wait, which can
         # block for minutes and is the likeliest interruption point.
-        _gpu_cleanup(gpu_strategy, args.kubectl)
+        _gpu_cleanup(gpu_strategy, args.kubectl, flow_id)
         if isinstance(e, (RuntimeError, ValueError)):
             raise SystemExit(str(e)) from e
         raise
@@ -373,7 +377,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # workloads may be worth keeping, a retuned cluster is not. Failures
         # *before* this try block are covered by the rollbacks around
         # _gpu_prepare and allocate_and_run_tasks above.
-        _gpu_cleanup(gpu_strategy, args.kubectl)
+        _gpu_cleanup(gpu_strategy, args.kubectl, flow_id)
     if stall:
         raise SystemExit(f'Flow aborted: {stall}')
     if failed:
@@ -790,7 +794,7 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
             # registered the mode is not installed in *this* shell.
             print(f'WARNING: skipping GPU cleanup: {e}', file = sys.stderr)
             strategy = None
-        _gpu_cleanup(strategy, args.kubectl)
+        _gpu_cleanup(strategy, args.kubectl, args.flow_id)
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
