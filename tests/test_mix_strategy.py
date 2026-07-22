@@ -290,7 +290,7 @@ def test_prepare_wires_the_config_through_cluster_policy(monkeypatch):
     joined = fake.joined_calls()
     # The published ConfigMap merges the operator's entries with videoflow's
     # (plus the disabled config cleanup points un-labeled nodes at)...
-    apply_call = next((stdin for c, stdin in fake.calls if 'apply' in c), None)
+    apply_call = next((stdin for c, stdin in fake.calls if c[1] in ('create', 'replace')), None)
     assert apply_call and 'videoflow-mig-parted-config' in apply_call
     assert '"namespace": "gpu-operator"' in apply_call
     assert 'all-balanced' in apply_call            # merged, not replaced
@@ -424,7 +424,8 @@ def test_prepare_stamps_ownership_before_any_geometry(monkeypatch):
     stamp_idx = next(i for i, c in enumerate(joined)
                      if 'label node gpu-a videoflow.io/gpu-owner=flow1' in c)
     assert '--overwrite' not in joined[stamp_idx]
-    apply_idx = next(i for i, (c, _stdin) in enumerate(fake.calls) if 'apply' in c)
+    apply_idx = next(i for i, (c, _stdin) in enumerate(fake.calls)
+                     if c[1] in ('create', 'replace'))
     mig_label_idx = next(i for i, c in enumerate(joined)
                          if 'nvidia.com/mig.config=videoflow-gpu-a' in c)
     assert stamp_idx < apply_idx < mig_label_idx
@@ -453,8 +454,88 @@ def test_prepare_releases_its_claims_when_a_node_is_taken(monkeypatch):
     joined = fake.joined_calls()
     assert any('label node gpu-a videoflow.io/gpu-owner=flow1' in c for c in joined)
     assert any('label node gpu-a videoflow.io/gpu-owner-' in c for c in joined)  # released
-    assert not any('apply' in c for c, _stdin in fake.calls)          # no geometry touched
+    assert not any(c[1] in ('create', 'replace') for c, _stdin in fake.calls)  # no geometry touched
     assert not any('mig.config=videoflow-' in c for c in joined)
+
+
+#: A published map carrying another flow's entry, as prepare/cleanup would find it.
+_LIVE_MIG_CONFIG = ('version: v1\n'
+                    'mig-configs:\n'
+                    '  all-balanced:\n'
+                    '    - devices: all\n'
+                    '      mig-enabled: false\n'
+                    '  videoflow-gpu-z:\n'
+                    '    - devices: [0]\n'
+                    '      mig-enabled: true\n'
+                    '      mig-devices:\n'
+                    '        2g.20gb: 1\n'
+                    '  videoflow-all-disabled:\n'
+                    '    - devices: all\n'
+                    '      mig-enabled: false\n')
+
+
+def test_prepare_preserves_other_flows_published_entries(monkeypatch):
+    '''Two flows share MIG_CONFIGMAP_NAME: flow B's publish must carry flow A's
+    videoflow-<node> entries forward (or A's nodes go state=failed on the next
+    manager pass), and must replace with the read resourceVersion so a racing
+    writer conflicts instead of being clobbered.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses()
+    responses.update({
+        'get configmap videoflow-mig-parted-config': json.dumps(
+            {'metadata': {'resourceVersion': '41'},
+             'data': {'config.yaml': _LIVE_MIG_CONFIG}}),
+        'mig\\.config\\.state': 'success',
+        'mig\\.config}': '', 'mig-config-restore}': '',
+    })
+    fake = _FakeKubectl(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    published = next(stdin for c, stdin in fake.calls if c[1] == 'replace')
+    payload = json.loads(published)
+    assert payload['metadata']['resourceVersion'] == '41'
+    merged = payload['data']['config.yaml']
+    assert 'videoflow-gpu-z' in merged       # flow A's geometry survives
+    assert 'videoflow-gpu-a' in merged       # ours lands
+    assert 'all-balanced' in merged          # operator entries come from the base
+
+
+def test_prepare_reretries_a_conflicted_publish(monkeypatch):
+    '''A racing flow bumps the map between our read and replace: the publish must
+    re-read and re-merge, not fail and not overwrite.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses()
+    responses.update({
+        'get configmap videoflow-mig-parted-config': json.dumps(
+            {'metadata': {'resourceVersion': '41'},
+             'data': {'config.yaml': _LIVE_MIG_CONFIG}}),
+        'mig\\.config\\.state': 'success',
+        'mig\\.config}': '', 'mig-config-restore}': '',
+    })
+
+    class _Conflicting(_FakeKubectl):
+        def __init__(self, responses):
+            super().__init__(responses)
+            self.replace_attempts = 0
+
+        def __call__(self, cmd, **kwargs):
+            if len(cmd) > 1 and cmd[1] == 'replace':
+                self.replace_attempts += 1
+                if self.replace_attempts == 1:
+                    self.calls.append((list(cmd), kwargs.get('input')))
+                    return subprocess.CompletedProcess(
+                        cmd, 1, '', 'Operation cannot be fulfilled: the object has '
+                                    'been modified (Conflict)')
+            return super().__call__(cmd, **kwargs)
+
+    fake = _Conflicting(responses)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+    assert fake.replace_attempts == 2        # first conflicted, second landed
 
 
 def test_cleanup_restores_the_recorded_label_state(monkeypatch):
@@ -578,6 +659,53 @@ def test_cleanup_scoped_to_a_flow_restores_only_its_nodes(monkeypatch):
     assert not any('gpu-c' in c and 'mig.config' in c for c in joined)
     # flow2's node is untouched.
     assert not any('gpu-b' in c and ('label' in c or 'annotate' in c) for c in joined)
+
+
+def test_cleanup_is_not_last_out_while_other_flows_hold_geometry(monkeypatch):
+    '''flow1's teardown with flow2's entries still published: strip only flow1's
+    entry, and leave the ClusterPolicy pointer, its restore annotation and the
+    ConfigMap standing — flow2's node labels must keep resolving in the mounted
+    file until the last flow out.'''
+    nodes = {'items': [
+        {'metadata': {'name': 'gpu-a',
+                      'labels': {gpu.GPU_OWNER_LABEL: 'flow1'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+    ]}
+    live = ('version: v1\n'
+            'mig-configs:\n'
+            '  videoflow-gpu-a:\n'
+            '    - devices: [0]\n'
+            '      mig-enabled: true\n'
+            '      mig-devices:\n'
+            '        1g.10gb: 1\n'
+            '  videoflow-gpu-z:\n'
+            '    - devices: [0]\n'
+            '      mig-enabled: true\n'
+            '      mig-devices:\n'
+            '        2g.20gb: 1\n'
+            '  videoflow-all-disabled:\n'
+            '    - devices: all\n'
+            '      mig-enabled: false\n')
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(
+            config_name = 'videoflow-mig-parted-config',
+            annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
+        'get configmap videoflow-mig-parted-config': json.dumps(
+            {'metadata': {'resourceVersion': '7'},
+             'data': {'config.yaml': live}}),
+        'mig\\.config\\.state': 'success',
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup(flow_id = 'flow1')
+    joined = fake.joined_calls()
+    stripped = json.loads(next(stdin for c, stdin in fake.calls if c[1] == 'replace'))
+    assert 'videoflow-gpu-a' not in stripped['data']['config.yaml']
+    assert 'videoflow-gpu-z' in stripped['data']['config.yaml']
+    assert not any('patch clusterpolicies' in c for c in joined)
+    assert not any('mig-config-name-restore-' in c for c in joined)
+    assert not any('delete configmap' in c for c in joined)
 
 
 def test_cleanup_without_prepare_is_a_tolerant_noop(monkeypatch):
