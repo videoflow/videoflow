@@ -6,6 +6,41 @@ on:
   pull_request:
 
 jobs:
+  # File hygiene, ruff and mypy, straight from .pre-commit-config.yaml so CI and the
+  # local hooks can never disagree about what "clean" means. Runs in parallel with
+  # `test` and needs no broker.
+  #
+  # This deliberately does not run the config's pytest hook: that hook is pre-push
+  # stage (so `run --all-files` skips it) and it excludes tests/integration, while
+  # the `test` job below runs the whole suite against a live NATS. Adding it here
+  # would be a slower, strictly weaker duplicate.
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Hook environments are keyed on the config: a rev bump reinstalls, everything
+      # else reuses. Without this the ruff and pre-commit-hooks envs rebuild each run.
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-py3.12-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # Via `uv run`, so pre-commit comes from the dev group (>= 3.5). The pinned
+      # pre-commit-hooks v5 declares the renamed stages and a pre-commit older than
+      # 3.2.0 dies on them with InvalidManifestError — installing it any other way
+      # reintroduces that trap in CI. --show-diff-on-failure turns a failure from the
+      # auto-fixing hooks (ruff --fix, trailing-whitespace) into a copyable patch.
+      - name: Run pre-commit hooks
+        run: uv run pre-commit run --all-files --show-diff-on-failure
+
   test:
     runs-on: ubuntu-latest
     steps:
