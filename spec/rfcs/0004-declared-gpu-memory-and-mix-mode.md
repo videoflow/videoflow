@@ -104,6 +104,23 @@ restore it without sharing any state with the deploy. Without the MIG manager,
 preflight and `prepare` emit the generated mig-parted config for manual
 application.
 
+*Amended 2026-07-22:* the MIG manager only reads the config file mounted from
+the ConfigMap named in ClusterPolicy `migManager.config.name`, so a
+side-published ConfigMap was never consulted (the original design failed with
+`mig.config.state=failed` on every stock GPU Operator cluster). `prepare()` now
+merges the generated entries into the operator's current mig-parted config,
+publishes the merge as `videoflow-mig-parted-config`, patches ClusterPolicy to
+name it (recording the original name in the
+`videoflow.io/mig-config-name-restore` ClusterPolicy annotation), and waits for
+the mig-manager DaemonSet rollout before labeling nodes. `cleanup()` reverts
+nodes (a node whose label was absent is pointed at a merged-in
+`videoflow-all-disabled` entry first, since bare label removal triggers no
+reconfiguration), waits for `mig.config.state=success`, and only then restores
+the policy and deletes the ConfigMap — a failed revert keeps its restore
+records so a retried teardown resumes. Note the mix end-to-end path cannot be
+exercised on the time-sliced dev cluster; it needs a MIG-capable GPU Operator
+cluster.
+
 Local runs degrade `mix` to `exclusive` semantics: the local engine cannot
 address MIG slices (RFC 0003), so a sharer simply gets a whole card — which
 satisfies "at least `gpu_memory_gib`".

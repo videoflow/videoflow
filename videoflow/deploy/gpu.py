@@ -28,7 +28,7 @@ import json
 import logging
 import subprocess
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from ..core.compiler import NodeSpec
 from ..utils import plugins
@@ -251,6 +251,35 @@ MIG_CONFIG_STATE_LABEL = 'nvidia.com/mig.config.state'
 MIG_APPLY_TIMEOUT_SECONDS = 600
 MIG_APPLY_POLL_SECONDS = 5
 
+#: ConfigMap videoflow publishes in the operator namespace: the operator's
+#: current mig-parted config with the generated videoflow-<node> entries merged
+#: in. The MIG manager only reads the ConfigMap named in ClusterPolicy
+#: migManager.config.name, so prepare() points that field here for the run.
+MIG_CONFIGMAP_NAME = 'videoflow-mig-parted-config'
+
+#: The GPU Operator's stock mig-parted ConfigMap — the merge base when
+#: ClusterPolicy names none, and what cleanup() restores when the
+#: migManager.config.name field was absent before videoflow touched it.
+MIG_OPERATOR_DEFAULT_CONFIGMAP = 'default-mig-parted-config'
+
+#: ClusterPolicy annotation recording the pre-videoflow migManager.config.name,
+#: so a teardown in a fresh shell can restore it (the ClusterPolicy twin of
+#: MIG_RESTORE_ANNOTATION on nodes).
+MIG_CONFIG_NAME_RESTORE_ANNOTATION = 'videoflow.io/mig-config-name-restore'
+
+#: Sentinel recorded in MIG_CONFIG_NAME_RESTORE_ANNOTATION when the field was
+#: absent — never '', which a failed read could be mistaken for.
+MIG_CONFIG_NAME_ABSENT = '__absent__'
+
+#: Config entry always injected into the merged file so cleanup() can un-MIG a
+#: node whose pre-videoflow mig.config label was absent: removing the label
+#: triggers no reconfiguration, so such nodes are pointed here first.
+MIG_DISABLED_CONFIG = 'videoflow-all-disabled'
+
+#: How long prepare() waits for the mig-manager DaemonSet to remount the
+#: videoflow ConfigMap after the ClusterPolicy patch.
+MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS = 300
+
 
 def _kubectl_run(kubectl : str, *args : str) -> str:
     '''Runs kubectl for a mutation and returns stdout; raises RuntimeError with
@@ -263,6 +292,184 @@ def _kubectl_run(kubectl : str, *args : str) -> str:
     if proc.returncode != 0:
         raise RuntimeError(f'{kubectl} {" ".join(args)} failed: {proc.stderr.strip()}')
     return proc.stdout.strip()
+
+
+def _kubectl_json(kubectl : str, *args : str) -> Optional[dict]:
+    '''Silence-tolerant kubectl read: ``kubectl *args -o json`` parsed, or None
+    on any failure (kubectl missing, non-zero exit, unparseable output) — the
+    read-side twin of ``_kubectl_run``, for callers that degrade gracefully.'''
+    try:
+        proc = subprocess.run([kubectl, *args, '-o', 'json'],
+                              capture_output = True, text = True, check = False)
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    try:
+        return json.loads(proc.stdout)
+    except ValueError:
+        return None
+
+
+def _cluster_policy(kubectl : str) -> Optional[dict]:
+    '''
+    The GPU Operator's ClusterPolicy object (``clusterpolicies.nvidia.com``,
+    cluster-scoped), or None when the CRD or the object is absent — mix then
+    degrades to an actionable error rather than a crash. The operator enforces
+    a single instance; should several exist anyway, the first by name is used
+    with a warning.
+    '''
+    listing = _kubectl_json(kubectl, 'get', 'clusterpolicies.nvidia.com')
+    items = (listing or {}).get('items') or []
+    if not items:
+        return None
+    items.sort(key = lambda item: (item.get('metadata') or {}).get('name', ''))
+    if len(items) > 1:
+        names = ', '.join((i.get('metadata') or {}).get('name', '?') for i in items)
+        logger.warning(f'multiple ClusterPolicy objects found ({names}) — using the first')
+    return items[0]
+
+
+def _operator_configmap_yaml(kubectl : str, namespace : str, name : str) -> str:
+    '''The ``config.yaml`` payload of a mig-parted ConfigMap, or '' when the map
+    or the key is absent. JSON + dict access rather than jsonpath: the dotted
+    key needs no escaping and absent-vs-empty stays unambiguous.'''
+    configmap = _kubectl_json(kubectl, 'get', 'configmap', name, '-n', namespace)
+    return ((configmap or {}).get('data') or {}).get('config.yaml', '')
+
+
+def _merge_mig_configs(base_config : str, videoflow_config : str) -> str:
+    '''
+    The operator's current mig-parted file with videoflow's generated configs
+    merged in, plus a ``MIG_DISABLED_CONFIG`` entry cleanup() can point a node
+    at to un-partition it.
+
+    Merging rather than replacing is a correctness requirement: once
+    ClusterPolicy points at the merged copy, the operator's
+    ``migManager.config.default`` and any pre-existing node ``mig.config``
+    labels must keep resolving in the mounted file. Videoflow wins name
+    collisions — its entries are ``videoflow-``-prefixed, so there should be
+    none.
+
+    - Arguments:
+        - base_config: the operator's current ``config.yaml`` text ('' or \
+            unparseable starts the merge from videoflow's entries only).
+        - videoflow_config: ``layout_to_mig_parted_config`` output.
+    '''
+    # Function-level: PyYAML ships via the deploy extras; core must import this
+    # module without it. (Text-level merging was rejected — the operator's file
+    # is arbitrary YAML, with indentation and anchors we cannot safely splice.)
+    import yaml
+
+    try:
+        base = yaml.safe_load(base_config)
+    except yaml.YAMLError:
+        base = None
+    if not isinstance(base, dict):
+        if base_config.strip():
+            logger.warning('could not parse the operator\'s mig-parted config.yaml — '
+                           'the merged config starts from videoflow\'s entries only')
+        base = {}
+    merged : dict[str, Any] = {'version': base.get('version') or 'v1',
+                               'mig-configs': dict(base.get('mig-configs') or {})}
+    ours = yaml.safe_load(videoflow_config)        # generated by us: always valid
+    merged['mig-configs'].update(ours.get('mig-configs') or {})
+    merged['mig-configs'][MIG_DISABLED_CONFIG] = [{'devices': 'all', 'mig-enabled': False}]
+    return yaml.safe_dump(merged, sort_keys = False, default_flow_style = False)
+
+
+def _point_cluster_policy_at(kubectl : str, policy_name : str, configmap_name : str) -> None:
+    '''Patches ClusterPolicy ``migManager.config.name`` to ``configmap_name``
+    (merge patch, so a missing path is created rather than rejected).
+
+    - Raises:
+        - RuntimeError: the patch failed — this mutates cluster state, so \
+            silence is not an option.
+    '''
+    patch = json.dumps({'spec': {'migManager': {'config': {'name': configmap_name}}}})
+    _kubectl_run(kubectl, 'patch', 'clusterpolicies.nvidia.com', policy_name,
+                 '--type', 'merge', '-p', patch)
+
+
+def _wait_for_mig_manager_rollout(kubectl : str, namespace : str, configmap_name : str,
+                                  timeout_seconds : Optional[int] = None) -> None:
+    '''
+    Blocks until the mig-manager DaemonSet mounts ``configmap_name`` and its
+    pods have rolled to that spec. Polls the DaemonSet object rather than using
+    ``kubectl rollout status``: the operator propagates ClusterPolicy into the
+    DaemonSet asynchronously (an immediate status check happily passes on the
+    old generation), and some operator versions recreate the DaemonSet instead
+    of updating it.
+
+    - Arguments:
+        - timeout_seconds: None means MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS, \
+            resolved at call time so tests can shrink the module constant.
+    - Raises:
+        - RuntimeError: the rollout did not complete within the timeout.
+    '''
+    if timeout_seconds is None:
+        timeout_seconds = MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        listing = _kubectl_json(kubectl, 'get', 'daemonsets', '-n', namespace,
+                                '-l', 'app=nvidia-mig-manager')
+        for ds in (listing or {}).get('items') or []:
+            template_spec = (((ds.get('spec') or {}).get('template') or {}).get('spec') or {})
+            mounts_config = any((volume.get('configMap') or {}).get('name') == configmap_name
+                                for volume in template_spec.get('volumes') or [])
+            status = ds.get('status') or {}
+            desired = status.get('desiredNumberScheduled', -1)
+            rolled = (status.get('observedGeneration', 0) >= (ds.get('metadata') or {}).get('generation', 1)
+                      and desired >= 0
+                      and status.get('updatedNumberScheduled') == desired
+                      and status.get('numberReady') == desired)
+            if mounts_config and rolled:
+                return
+        if time.monotonic() > deadline:
+            raise RuntimeError(
+                f'the MIG manager DaemonSet did not remount {configmap_name} within '
+                f'{timeout_seconds}s of the ClusterPolicy patch — check the GPU Operator '
+                f'(kubectl get ds -n {namespace} -l app=nvidia-mig-manager; '
+                f'kubectl logs -n {namespace} -l app=gpu-operator).')
+        time.sleep(MIG_APPLY_POLL_SECONDS)
+
+
+def _wait_for_mig_state(kubectl : str, nodes : List[str],
+                        timeout_seconds : Optional[int] = None) -> dict[str, str]:
+    '''
+    Polls each node's ``nvidia.com/mig.config.state`` label until it is
+    terminal and returns ``{node: 'success' | 'failed' | 'timeout'}``. Never
+    raises: prepare treats failed/timeout as fatal while cleanup only warns, so
+    severity is the caller's decision. A transient read error counts as
+    still-pending rather than aborting a long wait.
+
+    - Arguments:
+        - timeout_seconds: None means MIG_APPLY_TIMEOUT_SECONDS, resolved at \
+            call time so tests can shrink the module constant.
+    '''
+    if timeout_seconds is None:
+        timeout_seconds = MIG_APPLY_TIMEOUT_SECONDS
+    states = dict.fromkeys(nodes, 'timeout')
+    deadline = time.monotonic() + timeout_seconds
+    pending = list(nodes)
+    while pending:
+        still = []
+        for node in pending:
+            try:
+                state = _kubectl_run(kubectl, 'get', 'node', node, '-o',
+                                     'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config\\.state}')
+            except RuntimeError:
+                still.append(node)
+                continue
+            if state in ('success', 'failed'):
+                states[node] = state
+            else:
+                still.append(node)
+        pending = still
+        if not pending or time.monotonic() > deadline:
+            break
+        time.sleep(MIG_APPLY_POLL_SECONDS)
+    return states
 
 
 class MixGpu(ExclusiveGpu):
@@ -349,12 +556,17 @@ class MixGpu(ExclusiveGpu):
 
     def prepare(self, demand : Optional[dict[str, int]] = None, kubectl : str = 'kubectl') -> None:
         '''
-        Applies the layout's MIG geometry through the GPU Operator's MIG manager:
-        publish the generated mig-parted config as a ConfigMap, record each MIG'd
-        node's previous ``nvidia.com/mig.config`` label in
-        ``MIG_RESTORE_ANNOTATION``, set the label, and wait for
-        ``nvidia.com/mig.config.state=success``. Without a MIG manager it fails
-        actionably, with the config to apply by hand.
+        Applies the layout's MIG geometry through the GPU Operator: merge the
+        generated mig-parted config into the operator's current one, publish
+        the result as ``MIG_CONFIGMAP_NAME``, point ClusterPolicy
+        ``migManager.config.name`` at it (recording the original name in
+        ``MIG_CONFIG_NAME_RESTORE_ANNOTATION``), wait for the mig-manager
+        DaemonSet to remount, then label each MIG'd node ``videoflow-<node>``
+        (recording its previous label in ``MIG_RESTORE_ANNOTATION``) and wait
+        for ``nvidia.com/mig.config.state=success``. The manager only reads the
+        ConfigMap that ClusterPolicy names — a side ConfigMap it never mounts
+        cannot carry the config. Without a MIG manager or a ClusterPolicy it
+        fails actionably, with the config to apply by hand.
         '''
         layout = self._layout
         if layout is None:
@@ -371,38 +583,69 @@ class MixGpu(ExclusiveGpu):
                 'videoflow cannot apply MIG geometry itself. Apply this nvidia-mig-parted '
                 'config to the nodes below and redeploy:\n' + config)
         namespace = managers[0][0]
+        policy = _cluster_policy(kubectl)
+        if policy is None:
+            raise RuntimeError(
+                'a MIG manager is running but no ClusterPolicy (clusterpolicies.nvidia.com) '
+                'was found — videoflow wires its config through ClusterPolicy '
+                'migManager.config.name and cannot reach a standalone mig-manager. Mount and '
+                'select this nvidia-mig-parted config yourself and redeploy:\n' + config)
+        policy_name = (policy.get('metadata') or {}).get('name', '')
+        original = (((policy.get('spec') or {}).get('migManager') or {}).get('config') or {}).get('name')
+        base_name = original or MIG_OPERATOR_DEFAULT_CONFIGMAP
+        base = _operator_configmap_yaml(kubectl, namespace, base_name)
+        if not base and base_name != MIG_OPERATOR_DEFAULT_CONFIGMAP:
+            # The named ConfigMap is gone (e.g. a prior unclean run left the
+            # policy pointing at ours and something deleted it) — fall back to
+            # the stock file so the merge keeps the operator's entries.
+            base = _operator_configmap_yaml(kubectl, namespace, MIG_OPERATOR_DEFAULT_CONFIGMAP)
+        if not base:
+            logger.warning(f'no readable mig-parted config in ConfigMap {base_name!r} — '
+                           f'the merged config will carry only videoflow\'s entries')
+        merged = _merge_mig_configs(base, config)
         configmap = {
             'apiVersion': 'v1', 'kind': 'ConfigMap',
-            'metadata': {'name': 'videoflow-mig-parted-config', 'namespace': namespace},
-            'data': {'config.yaml': config},
+            'metadata': {'name': MIG_CONFIGMAP_NAME, 'namespace': namespace},
+            'data': {'config.yaml': merged},
         }
         proc = subprocess.run([kubectl, 'apply', '-f', '-'], input = json.dumps(configmap),
                               capture_output = True, text = True, check = False)
         if proc.returncode != 0:
             raise RuntimeError(f'could not publish the mig-parted ConfigMap: {proc.stderr.strip()}')
+        annotations = (policy.get('metadata') or {}).get('annotations') or {}
+        if MIG_CONFIG_NAME_RESTORE_ANNOTATION not in annotations:
+            # Record before patching, so the restore record exists in-cluster
+            # before the mutation it undoes. Never record our own name as the
+            # "original" — a prior run that left the patch but lost its record
+            # would make cleanup a no-op forever.
+            if original == MIG_CONFIGMAP_NAME:
+                logger.warning(f'ClusterPolicy already points at {MIG_CONFIGMAP_NAME} with no '
+                               f'restore record — cleanup will restore the operator default')
+                record = MIG_CONFIG_NAME_ABSENT
+            else:
+                record = original or MIG_CONFIG_NAME_ABSENT
+            _kubectl_run(kubectl, 'annotate', 'clusterpolicies.nvidia.com', policy_name,
+                         f'{MIG_CONFIG_NAME_RESTORE_ANNOTATION}={record}')
+        if original != MIG_CONFIGMAP_NAME:
+            _point_cluster_policy_at(kubectl, policy_name, MIG_CONFIGMAP_NAME)
+        # The ClusterPolicy change swaps the DaemonSet's config volume; a node
+        # labeled before the new pods mount it is judged against the old file
+        # and stamped state=failed, which the wait below treats as fatal.
+        _wait_for_mig_manager_rollout(kubectl, namespace, MIG_CONFIGMAP_NAME)
         for node in nodes:
             self._label_node_for_mig(kubectl, node)
-        deadline = time.monotonic() + MIG_APPLY_TIMEOUT_SECONDS
-        pending = list(nodes)
-        while pending:
-            if time.monotonic() > deadline:
-                raise RuntimeError(
-                    f'MIG geometry did not reach state=success on {", ".join(pending)} within '
-                    f'{MIG_APPLY_TIMEOUT_SECONDS}s — check the MIG manager logs '
-                    f'(kubectl logs -n {namespace} -l app=nvidia-mig-manager).')
-            still = []
-            for node in pending:
-                state = _kubectl_run(kubectl, 'get', 'node', node, '-o',
-                                     'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config\\.state}')
-                if state == 'failed':
-                    raise RuntimeError(
-                        f'the MIG manager reported state=failed on node {node} — the generated '
-                        f'geometry may need adjusting; config applied:\n' + config)
-                if state != 'success':
-                    still.append(node)
-            pending = still
-            if pending:
-                time.sleep(MIG_APPLY_POLL_SECONDS)
+        states = _wait_for_mig_state(kubectl, nodes)
+        failed = sorted(node for node, state in states.items() if state == 'failed')
+        if failed:
+            raise RuntimeError(
+                f'the MIG manager reported state=failed on {", ".join(failed)} — the generated '
+                f'geometry may need adjusting; config applied:\n' + config)
+        timed_out = sorted(node for node, state in states.items() if state == 'timeout')
+        if timed_out:
+            raise RuntimeError(
+                f'MIG geometry did not reach state=success on {", ".join(timed_out)} within '
+                f'{MIG_APPLY_TIMEOUT_SECONDS}s — check the MIG manager logs '
+                f'(kubectl logs -n {namespace} -l app=nvidia-mig-manager).')
 
     def _label_node_for_mig(self, kubectl : str, node : str) -> None:
         previous = _kubectl_run(kubectl, 'get', 'node', node, '-o',
@@ -420,18 +663,31 @@ class MixGpu(ExclusiveGpu):
     def cleanup(self, kubectl : str = 'kubectl') -> None:
         '''
         Restores every node carrying ``MIG_RESTORE_ANNOTATION`` to its recorded
-        pre-videoflow ``nvidia.com/mig.config`` value (removing the label where
-        it was absent), then drops the annotation and the published ConfigMap.
+        pre-videoflow ``nvidia.com/mig.config`` value — a node whose label was
+        absent is first pointed at ``MIG_DISABLED_CONFIG`` so the manager
+        actually un-partitions the cards (removing the label triggers nothing),
+        then unlabeled — and waits for ``mig.config.state=success`` before
+        declaring a node done. Only when every node reverted does it restore
+        ClusterPolicy ``migManager.config.name`` from
+        ``MIG_CONFIG_NAME_RESTORE_ANNOTATION`` and delete the published
+        ConfigMap; a node that failed keeps its annotation, and the policy
+        patch and ConfigMap stay wired, so a retried teardown can resume.
         State lives entirely in the cluster, so this works from a teardown that
         shares nothing with the deploy that ran prepare — and is a no-op when
         prepare never ran.
         '''
-        try:
-            proc = subprocess.run([kubectl, 'get', 'nodes', '-o', 'json'],
-                                  capture_output = True, text = True, check = False)
-            nodes = json.loads(proc.stdout).get('items', []) if proc.returncode == 0 else []
-        except (FileNotFoundError, ValueError):
-            nodes = []
+        listing = _kubectl_json(kubectl, 'get', 'nodes')
+        nodes = (listing or {}).get('items') or []
+        policy = _cluster_policy(kubectl)
+        policy_name = ((policy or {}).get('metadata') or {}).get('name', '')
+        current_name = ((((policy or {}).get('spec') or {}).get('migManager') or {})
+                        .get('config') or {}).get('name')
+        # The disabled config must exist in the file the manager currently
+        # mounts: ours while the policy still points at the merged copy, the
+        # stock all-disabled once an earlier partial cleanup restored it.
+        disabled = MIG_DISABLED_CONFIG if current_name == MIG_CONFIGMAP_NAME else 'all-disabled'
+        restored : dict[str, str] = {}     # node -> recorded previous label value
+        unrestored = False
         for node in nodes:
             meta = node.get('metadata') or {}
             annotations = meta.get('annotations') or {}
@@ -440,18 +696,55 @@ class MixGpu(ExclusiveGpu):
             name = meta.get('name', '')
             previous = annotations[MIG_RESTORE_ANNOTATION]
             try:
-                if previous:
-                    _kubectl_run(kubectl, 'label', 'node', name, '--overwrite',
-                                 f'{MIG_CONFIG_LABEL}={previous}')
-                else:
+                _kubectl_run(kubectl, 'label', 'node', name, '--overwrite',
+                             f'{MIG_CONFIG_LABEL}={previous or disabled}')
+                restored[name] = previous
+            except RuntimeError as e:
+                # Best-effort per node: one stuck node must not abort the rest.
+                unrestored = True
+                logger.warning(f'mix cleanup could not restore node {name}: {e}')
+        states = _wait_for_mig_state(kubectl, sorted(restored)) if restored else {}
+        for name in sorted(restored):
+            if states.get(name) != 'success':
+                unrestored = True
+                logger.warning(
+                    f'node {name} did not reach mig.config.state=success while reverting '
+                    f'(state: {states.get(name)}) — its restore annotation is kept; check the '
+                    f'MIG manager logs and re-run videoflow teardown --gpu-mode mix to retry.')
+                continue
+            try:
+                if not restored[name]:
+                    # The label was absent before videoflow; the disabled config
+                    # has done its job, so the label itself can go now.
                     _kubectl_run(kubectl, 'label', 'node', name, f'{MIG_CONFIG_LABEL}-')
                 _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_RESTORE_ANNOTATION}-')
             except RuntimeError as e:
-                # Best-effort per node: one stuck node must not abort the rest.
-                logger.warning(f'mix cleanup could not restore node {name}: {e}')
+                unrestored = True
+                logger.warning(f'mix cleanup could not finish restoring node {name}: {e}')
+        if unrestored:
+            logger.warning(
+                f'mix cleanup left the ClusterPolicy patch and the {MIG_CONFIGMAP_NAME} '
+                f'ConfigMap in place — a retried teardown needs them to finish reverting '
+                f'the nodes above.')
+            return
+        if policy is not None:
+            recorded = ((policy.get('metadata') or {}).get('annotations') or {}) \
+                .get(MIG_CONFIG_NAME_RESTORE_ANNOTATION)
+            if recorded:
+                # Restoring "absent" by setting the operator default explicitly
+                # is semantically identical and avoids a JSON-patch remove op
+                # racing CRD defaulting.
+                target = MIG_OPERATOR_DEFAULT_CONFIGMAP if recorded == MIG_CONFIG_NAME_ABSENT else recorded
+                try:
+                    _point_cluster_policy_at(kubectl, policy_name, target)
+                    _kubectl_run(kubectl, 'annotate', 'clusterpolicies.nvidia.com', policy_name,
+                                 f'{MIG_CONFIG_NAME_RESTORE_ANNOTATION}-')
+                except RuntimeError as e:
+                    logger.warning(f'mix cleanup could not restore ClusterPolicy '
+                                   f'migManager.config.name: {e}')
         for namespace, _pod in self._mig_manager_pods(kubectl):
             try:
-                _kubectl_run(kubectl, 'delete', 'configmap', 'videoflow-mig-parted-config',
+                _kubectl_run(kubectl, 'delete', 'configmap', MIG_CONFIGMAP_NAME,
                              '-n', namespace, '--ignore-not-found')
             except RuntimeError as e:
                 logger.warning(f'mix cleanup could not delete the mig-parted ConfigMap: {e}')

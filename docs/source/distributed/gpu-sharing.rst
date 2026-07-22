@@ -111,11 +111,20 @@ Feature Discovery labels — GFD is required for mix):
    demand (e.g. four 10 GiB detectors land as ``1g.10gb`` slices of one A100).
    All replicas of one node use one profile, so the node's pods request a single
    extended resource (``nvidia.com/mig-1g.10gb``).
-3. The geometry is applied through the GPU Operator's MIG manager (a generated
-   ``nvidia-mig-parted`` config + the ``nvidia.com/mig.config`` node label) and
-   restored at ``videoflow teardown --gpu-mode mix`` — the previous label value
-   is recorded on the node itself, so teardown needs no state from the deploy.
-   Without a MIG manager, preflight prints the exact config to apply by hand.
+3. The geometry is applied through the GPU Operator's MIG manager: videoflow
+   merges its generated ``nvidia-mig-parted`` entries into the operator's
+   current config, publishes the result as the ``videoflow-mig-parted-config``
+   ConfigMap, points ClusterPolicy ``migManager.config.name`` at it (the MIG
+   manager only reads the ConfigMap that field names), waits for the
+   mig-manager DaemonSet to remount, then sets each node's
+   ``nvidia.com/mig.config`` label and waits for ``mig.config.state=success``.
+   ``videoflow teardown --gpu-mode mix`` reverts the geometry, verifies the
+   same state, and restores the policy — the pre-videoflow label and config
+   name are recorded in cluster annotations, so teardown needs no state from
+   the deploy. Without a MIG manager or ClusterPolicy, preflight prints the
+   exact config to apply by hand. Note: if ClusterPolicy is managed by GitOps
+   (ArgoCD/Flux), the reconciler will revert videoflow's patch mid-run — keep
+   ``migManager.config.name`` unmanaged, or run mix with a paused sync.
 
 A node that declares nothing gets a whole physical device — a plain
 ``device_type=GPU`` node means the same thing in both modes, so flows do not

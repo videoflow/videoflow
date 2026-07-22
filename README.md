@@ -496,8 +496,12 @@ inventory (from GPU Feature Discovery labels): whole cards are reserved for the
 spanners, the sharers are packed into MIG slices of the smallest fitting profile
 (each an *exclusive* slice — the card is shared, the slice is not, with hard
 memory/fault isolation), and the geometry is applied through the GPU Operator's
-MIG manager and restored at teardown. Without the MIG manager, preflight prints
-the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
+MIG manager: videoflow merges its generated `nvidia-mig-parted` entries into the
+operator's current config, points ClusterPolicy `migManager.config.name` at the
+merged copy for the run, and restores both the policy and each node's previous
+`nvidia.com/mig.config` label at teardown. Without the MIG manager (or its
+ClusterPolicy), preflight prints the exact `nvidia-mig-parted` config to apply
+by hand. `gpu_memory_gib` and
 `gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
 slices, so a node declares either a fraction of one device or whole devices.
 Under every other mode `gpu_memory_gib` is simply unused (the node gets a whole

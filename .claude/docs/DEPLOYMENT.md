@@ -139,8 +139,11 @@ Two modes (`deploy/gpu.py` strategy registry). `exclusive` (default): units are 
 devices, `gpu_count > 1` spans devices on one host, sharing is inexpressible. `mix`: nodes
 declaring `gpu_memory_gib` get solver-chosen exclusive MIG slices (`deploy/mig.py` computes the
 layout from GFD-label inventory; the strategy's `resolve_specs` hook stamps each sharer's profile
-into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry via the GPU
-Operator's `nvidia.com/mig.config` label, recording restore state in a node annotation). The
+into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry through the GPU
+Operator: merge the generated mig-parted config into the operator's, patch ClusterPolicy
+`migManager.config.name` at the merged copy, wait for the mig-manager DaemonSet rollout, label
+nodes `nvidia.com/mig.config` and wait for `mig.config.state=success` — teardown verifies the
+same state before restoring the policy, with restore records in node/ClusterPolicy annotations). The
 deploy-level `--gpu-resource-name` covers clusters advertising whole devices under another name;
 there is no node-level resource-name knob. The full cluster-preparation walkthrough is in
 [`README.md`](../../README.md).
