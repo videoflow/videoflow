@@ -120,7 +120,9 @@ def test_gpu_preflight_reports_both_problems_with_fixes(monkeypatch):
 
 
 def test_gpu_preflight_ok(monkeypatch):
-    run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box', 'allocatable': '1'})
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/gpu': '1'}))})
     monkeypatch.setattr(subprocess, 'run', run)
     assert cluster.gpu_preflight() == []
 
@@ -138,7 +140,9 @@ def test_gpu_preflight_unreachable_cluster_says_so(monkeypatch):
 def test_gpu_preflight_flags_opt_in_nvidia_runtimeclass(monkeypatch):
     '''k3s registers an 'nvidia' RuntimeClass but leaves runc the node default, so a
     GPU pod without runtimeClassName schedules and then runs with no device.'''
-    run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box', 'allocatable': '1',
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/gpu': '1'})),
                         'get runtimeclass': 'crun nvidia nvidia-experimental'})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight()
@@ -154,7 +158,8 @@ def test_gpu_preflight_reports_demand_over_capacity(monkeypatch):
     scheduler would bind one pod and strand the rest Pending — preflight must say
     so with the exact numbers, before anything is applied.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'allocatable': '1'})
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/gpu': '1'}))})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/gpu': 9})
@@ -168,11 +173,31 @@ def test_gpu_preflight_reports_demand_over_capacity(monkeypatch):
                                  demand = {'nvidia.com/gpu': 1}) == []
 
 
+def test_gpu_preflight_subtracts_units_in_use(monkeypatch):
+    '''Multi-tenant pool: units held by running pods are not grantable, so demand
+    is compared against free capacity and the message shows the occupancy math.'''
+    pool = _named_nodes_json(('gpu-box', {}, {'nvidia.com/gpu': '2'}))
+    pods = _pods_json(('gpu-box', 'Running', [{'nvidia.com/gpu': '1'}]))
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
+                        'gpu-pool=true -o json': pool, 'pods -A': pods})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                     demand = {'nvidia.com/gpu': 2})
+    assert len(problems) == 1
+    assert 'only 1 free' in problems[0]
+    assert '1 of 2 allocatable in use' in problems[0]
+    # A demand that fits the free capacity is clean.
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                 demand = {'nvidia.com/gpu': 1}) == []
+
+
 def test_gpu_preflight_checks_each_requested_resource(monkeypatch):
     '''A node that requests a MIG profile the cluster does not expose must be
     reported against that resource name, not nvidia.com/gpu.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'nvidia\\.com/gpu}': '2'})
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/gpu': '2'}))})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/gpu': 2,
@@ -203,8 +228,10 @@ def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
     only the per-pod check can say why.'''
     physical = _nodes_json((_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}),
                            (_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}))
+    pool = _named_nodes_json(('node-a', _PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}),
+                             ('node-b', _PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}))
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'allocatable': '2 2', 'nodes -o json': physical})
+                        'gpu-pool=true -o json': pool, 'nodes -o json': physical})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/gpu': 3},
@@ -215,8 +242,10 @@ def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
     # A big-enough single node is clean.
     big = _nodes_json(({'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
                         'nvidia.com/gpu.count': '4'}, {'nvidia.com/gpu': '4'}))
+    big_pool = _named_nodes_json(('node-big', {'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
+                                               'nvidia.com/gpu.count': '4'}, {'nvidia.com/gpu': '4'}))
     run_big, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                            'allocatable': '4', 'nodes -o json': big})
+                            'gpu-pool=true -o json': big_pool, 'nodes -o json': big})
     monkeypatch.setattr(subprocess, 'run', run_big)
     assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                  demand = {'nvidia.com/gpu': 3},
@@ -228,7 +257,8 @@ def test_gpu_preflight_rejects_combining_mig_slices(monkeypatch):
     of them, so a multi-slice single-pod claim is impossible no matter what the
     cluster has, and the problem carries the fatal marker the CLI hard-errors on.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'allocatable': '4'})
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/mig-1g.10gb': '4'}))})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/mig-1g.10gb': 2},
@@ -247,7 +277,9 @@ def test_gpu_preflight_rejects_multi_gpu_on_a_time_sliced_pool(monkeypatch):
                            'nvidia.com/gpu.sharing-strategy': 'time-slicing'},
                           {'nvidia.com/gpu': '4'}))
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'allocatable': '4', 'nodes -o json': sliced})
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'nvidia.com/gpu': '4'})),
+                        'nodes -o json': sliced})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/gpu': 2},
@@ -266,7 +298,8 @@ def test_gpu_preflight_notes_an_unclassifiable_resource(monkeypatch):
     '''No GFD labels (or a non-NVIDIA resource): preflight cannot prove the units
     are whole devices, so it keeps the numeric checks and says what it assumed.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                        'allocatable': '4'})
+                        'gpu-pool=true -o json': _named_nodes_json(
+                            ('gpu-box', {}, {'amd.com/gpu': '4'}))})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'amd.com/gpu': 2},

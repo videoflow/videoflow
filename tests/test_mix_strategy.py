@@ -142,6 +142,38 @@ def test_mix_preflight_reports_unapplied_geometry_with_the_config(monkeypatch):
     assert strategy.preflight_problems(gpu_runtime_class = 'nvidia') == []
 
 
+def test_mix_preflight_checks_spanner_capacity(monkeypatch):
+    '''Bug #7: the slice check alone passed while the device plugin was broken or
+    other workloads held the pool's whole cards — spanner demand must be compared
+    against free whole-device capacity too.'''
+    _a100_inventory(monkeypatch, cards = 3)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('span', gpu_count = 2),
+                            _gpu_spec('share', gpu_memory_gib = 10)])
+    monkeypatch.setattr(cluster, 'allocatable_gpus', lambda kubectl, resource: 1)  # slices applied
+    monkeypatch.setattr(cluster, 'nvidia_runtimeclass', lambda kubectl: None)
+    monkeypatch.setattr(cluster, 'gpu_units_in_use', lambda kubectl = 'kubectl': {})
+
+    def _mostly_taken(kubectl = 'kubectl', resource = 'nvidia.com/gpu',
+                      in_use = None, exclude_nodes = frozenset()):
+        return cluster.GpuAvailability(per_node_allocatable = {'gpu-a': 2},
+                                       per_node_in_use = {'gpu-a': 1})
+    monkeypatch.setattr(cluster, 'gpu_availability', _mostly_taken)
+    problems = strategy.preflight_problems(demand = {'nvidia.com/gpu': 2,
+                                                     'nvidia.com/mig-1g.10gb': 1})
+    assert len(problems) == 1
+    assert 'nvidia.com/gpu' in problems[0] and 'only 1 free' in problems[0]
+
+    # No advertiser at all: the broken/absent device-plugin case.
+    monkeypatch.setattr(cluster, 'gpu_availability',
+                        lambda kubectl = 'kubectl', resource = 'nvidia.com/gpu',
+                               in_use = None, exclude_nodes = frozenset():
+                        cluster.GpuAvailability())
+    problems = strategy.preflight_problems(demand = {'nvidia.com/gpu': 2,
+                                                     'nvidia.com/mig-1g.10gb': 1})
+    assert len(problems) == 1 and 'nvidia-device-plugin' in problems[0]
+
+
 # -- prepare/cleanup lifecycle ---------------------------------------------
 
 def test_prepare_without_a_mig_manager_fails_with_the_config(monkeypatch):

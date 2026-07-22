@@ -9,6 +9,7 @@ measured-partitioning strategies need.
 '''
 from __future__ import absolute_import, division, print_function
 
+import json
 import subprocess
 
 import pytest
@@ -135,8 +136,10 @@ def _fake_kubectl(monkeypatch, outputs):
 
 
 def test_preflight_delegates_capacity_math_to_the_strategy(monkeypatch):
+    pool = json.dumps({'items': [{'metadata': {'name': 'gpu-box', 'labels': {}},
+                                  'status': {'allocatable': {'nvidia.com/gpu': '2'}}}]})
     _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                                'allocatable': '2'})
+                                'gpu-pool=true -o json': pool})
     problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'exclusive')
     assert any('demands 9' in p for p in problems)
 

@@ -28,7 +28,7 @@ import json
 import logging
 import subprocess
 import time
-from typing import Any, List, Optional
+from typing import AbstractSet, Any, List, Optional
 
 from ..core.compiler import NodeSpec
 from ..utils import plugins
@@ -64,6 +64,54 @@ def resolve_gpu_resource(spec : NodeSpec, default : Optional[str] = None) -> str
     (internal — only a GPU strategy sets it, e.g. ``mix`` assigning a MIG profile),
     else the deploy default (``--gpu-resource-name``), else ``nvidia.com/gpu``.'''
     return spec.gpu_resource_name or default or DEFAULT_GPU_RESOURCE
+
+def _capacity_problems(kubectl : str, demand : Optional[dict[str, int]],
+                       exclude_nodes : AbstractSet[str] = frozenset(),
+                       in_use : Optional[dict[str, dict[str, int]]] = None) -> List[str]:
+    '''
+    Demand-vs-free-capacity problems for whole-unit extended-resource claims,
+    shared by the exclusive preflight and mix's spanner check. Free capacity is
+    pool allocatable minus what running pods already hold — raw allocatable lies
+    in a multi-tenant cluster, where the scheduler will not grant units another
+    workload owns. ``exclude_nodes`` drops nodes the caller has ruled out of
+    planning (mix: nodes owned by other flows) so the arithmetic matches what
+    will actually be deployed; ``in_use`` takes a pre-fetched
+    ``cluster.gpu_units_in_use()`` so multi-resource callers list pods once.
+    '''
+    # Function-level: cluster.py imports this module at module scope (for
+    # get_gpu_mode), so importing it back at module scope here would be a cycle.
+    from .cluster import gpu_availability, gpu_units_in_use
+
+    if in_use is None:
+        in_use = gpu_units_in_use(kubectl)
+    problems : List[str] = []
+    for resource in sorted(demand) if demand else [DEFAULT_GPU_RESOURCE]:
+        availability = gpu_availability(kubectl, resource, in_use = in_use,
+                                        exclude_nodes = exclude_nodes)
+        if availability.allocatable == 0:
+            if resource == DEFAULT_GPU_RESOURCE:
+                problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device '
+                                'plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/'
+                                'k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml')
+            else:
+                problems.append(f'no node advertises {resource} — the flow requests it '
+                                f'(--gpu-resource-name) but the cluster does not expose it')
+        elif demand and demand[resource] > availability.free:
+            needed = demand[resource]
+            if availability.in_use:
+                problems.append(
+                    f'flow demands {needed} x {resource} but the pool has only '
+                    f'{availability.free} free ({availability.in_use} of '
+                    f'{availability.allocatable} allocatable in use by running pods) — '
+                    f'{needed - availability.free} pod(s) will stay Pending and the flow will '
+                    f'stall. Reduce GPU replicas, wait for the competing workloads, or add capacity')
+            else:
+                problems.append(
+                    f'flow demands {needed} x {resource} but the cluster has only '
+                    f'{availability.allocatable} allocatable — {needed - availability.allocatable} '
+                    f'pod(s) will stay Pending and the flow will stall. Reduce GPU nodes/replicas, '
+                    f'or enable device-plugin time-slicing (dev clusters; see the GPU sharing docs)')
+    return problems
 
 class GpuStrategy:
     '''
@@ -168,30 +216,10 @@ class ExclusiveGpu(GpuStrategy):
                         max_per_pod : Optional[dict[str, int]] = None) -> List[str]:
         # Function-level: cluster.py imports this module at module scope (for
         # get_gpu_mode), so importing it back at module scope here would be a cycle.
-        from .cluster import (
-            allocatable_gpus,
-            classify_gpu_resource,
-            max_allocatable_gpus_per_node,
-            nvidia_runtimeclass,
-        )
+        from .cluster import classify_gpu_resource, gpu_availability, gpu_units_in_use, nvidia_runtimeclass
 
-        problems = []
-        for resource in sorted(demand) if demand else [DEFAULT_GPU_RESOURCE]:
-            capacity = allocatable_gpus(kubectl, resource)
-            if capacity == 0:
-                if resource == DEFAULT_GPU_RESOURCE:
-                    problems.append('no node advertises nvidia.com/gpu — install the NVIDIA device '
-                                    'plugin: kubectl apply -f https://raw.githubusercontent.com/NVIDIA/'
-                                    'k8s-device-plugin/v0.16.2/deployments/static/nvidia-device-plugin.yml')
-                else:
-                    problems.append(f'no node advertises {resource} — the flow requests it '
-                                    f'(--gpu-resource-name) but the cluster does not expose it')
-            elif demand and demand[resource] > capacity:
-                problems.append(
-                    f'flow demands {demand[resource]} x {resource} but the cluster has only '
-                    f'{capacity} allocatable — {demand[resource] - capacity} pod(s) will stay '
-                    f'Pending and the flow will stall. Reduce GPU nodes/replicas, or enable '
-                    f'device-plugin time-slicing (dev clusters; see the GPU sharing docs)')
+        in_use = gpu_units_in_use(kubectl)
+        problems = _capacity_problems(kubectl, demand, in_use = in_use)
         # Per-pod bound (RFC 0003): all of one replica's gpu_count devices must sit
         # on ONE host, so the cluster total above is necessary but not sufficient.
         # And they must be whole physical devices: a multi-unit claim against a MIG
@@ -227,14 +255,15 @@ class ExclusiveGpu(GpuStrategy):
                     f'advertising nodes) — assuming its units are whole physical devices. '
                     f'If this pool is MIG- or time-sliced, gpu_count = {per_pod} will not '
                     f'behave as a multi-GPU grant.')
-            biggest = max_allocatable_gpus_per_node(kubectl, resource)
-            # biggest == 0 means the resource is unadvertised, already reported above.
-            if biggest and per_pod > biggest:
+            availability = gpu_availability(kubectl, resource, in_use = in_use)
+            # allocatable == 0 means the resource is unadvertised, already reported above.
+            if availability.allocatable and per_pod > availability.max_free_on_node:
+                held = ' (running pods hold the rest)' if availability.in_use else ''
                 problems.append(
                     f'a node requests {per_pod} x {resource} in a single pod but the largest '
-                    f'cluster node has only {biggest} allocatable — all of one replica\'s GPUs '
-                    f'must sit on one Kubernetes host, so the cluster total is irrelevant. '
-                    f'Fix: add a node with >= {per_pod} GPUs, or reduce gpu_count.')
+                    f'cluster node has only {availability.max_free_on_node} free{held} — all of '
+                    f'one replica\'s GPUs must sit on one Kubernetes host, so the cluster total '
+                    f'is irrelevant. Fix: add a node with >= {per_pod} GPUs, or reduce gpu_count.')
         if not gpu_runtime_class:
             nvidia_rc = nvidia_runtimeclass(kubectl)
             if nvidia_rc:
@@ -538,6 +567,15 @@ class MixGpu(ExclusiveGpu):
                     f'apply it via the GPU Operator MIG manager if present; otherwise apply '
                     f'this nvidia-mig-parted config and retry:\n'
                     + layout_to_mig_parted_config(layout))
+        # Spanner demand is claimed exclusive-style, so the whole-device check
+        # applies before prepare() too: applying geometry only *shrinks* whole-card
+        # capacity (a MIG'd card retires its units), so demand exceeding today's
+        # free pool can never be satisfied afterwards — and 0 allocatable is the
+        # broken/absent device-plugin case the slice check cannot see.
+        whole = {resource: units for resource, units in sorted((demand or {}).items())
+                 if resource not in layout.slice_demand}
+        if whole:
+            problems.extend(_capacity_problems(kubectl, whole))
         if not gpu_runtime_class:
             nvidia_rc = nvidia_runtimeclass(kubectl)
             if nvidia_rc:
