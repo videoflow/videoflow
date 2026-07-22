@@ -83,15 +83,14 @@ def test_bad_descriptor_shapes_rejected():
             ComponentDescriptor.from_dict(d)
 
 
-def test_descriptor_resources_gpu_parses_count_and_resource_name():
-    d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2, 'resourceName': 'nvidia.com/mig-3g.40gb'}}))
+def test_descriptor_resources_gpu_parses_count():
+    d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2}}))
     assert d.gpu_count == 2
-    assert d.gpu_resource_name == 'nvidia.com/mig-3g.40gb'
 
 
 def test_descriptor_without_resources_defaults_to_one_gpu():
     d = ComponentDescriptor.from_dict(_desc())
-    assert d.gpu_count == 1 and d.gpu_resource_name is None
+    assert d.gpu_count == 1
 
 
 def test_descriptor_rejects_bad_gpu_resources():
@@ -99,10 +98,37 @@ def test_descriptor_rejects_bad_gpu_resources():
         {'gpu': {'count': 0}},
         {'gpu': {'count': 1.5}},
         {'gpu': {'count': True}},
-        {'gpu': {'resourceName': ''}},
     ]:
         with pytest.raises(ValueError, match = 'resources.gpu'):
             ComponentDescriptor.from_dict(_desc(resources = resources))
+
+
+def test_descriptor_resources_gpu_parses_memory_gib():
+    d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'memoryGiB': 20}}))
+    assert d.gpu_memory_gib == 20
+    assert ComponentDescriptor.from_dict(_desc()).gpu_memory_gib is None
+
+
+def test_descriptor_rejects_bad_memory_gib():
+    for gpu in [{'memoryGiB': 0}, {'memoryGiB': -1}, {'memoryGiB': True}, {'memoryGiB': 'lots'}]:
+        with pytest.raises(ValueError, match = 'memoryGiB'):
+            ComponentDescriptor.from_dict(_desc(resources = {'gpu': gpu}))
+    # A memory demand and a multi-device span are mutually exclusive (RFC 0004).
+    with pytest.raises(ValueError, match = 'mutually exclusive'):
+        ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2, 'memoryGiB': 20}}))
+    # ...and a memory demand needs the gpu device declared.
+    with pytest.raises(ValueError, match = "requires 'gpu'"):
+        ComponentDescriptor.from_dict(_desc(device = ['cpu'], resources = {'gpu': {'memoryGiB': 20}}))
+
+
+def test_descriptor_rejects_gpu_resources_on_non_processor_roles():
+    # Bug 5 regression: a producer/consumer descriptor declaring a GPU need used
+    # to validate cleanly and mean nothing — an underprovisioned pod waiting to
+    # happen. Now it is a load-time error.
+    for role in ('producer', 'consumer'):
+        with pytest.raises(ValueError, match = 'processor components only'):
+            ComponentDescriptor.from_dict(_desc(role = role,
+                                                resources = {'gpu': {'count': 2}}))
 
 
 def test_descriptor_rejects_multi_gpu_without_gpu_device():

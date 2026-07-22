@@ -109,8 +109,8 @@
               "type": "object",
               "additionalProperties": false,
               "properties": {
-                "count": {"type": "integer", "minimum": 1, "description": "Whole GPUs each replica needs, all granted to the one worker pod and visible as devices 0..count-1 (RFC 0003). Default 1. A graph-side gpu_count= overrides this default."},
-                "resourceName": {"type": "string", "description": "Default Kubernetes extended-resource name to request, e.g. a MIG profile 'nvidia.com/mig-1g.10gb'. Overridable per node and per deploy."}
+                "count": {"type": "integer", "minimum": 1, "description": "Whole physical GPUs each replica needs, all granted to the one worker pod and visible as devices 0..count-1 (RFC 0003). Default 1. A graph-side gpu_count= overrides this default. Processor components only."},
+                "memoryGiB": {"type": "number", "exclusiveMinimum": 0, "description": "GPU memory the component needs, in GiB (RFC 0004). Under --gpu-mode mix each replica gets an exclusive MIG slice of at least this size; other modes grant a whole device. Mutually exclusive with count > 1 (a model cannot span MIG slices). A graph-side gpu_memory_gib= overrides this default."}
               }
             }
           }

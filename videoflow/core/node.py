@@ -259,30 +259,49 @@ class ProcessorNode(Node):
         - join_policy (JoinPolicy | dict): for multi-parent nodes, how to handle a \
             join group that never completes (timeout + missing policy). Defaults per \
             flow type when unset.
-        - gpu_count (int): GPUs each replica requests on Kubernetes (``device_type=GPU`` \
-            only; ignored locally). Whole devices — the resource is not overcommittable.
-        - gpu_resource_name (str): Kubernetes extended-resource name each replica \
-            requests, when the cluster does not expose plain ``nvidia.com/gpu`` — e.g. \
-            a MIG profile (``nvidia.com/mig-1g.10gb``) or a renamed time-sliced \
-            resource (``nvidia.com/gpu.shared``). None defers to the deploy-time \
-            default (``--gpu-resource-name``, else ``nvidia.com/gpu``).
+        - gpu_count (int): whole physical GPUs each replica is granted \
+            (``device_type=GPU`` only — a positive count on a CPU node is a build \
+            error). ``N > 1`` grants N whole devices on one host, visible as \
+            ``cuda:0..N-1`` (RFC 0003); locally the engine partitions the host's \
+            devices to match.
+        - gpu_memory_gib (int | float): GPU memory this node needs, in GiB \
+            (``device_type=GPU`` only). Under ``--gpu-mode mix`` each replica gets \
+            an exclusive MIG slice of at least this size, chosen by the layout \
+            solver — the card is shared, the slice is not (RFC 0004). Other modes \
+            ignore it (the node gets a whole device). Mutually exclusive with \
+            ``gpu_count > 1``: a model cannot span MIG slices, so a node either \
+            declares a fraction of one device or whole devices, never both.
         - name (str): see ``Node``.
     '''
     def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
                 partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
-                gpu_count : int = 1, gpu_resource_name : Optional[str] = None, **kwargs : Any) -> None:
+                gpu_count : int = 1, gpu_memory_gib : int | float | None = None,
+                **kwargs : Any) -> None:
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
         if not isinstance(gpu_count, int) or isinstance(gpu_count, bool) or gpu_count < 1:
             raise ValueError(f'gpu_count must be a positive integer, got {gpu_count!r}')
+        if gpu_count > 1 and device_type != GPU:
+            raise ValueError(f'gpu_count={gpu_count} requires device_type=GPU, got '
+                             f'{device_type!r} — a CPU node cannot hold a GPU grant. '
+                             f'Pass device_type=GPU, or drop gpu_count.')
         self._gpu_count = gpu_count
-        if gpu_resource_name is not None and (not isinstance(gpu_resource_name, str)
-                                              or not gpu_resource_name.strip()):
-            raise ValueError(f'gpu_resource_name must be a non-empty string or None, '
-                             f'got {gpu_resource_name!r}')
-        self._gpu_resource_name = gpu_resource_name
+        if gpu_memory_gib is not None:
+            if isinstance(gpu_memory_gib, bool) or not isinstance(gpu_memory_gib, (int, float)) \
+                    or gpu_memory_gib <= 0:
+                raise ValueError(f'gpu_memory_gib must be a positive number, got {gpu_memory_gib!r}')
+            if device_type != GPU:
+                raise ValueError(f'gpu_memory_gib={gpu_memory_gib} requires device_type=GPU, got '
+                                 f'{device_type!r} — a memory demand only means something on a GPU. '
+                                 f'Pass device_type=GPU, or drop gpu_memory_gib.')
+            if gpu_count > 1:
+                raise ValueError(f'gpu_memory_gib and gpu_count={gpu_count} are mutually exclusive: '
+                                 f'a model cannot span MIG slices, so a node declares either a '
+                                 f'fraction of one device (gpu_memory_gib) or whole devices '
+                                 f'(gpu_count > 1), never both.')
+        self._gpu_memory_gib = gpu_memory_gib
         self._partition_by = partition_by
         # Stored as a plain dict so get_params() stays JSON-serializable.
         if isinstance(join_policy, JoinPolicy):
@@ -306,13 +325,13 @@ class ProcessorNode(Node):
 
     @property
     def gpu_count(self) -> int:
-        '''GPUs each replica requests on Kubernetes (meaningful only when ``device_type`` is GPU).'''
+        '''Whole physical GPUs each replica is granted (``device_type=GPU`` only).'''
         return self._gpu_count
 
     @property
-    def gpu_resource_name(self) -> Optional[str]:
-        '''Extended-resource name each replica requests, or None for the deploy default.'''
-        return self._gpu_resource_name
+    def gpu_memory_gib(self) -> int | float | None:
+        '''GPU memory demand in GiB (drives the ``mix`` strategy's MIG slice choice), or None.'''
+        return self._gpu_memory_gib
 
     @property
     def partition_by(self) -> Optional[str]:
@@ -326,6 +345,14 @@ class ProcessorNode(Node):
     def change_device(self, device_type : str) -> None:
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
+        if device_type != GPU and self._gpu_count > 1:
+            raise ValueError(f'cannot change device_type to {device_type!r}: this node holds a '
+                             f'gpu_count={self._gpu_count} grant, which only device_type=GPU '
+                             f'supports. Rebuild the node with gpu_count=1 to run it on CPU.')
+        if device_type != GPU and self._gpu_memory_gib is not None:
+            raise ValueError(f'cannot change device_type to {device_type!r}: this node declares '
+                             f'gpu_memory_gib={self._gpu_memory_gib}, which only device_type=GPU '
+                             f'supports. Rebuild the node without gpu_memory_gib to run it on CPU.')
         self._device_type = device_type
 
     def process(self, inp : Any) -> Any:

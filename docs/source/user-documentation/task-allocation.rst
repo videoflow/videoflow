@@ -54,10 +54,12 @@ On Kubernetes this makes the node's pod request ``nvidia.com/gpu`` (``gpu_count`
 per replica, default 1) and adds a GPU-pool ``nodeSelector`` and toleration, so the
 pod lands on a GPU node. The NVIDIA device plugin then exposes the GPU to the
 container through ``CUDA_VISIBLE_DEVICES``; your node code is responsible for
-actually placing its model/computation on the GPU. On clusters that expose a
-different extended resource (a MIG profile, a renamed time-sliced resource), set
-``gpu_resource_name='nvidia.com/mig-1g.10gb'`` on the node or pass a deploy-wide
-default with ``--gpu-resource-name``.
+actually placing its model/computation on the GPU. On clusters whose whole
+devices are advertised under a different extended-resource name
+(``amd.com/gpu``), pass a deploy-wide ``--gpu-resource-name``. To *share* a
+MIG-capable card with other components, declare the node's memory demand
+(``gpu_memory_gib=10``) and deploy with ``--gpu-mode mix`` — see
+:doc:`../distributed/gpu-sharing`.
 
 You can combine GPU scheduling with ``nb_tasks`` to run several GPU replicas — each
 replica pod requests its own GPUs.

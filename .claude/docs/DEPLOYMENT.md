@@ -135,19 +135,28 @@ The contract a GPU node produces in its manifest: `resources.limits: {nvidia.com
 `nodeSelector` on `videoflow.io/gpu-pool: "true"`, and a toleration for the `nvidia.com/gpu` taint.
 Deploy preflights both the label and the taint — it warns but does not block.
 
-`--gpu-mode shared` drops the resource limit for dev clusters using time-slicing.
-`gpu_resource_name` (per node) or `--gpu-resource-name` (per deploy) targets MIG profiles or
-renamed time-sliced resources. The full cluster-preparation walkthrough is in
+Two modes (`deploy/gpu.py` strategy registry). `exclusive` (default): units are whole physical
+devices, `gpu_count > 1` spans devices on one host, sharing is inexpressible. `mix`: nodes
+declaring `gpu_memory_gib` get solver-chosen exclusive MIG slices (`deploy/mig.py` computes the
+layout from GFD-label inventory; the strategy's `resolve_specs` hook stamps each sharer's profile
+into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry via the GPU
+Operator's `nvidia.com/mig.config` label, recording restore state in a node annotation). The
+deploy-level `--gpu-resource-name` covers clusters advertising whole devices under another name;
+there is no node-level resource-name knob. The full cluster-preparation walkthrough is in
 [`README.md`](../../README.md).
 
 Multi-GPU nodes (`gpu_count > 1`, RFC 0003): preflight additionally checks the **largest single
 node's** allocatable count (`cluster.max_allocatable_gpus_per_node` vs `manifests.gpu_max_per_pod`
-— all of one replica's devices must sit on one host, so the cluster total is not sufficient),
-flags `gpu_count > 1` against a `mig-` resource (slices can't be combined into one model), and
-warns that shared mode ignores the count. `run-local` partitions the host's visible devices into
-disjoint `CUDA_VISIBLE_DEVICES` blocks per GPU replica (wrap-around with a warning when
-oversubscribed; nothing is set on a GPU-less host). Non-goals, deliberately: injecting `--gpus`
-into the docker-run path for native components, and any local enforcement beyond cooperative
+— all of one replica's devices must sit on one host, so the cluster total is not sufficient) and
+**classifies the resource** (`cluster.classify_gpu_resource`, from GFD labels): a multi-unit claim
+against a MIG or time-sliced pool is fatal regardless of `--strict-preflight`
+(`gpu.IMPOSSIBLE_GPU_REQUEST` marker), an unclassifiable pool gets an assuming-physical note, and
+`manifests.validate_gpu_specs` hard-errors a `mig-*` resolved name at render. `run-local`
+partitions the host's visible devices into disjoint `CUDA_VISIBLE_DEVICES` blocks per GPU replica
+(wrap-around with per-replica warnings when oversubscribed, `VF_GPU_COUNT` reporting the
+*delivered* count; nothing is set on a GPU-less host; docker-run native components get neither
+devices nor `VF_GPU_*`). Non-goals, deliberately: injecting `--gpus` into the docker-run path for
+native components, local MIG addressing, and any local enforcement beyond cooperative
 `CUDA_VISIBLE_DEVICES` masking.
 
 ## Infrastructure ownership

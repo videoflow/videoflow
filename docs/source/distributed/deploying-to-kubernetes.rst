@@ -233,9 +233,10 @@ How graph concepts map onto Kubernetes
 |                                       | not autoscaled                                              |
 +---------------------------------------+-------------------------------------------------------------+
 | ``device_type='gpu'``                 | pod requests ``gpu_count`` x ``nvidia.com/gpu`` (or         |
-|                                       | ``gpu_resource_name``) + GPU-pool nodeSelector; exclusive — |
-|                                       | see :doc:`gpu-sharing` (``--gpu-mode shared`` omits the     |
-|                                       | request so pods share the physical GPUs)                    |
+|                                       | ``--gpu-resource-name``) + GPU-pool nodeSelector; whole     |
+|                                       | physical devices — see :doc:`gpu-sharing`                   |
+|                                       | (``--gpu-mode mix`` packs ``gpu_memory_gib`` nodes onto     |
+|                                       | solver-chosen exclusive MIG slices)                         |
 +---------------------------------------+-------------------------------------------------------------+
 | finite producer (``is_finite=True``)  | a Kubernetes **Job**                                        |
 +---------------------------------------+-------------------------------------------------------------+

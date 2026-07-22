@@ -69,18 +69,43 @@ def test_no_image_for_device_rejected():
         component(desc, device_type = 'cpu')
 
 
-def _gpu_descriptor(count = 2, resource_name = None):
-    gpu = {'count': count}
-    if resource_name is not None:
-        gpu['resourceName'] = resource_name
+def _gpu_descriptor(count = 2):
     return _descriptor(runtime = {'images': {'cpu': 'x:cpu', 'gpu': 'x:gpu'}},
-                    device = ['cpu', 'gpu'], resources = {'gpu': gpu})
+                    device = ['cpu', 'gpu'], resources = {'gpu': {'count': count}})
 
 
 def test_component_defaults_gpu_count_from_descriptor():
-    node = component(_gpu_descriptor(count = 2, resource_name = 'nvidia.com/mig-3g.40gb'), device_type = 'gpu')
+    node = component(_gpu_descriptor(count = 2), device_type = 'gpu')
     assert node.gpu_count == 2
-    assert node.gpu_resource_name == 'nvidia.com/mig-3g.40gb'
+
+
+def test_component_resolves_gpu_memory_gib_from_descriptor():
+    d = _descriptor(runtime = {'images': {'cpu': 'x:cpu', 'gpu': 'x:gpu'}},
+                    device = ['cpu', 'gpu'], resources = {'gpu': {'memoryGiB': 20}})
+    node = component(d, device_type = 'gpu')
+    assert node.gpu_memory_gib == 20
+    # Explicit argument overrides the descriptor default.
+    assert component(d, device_type = 'gpu', gpu_memory_gib = 10).gpu_memory_gib == 10
+    # A cpu run drops the descriptor's gpu-flavor demand rather than erroring...
+    assert component(d, device_type = 'cpu').gpu_memory_gib is None
+    # ...but an explicit demand on a cpu run is still a build error.
+    with pytest.raises(ValueError, match = 'device_type=GPU'):
+        component(d, device_type = 'cpu', gpu_memory_gib = 10)
+
+
+def test_gpu_memory_gib_on_a_non_processor_component_is_rejected():
+    with pytest.raises(ValueError, match = 'processor components only'):
+        component(_descriptor(role = 'consumer'), gpu_memory_gib = 10)
+
+
+def test_gpu_count_on_a_non_processor_component_is_rejected():
+    # Bug 5 regression: the argument used to be silently dropped for producer and
+    # consumer roles — a GPU-hungry decode producer would get a CPU-class pod with
+    # no signal to the author.
+    with pytest.raises(ValueError, match = 'processor components only'):
+        component(_descriptor(role = 'producer', io = {}), gpu_count = 2)
+    with pytest.raises(ValueError, match = 'processor components only'):
+        component(_descriptor(role = 'consumer'), gpu_count = 1)
 
 
 def test_explicit_gpu_count_overrides_descriptor():

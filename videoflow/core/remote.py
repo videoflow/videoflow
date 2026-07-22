@@ -91,13 +91,13 @@ class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
                 partition_by : Optional[str] = None,
                 join_policy : Union[JoinPolicy, dict, None] = None,
                 name : Optional[str] = None, image : Optional[str] = None,
-                gpu_count : int = 1, gpu_resource_name : Optional[str] = None) -> None:
+                gpu_count : int = 1, gpu_memory_gib : Union[int, float, None] = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
         super().__init__(nb_tasks = nb_tasks, device_type = device_type, name = name,
                         partition_by = partition_by, join_policy = join_policy, image = image,
-                        gpu_count = gpu_count, gpu_resource_name = gpu_resource_name)
+                        gpu_count = gpu_count, gpu_memory_gib = gpu_memory_gib)
 
     def _python_node_params(self) -> Dict[str, Any]:
         # A Python processor is reconstructed as pythonClass(**params); it needs its
@@ -105,7 +105,7 @@ class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
         # or to size data-parallel work off self.gpu_count) — mirroring what a
         # native node's get_params() auto-captures.
         return {'nb_tasks': self._nb_tasks, 'device_type': self._device_type,
-                'gpu_count': self._gpu_count, 'gpu_resource_name': self._gpu_resource_name}
+                'gpu_count': self._gpu_count, 'gpu_memory_gib': self._gpu_memory_gib}
 
     def process(self, *inputs : Any) -> Any:
         raise NotImplementedError('RemoteProcessor runs out-of-process in its own image; '
@@ -138,8 +138,9 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
             partition_by : Optional[str] = None,
             join_policy : Union[JoinPolicy, dict, None] = None,
             image : Optional[str] = None, is_finite : Optional[bool] = None,
-            metadata : bool = False, idempotent : bool = False, gpu_count : Optional[int] = None,
-            gpu_resource_name : Optional[str] = None) -> Node:
+            metadata : bool = False, idempotent : bool = False,
+            gpu_count : Optional[int] = None,
+            gpu_memory_gib : Union[int, float, None] = None) -> Node:
     '''
     Create a graph node backed by a language-agnostic component described by ``ref``
     (a path to a ``component.yaml`` or, later, an ``oci://`` ref). Returns a
@@ -163,11 +164,16 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
         - image: explicit image ref override (else the descriptor's image for the device).
         - is_finite: producers only; defaults to the descriptor's ``finite``.
         - nb_tasks/partition_by/join_policy/metadata/idempotent: as on the native nodes.
-        - gpu_count/gpu_resource_name: processors only; as on ``ProcessorNode``. \
-            Resolution order: explicit argument, then the descriptor's \
-            ``spec.resources.gpu`` (RFC 0003), then 1/None. The descriptor value \
-            is a default, not a floor — a component with a hard minimum should \
-            verify in ``open()``.
+        - gpu_count: processors only; as on ``ProcessorNode`` (whole physical \
+            devices per replica). Resolution order: explicit argument, then the \
+            descriptor's ``spec.resources.gpu.count`` (RFC 0003), then 1. The \
+            descriptor value is a default, not a floor — a component with a hard \
+            minimum should verify in ``open()``. Passing it for a producer or \
+            consumer component is an error, not a silent no-op.
+        - gpu_memory_gib: processors only; as on ``ProcessorNode`` (declared GPU \
+            memory demand in GiB, RFC 0004). Resolution order: explicit argument, \
+            then the descriptor's ``spec.resources.gpu.memoryGiB``, then None. \
+            Same non-processor rejection as gpu_count.
     '''
     descriptor = ref if isinstance(ref, ComponentDescriptor) else load_descriptor(ref)
     component_ref = descriptor.source or (ref if isinstance(ref, str) else descriptor.name)
@@ -198,24 +204,41 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
         name = _default_remote_name(descriptor)
 
     role = descriptor.role
+    # A GPU grant belongs to processors only. Rejecting (rather than dropping) the
+    # arguments here keeps "silently ignored" out of the API: a producer/consumer
+    # descriptor with a GPU need is already rejected at descriptor validation.
+    if role != 'processor' and gpu_count is not None:
+        raise ValueError(f"component '{descriptor.name}': gpu_count applies to processor "
+                        f"components only, but this component's role is {role!r} — drop the "
+                        f"argument.")
+    if role != 'processor' and gpu_memory_gib is not None:
+        raise ValueError(f"component '{descriptor.name}': gpu_memory_gib applies to processor "
+                        f"components only, but this component's role is {role!r} — drop the "
+                        f"argument.")
     if role == 'producer':
         finite = descriptor.finite if is_finite is None else is_finite
         return RemoteProducer(component_ref, descriptor, validated_params,
                             is_finite = finite, name = name, image = resolved_image)
     if role == 'processor':
-        # RFC 0003 resolution: explicit argument → descriptor spec.resources.gpu →
-        # 1/None. The descriptor value is a default, not a floor.
+        # RFC 0003/0004 resolution: explicit argument → descriptor
+        # spec.resources.gpu → 1/None. Descriptor values are defaults, not floors.
         resolved_gpu_count = descriptor.gpu_count if gpu_count is None else gpu_count
-        resolved_gpu_resource = gpu_resource_name if gpu_resource_name is not None else descriptor.gpu_resource_name
+        resolved_memory = descriptor.gpu_memory_gib if gpu_memory_gib is None else gpu_memory_gib
         if resolved_gpu_count > 1 and device_type != 'gpu':
             raise ValueError(f"component '{descriptor.name}': gpu_count={resolved_gpu_count} requires "
                             f"device_type='gpu', got {device_type!r}. Pass device_type='gpu', or gpu_count=1 "
                             "to override the descriptor's default.")
+        if gpu_memory_gib is None and resolved_memory is not None and device_type != 'gpu':
+            # A cpu run of a dual-device component drops the *descriptor's* GPU
+            # memory default rather than erroring: the demand describes the gpu
+            # flavor. An explicit gpu_memory_gib= with device_type='cpu' still
+            # errors, in the ProcessorNode constructor.
+            resolved_memory = None
         return RemoteProcessor(component_ref, descriptor, validated_params,
                             nb_tasks = nb_tasks, device_type = device_type,
                             partition_by = partition_by, join_policy = policy,
                             name = name, image = resolved_image,
-                            gpu_count = resolved_gpu_count, gpu_resource_name = resolved_gpu_resource)
+                            gpu_count = resolved_gpu_count, gpu_memory_gib = resolved_memory)
     if role == 'consumer':
         return RemoteConsumer(component_ref, descriptor, validated_params,
                             metadata = metadata, idempotent = idempotent,

@@ -103,10 +103,12 @@ def test_interrupted_prepare_rolls_back_and_propagates(registry_sandbox):
 # -- teardown carries --gpu-mode and undoes the run ------------------------
 
 def test_teardown_parser_accepts_gpu_mode():
+    # Teardown deliberately takes a free string (no choices=): it must accept a
+    # mode registered by a plugin that isn't installed in this shell.
     parser = cli.build_parser()
     args = parser.parse_args(['teardown', '--flow-id', 'f', '--run-id', 'r',
-                              '--nats', 'nats://x', '--gpu-mode', 'shared'])
-    assert args.gpu_mode == 'shared'
+                              '--nats', 'nats://x', '--gpu-mode', 'mix'])
+    assert args.gpu_mode == 'mix'
 
 
 def test_teardown_calls_cleanup_for_the_named_mode(registry_sandbox, monkeypatch):

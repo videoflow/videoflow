@@ -125,6 +125,50 @@ def test_assign_local_gpus_no_host_gpus_assigns_nothing():
     assert assign_local_gpus(_gpu_flow_specs(), []) == {}
 
 
+def test_worker_env_reports_the_delivered_grant_not_the_request(caplog):
+    # Bug 3 regression: a shrunken grant (oversubscribed host collapsed the
+    # duplicates) must be reported as delivered — VF_GPU_COUNT=2 with one visible
+    # device would send a native component addressing cuda:1 into a crash.
+    import logging
+    specs = {s.name: s for s in _gpu_flow_specs(gpu_count = 2)}
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.engines'):
+        assignment = assign_local_gpus(list(specs.values()), [0])
+    assert assignment[('work', 0)] == [0]
+    assert any('VF_GPU_COUNT will report 1' in r.message for r in caplog.records)
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,
+                      gpu_devices = assignment[('work', 0)])
+    assert env['VF_GPU_COUNT'] == '1'
+    assert env['CUDA_VISIBLE_DEVICES'] == '0'
+    # A GPU-less host (no assignment at all) keeps the CPU-fallback behavior:
+    # the request is reported, and no mask is set.
+    bare = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert bare['VF_GPU_COUNT'] == '2' and 'CUDA_VISIBLE_DEVICES' not in bare
+
+
+def _docker_native_gpu_spec():
+    from videoflow.core.compiler import NodeSpec
+    return NodeSpec('native', None, {}, ['producer'], 'processor', True, 1, 'gpu',
+                    True, image = 'vendor/img:1', component_ref = 'components/native',
+                    descriptor = {'spec': {'runtime': {}}}, gpu_count = 2)
+
+
+def test_docker_run_natives_get_no_local_gpu_grant():
+    # Bug 4 regression: a docker-run native component can never see the mask (env
+    # filter + no --gpus), so granting it ordinals starved real workers while
+    # VF_GPU_COUNT promised it devices it did not have.
+    native = _docker_native_gpu_spec()
+    specs = list(_gpu_flow_specs(gpu_count = 2)) + [native]
+    assignment = assign_local_gpus(specs, [0, 1])
+    assert ('native', 0) not in assignment
+    assert assignment[('work', 0)] == [0, 1]   # ordinals not consumed by the native
+    env = _worker_env(native, 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_GPU_COUNT' not in env and 'VF_GPU_RESOURCE_NAME' not in env
+    # A native with a localCommand runs in-process env-wise and keeps the grant.
+    local_cmd = _docker_native_gpu_spec()
+    local_cmd.descriptor = {'spec': {'runtime': {'localCommand': ['./run']}}}
+    assert assign_local_gpus([local_cmd], [0, 1])[('native', 0)] == [0, 1]
+
+
 def test_worker_env_sets_gpu_grant_and_cuda_visible_devices():
     specs = {s.name: s for s in _gpu_flow_specs(gpu_count = 2)}
     env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,

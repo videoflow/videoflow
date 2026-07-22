@@ -32,7 +32,7 @@ def registry_sandbox(monkeypatch):
 # -- built-ins: behavior must be exactly what the string branches did ------
 
 def test_builtin_modes_are_registered():
-    assert gpu.registered_gpu_modes() == ['exclusive', 'shared']
+    assert gpu.registered_gpu_modes() == ['exclusive', 'mix']
 
 
 def test_exclusive_claims_whole_devices():
@@ -40,27 +40,24 @@ def test_exclusive_claims_whole_devices():
     assert resources == {'limits': {'nvidia.com/gpu': 2}}
 
 
-def test_exclusive_honours_the_nodes_own_resource_name():
+def test_exclusive_honours_a_strategy_resolved_resource_name():
+    # spec.gpu_resource_name is internal plumbing (a strategy's resolved choice,
+    # e.g. the mix solver's MIG profile) — when set, it wins over the deploy default.
     spec = _Spec(gpu_count = 1, gpu_resource_name = 'nvidia.com/mig-1g.10gb')
-    resources = gpu.get_gpu_mode('exclusive').pod_resources(spec, 'nvidia.com/gpu.shared')
+    resources = gpu.get_gpu_mode('exclusive').pod_resources(spec, 'amd.com/gpu')
     assert resources == {'limits': {'nvidia.com/mig-1g.10gb': 1}}
 
 
 def test_exclusive_falls_back_to_the_deploy_default():
-    resources = gpu.get_gpu_mode('exclusive').pod_resources(_Spec(), 'nvidia.com/gpu.shared')
-    assert resources == {'limits': {'nvidia.com/gpu.shared': 1}}
-
-
-def test_shared_emits_no_resource_limit():
-    '''Shared pods land on the pool by selector alone -- a limit would defeat it.'''
-    assert gpu.get_gpu_mode('shared').pod_resources(_Spec(gpu_count = 4)) == {}
+    resources = gpu.get_gpu_mode('exclusive').pod_resources(_Spec(), 'amd.com/gpu')
+    assert resources == {'limits': {'amd.com/gpu': 1}}
 
 
 def test_unknown_mode_names_the_known_ones_and_the_fix():
     with pytest.raises(ValueError) as excinfo:
         gpu.get_gpu_mode('mps')
     msg = str(excinfo.value)
-    assert 'exclusive' in msg and 'shared' in msg and 'register_gpu_mode' in msg
+    assert 'exclusive' in msg and 'register_gpu_mode' in msg
 
 
 def test_render_manifests_rejects_an_unknown_mode_before_building_anything():
@@ -144,14 +141,6 @@ def test_preflight_delegates_capacity_math_to_the_strategy(monkeypatch):
     assert any('demands 9' in p for p in problems)
 
 
-def test_shared_mode_skips_capacity_and_escalates_the_runtime_class(monkeypatch):
-    _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                                'get runtimeclass': 'nvidia'})
-    problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'shared')
-    assert len(problems) == 1
-    assert gpu.SHARED_NEEDS_RUNTIME_CLASS in problems[0]
-
-
 def test_preflight_uses_a_registered_strategys_checks(monkeypatch, registry_sandbox):
     class _Picky(gpu.GpuStrategy):
         name = 'picky'
@@ -170,10 +159,9 @@ def test_preflight_uses_a_registered_strategys_checks(monkeypatch, registry_sand
 # -- lifecycle hooks -------------------------------------------------------
 
 def test_builtin_lifecycle_hooks_are_noops():
-    for mode in ('exclusive', 'shared'):
-        strategy = gpu.get_gpu_mode(mode)
-        assert strategy.prepare(demand = {'nvidia.com/gpu': 1}) is None
-        assert strategy.cleanup() is None
+    strategy = gpu.get_gpu_mode('exclusive')
+    assert strategy.prepare(demand = {'nvidia.com/gpu': 1}) is None
+    assert strategy.cleanup() is None
 
 
 def test_prepare_receives_the_flows_demand(registry_sandbox):

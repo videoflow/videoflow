@@ -1,4 +1,9 @@
-4. resources.gpu on a producer/consumer descriptor is silently ignored. The schema allows spec.resources.gpu on any role, but only the processor branch of component() (remote.py:205-213) reads it. A producer descriptor declaring count: 2 validates cleanly and does nothing — no error, no warning. Descriptor validation should reject (or the docs should state) that resources.gpu is processor-only.
+~~4. resources.gpu on a producer/consumer descriptor is silently ignored.~~ **Done**
+(two-mode GPU redesign): descriptor validation now rejects `spec.resources.gpu` on
+non-processor roles at load, and `component()` rejects explicit `gpu_count=` /
+`gpu_memory_gib=` arguments for producer/consumer components
+(`tests/test_component_descriptor.py::test_descriptor_rejects_gpu_resources_on_non_processor_roles`,
+`tests/test_remote_component.py::test_gpu_count_on_a_non_processor_component_is_rejected`).
 
 
 Integration tests:

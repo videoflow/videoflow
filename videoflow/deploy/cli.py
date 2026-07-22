@@ -41,8 +41,6 @@ from ..core.flow import Flow
 from ..utils.plugins import load_plugin_group
 from .build import autobuild, docker_gpus_available, image_exists, run_in_image
 from .cluster import (
-    SHARED_NEEDS_RUNTIME_CLASS,
-    allocatable_gpus,
     detect_cluster,
     gpu_preflight,
     hostpath_warning,
@@ -51,6 +49,7 @@ from .cluster import (
 from .compile import load_flow, specs_from_document
 from .gpu import (
     GPU_STRATEGY_ENTRY_POINT_GROUP,
+    IMPOSSIBLE_GPU_REQUEST,
     GpuStrategy,
     get_gpu_mode,
     registered_gpu_modes,
@@ -210,6 +209,15 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     if gpu_specs:
         # optional dep: manifests imports yaml at module scope
         from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod
+        # The strategy decides names and geometry first (mix resolves each
+        # sharer's MIG profile into its spec) so that everything downstream —
+        # demand math, preflight, manifests, env — consumes the resolved specs.
+        try:
+            specs = get_gpu_mode(args.gpu_mode).resolve_specs(
+                specs, kubectl = args.kubectl, default_resource = args.gpu_resource_name)
+        except ValueError as e:
+            raise SystemExit(str(e)) from e
+        gpu_specs = [s for s in specs if s.device_type == 'gpu']
         # Whole-flow demand per extended resource: every replica of a GPU node claims
         # its own gpu_count devices, so a partially-schedulable flow deadlocks. The
         # per-pod maximum bounds single-node schedulability for multi-GPU nodes.
@@ -217,20 +225,16 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
                                  demand = demand, gpu_mode = args.gpu_mode,
                                  max_per_pod = gpu_max_per_pod(specs, default_resource = args.gpu_resource_name))
-        if args.gpu_mode == 'shared':
-            pods = sum(s.nb_tasks for s in gpu_specs)
-            physical = allocatable_gpus(args.kubectl)
-            shared_with = (f'{physical} schedulable GPU unit(s)' if physical
-                           else 'the GPU pool')
-            print(f'GPU mode shared: {pods} pod(s) will share {shared_with} '
-                  f'with no memory isolation — VRAM is the only limit.', file = sys.stderr)
-            # Without a runtime class, shared pods have no path to the device at all
-            # (they carry no resource limit for the device plugin to act on) — this
-            # is fatal regardless of --strict-preflight.
-            fatal = [p for p in problems if p.startswith(SHARED_NEEDS_RUNTIME_CLASS)]
-            if fatal:
-                raise SystemExit('ERROR: ' + fatal[0])
-        elif args.autoscaling and args.gpu_autoscaling:
+        # An impossible request (multi-unit claim against a MIG/time-sliced
+        # resource) can only end in an admission error or a silently broken
+        # visibility contract — fatal regardless of --strict-preflight.
+        fatal = [p for p in problems if p.startswith(IMPOSSIBLE_GPU_REQUEST)]
+        if fatal:
+            for p in fatal:
+                print(f'ERROR: {p}', file = sys.stderr)
+            raise SystemExit('ERROR: the GPU preflight found impossible requests '
+                             '(above); nothing was applied.')
+        if args.autoscaling and args.gpu_autoscaling:
             # Partitioned nodes never autoscale (fixed scale), so they contribute
             # their fixed replica count to the ceiling, not max_replicas.
             ceiling = sum((s.nb_tasks if _is_partitioned(s) else max(s.nb_tasks, args.max_replicas))
@@ -246,6 +250,14 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         if problems and args.strict_preflight:
             raise SystemExit('ERROR: --strict-preflight set and the GPU preflight found '
                              'problems (above); nothing was applied.')
+        # gpu_memory_gib drives the mix strategy's MIG slice choice; every other
+        # mode grants whole devices, so a declared demand deserves a heads-up
+        # rather than silence (a mix-authored flow must still deploy anywhere).
+        memory_nodes = [s.name for s in gpu_specs if s.gpu_memory_gib is not None]
+        if memory_nodes and args.gpu_mode != 'mix':
+            print(f'NOTE: gpu_memory_gib on {", ".join(sorted(memory_nodes))} is unused under '
+                  f'--gpu-mode {args.gpu_mode} — each replica gets a whole device. Deploy with '
+                  f'--gpu-mode mix to pack these nodes onto MIG slices.', file = sys.stderr)
 
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
     # (+ Redis for the blob store) in the namespace, owning only what we created.
@@ -666,6 +678,8 @@ def _cmd_explain(args : argparse.Namespace) -> None:
             bits.append('device=gpu')
             if s.gpu_count != 1:
                 bits.append(f'gpu_count={s.gpu_count}')
+            if s.gpu_memory_gib is not None:
+                bits.append(f'gpu_memory_gib={s.gpu_memory_gib}')
             if s.gpu_resource_name:
                 bits.append(f'gpu_resource={s.gpu_resource_name}')
         if s.partition_by:
@@ -690,12 +704,15 @@ def _cmd_explain(args : argparse.Namespace) -> None:
         default_resource = args.gpu_resource_name
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')
+        if any(s.gpu_memory_gib is not None for s in gpu_specs):
+            lines.append('  note: nodes with gpu_memory_gib become solver-chosen MIG slices '
+                         'under --gpu-mode mix (resolved against the cluster at deploy time)')
         for s in gpu_specs:
             resource = resolve_gpu_resource(s, default_resource)
             lines.append(f'  {s.name}: {s.nb_tasks} x {s.gpu_count} {resource}')
         for resource, units in sorted(demand.items()):
             lines.append(f'  total: {units} x {resource} — the cluster needs at least this '
-                         f'allocatable (or deploy with --gpu-mode shared / time-slicing)')
+                         f'allocatable (or enable device-plugin time-slicing on a dev cluster)')
         # One-node bound (RFC 0003): all of one replica's gpu_count devices must sit
         # on a single host, so the totals above can be satisfiable while the biggest
         # pod never schedules. Noise at 1 device — only printed for multi-GPU pods.
@@ -918,17 +935,17 @@ def build_parser() -> argparse.ArgumentParser:
     # (rather than raises) for a broken plugin.
     load_plugin_group(GPU_STRATEGY_ENTRY_POINT_GROUP)
     deploy.add_argument('--gpu-mode', choices = registered_gpu_modes(), default = 'exclusive',
-                        help = 'exclusive (default): each GPU replica claims whole devices via the '
-                               'extended resource — a flow needs as many allocatable units as it has '
-                               'GPU replicas. shared: emit no GPU resource limit; all GPU pods '
-                               'co-schedule onto the gpu-pool and share the physical GPUs (local-run '
-                               'semantics — dev clusters only, no memory isolation, requires '
-                               '--gpu-runtime-class on clusters where the NVIDIA runtime is opt-in).')
+                        help = 'exclusive (default): each GPU replica claims whole physical devices '
+                               'via the extended resource — a flow needs as many allocatable units '
+                               'as it has GPU replicas, and gpu_count > 1 spans devices on one host. '
+                               'mix: nodes declaring gpu_memory_gib share cards via solver-chosen '
+                               'exclusive MIG slices; everything else still gets whole devices '
+                               '(needs MIG-capable GPUs + GPU Feature Discovery labels).')
     deploy.add_argument('--gpu-resource-name', default = None, metavar = 'RESOURCE',
-                        help = 'Default extended-resource name GPU nodes request (default '
-                               'nvidia.com/gpu). Use for MIG profiles (nvidia.com/mig-1g.10gb) or '
-                               'clusters that rename time-sliced resources (nvidia.com/gpu.shared). '
-                               'A node\'s own gpu_resource_name= wins.')
+                        help = 'Extended-resource name GPU nodes request (default nvidia.com/gpu). '
+                               'For clusters whose whole devices are advertised under another name, '
+                               'e.g. amd.com/gpu. Not for MIG profiles or sliced resources — a unit '
+                               'of this resource must be one whole physical device.')
     deploy.add_argument('--gpu-autoscaling', action = 'store_true',
                         help = 'Include GPU nodes in --autoscaling (off by default: every autoscaled '
                                'replica claims its own GPUs, so lag-driven scaling can demand more '

@@ -406,11 +406,12 @@ kubectl get node <gpu-node> -o jsonpath='{.status.allocatable.nvidia\.com/gpu}' 
 ```
 
 `renameByDefault: false` keeps the resource named `nvidia.com/gpu`, so **no
-Videoflow change is needed** — the same manifests just schedule.
-`failRequestsGreaterThanOne: true` rejects `gpu_count > 1`, which is meaningless
-against slices of one card. The same logic applies to MIG: slices are
-hardware-isolated partitions, so a model can never span two of them —
-`gpu_count > 1` against a MIG profile is flagged by deploy's preflight. A model
+Videoflow change is needed** — the same manifests just schedule. Time-slicing
+supports `gpu_count = 1` nodes only: the units are shares of one card, so a
+multi-device grant is meaningless against them (`failRequestsGreaterThanOne:
+true` rejects it cluster-side, and deploy's preflight hard-errors first, reading
+the GPU Feature Discovery labels). The same logic applies to MIG: slices are
+hardware-isolated partitions, so a model can never span two of them. A model
 that needs multiple GPUs needs whole exclusive devices (see below).
 
 **Size `replicas` from measured VRAM, not by guessing.** Time-slicing hands out
@@ -450,14 +451,13 @@ flow stalls. Videoflow surfaces this instead of hanging: `videoflow explain`
 prints the flow's GPU demand, deploy's preflight compares it against the cluster
 (exit non-zero with `--strict-preflight`), and the BATCH wait loop aborts with an
 actionable error when a pod is unschedulable. To actually run such a flow on a
-small box: cut demand (run trackers/light stages on CPU), enable device-plugin
+small box: cut demand (run trackers/light stages on CPU), or enable device-plugin
 **time-slicing** (step 7 — advertise each GPU as N units; no videoflow changes
-needed), or
-deploy with `--gpu-mode shared --gpu-runtime-class nvidia` — no GPU limits at all,
-every GPU pod co-schedules and shares the devices exactly like a local run (dev
-clusters only: no memory isolation). Per-node `gpu_count=` / `gpu_resource_name=`
-(e.g. a MIG profile) and `--gpu-resource-name` cover clusters with other resource
-shapes; see `docs/source/distributed/gpu-sharing.rst` for the full recipes.
+needed). On MIG-capable hardware, `--gpu-mode mix` shares cards with hard memory
+isolation instead: nodes declare `gpu_memory_gib` and the deploy solves a MIG
+layout for them (see below). `--gpu-resource-name` covers clusters whose whole
+devices are advertised under another name (`amd.com/gpu`); see
+`docs/source/distributed/gpu-sharing.rst` for the full recipes.
 
 **Models larger than one GPU.** A node whose model doesn't fit on one device asks
 for more with `gpu_count`:
@@ -478,7 +478,30 @@ placement for multi-model nodes. A component can declare its need in its
 have to pass `gpu_count=` by hand. Two things to know: all `gpu_count` devices
 must fit on **one** cluster node (preflight checks the largest node, not just the
 total — prefer NVLink-connected GPUs for tensor parallelism), and sliced GPUs
-don't qualify (MIG and time-sliced units can't be combined into one model).
+don't qualify (MIG and time-sliced units can't be combined into one model —
+preflight hard-errors on the attempt).
+
+**Sharing GPUs with isolation: `--gpu-mode mix`.** On MIG-capable hardware
+(A30/A100/H100), a flow can mix models that share a card with models that span
+several. Nodes that state their memory demand become **sharers**; nodes that
+don't (or that set `gpu_count > 1`) get whole physical devices:
+
+```python
+detector  = Detector(device_type = GPU, nb_tasks = 4, gpu_memory_gib = 10)(frames)   # 4 x 10 GiB slices
+captioner = VlmCaptioner(device_type = GPU, gpu_count = 2)(frames)                   # 2 whole GPUs
+```
+
+Deploying with `--gpu-mode mix` solves a card layout against the cluster's
+inventory (from GPU Feature Discovery labels): whole cards are reserved for the
+spanners, the sharers are packed into MIG slices of the smallest fitting profile
+(each an *exclusive* slice — the card is shared, the slice is not, with hard
+memory/fault isolation), and the geometry is applied through the GPU Operator's
+MIG manager and restored at teardown. Without the MIG manager, preflight prints
+the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
+`gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
+slices, so a node declares either a fraction of one device or whole devices.
+Under every other mode `gpu_memory_gib` is simply unused (the node gets a whole
+device), so a mix-authored flow still deploys anywhere.
 
 ### How graph concepts map onto the broker and Kubernetes
 
@@ -488,7 +511,7 @@ don't qualify (MIG and time-sliced units can't be combined into one model).
 | `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
 | `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas) |
 | `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
-| `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `gpu_resource_name`) plus a GPU-pool nodeSelector/toleration — exclusive whole devices; `--gpu-mode shared` drops the request so pods share GPUs (dev) |
+| `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `--gpu-resource-name`) plus a GPU-pool nodeSelector/toleration — exclusive whole physical devices; under `--gpu-mode mix`, nodes with `gpu_memory_gib` request a solver-chosen exclusive MIG slice instead |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
 | observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag |

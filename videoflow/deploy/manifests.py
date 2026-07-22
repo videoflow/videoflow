@@ -176,7 +176,8 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
     if spec.device_type == 'gpu':
         # The worker's GPU grant (RFC 0003): informational for native components,
         # which never see the Python node's reconstruction params. Visible devices
-        # are exactly 0..count-1 under the exclusive GPU mode.
+        # are exactly 0..count-1 — true in every registered mode (the device plugin
+        # masks the container to its exclusive claim).
         env['VF_GPU_COUNT'] = str(spec.gpu_count)
         if spec.gpu_resource_name:
             env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
@@ -223,6 +224,33 @@ def gpu_demand(specs : List[NodeSpec],
         resource = resolve_gpu_resource(spec, default_resource)
         demand[resource] = demand.get(resource, 0) + spec.nb_tasks * spec.gpu_count
     return demand
+
+def validate_gpu_specs(specs : List[NodeSpec],
+                       default_resource : Optional[str] = None) -> None:
+    '''
+    Hard build-time GPU validation — the checks that are provable from the specs
+    alone, with no cluster in sight. Distinct from preflight (which compares
+    against live cluster state and is skippable): what fails here can never work
+    on any cluster, so it raises instead of warning.
+
+    Today that is one rule: a multi-device grant (``gpu_count > 1``) against a MIG
+    resource. MIG slices are hardware-isolated partitions — one CUDA process
+    addresses one MIG instance and there is no P2P between instances — so the pod
+    would receive devices its model cannot span (RFC 0003).
+
+    - Raises:
+        - ValueError: naming the node and the fix.
+    '''
+    for spec in specs:
+        if spec.device_type != 'gpu' or spec.gpu_count <= 1:
+            continue
+        resource = resolve_gpu_resource(spec, default_resource)
+        if resource.rsplit('/', 1)[-1].startswith('mig-'):
+            raise ValueError(
+                f'node {spec.name!r} requests gpu_count={spec.gpu_count} x {resource}, but MIG '
+                f'slices are hardware-isolated partitions a model cannot span — a multi-GPU '
+                f'grant needs whole physical devices. Fix: drop --gpu-resource-name (request '
+                f'whole GPUs), or set gpu_count=1.')
 
 def gpu_max_per_pod(specs : List[NodeSpec],
                     default_resource : Optional[str] = None) -> dict[str, int]:
@@ -295,8 +323,7 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     runtime_class = None
     if spec.device_type == 'gpu':
         # Resolved here, not only in render_manifests: a direct workload()/_pod_spec
-        # caller with a typo'd mode must get an error, not a silent fall-through to
-        # the no-limit shared branch.
+        # caller with a typo'd mode must get an error, not a silently wrong claim.
         resources.update(get_gpu_mode(gpu_mode).pod_resources(spec, gpu_resource_name))
         node_selector = {GPU_POOL_LABEL: 'true'}
         tolerations = [{
@@ -308,7 +335,6 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # distros that register it as an opt-in RuntimeClass instead (k3s ships an
         # 'nvidia' handler but leaves runc default), a pod without runtimeClassName
         # starts with no device — so --gpu-runtime-class names the handler to use.
-        # In shared mode it is the only thing that grants device access at all.
         runtime_class = gpu_runtime_class
     if resources:
         container['resources'] = resources
@@ -667,13 +693,13 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         Needed where the NVIDIA container runtime is registered as an opt-in \
         RuntimeClass rather than the node default — on k3s, ``nvidia``. Without it \
         such a pod schedules onto a GPU node and then runs with no device visible.
-    - gpu_mode: ``'exclusive'`` (default — each GPU replica claims whole devices \
-        via the extended resource) or ``'shared'`` (no resource limit; all GPU pods \
-        co-schedule onto the pool and share the physical GPUs through the NVIDIA \
-        runtime — LocalProcessEngine semantics, dev clusters only).
-    - gpu_resource_name: deploy-level default extended-resource name for GPU claims \
-        (``--gpu-resource-name``); a node's own ``gpu_resource_name`` wins. Defaults \
-        to ``nvidia.com/gpu``.
+    - gpu_mode: GPU strategy name (``'exclusive'``, the default — each GPU replica \
+        claims whole physical devices via the extended resource; see ``deploy.gpu``).
+    - gpu_resource_name: deploy-level extended-resource name for GPU claims \
+        (``--gpu-resource-name``), for clusters advertising whole devices under a \
+        non-default name. Defaults to ``nvidia.com/gpu``. Must denote whole \
+        physical devices — a MIG profile here is rejected (see \
+        ``validate_gpu_specs``).
     - gpu_autoscaling: emit KEDA ScaledObjects for GPU nodes too. Off by default: \
         each autoscaled replica claims its own GPUs, so scaling to ``max_replicas`` \
         can demand more devices than the cluster has and strand pods Pending.
@@ -693,6 +719,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
 
     # Fail before any manifest is built, rather than at the first GPU node.
     get_gpu_mode(gpu_mode)
+    validate_gpu_specs(specs, gpu_resource_name)
     validate_image_pull_policy(image_pull_policy)
 
     # The whole-run wire version: the single language-neutral protobuf envelope (v4).
@@ -735,8 +762,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         for spec in specs:
             # GPU nodes are excluded from autoscaling unless explicitly opted in:
             # every extra replica claims its own whole GPUs, so scaling on broker lag
-            # can demand max_replicas x gpu_count devices and strand pods Pending
-            # (and in shared mode it multiplies VRAM pressure instead).
+            # can demand max_replicas x gpu_count devices and strand pods Pending.
             if spec.device_type == 'gpu' and not gpu_autoscaling:
                 continue
             so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)

@@ -86,7 +86,7 @@ def test_wait_aborts_on_unschedulable_pod_after_grace(monkeypatch, engine):
     assert 'Insufficient nvidia.com/gpu' in str(e.value)
     assert 'cannot be scheduled' in str(e.value)
     # The abort names the remedies rather than just the symptom.
-    assert '--gpu-mode shared' in str(e.value)
+    assert 'time-slicing' in str(e.value)
 
 
 def test_wait_does_not_abort_before_grace_or_during_scaleup(monkeypatch, engine):

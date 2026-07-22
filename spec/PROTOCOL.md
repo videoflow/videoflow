@@ -89,8 +89,8 @@ depend on any other configuration channel for routing.
 | `VF_BLOB_REDIS_URL` | no | unset | Enables the external blob store for large payloads (§13). |
 | `VF_BLOB_READERS` | no | unset | Downstream read count of this node's published messages; enables refcounted blob reclamation (`BLOB-5`). Unset ⇒ TTL-only blobs. |
 | `VF_BLOB_TTL_SECONDS` | no | unset | Blob (and counter) TTL override. Unset ⇒ flow-type default: 3600 realtime / 86400 batch (`BLOB-7`). |
-| `VF_GPU_COUNT` | no | `1` | Whole GPUs granted to this worker (GPU nodes only). The visible devices are exactly the granted devices, numbered `0..count-1` (RFC 0003). Informational — not routing. |
-| `VF_GPU_RESOURCE_NAME` | no | unset | Kubernetes extended-resource name the GPUs were requested as, e.g. a MIG profile (RFC 0003). Informational — not routing. |
+| `VF_GPU_COUNT` | no | `1` | Devices **delivered** to this worker (GPU nodes only). The visible devices are exactly the delivered devices, numbered `0..count-1` (RFC 0003, amended). Informational — not routing. |
+| `VF_GPU_RESOURCE_NAME` | no | unset | Kubernetes extended-resource name the devices were requested as — strategy-resolved, e.g. the mix solver's MIG profile (RFC 0003/0004). Informational — not routing. |
 | `VF_STRUCTURED_LOGS` | no | unset | Truthy ⇒ JSON structured logs. Cosmetic; not protocol. |
 | `VF_ENVELOPE_VERSION` | no | see §4.1 | Wire envelope version to emit/accept for this run. The only supported version is 4. |
 

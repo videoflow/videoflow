@@ -106,13 +106,21 @@ Constructor arguments on `ProcessorNode`:
   Non-torch/native code can enumerate its grant with `videoflow.utils.system.granted_gpus()`,
   which returns valid CUDA indices `[0..n-1]` — safe both for `.to(f'cuda:{i}')` placement and
   for a hard device minimum via `len(granted_gpus())` in `open()` (raise if short).
-  Native components (no Python params) read `VF_GPU_COUNT`/`VF_GPU_RESOURCE_NAME` from env.
-  Multi-GPU needs whole exclusive devices: MIG slices can't be combined into one model, and
-  time-sliced resources reject multi-unit requests — preflight flags both.
-- **`gpu_resource_name`** — for clusters not exposing plain `nvidia.com/gpu`, e.g. a MIG profile
-  (`nvidia.com/mig-1g.10gb`) or a renamed time-sliced resource (`nvidia.com/gpu.shared`). A
-  remote component's descriptor can declare both knobs as defaults via `spec.resources.gpu`
-  (`count`/`resourceName`); an explicit `gpu_count=`/`gpu_resource_name=` argument overrides.
+  Native components (no Python params) read `VF_GPU_COUNT`/`VF_GPU_RESOURCE_NAME` from env —
+  the count is the *delivered* grant (a shrunken local grant reports what was masked in).
+  Multi-GPU needs whole physical devices: MIG slices can't be combined into one model
+  (one CUDA process ↔ one MIG instance, no P2P between instances) and time-sliced units are
+  shares of one card — both are hard errors, at build time (MIG names) or preflight
+  (GFD classification).
+- **`gpu_memory_gib`** — the node's GPU memory demand in GiB (RFC 0004). Under
+  `--gpu-mode mix` each replica gets an exclusive MIG slice of at least this size, chosen by
+  the layout solver; other modes grant a whole device (deploy prints a NOTE). Mutually
+  exclusive with `gpu_count > 1` — a node declares a fraction of one device or whole devices,
+  never both. A remote component's descriptor declares defaults via `spec.resources.gpu`
+  (`count`/`memoryGiB`); explicit `gpu_count=`/`gpu_memory_gib=` arguments override. There is
+  no user-facing resource-name knob: extended-resource names are strategy-internal (the mix
+  solver stamps a sharer's MIG profile into `NodeSpec.gpu_resource_name`), and the deploy-level
+  `--gpu-resource-name` exists only for clusters advertising whole devices under another name.
 
 On `Node` itself: **`name`** (the node's identity everywhere outside the build process — broker
 subjects, k8s resource names, logs; auto-generated from the class name and a counter if omitted,

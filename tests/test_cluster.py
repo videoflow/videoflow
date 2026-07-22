@@ -5,11 +5,25 @@ and the GPU preflight messages.
 
 Pure/unit: subprocess is monkeypatched — no cluster, no docker.
 '''
+import json
 import subprocess
 
 import pytest
 
-from videoflow.deploy import cluster
+from videoflow.deploy import cluster, gpu
+
+
+def _nodes_json(*nodes):
+    '''A `kubectl get nodes -o json` body: nodes as (labels, allocatable) pairs.'''
+    return json.dumps({'items': [
+        {'metadata': {'labels': labels}, 'status': {'allocatable': allocatable}}
+        for labels, allocatable in nodes
+    ]})
+
+
+#: GFD labels of a plain physical-GPU node (no sharing).
+_PHYSICAL_LABELS = {'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
+                    'nvidia.com/gpu.count': '2'}
 
 
 class _Proc:
@@ -168,22 +182,6 @@ def test_gpu_preflight_checks_each_requested_resource(monkeypatch):
     assert 'does not expose it' in problems[0]
 
 
-def test_gpu_preflight_shared_mode(monkeypatch):
-    '''Shared pods carry no resource limit, so capacity math and the device plugin
-    are irrelevant — but without a runtime class on an opt-in cluster the pods
-    would run device-less, which is the one shared-mode blocker.'''
-    run, calls = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                            'get runtimeclass': 'nvidia'})
-    monkeypatch.setattr(subprocess, 'run', run)
-    problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'shared')
-    assert len(problems) == 1
-    assert '--gpu-mode shared without --gpu-runtime-class' in problems[0]
-    assert not any('allocatable' in ' '.join(c) for c in calls)  # no capacity query
-    monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
-                                 demand = {'nvidia.com/gpu': 9}, gpu_mode = 'shared') == []
-
-
 def test_allocatable_gpus_sums_across_nodes(monkeypatch):
     run, _ = _fake_run({'version': '{}', 'allocatable': '1 4'})
     monkeypatch.setattr(subprocess, 'run', run)
@@ -203,8 +201,10 @@ def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
     '''A 3-GPU pod against two 2-GPU nodes: total capacity (4) satisfies the demand
     (3), but no single host can bind the pod — it would stay Pending forever, and
     only the per-pod check can say why.'''
+    physical = _nodes_json((_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}),
+                           (_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}))
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                        'allocatable': '2 2'})
+                        'allocatable': '2 2', 'nodes -o json': physical})
     monkeypatch.setattr(subprocess, 'run', run)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                      demand = {'nvidia.com/gpu': 3},
@@ -213,8 +213,10 @@ def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
     assert '3 x nvidia.com/gpu in a single pod' in problems[0]
     assert 'largest cluster node has only 2' in problems[0]
     # A big-enough single node is clean.
+    big = _nodes_json(({'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
+                        'nvidia.com/gpu.count': '4'}, {'nvidia.com/gpu': '4'}))
     run_big, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                            'allocatable': '4'})
+                            'allocatable': '4', 'nodes -o json': big})
     monkeypatch.setattr(subprocess, 'run', run_big)
     assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
                                  demand = {'nvidia.com/gpu': 3},
@@ -222,8 +224,9 @@ def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
 
 
 def test_gpu_preflight_rejects_combining_mig_slices(monkeypatch):
-    '''MIG slices are hardware-isolated: a model cannot span two of them, so a
-    multi-slice single-pod claim is wrong no matter what the cluster has.'''
+    '''Bug 2 regression: MIG slices are hardware-isolated — a model cannot span two
+    of them, so a multi-slice single-pod claim is impossible no matter what the
+    cluster has, and the problem carries the fatal marker the CLI hard-errors on.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
                         'allocatable': '4'})
     monkeypatch.setattr(subprocess, 'run', run)
@@ -231,47 +234,99 @@ def test_gpu_preflight_rejects_combining_mig_slices(monkeypatch):
                                      demand = {'nvidia.com/mig-1g.10gb': 2},
                                      max_per_pod = {'nvidia.com/mig-1g.10gb': 2})
     assert len(problems) == 1
+    assert problems[0].startswith(gpu.IMPOSSIBLE_GPU_REQUEST)
     assert 'MIG slices' in problems[0]
-    assert 'single larger MIG profile' in problems[0]
 
 
-def test_gpu_preflight_mig_check_anchors_on_the_resources_last_segment(monkeypatch):
-    '''Only a name whose final /-segment starts with 'mig-' is a MIG profile. A
-    'mig-' elsewhere — e.g. a renamed time-sliced resource nvidia.com/ts-mig-1g.10gb,
-    which RFC 0003 deliberately does not name-detect — must skip the MIG hard-reject
-    and take the ordinary largest-node check instead.'''
+def test_gpu_preflight_rejects_multi_gpu_on_a_time_sliced_pool(monkeypatch):
+    '''Bug 1 regression: a time-sliced cluster advertises inflated units, so the
+    numeric checks pass — but gpu_count > 1 would be rejected at admission or
+    granted slices of the same card. GFD labels are what make this detectable.'''
+    sliced = _nodes_json(({'nvidia.com/gpu.product': 'NVIDIA-GeForce-RTX-3090-SHARED',
+                           'nvidia.com/gpu.replicas': '4',
+                           'nvidia.com/gpu.sharing-strategy': 'time-slicing'},
+                          {'nvidia.com/gpu': '4'}))
+    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
+                        'allocatable': '4', 'nodes -o json': sliced})
+    monkeypatch.setattr(subprocess, 'run', run)
+    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                     demand = {'nvidia.com/gpu': 2},
+                                     max_per_pod = {'nvidia.com/gpu': 2})
+    assert len(problems) == 1
+    assert problems[0].startswith(gpu.IMPOSSIBLE_GPU_REQUEST)
+    assert 'time-sliced' in problems[0]
+    # gpu_count == 1 on the same pool stays the supported dev workflow.
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
+                                 demand = {'nvidia.com/gpu': 2},
+                                 max_per_pod = {'nvidia.com/gpu': 1}) == []
+
+
+def test_gpu_preflight_notes_an_unclassifiable_resource(monkeypatch):
+    '''No GFD labels (or a non-NVIDIA resource): preflight cannot prove the units
+    are whole devices, so it keeps the numeric checks and says what it assumed.'''
     run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
                         'allocatable': '4'})
     monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
-                                 demand = {'nvidia.com/ts-mig-1g.10gb': 2},
-                                 max_per_pod = {'nvidia.com/ts-mig-1g.10gb': 2}) == []
-    # ...and on a cluster of 1-GPU nodes the same request hits the per-node bound,
-    # proving it fell through to the largest-node check rather than skipping it.
-    run_small, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                              'allocatable': '1 1'})
-    monkeypatch.setattr(subprocess, 'run', run_small)
     problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia',
-                                     demand = {'nvidia.com/ts-mig-1g.10gb': 2},
-                                     max_per_pod = {'nvidia.com/ts-mig-1g.10gb': 2})
+                                     demand = {'amd.com/gpu': 2},
+                                     max_per_pod = {'amd.com/gpu': 2})
     assert len(problems) == 1
-    assert 'largest cluster node has only 1' in problems[0]
-    assert 'MIG slices' not in problems[0]
+    assert 'cannot classify amd.com/gpu' in problems[0]
+    assert not problems[0].startswith(gpu.IMPOSSIBLE_GPU_REQUEST)
 
 
-def test_gpu_preflight_shared_mode_warns_on_multi_gpu_count(monkeypatch):
-    '''Under shared mode gpu_count is neither reserved nor isolated; a declared
-    multi-GPU need should surface as an advisory, not silently mean nothing.'''
-    run, _ = _fake_run({'version': '{}', 'gpu-pool=true': 'node/gpu-box',
-                        'get runtimeclass': 'nvidia'})
+def test_gpu_inventory_reads_gfd_labels(monkeypatch):
+    nodes = _nodes_json(({'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
+                          'nvidia.com/gpu.count': '2',
+                          'nvidia.com/gpu.memory': '81920'}, {'nvidia.com/gpu': '2'}),
+                        ({}, {}),                        # CPU node contributes nothing
+                        ({'nvidia.com/gpu.product': 'NVIDIA-A30',
+                          'nvidia.com/gpu.count': '1'}, {'nvidia.com/gpu': '1'}))
+    run, _ = _fake_run({'nodes -o json': nodes})
     monkeypatch.setattr(subprocess, 'run', run)
-    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia', gpu_mode = 'shared',
-                                     max_per_pod = {'nvidia.com/gpu': 2})
-    assert len(problems) == 1
-    assert 'ignored under --gpu-mode shared' in problems[0]
+    inventory = cluster.gpu_inventory()
+    assert [(n.product, n.card_count, n.memory_gib_per_card) for n in inventory] == [
+        ('NVIDIA-A100-SXM4-80GB', 2, 80.0), ('NVIDIA-A30', 1, 0.0)]
+    run_empty, _ = _fake_run({})
+    monkeypatch.setattr(subprocess, 'run', run_empty)
+    assert cluster.gpu_inventory() == []
+
+
+def test_classify_gpu_resource(monkeypatch):
+    '''The classification table: name says MIG; labels say time-sliced or
+    single-strategy MIG; GFD present and quiet says physical; nothing says unknown.'''
+    assert cluster.classify_gpu_resource(resource = 'nvidia.com/mig-3g.40gb') == 'mig'
+
+    single = _nodes_json(({'nvidia.com/mig.capable': 'true',
+                           'nvidia.com/mig.strategy': 'single',
+                           'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB'},
+                          {'nvidia.com/gpu': '14'}))
+    run, _ = _fake_run({'nodes -o json': single})
     monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia', gpu_mode = 'shared',
-                                 max_per_pod = {'nvidia.com/gpu': 1}) == []
+    assert cluster.classify_gpu_resource() == 'mig'
+
+    sliced = _nodes_json(({'nvidia.com/gpu.replicas': '4'}, {'nvidia.com/gpu': '4'}))
+    run, _ = _fake_run({'nodes -o json': sliced})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.classify_gpu_resource() == 'time-sliced'
+
+    physical = _nodes_json((_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}))
+    run, _ = _fake_run({'nodes -o json': physical})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.classify_gpu_resource() == 'physical'
+
+    # Worst case wins across nodes: one sliced advertiser taints the pool.
+    mixed = _nodes_json((_PHYSICAL_LABELS, {'nvidia.com/gpu': '2'}),
+                        ({'nvidia.com/gpu.replicas': '4'}, {'nvidia.com/gpu': '4'}))
+    run, _ = _fake_run({'nodes -o json': mixed})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.classify_gpu_resource() == 'time-sliced'
+
+    unlabeled = _nodes_json(({}, {'nvidia.com/gpu': '2'}))
+    run, _ = _fake_run({'nodes -o json': unlabeled})
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert cluster.classify_gpu_resource() == 'unknown'
 
 
 # -- flavor registry -------------------------------------------------------

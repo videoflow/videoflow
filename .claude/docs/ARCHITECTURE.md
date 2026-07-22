@@ -145,7 +145,8 @@ unchanged.
 | Blob store | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_blob_store(scheme, factory)` — selected by the blob URL's scheme |
 | Payload encoding (v4) | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_payload_encoder(type, encoder)`, paired with `register_payload_type` for decode |
 | Cluster flavor | [deploy/cluster.py](../../videoflow/deploy/cluster.py) | `register_cluster_flavor(handler)` — one class covers detection, image loading, hostPath warning |
-| GPU allocation | [deploy/gpu.py](../../videoflow/deploy/gpu.py) | `register_gpu_mode(strategy)` — pod resources, preflight, and per-run prepare/cleanup |
+| GPU allocation | [deploy/gpu.py](../../videoflow/deploy/gpu.py) | `register_gpu_mode(strategy)` — pod resources, spec resolution (`resolve_specs`, how mix stamps MIG profiles), preflight, and per-run prepare/cleanup |
+| MIG geometry | [deploy/mig.py](../../videoflow/deploy/mig.py) | `register_mig_table(table)` — a new GPU family's profiles for the mix layout solver |
 | `x-questions` type | [deploy/solution.py](../../videoflow/deploy/solution.py) | `register_question_type(qtype, coercer)` |
 
 Registration normally happens on import of the package that provides it. Where nothing would

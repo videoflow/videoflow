@@ -62,8 +62,7 @@ spec:
   device: [gpu]
   resources:
     gpu:
-      count: 2                      # whole GPUs per replica; integer >= 1; default 1
-      resourceName: nvidia.com/gpu  # optional; default resource name to request
+      count: 2                      # whole physical GPUs per replica; integer >= 1; default 1
 ```
 
 - `count` is a **default, not a floor**: an explicit graph-side `gpu_count=`
@@ -71,45 +70,64 @@ spec:
   component with a hard minimum should verify in `open()` and raise.
 - `count > 1` requires `'gpu'` in `spec.device` — a multi-GPU CPU-only component
   is a contradiction rejected at descriptor load.
-- `resourceName` mirrors the node-level `gpu_resource_name` and follows the same
-  precedence: node override → descriptor → deploy default → `nvidia.com/gpu`.
+- `resources.gpu` is valid on **processor** components only; on a producer or
+  consumer descriptor it is rejected at load (a silently ignored GPU need would
+  schedule an underprovisioned pod).
 - The key is `resources` (not `constraints`) to mirror the Kubernetes vocabulary
-  and leave room for future needs (e.g. `resources.memory`).
+  and leave room for future needs (e.g. `resources.gpu.memoryGiB`, RFC 0004).
+- *Amended (two-mode redesign):* the original draft also had a
+  `resourceName` field mirroring a node-level `gpu_resource_name` parameter.
+  Both were removed before merge: resource names are not a user-facing concept —
+  the deploy-level `--gpu-resource-name` covers clusters that advertise whole
+  devices under a non-default name, and slice resources (MIG profiles) are
+  assigned only by a GPU strategy (the `mix` solver), never by hand. Letting
+  users name slice resources was the door to the impossible
+  `gpu_count > 1 × MIG` combination this contract forbids.
 
 ### Environment: two optional rows (§1.1)
 
 | Variable | Required | Default | Meaning |
 |---|---|---|---|
-| `VF_GPU_COUNT` | no | `1` | Whole GPUs granted to this worker (GPU nodes only). Visible devices are exactly `0..count-1`. |
-| `VF_GPU_RESOURCE_NAME` | no | unset | Extended-resource name the GPUs were requested as, e.g. a MIG profile. |
+| `VF_GPU_COUNT` | no | `1` | Devices **delivered** to this worker (GPU nodes only). Visible devices are exactly `0..count-1`. |
+| `VF_GPU_RESOURCE_NAME` | no | unset | Extended-resource name the devices were requested as (strategy-resolved, e.g. the mix solver's MIG profile). |
 
 Both are informational, not routing: a Python component's authoritative source
 remains its own reconstructed `gpu_count` param; the env rows exist for native
 components and diagnostics. Set by both control planes (`manifests.py`,
-`engines/local.py`) for `device_type == 'gpu'` nodes only.
+`engines/local.py`) for `device_type == 'gpu'` nodes only. *Amended:* the count
+is the delivered grant, not the request — when the local engine cannot deliver
+the full request (an oversubscribed dev host), it reports what it actually
+masked in, and a docker-run native component (which receives no devices at all
+locally) gets neither variable.
 
 ### The visibility contract
 
-- **Kubernetes, exclusive mode:** already true — the device plugin mounts exactly
-  the granted N devices, enumerated `0..N-1`. Unchanged.
-- **Kubernetes, shared mode:** the contract does not hold (`--gpu-mode shared`
-  renders no limit and every pod sees every host device); deploy preflight warns
-  when a shared-mode flow declares `gpu_count > 1`.
+- **Kubernetes (exclusive mode, the default):** already true — the device plugin
+  mounts exactly the granted N devices, enumerated `0..N-1`. Unchanged. (An
+  earlier `--gpu-mode shared`, under which the contract could not hold, was
+  removed in the two-mode redesign; every registered mode now honours the
+  contract.)
 - **Local engine:** the engine partitions the host's visible devices (the parent
   process's `CUDA_VISIBLE_DEVICES` intersection, warning on non-integer entries
   such as UUID pins, which the ordinal pool cannot represent) into disjoint blocks of
   `gpu_count` per GPU replica and sets `CUDA_VISIBLE_DEVICES` accordingly. When
   demand exceeds supply it wraps around and warns (device sharing is acceptable
-  for dev; the same flow will not schedule that way on Kubernetes). On a host with
+  for dev; the same flow will not schedule that way on Kubernetes), and
+  `VF_GPU_COUNT` reports the devices actually delivered. On a host with
   no visible GPUs nothing is set — behaviour is unchanged. The host probe counts
   physical cards (`nvidia-smi -L` `GPU <n>:` lines); MIG instances are not
   enumerated, so a MIG-enabled card is one ordinal in the pool and cannot be
-  subdivided locally.
-- **Non-combinable resources:** MIG slices are hardware-isolated partitions;
-  `count > 1` against a `mig-` resource can never satisfy the contract and deploy
-  preflight rejects it. Time-sliced resources reject multi-unit requests
-  cluster-side (`failRequestsGreaterThanOne`); videoflow cannot detect renamed
-  time-sliced resources by name and documents the caveat instead.
+  subdivided locally. Docker-run native components receive no local grant at all
+  (no device mask can reach them) and therefore no `VF_GPU_*` variables.
+- **Non-combinable resources:** MIG slices are hardware-isolated partitions
+  (one CUDA process addresses one MIG instance; no P2P between instances) and
+  time-sliced units are shares of a device — `count > 1` against either can
+  never satisfy the contract. Deploy rejects the MIG case at render time (the
+  name is definitive) and classifies every other resource from GPU Feature
+  Discovery node labels (`nvidia.com/gpu.replicas`, `.sharing-strategy`,
+  `nvidia.com/mig.strategy`, `-SHARED` product suffix) at preflight, hard-failing
+  a multi-unit claim against a sliced pool. An unclassifiable resource (no GFD)
+  is assumed physical, with a note saying so.
 
 ## Compatibility
 

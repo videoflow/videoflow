@@ -13,12 +13,12 @@ teach image loading about it.
 '''
 from __future__ import absolute_import, division, print_function
 
+import json
 import subprocess
 from typing import Callable, List, Optional
 
-# SHARED_NEEDS_RUNTIME_CLASS lived here before the GPU strategies were extracted;
-# cli.py still imports it from this module to detect the fatal shared-mode problem.
-from .gpu import SHARED_NEEDS_RUNTIME_CLASS, get_gpu_mode  # noqa: F401
+from .gpu import get_gpu_mode
+from .mig import NodeInventory
 
 K3S = 'k3s'
 KIND = 'kind'
@@ -293,6 +293,93 @@ def max_allocatable_gpus_per_node(kubectl : str = 'kubectl',
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return max((int(v) for v in out.split() if v.isdigit()), default = 0)
 
+def classify_gpu_resource(kubectl : str = 'kubectl',
+                        resource : str = 'nvidia.com/gpu') -> str:
+    '''
+    What one advertised GPU extended resource's units actually are, from GPU
+    Feature Discovery node labels: ``'physical'`` (one unit = one whole device),
+    ``'mig'`` (units are hardware-isolated MIG slices), ``'time-sliced'`` (units
+    are shares of a device), or ``'unknown'`` (no GFD labels to judge by — e.g. a
+    non-NVIDIA resource, or a cluster without GFD).
+
+    This is what makes ``gpu_count > 1`` checkable: the scheduler happily grants N
+    units of any integer resource, but only whole physical devices can be spanned
+    by one model. Classification looks only at nodes that advertise ``resource``:
+
+    - a ``mig-`` final path segment, or ``nvidia.com/mig.strategy=single`` on a
+      MIG-capable advertising node (slices renamed to ``nvidia.com/gpu``) → mig;
+    - ``nvidia.com/gpu.sharing-strategy=time-slicing``, a ``-SHARED`` product
+      suffix, or ``nvidia.com/gpu.replicas`` > 1 → time-sliced;
+    - GFD labels present and none of the above → physical.
+
+    Worst case wins across nodes (any time-sliced advertiser taints the answer):
+    the scheduler may place the pod on any advertising node, so the safe claim is
+    the weakest one.
+    '''
+    # The name is definitive on its own: nvidia.com/mig-<profile> is always MIG.
+    if resource.rsplit('/', 1)[-1].startswith('mig-'):
+        return 'mig'
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'json')
+    if not out:
+        return 'unknown'
+    try:
+        nodes = json.loads(out).get('items', [])
+    except ValueError:
+        return 'unknown'
+    kinds : set[str] = set()
+    for node in nodes:
+        allocatable = (node.get('status') or {}).get('allocatable') or {}
+        if resource not in allocatable:
+            continue
+        labels = (node.get('metadata') or {}).get('labels') or {}
+        replicas = str(labels.get('nvidia.com/gpu.replicas', '')).strip()
+        if (labels.get('nvidia.com/gpu.sharing-strategy') == 'time-slicing'
+                or str(labels.get('nvidia.com/gpu.product', '')).endswith('-SHARED')
+                or (replicas.isdigit() and int(replicas) > 1)):
+            kinds.add('time-sliced')
+        elif (labels.get('nvidia.com/mig.strategy') == 'single'
+                and str(labels.get('nvidia.com/mig.capable', '')).lower() == 'true'):
+            # single strategy advertises MIG slices under the plain nvidia.com/gpu name.
+            kinds.add('mig')
+        elif any(key.startswith('nvidia.com/gpu') for key in labels):
+            kinds.add('physical')
+        else:
+            kinds.add('unknown')
+    for kind in ('time-sliced', 'mig', 'physical'):
+        if kind in kinds:
+            return kind
+    return 'unknown'
+
+def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
+    '''
+    The pool's physical GPU inventory as ``NodeInventory`` records, read off
+    GPU Feature Discovery labels (``nvidia.com/gpu.count``, ``.product``,
+    ``.memory`` — the last in MiB). Nodes without those labels contribute
+    nothing: without GFD there is no inventory to lay out, and the mix strategy
+    reports that as its own preflight problem rather than guessing.
+    '''
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'json')
+    if not out:
+        return []
+    try:
+        nodes = json.loads(out).get('items', [])
+    except ValueError:
+        return []
+    inventory = []
+    for node in nodes:
+        labels = (node.get('metadata') or {}).get('labels') or {}
+        product = labels.get('nvidia.com/gpu.product')
+        count = str(labels.get('nvidia.com/gpu.count', '')).strip()
+        memory_mib = str(labels.get('nvidia.com/gpu.memory', '')).strip()
+        if not product or not count.isdigit() or int(count) < 1:
+            continue
+        name = (node.get('metadata') or {}).get('name', '')
+        memory_gib = round(int(memory_mib) / 1024, 1) if memory_mib.isdigit() else 0.0
+        inventory.append(NodeInventory(name = name, product = product,
+                                       card_count = int(count),
+                                       memory_gib_per_card = memory_gib))
+    return sorted(inventory, key = lambda n: n.name)
+
 def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
     '''
     The NVIDIA RuntimeClass name when the cluster registers one, else None. Prefers
@@ -312,25 +399,25 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
                   max_per_pod : Optional[dict] = None) -> List[str]:
     '''
     Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
-    labeled ``videoflow.io/gpu-pool=true``; in exclusive mode, enough allocatable
-    units of each requested extended resource to satisfy the flow's whole demand
-    (an under-provisioned flow schedules partially and stalls with the rest of its
+    labeled ``videoflow.io/gpu-pool=true``; enough allocatable units of each
+    requested extended resource to satisfy the flow's whole demand (an
+    under-provisioned flow schedules partially and stalls with the rest of its
     pods Pending); and — where the NVIDIA container runtime is an opt-in
     RuntimeClass rather than the node default — a ``--gpu-runtime-class``, without
     which the pod schedules and then runs with no device. Returns problem strings
-    with copy-pasteable fixes (empty list = OK).
+    with copy-pasteable fixes (empty list = OK). A problem prefixed with
+    ``gpu.IMPOSSIBLE_GPU_REQUEST`` is fatal regardless of ``--strict-preflight``
+    (the request cannot work by construction).
 
     - Arguments:
         - demand: dict of extended-resource name -> total units the flow requests \
             (sum over GPU nodes of ``nb_tasks * gpu_count``), or None to skip the \
             capacity comparison and only check that the resource exists.
-        - gpu_mode: ``'exclusive'`` or ``'shared'``. Shared pods carry no resource \
-            limit, so the capacity/device-plugin checks are skipped; the RuntimeClass \
-            check is escalated instead, because in shared mode the runtime class is \
-            the only thing granting device access at all.
+        - gpu_mode: the ``--gpu-mode`` strategy name whose ``preflight_problems`` \
+            runs the mode-specific checks.
         - max_per_pod: dict of extended-resource name -> largest single-pod claim \
             (``manifests.gpu_max_per_pod``), or None to skip the per-node capacity \
-            and MIG-combination checks (RFC 0003).
+            and resource-classification checks (RFC 0003).
     '''
     problems = []
     # An unreachable cluster makes every check below come back empty, which would

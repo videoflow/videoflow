@@ -130,11 +130,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - gpu_runtime_class: ``runtimeClassName`` for GPU pods (``nvidia`` on k3s and \
             other distros where the NVIDIA runtime is opt-in rather than the node \
             default). Without it a GPU pod schedules but sees no device.
-        - gpu_mode: ``'exclusive'`` (whole-device claims, default) or ``'shared'`` \
-            (no resource limit — GPU pods co-schedule and share physical devices; \
-            dev clusters only, see ``manifests.render_manifests``).
-        - gpu_resource_name: deploy-level default extended-resource name for GPU \
-            claims; a node's own ``gpu_resource_name`` wins.
+        - gpu_mode: GPU strategy name (``'exclusive'``, the default: whole-device \
+            claims via the extended resource; see ``deploy.gpu``).
+        - gpu_resource_name: deploy-level extended-resource name for GPU claims \
+            (clusters advertising whole devices under a non-default name).
         - gpu_autoscaling: include GPU nodes in KEDA autoscaling (off by default — \
             each extra replica claims whole GPUs).
         - image_pull_policy: ``imagePullPolicy`` for every rendered container. \
@@ -399,8 +398,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 # resource — for a CPU/memory/affinity stall they would mislead.
                 if any('gpu' in (message or '') for _, message in overdue):
                     error += (' The flow demands more GPUs than the cluster has allocatable — '
-                              'reduce GPU nodes/replicas, enable device-plugin time-slicing, '
-                              'or deploy with --gpu-mode shared.')
+                              'reduce GPU nodes/replicas, or enable device-plugin time-slicing '
+                              '(dev clusters).')
                 raise RuntimeError(error)
             time.sleep(poll_secs)
 

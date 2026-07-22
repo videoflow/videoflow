@@ -301,6 +301,19 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
+def _runs_via_docker(spec : NodeSpec) -> bool:
+    '''
+    Whether ``_launch_command`` will run this spec with ``docker run``: a native
+    component with no ``localCommand``. Such a worker cannot receive a GPU grant
+    locally — the env filter passes only VF_* variables and no ``--gpus`` flag is
+    injected (a documented non-goal) — so the assignment and env code below must
+    treat it as ungrantable rather than hand it devices it can never see.
+    '''
+    if spec.node_class:
+        return False
+    runtime = (spec.descriptor or {}).get('spec', {}).get('runtime', {})
+    return not runtime.get('localCommand')
+
 def assign_local_gpus(specs : List[NodeSpec],
                     host_gpus : list[int]) -> dict[tuple[str, int], list[int]]:
     '''
@@ -308,12 +321,16 @@ def assign_local_gpus(specs : List[NodeSpec],
     replica of each GPU node takes the next ``gpu_count`` ordinals from
     ``host_gpus`` — the local twin of the exclusive Kubernetes grant (RFC 0003),
     so a worker's ``CUDA_VISIBLE_DEVICES`` shows exactly its granted devices.
+    Docker-run native components are skipped: they cannot receive the mask (see
+    ``_runs_via_docker``), so granting them ordinals would only starve the
+    workers that can.
 
     When demand exceeds ``len(host_gpus)`` the walk wraps around (duplicates
-    within one replica are collapsed) and a single warning is logged: sharing
-    devices is fine for dev, but the same flow will not schedule that way on
-    Kubernetes. An empty ``host_gpus`` returns an empty mapping — no env gets
-    set, so CPU-fallback GPU nodes on a GPU-less machine behave exactly as before.
+    within one replica are collapsed, with a per-replica warning naming the
+    short grant) and a single aggregate warning is logged: sharing devices is
+    fine for dev, but the same flow will not schedule that way on Kubernetes.
+    An empty ``host_gpus`` returns an empty mapping — no env gets set, so
+    CPU-fallback GPU nodes on a GPU-less machine behave exactly as before.
     '''
     if not host_gpus:
         return {}
@@ -321,14 +338,21 @@ def assign_local_gpus(specs : List[NodeSpec],
     cursor = 0
     demand = 0
     for spec in specs:
-        if spec.device_type != 'gpu':
+        if spec.device_type != 'gpu' or _runs_via_docker(spec):
             continue
         for replica_idx in range(spec.nb_tasks):
             devices = [host_gpus[(cursor + i) % len(host_gpus)] for i in range(spec.gpu_count)]
             cursor += spec.gpu_count
             demand += spec.gpu_count
             # dict.fromkeys collapses wrap-around duplicates while keeping order.
-            assignment[(spec.name, replica_idx)] = list(dict.fromkeys(devices))
+            granted = list(dict.fromkeys(devices))
+            if len(granted) < spec.gpu_count:
+                logger.warning(
+                    f'node {spec.name} replica {replica_idx} asked for gpu_count='
+                    f'{spec.gpu_count} but only {len(granted)} distinct device(s) are '
+                    f'visible — VF_GPU_COUNT will report {len(granted)}, the delivered '
+                    f'grant.')
+            assignment[(spec.name, replica_idx)] = granted
     if demand > len(host_gpus):
         logger.warning(
             f'local GPU demand ({demand} device claims) exceeds the {len(host_gpus)} visible '
@@ -378,10 +402,15 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
-    if spec.device_type == 'gpu':
+    if spec.device_type == 'gpu' and not _runs_via_docker(spec):
         # The worker's GPU grant (RFC 0003): informational for native components,
-        # which never see the Python node's reconstruction params.
-        env['VF_GPU_COUNT'] = str(spec.gpu_count)
+        # which never see the Python node's reconstruction params. The count is the
+        # *delivered* grant — when an oversubscribed host shrank the device list,
+        # reporting spec.gpu_count would promise devices that don't exist. A
+        # docker-run native gets neither variable: it receives no devices at all
+        # (see _runs_via_docker), so a count would be a lie.
+        env['VF_GPU_COUNT'] = str(len(gpu_devices) if gpu_devices is not None
+                                  else spec.gpu_count)
         if spec.gpu_resource_name:
             env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
     if gpu_devices:

@@ -1,3 +1,10 @@
+> **Status (two-mode GPU redesign, 2026-07-22):** Option A shipped and was then amended —
+> `--gpu-mode shared` and the node-level `gpu_resource_name` knob (including the descriptor's
+> `resourceName`) were **removed**; sharing is now expressed as declared memory demand
+> (`gpu_memory_gib`, RFC 0004) served by the `--gpu-mode mix` MIG layout solver
+> (`videoflow/deploy/mig.py`). References to those knobs below are historical.
+> Option B remains unimplemented and deferred.
+
 # Multi-GPU components — models that span more than one GPU
 
 Design doc + implementation plans for components whose deep-learning model is too large for a

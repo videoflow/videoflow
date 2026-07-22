@@ -41,9 +41,13 @@ class NodeSpec:
         - has_children: whether anything downstream consumes this node's output.
         - nb_tasks: desired replica count (processors only; 1 otherwise).
         - device_type: 'cpu' or 'gpu' (processors only).
-        - gpu_count: GPUs each replica requests (GPU processors only; default 1).
-        - gpu_resource_name: extended-resource name each replica requests, or None \
-            to use the deploy-time default (``nvidia.com/gpu``).
+        - gpu_count: whole physical GPUs each replica requests (GPU processors \
+            only; default 1).
+        - gpu_memory_gib: declared GPU memory demand in GiB (RFC 0004) — drives \
+            the mix strategy's MIG slice choice; None when undeclared.
+        - gpu_resource_name: internal — the resolved extended-resource name, set \
+            only by a GPU strategy (e.g. the mix solver's chosen MIG profile); \
+            None means the deploy-time default (``nvidia.com/gpu``).
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
             deploy-time default/override supplies it — see ``videoflow.deploy.images``).
@@ -84,9 +88,16 @@ class NodeSpec:
     protocol_version : Optional[int] = None
     # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
     gpu_count : int = 1
+    # Internal: the resolved extended-resource name, set only by a GPU strategy
+    # (the mix solver assigns a sharer's MIG profile here). Never user-set — the
+    # node API has no such knob; None means "the deploy default resource".
     gpu_resource_name : Optional[str] = None
-    # Appended last (field order is the constructor signature — see class docstring).
+    # Appended in arrival order (field order is the constructor signature — see
+    # class docstring).
     blob_readers : Optional[int] = None
+    # GPU memory demand in GiB (RFC 0004): drives the mix strategy's MIG slice
+    # choice; other modes ignore it. None = no declared demand (whole device).
+    gpu_memory_gib : Optional[float] = None
 
     @property
     def is_remote(self) -> bool:
@@ -110,6 +121,7 @@ class NodeSpec:
             'device_type': self.device_type,
             'gpu_count': self.gpu_count,
             'gpu_resource_name': self.gpu_resource_name,
+            'gpu_memory_gib': self.gpu_memory_gib,
             'is_finite': self.is_finite,
             'image': self.image,
             'partition_by': self.partition_by,
@@ -132,6 +144,7 @@ class NodeSpec:
             component_ref = d.get('component_ref'), descriptor = d.get('descriptor'),
             command = d.get('command'), protocol_version = d.get('protocol_version'),
             gpu_count = d.get('gpu_count', 1), gpu_resource_name = d.get('gpu_resource_name'),
+            gpu_memory_gib = d.get('gpu_memory_gib'),
             blob_readers = d.get('blob_readers'),
         )
 
@@ -146,7 +159,7 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
         nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
         device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
         gpu_count = node.gpu_count if isinstance(node, ProcessorNode) else 1
-        gpu_resource_name = node.gpu_resource_name if isinstance(node, ProcessorNode) else None
+        gpu_memory_gib = node.gpu_memory_gib if isinstance(node, ProcessorNode) else None
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
         # partition_by and _join_policy live on ProcessorNode/ConsumerNode; a producer
         # has neither. isinstance (not getattr) so the checker verifies the families.
@@ -181,7 +194,7 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             nb_tasks = nb_tasks,
             device_type = device_type,
             gpu_count = gpu_count,
-            gpu_resource_name = gpu_resource_name,
+            gpu_memory_gib = gpu_memory_gib,
             is_finite = is_finite,
             image = node.image,
             partition_by = partition_by,
