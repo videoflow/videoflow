@@ -1,0 +1,4 @@
+# No dependencies beyond the videoflow base image: the glue nodes are pure
+# stdlib, and PyYAML (for common.py) ships in videoflow-base. The file exists
+# so the solution keeps the standard layout; add real dependencies here (and
+# re-enable the install step in the Dockerfile) if the toy ever grows some.

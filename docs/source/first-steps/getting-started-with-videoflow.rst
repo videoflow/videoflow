@@ -108,5 +108,31 @@ tuple. Videoflow matches the two inputs that originated from the same upstream
 event before delivering them to the join — you do not have to synchronize anything
 yourself.
 
+Complete example solutions
+--------------------------
+
+The `solutions/ <https://github.com/videoflow/videoflow/tree/master/solutions>`_
+directory holds three complete, deployable applications built from core nodes
+only — no models, no footage, no extra dependencies:
+
+``toy_calculator``
+    A BATCH diamond over a stream of integers: fan-out, a trace join, competing
+    replicas, stateful aggregation and a two-parent consumer. The smallest
+    complete solution, and the best one to read first.
+
+``toy_router``
+    Partitioned parallelism — ``partition_by`` pinning each key to one replica,
+    an ``async def process`` node, and an idempotent sink.
+
+``toy_fusion``
+    A REALTIME flow fusing independent producers by event time, with tolerance,
+    lateness timeout, quorum and collect windows.
+
+Each runs in seconds and writes a self-checking artifact saying whether the
+distributed run computed the right answer::
+
+    cd solutions/toy_calculator
+    videoflow run-local toy_calculator.py
+
 Next, read :doc:`../distributed/distributed-execution` to understand how the same
 graph runs locally versus on Kubernetes.

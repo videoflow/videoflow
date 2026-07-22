@@ -1,0 +1,38 @@
+# Toy-calculator config template. `videoflow deploy toy_calculator.py` reads this
+# when no config.yaml exists: it asks the x-questions below, writes config.yaml,
+# and hostPath-mounts the x-mounts paths into the prep container and the worker
+# pods. See config.example.yaml for what every knob means.
+work_dir: ./out
+start_value: 1
+end_value: 200
+producer_fps: 50
+delay_fps: 40
+flow_type: batch
+square:
+  workers: 2
+join:
+  timeout_s: null
+  missing: wait
+  max_pending: 100000
+
+# Inputs `videoflow deploy` asks for when generating config.yaml.
+x-questions:
+  - key: end_value
+    prompt: 'Last integer to produce (the stream is start_value..end_value)'
+    type: int
+    default: 200
+  - key: square.workers
+    prompt: 'Competing replicas for the square stage'
+    type: int
+    default: 2
+  - key: join.missing
+    prompt: 'What the pair join does with a group that never completes'
+    type: choice
+    choices: [wait, drop, error]
+    default: wait
+
+# The work dir must be visible inside prep containers and worker pods at the same
+# absolute path: it holds expected.json (written by prepare.py, read by the report
+# consumer) and receives report.json, pairs.jsonl and proctimes.jsonl.
+x-mounts:
+  - '{work_dir}'

@@ -10,6 +10,14 @@ __pycache__/
 # rendered k8s manifests (videoflow deploy --render-only)
 /manifests/
 
+# Per-machine solution configs: generated from config.template.yaml and full of
+# absolute paths. config.example.yaml and config.template.yaml are the tracked ones.
+solutions/*/config.yaml
+
+# Solution run artifacts (work_dir defaults to ./out next to the config).
+solutions/*/out/
+*_nocommit*
+
 # Folder with models downloaded
 models/
 

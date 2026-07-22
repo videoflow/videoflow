@@ -27,10 +27,35 @@ convention below follows from that.
 | `spec/` | Language-agnostic protocol contract: `PROTOCOL.md`, `proto/`, golden `vectors/`, `rfcs/` |
 | `docker/`, `k8s/` | Base images (CPU + CUDA) and dev broker manifests |
 | `docs/` | Sphinx site (`docs/source/`) |
+| `solutions/` | The three dependency-free `toy_*` solutions — deployable apps that double as the end-to-end test fixtures (see below) |
 | `tests/`, `tests/integration/`, `examples/` | Unit tests, broker-backed tests, runnable examples |
 
-Sibling repo: `../videoflow-contrib` — community components and end-to-end solutions. It has its
+Sibling repo: `../videoflow-contrib` — community components and the ML solutions. It has its
 own `CLAUDE.md`.
+
+## The toy solutions are the end-to-end tests
+
+`solutions/{toy_calculator,toy_fusion,toy_router}` are complete, deployable solutions built from
+core nodes only — no models, no footage, no `videoflow_contrib` packages — and
+`tests/integration/test_toy_solutions.py` runs all three on every CI build. Between them they
+cover the framework paths no in-process test reaches:
+
+| Solution | Flow type | What it gates | Success artifact |
+|---|---|---|---|
+| `toy_calculator` | BATCH | fan-out, trace join re-aligning branches, competing replicas, stateful aggregation, two-parent consumer, `metadata=True` consumer, prep hook | `report.json` → `matches_expected: true` |
+| `toy_router` | BATCH | `partition_by` routing, `ctx.set_partition_key`, `async def process`, replica identity, idempotent sink | `counts.json` → `matches_expected` **and** `sticky` |
+| `toy_fusion` | REALTIME | independent producers fused by event time, `tolerance_ms`/`quorum`/`collect`, unbounded sources, `ctx.input_info` | `fusion_summary.json` → complete moments |
+
+Two things to know before touching them:
+
+- **They are tests *and* published examples.** A change to a graph, a node or a config key means
+  updating the solution's `README.md`, its `config.example.yaml`/`config.template.yaml`, and the
+  test's config dict together. Keep every stream short enough that a full run stays ~10s.
+- **The test copies each solution to a tmpdir and drives it with `videoflow run-local`.** That is
+  not incidental: `load_flow` calls `build_flow()` with no arguments, so a solution always reads
+  the `config.yaml` next to its own module (`--config` reaches only `prepare.py`), and all three
+  ship a `common.py`, so importing two into one interpreter would collide. Don't "simplify" the
+  test into an in-process `build_flow()` call.
 
 ## Commands
 
@@ -38,6 +63,7 @@ own `CLAUDE.md`.
 uv sync                                        # install (uv is the tool of record)
 uv run pytest --ignore=tests/integration       # unit tests — what the pre-push hook runs
 uv run pytest tests/integration                # needs a live NATS; auto-skipped if absent
+uv run pytest tests/integration/test_toy_solutions.py   # the three solutions/, end to end (~25s)
 uv run mypy                                    # type check (files = ["videoflow"])
 uv run ruff check --fix .                      # lint + import sort
 docker compose up -d                           # dev NATS (:4222) + Redis (:6379)
@@ -252,6 +278,9 @@ finishing, check each of these and update the ones your change invalidates:
 - `spec/PROTOCOL.md` + `spec/vectors/` — the wire format or routing changed (also needs an RFC).
 - `CLAUDE.md` and `.claude/docs/*.md` — conventions, layout, or commands changed.
 - `examples/` — an example is now wrong or misleading.
+- `solutions/` — a toy solution's graph, nodes or config keys changed. Its `README.md`,
+  `config.example.yaml`, `config.template.yaml` and the config dict in
+  `tests/integration/test_toy_solutions.py` all describe the same thing and go stale together.
 - `../videoflow-contrib` — the node contract changed in a way components must follow.
 
 ## Where to look next
