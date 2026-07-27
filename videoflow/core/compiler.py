@@ -7,7 +7,7 @@ Kubernetes pod as environment variables / a ConfigMap.
 '''
 from __future__ import absolute_import, division, print_function
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 from .flow import Flow
@@ -30,7 +30,8 @@ def _node_kind(node : Node) -> str:
 @dataclass
 class NodeSpec:
     '''
-    A flat, serializable description of one node's deployment.
+    A flat, serializable description of one node's deployment. Here a node refers to a
+    videoflow graph node (producer/processor/consumer), not a physical machine in a Kubernetes cluster.
 
     - Attributes:
         - name: node's stable name (unique in the flow).
@@ -110,28 +111,7 @@ class NodeSpec:
         return self.component_ref is not None and self.node_class is None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            'name': self.name,
-            'node_class': self.node_class,
-            'params': self.params,
-            'parents': self.parents,
-            'kind': self.kind,
-            'has_children': self.has_children,
-            'nb_tasks': self.nb_tasks,
-            'device_type': self.device_type,
-            'gpu_count': self.gpu_count,
-            'gpu_resource_name': self.gpu_resource_name,
-            'gpu_memory_gib': self.gpu_memory_gib,
-            'is_finite': self.is_finite,
-            'image': self.image,
-            'partition_by': self.partition_by,
-            'join_policy': self.join_policy,
-            'component_ref': self.component_ref,
-            'descriptor': self.descriptor,
-            'command': self.command,
-            'protocol_version': self.protocol_version,
-            'blob_readers': self.blob_readers,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d : Dict[str, Any]) -> "NodeSpec":
@@ -152,6 +132,16 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
     '''
     Converts ``build_tasks_data`` output — tuples of
     ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
+
+    It defaults GPU scheduling knobs to 1 GPU per replica, and leaves the GPU resource name
+    unset (None) so the deploy-time default is used. The mix strategy's solver will
+    override those fields with the chosen MIG profile if the node is a sharer.
+
+    It defaults ``is_finite`` to True for non-producers, and leaves ``blob_readers`` unset (None)
+    for non-leaves, so the engine can compute it once all specs are known.
+
+    It defaults ``component_ref``, ``descriptor``, ``command``, and ``protocol_version`` to None for native Python nodes,
+    and fills them in for remote components (Python or native) from the node's descriptor.
     '''
     specs : List[NodeSpec] = []
     for node, parent_names, is_last in tasks_data:
