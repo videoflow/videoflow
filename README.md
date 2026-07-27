@@ -236,6 +236,7 @@ So a cluster is GPU-ready for Videoflow when some node **advertises allocatable
 preflights exactly those two conditions for any flow containing a GPU node and
 prints the fix for whichever is missing (as a warning — it does not block the
 deploy, so the pods will simply sit `Pending`).
+TODO: Why wouldn't it block the deploy? Isn't that whay we would wants, instead of having a node wait forever? (The philosophy behind videoflow is that it takes total control of the Kubernetes cluster.)
 
 **1. Drivers and container runtime on the GPU hosts.** Each GPU node needs the
 NVIDIA driver plus the NVIDIA container toolkit wired into its container runtime,
@@ -308,6 +309,7 @@ pod that then finds no device. Name the class at deploy time:
 ```bash
 videoflow deploy my_flow.py --gpu-runtime-class nvidia
 ```
+TODO: Why would we need to mention this? why isn't a default that is not needed to be passed explicitly as a paramter?
 
 `--gpu-runtime-class` puts `runtimeClassName` on GPU pods only; CPU nodes are left
 on the node's default runtime. Deploy's preflight warns when an `nvidia`
@@ -373,6 +375,8 @@ GPU nodes schedulable on one card. The device plugin advertises each physical GP
 as N schedulable units, so N pods co-schedule onto it. Nothing is partitioned:
 every one of those pods gets the same physical device and draws from the same
 VRAM pool — this is scheduler bookkeeping plus driver time-slicing, not isolation.
+
+For more documentation on this, look [here.](https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/gpu-sharing.html) Some notes: time-slicing can be applied to specific GPUs. Time-slicing and MIG can be combined in one cluster.
 
 ```yaml
 # nvidia-plugin-configs.yaml
