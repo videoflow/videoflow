@@ -5,6 +5,7 @@ reporting that makes a dead worker visible instead of silent.
 
 Pure/unit: subprocess.Popen and broker provisioning are monkeypatched — no NATS.
 '''
+import json
 import os
 import signal
 import subprocess
@@ -14,7 +15,8 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH
-from videoflow.engines.local import LocalProcessEngine, _worker_env, inherited_python_path
+from videoflow.core.supervision import SupervisionPolicy
+from videoflow.engines.local import LocalProcessEngine, _worker_env, assign_local_gpus, inherited_python_path
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
 
@@ -36,7 +38,14 @@ class _FakeProc:
 
 
 def _run_engine(monkeypatch, engine = None, returncodes = None):
-    '''Runs the engine with Popen stubbed; returns (envs, engine).'''
+    '''
+    Runs the engine with Popen stubbed; returns (envs, engine).
+
+    ``returncodes`` is consumed one per *launch*, so a restart takes the next
+    value — which is how the supervision tests express "fails, then succeeds".
+    Restarts are disabled by default here so the exit-code bookkeeping tests stay
+    about bookkeeping; the supervision tests pass their own policy.
+    '''
     envs = []
     codes = list(returncodes or [])
     def fake_popen(cmd, env = None, **kwargs):
@@ -45,8 +54,9 @@ def _run_engine(monkeypatch, engine = None, returncodes = None):
     monkeypatch.setattr(subprocess, 'Popen', fake_popen)
     monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync',
                         lambda *a, **kw: None)
-    engine = engine or LocalProcessEngine()
+    engine = engine or LocalProcessEngine(supervision = SupervisionPolicy.disabled())
     monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    monkeypatch.setattr(engine, 'signal_flow_termination', lambda: None)
     flow = _flow()
     engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
     return envs, engine
@@ -77,6 +87,31 @@ def test_worker_env_without_python_path_is_untouched(monkeypatch):
     assert 'PYTHONPATH' not in env
 
 
+def test_worker_env_carries_the_error_handling_overrides():
+    p = IntProducer(0, 3, name = 'producer')
+    a = IdentityProcessor(name = 'work', delivery = 'best-effort', on_error = 'poison')(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    specs = {s.name: s for s in compile_flow(Flow([out], flow_type = BATCH, flow_id = 'demo'))}
+
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert env['VF_DELIVERY'] == 'best-effort'
+    assert env['VF_ON_ERROR'] == 'poison'
+    # A node that overrides nothing ships nothing: an unchanged flow gets exactly
+    # the environment it always did.
+    plain = _worker_env(specs['printer'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_DELIVERY' not in plain and 'VF_ON_ERROR' not in plain
+
+
+def test_worker_env_gives_each_worker_its_own_termination_log(monkeypatch):
+    '''
+    The local stand-in for Kubernetes' termination-message path — and the only way
+    the supervisor learns *why* a worker died rather than just that it did.
+    '''
+    envs, engine = _run_engine(monkeypatch)
+    paths = [e['VF_TERMINATION_LOG'] for e in envs]
+    assert len(set(paths)) == len(paths)             # one per worker, never shared
+
+
 def test_worker_env_carries_blob_reclamation_vars():
     specs = compile_flow(_flow())
     # The compiler stamps a reader count on every spec; the env carries it so the
@@ -91,6 +126,115 @@ def test_worker_env_carries_blob_reclamation_vars():
     specs[0].blob_readers = None
     env_legacy = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
     assert 'VF_BLOB_READERS' not in env_legacy
+
+
+def _gpu_flow_specs(gpu_count = 2, nb_tasks = 1):
+    p = IntProducer(0, 3, name = 'producer')
+    from videoflow.core.constants import GPU
+    a = IdentityProcessor(name = 'work', device_type = GPU, gpu_count = gpu_count,
+                        nb_tasks = nb_tasks, partition_by = 'trace_id' if nb_tasks > 1 else None)(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    return compile_flow(Flow([out], flow_type = BATCH, flow_id = 'demo'))
+
+
+def test_assign_local_gpus_gives_each_replica_a_disjoint_block():
+    specs = _gpu_flow_specs(gpu_count = 2, nb_tasks = 2)
+    assignment = assign_local_gpus(specs, [0, 1, 2, 3])
+    assert assignment == {('work', 0): [0, 1], ('work', 1): [2, 3]}
+
+
+def test_assign_local_gpus_wraps_and_warns_when_oversubscribed(caplog):
+    import logging
+    specs = _gpu_flow_specs(gpu_count = 2, nb_tasks = 2)
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.engines'):
+        assignment = assign_local_gpus(specs, [0, 1, 2])
+    assert assignment[('work', 0)] == [0, 1]
+    assert assignment[('work', 1)] == [2, 0]   # wrapped: shares device 0
+    assert any('will share devices' in r.message for r in caplog.records)
+    # A single replica bigger than the host collapses duplicates rather than
+    # repeating a device in CUDA_VISIBLE_DEVICES.
+    assert assign_local_gpus(_gpu_flow_specs(gpu_count = 2), [0])[('work', 0)] == [0]
+
+
+def test_assign_local_gpus_no_host_gpus_assigns_nothing():
+    assert assign_local_gpus(_gpu_flow_specs(), []) == {}
+
+
+def test_worker_env_reports_the_delivered_grant_not_the_request(caplog):
+    # Bug 3 regression: a shrunken grant (oversubscribed host collapsed the
+    # duplicates) must be reported as delivered — VF_GPU_COUNT=2 with one visible
+    # device would send a native component addressing cuda:1 into a crash.
+    import logging
+    specs = {s.name: s for s in _gpu_flow_specs(gpu_count = 2)}
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.engines'):
+        assignment = assign_local_gpus(list(specs.values()), [0])
+    assert assignment[('work', 0)] == [0]
+    assert any('VF_GPU_COUNT will report 1' in r.message for r in caplog.records)
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,
+                      gpu_devices = assignment[('work', 0)])
+    assert env['VF_GPU_COUNT'] == '1'
+    assert env['CUDA_VISIBLE_DEVICES'] == '0'
+    # A GPU-less host (no assignment at all) keeps the CPU-fallback behavior:
+    # the request is reported, and no mask is set.
+    bare = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert bare['VF_GPU_COUNT'] == '2' and 'CUDA_VISIBLE_DEVICES' not in bare
+
+
+def _docker_native_gpu_spec():
+    from videoflow.core.compiler import NodeSpec
+    return NodeSpec('native', None, {}, ['producer'], 'processor', True, 1, 'gpu',
+                    True, image = 'vendor/img:1', component_ref = 'components/native',
+                    descriptor = {'spec': {'runtime': {}}}, gpu_count = 2)
+
+
+def test_docker_run_natives_get_no_local_gpu_grant():
+    # Bug 4 regression: a docker-run native component can never see the mask (env
+    # filter + no --gpus), so granting it ordinals starved real workers while
+    # VF_GPU_COUNT promised it devices it did not have.
+    native = _docker_native_gpu_spec()
+    specs = list(_gpu_flow_specs(gpu_count = 2)) + [native]
+    assignment = assign_local_gpus(specs, [0, 1])
+    assert ('native', 0) not in assignment
+    assert assignment[('work', 0)] == [0, 1]   # ordinals not consumed by the native
+    env = _worker_env(native, 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_GPU_COUNT' not in env and 'VF_GPU_RESOURCE_NAME' not in env
+    # A native with a localCommand runs in-process env-wise and keeps the grant.
+    local_cmd = _docker_native_gpu_spec()
+    local_cmd.descriptor = {'spec': {'runtime': {'localCommand': ['./run']}}}
+    assert assign_local_gpus([local_cmd], [0, 1])[('native', 0)] == [0, 1]
+
+
+def test_worker_env_sets_gpu_grant_and_cuda_visible_devices():
+    specs = {s.name: s for s in _gpu_flow_specs(gpu_count = 2)}
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3,
+                      gpu_devices = [1, 2])
+    assert env['CUDA_VISIBLE_DEVICES'] == '1,2'
+    assert env['VF_GPU_COUNT'] == '2'
+    assert 'VF_GPU_RESOURCE_NAME' not in env   # none declared
+    # CPU nodes carry neither the grant nor a device mask.
+    cpu_env = _worker_env(specs['producer'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_GPU_COUNT' not in cpu_env and 'CUDA_VISIBLE_DEVICES' not in cpu_env
+
+
+def test_engine_partitions_gpus_across_workers(monkeypatch):
+    monkeypatch.setattr('videoflow.engines.local.visible_physical_gpus', lambda: [0, 1])
+    envs = []
+    def fake_popen(cmd, env = None, **kwargs):
+        envs.append(env or {})
+        return _FakeProc()
+    monkeypatch.setattr(subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync', lambda *a, **kw: None)
+    engine = LocalProcessEngine()
+    monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    p = IntProducer(0, 3, name = 'producer')
+    from videoflow.core.constants import GPU
+    a = IdentityProcessor(name = 'work', device_type = GPU, gpu_count = 2)(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    flow = Flow([out], flow_type = BATCH, flow_id = 'demo')
+    engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
+    by_node = {e['VF_NODE_NAME']: e for e in envs}
+    assert by_node['work']['CUDA_VISIBLE_DEVICES'] == '0,1'
+    assert 'CUDA_VISIBLE_DEVICES' not in by_node['producer']
 
 
 def test_workers_get_the_graph_dir_on_pythonpath(tmp_path, monkeypatch):
@@ -158,3 +302,58 @@ def test_report_failures_names_node_and_code(monkeypatch, capsys):
     engine.report_failures()
     err = capsys.readouterr().err
     assert 'exited with code 3' in err
+
+
+def test_failed_worker_is_restarted_and_the_flow_recovers(monkeypatch):
+    '''
+    The parity guarantee: a crash that Kubernetes recovers from (new pod, same
+    durable, un-acked messages redelivered) must recover here too. Before the
+    supervisor, this same failure left run-local hanging while the cluster ran on.
+    '''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    # producer ok, work fails once then succeeds on the restart, printer ok.
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0, 0])
+    assert engine.wait_for_completion() == []
+    assert engine.events().restart_count('work') == 1
+
+
+def test_restarts_are_bounded_and_then_the_node_gives_up(monkeypatch):
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 2, backoff_seconds = (0.0,)))
+    # Launch order is topological (producer, work, printer); each restart pops the
+    # next code, so 'work' fails on its first launch and on both restarts.
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0, 1, 1])
+    assert engine.wait_for_completion() == ['work']
+    assert engine.events().restart_count('work') == 2      # not unbounded
+    assert engine.events().failed_nodes() == ['work']
+
+
+def test_poison_exit_is_not_restarted(monkeypatch, tmp_path):
+    '''
+    A worker that died of a bad *message* will die of it again, so three more
+    identical crashes help nobody. The disposition comes from the death note the
+    worker wrote on its way out.
+    '''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0])
+    reason = {'code': 'VF_POISON_SCHEMA', 'message': 'bad frame', 'disposition': 'poison'}
+    path = tmp_path / 'work-0.json'
+    path.write_text(json.dumps(reason))
+    engine._termination_logs[('work', 0)] = str(path)
+    assert engine.wait_for_completion() == ['work']
+    assert engine.events().restart_count('work') == 0
+
+
+def test_sigint_is_not_restarted(monkeypatch):
+    '''Ctrl-C is not a crash: restarting the worker would fight the user.'''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, -signal.SIGINT, 0])
+    assert engine.wait_for_completion() == []
+    assert engine.events().restart_count() == 0

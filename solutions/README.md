@@ -34,14 +34,20 @@ config key.
 
 ## They are also the end-to-end test suite
 
-`tests/integration/test_toy_solutions.py` runs all three on every CI build and
-asserts their self-checking artifacts — `report.json`'s `matches_expected`,
+`tests/integration/local/test_toy_solutions.py` runs all of them on every CI build
+and asserts their self-checking artifacts — `report.json`'s `matches_expected`,
 `counts.json`'s `matches_expected` and `sticky`, `fusion_summary.json`'s
 complete moments. A green run means the distributed path computed the right
 answer, not merely that nothing crashed.
 
+`tests/integration/k8s/test_k8s_solutions.py` then runs the same solutions on a
+kind cluster through `videoflow deploy`, with the **same** config dicts and the
+**same** assertions — both import them from
+`tests/integration/support_solutions.py`. A solution that passes locally and fails
+there is a framework bug, which is exactly what that pairing exists to catch.
+
 So these solutions carry two responsibilities at once. If you change a graph, a
 node or a config key, update the solution's `README.md`, its
-`config.example.yaml` and `config.template.yaml`, **and** the matching config
-dict in the test. And keep the streams short — the whole suite should stay
-around 25 seconds.
+`config.example.yaml` and `config.template.yaml`, **and** the shared config dict
+in `support_solutions.py`. And keep the streams short — the whole local suite
+should stay around 25 seconds.

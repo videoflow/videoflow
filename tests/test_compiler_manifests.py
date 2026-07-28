@@ -10,7 +10,8 @@ import yaml
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
-from videoflow.core.constants import GPU, REALTIME
+from videoflow.core.constants import BATCH, GPU, REALTIME
+from videoflow.core.policies import MISSING_DROP, MISSING_WAIT, JoinPolicy
 from videoflow.deploy.images import parse_override, resolve_image
 from videoflow.deploy.manifests import dump_manifests, render_manifests
 from videoflow.processors import IdentityProcessor, JoinerProcessor
@@ -225,60 +226,137 @@ def _gpu_flow(**gpu_kwargs):
     printer = CommandlineConsumer(name = 'c')(gpu)
     return Flow([printer], flow_type = REALTIME, flow_id = 'g')
 
-def test_gpu_count_and_resource_name_reach_the_pod_spec():
-    flow = _gpu_flow(gpu_count = 2, gpu_resource_name = 'nvidia.com/mig-1g.10gb')
+def test_mix_mode_gpu_pods_get_owner_aware_affinity():
+    '''Mix stamps MIG'd nodes with the owning flow's videoflow.io/gpu-owner label;
+    the pod must be schedulable onto unowned pool nodes OR nodes this flow owns —
+    never another flow's, whose teardown would revert the geometry under it.'''
+    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime',
+                                 'nats://x:4222', 'run1', default_image = IMG,
+                                 gpu_mode = 'mix')
+    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
+    pod = by_name['vf-g-g']['spec']['template']['spec']
+    assert 'nodeSelector' not in pod
+    terms = (pod['affinity']['nodeAffinity']
+             ['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms'])
+    assert [
+        {'matchExpressions': [
+            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
+            {'key': 'videoflow.io/gpu-owner', 'operator': 'DoesNotExist'},
+        ]},
+        {'matchExpressions': [
+            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
+            {'key': 'videoflow.io/gpu-owner', 'operator': 'In', 'values': ['g']},
+        ]},
+    ] == terms
+    # CPU pods carry neither the selector nor the affinity.
+    assert 'affinity' not in by_name['vf-g-c']['spec']['template']['spec']
+
+def test_gpu_count_reaches_the_pod_spec():
+    flow = _gpu_flow(gpu_count = 2)
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG)
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
-    assert limits == {'nvidia.com/mig-1g.10gb': 2}
+    assert limits == {'nvidia.com/gpu': 2}
 
-def test_deploy_level_gpu_resource_name_is_a_default_not_an_override():
-    # The deploy default fills in for nodes that declared nothing; a node's own
-    # gpu_resource_name= wins over it.
-    flow = _gpu_flow(gpu_resource_name = 'nvidia.com/mig-1g.10gb')
-    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, gpu_resource_name = 'nvidia.com/gpu.shared')
+def test_strategy_resolved_resource_name_wins_over_the_deploy_default():
+    # NodeSpec.gpu_resource_name is internal: only a GPU strategy sets it (the mix
+    # solver's chosen MIG profile). When set, it wins over --gpu-resource-name.
+    specs = compile_flow(_gpu_flow())
+    next(s for s in specs if s.name == 'g').gpu_resource_name = 'nvidia.com/mig-1g.10gb'
+    manifests = render_manifests(specs, 'g', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, gpu_resource_name = 'amd.com/gpu')
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
     assert limits == {'nvidia.com/mig-1g.10gb': 1}
     manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, gpu_resource_name = 'nvidia.com/gpu.shared')
+                                default_image = IMG, gpu_resource_name = 'amd.com/gpu')
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
-    assert limits == {'nvidia.com/gpu.shared': 1}
+    assert limits == {'amd.com/gpu': 1}
 
-def test_gpu_shared_mode_omits_the_resource_limit_but_keeps_placement():
-    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, gpu_mode = 'shared',
-                                gpu_runtime_class = 'nvidia')
-    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
-    spec = by_name['vf-g-g']['spec']['template']['spec']
-    # No scheduler claim: the pod shares the physical GPUs through the runtime...
-    assert 'resources' not in spec['containers'][0]
-    # ...but placement and device injection stay: pool selector, toleration, runtime class.
-    assert spec['nodeSelector'] == {'videoflow.io/gpu-pool': 'true'}
-    assert spec['tolerations'][0]['key'] == 'nvidia.com/gpu'
-    assert spec['runtimeClassName'] == 'nvidia'
-    # CPU nodes are untouched by shared mode.
-    assert 'nodeSelector' not in by_name['vf-g-c']['spec']['template']['spec']
-    assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
+def test_render_rejects_a_multi_gpu_grant_against_a_mig_resource():
+    # Bug 2 regression: impossible by construction (a model cannot span MIG
+    # slices), so it is a hard render error — not a skippable preflight warning.
+    with pytest.raises(ValueError, match = 'MIG'):
+        render_manifests(compile_flow(_gpu_flow(gpu_count = 2)), 'g', 'realtime',
+                        'nats://x:4222', 'run1', default_image = IMG,
+                        gpu_resource_name = 'nvidia.com/mig-3g.40gb')
+
+def test_gpu_max_per_pod_takes_the_max_not_the_sum():
+    from videoflow.deploy.manifests import gpu_demand, gpu_max_per_pod
+    producer = IntProducer(name = 'p')
+    small = IdentityProcessor(name = 'small', device_type = GPU, nb_tasks = 3)(producer)
+    big = IdentityProcessor(name = 'big', device_type = GPU, gpu_count = 4)(small)
+    printer = CommandlineConsumer(name = 'c')(big)
+    specs = compile_flow(Flow([printer], flow_type = REALTIME, flow_id = 'g'))
+    # Demand sums every replica's claim; max-per-pod is the biggest single claim.
+    assert gpu_demand(specs) == {'nvidia.com/gpu': 3 + 4}
+    assert gpu_max_per_pod(specs) == {'nvidia.com/gpu': 4}
+    # Both group by resolved resource name, honoring the deploy default.
+    assert gpu_max_per_pod(specs, default_resource = 'amd.com/gpu') == {'amd.com/gpu': 4}
+
+
+def test_env_pairs_carry_gpu_grant_for_gpu_nodes():
+    from videoflow.deploy.manifests import _env_pairs
+    specs = {s.name: s for s in compile_flow(_gpu_flow(gpu_count = 2))}
+    specs['g'].gpu_resource_name = 'amd.com/gpu'   # strategy-resolved (internal)
+    env = _env_pairs(specs['g'], 'g', 'realtime', 'run1', 4)
+    assert env['VF_GPU_COUNT'] == '2'
+    assert env['VF_GPU_RESOURCE_NAME'] == 'amd.com/gpu'
+    # CPU nodes carry neither; a GPU node without a resource name only the count.
+    cpu_env = _env_pairs(specs['c'], 'g', 'realtime', 'run1', 4)
+    assert 'VF_GPU_COUNT' not in cpu_env and 'VF_GPU_RESOURCE_NAME' not in cpu_env
+    plain = {s.name: s for s in compile_flow(_gpu_flow())}
+    plain_env = _env_pairs(plain['g'], 'g', 'realtime', 'run1', 4)
+    assert plain_env['VF_GPU_COUNT'] == '1'
+    assert 'VF_GPU_RESOURCE_NAME' not in plain_env
+
 
 def test_invalid_gpu_mode_is_rejected():
     with pytest.raises(ValueError, match = 'gpu_mode'):
         render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
                         default_image = IMG, gpu_mode = 'fractional')
 
+def test_gpu_memory_gib_is_validated_and_reaches_the_spec():
+    # RFC 0004: a sharer declares memory; the compiler carries it to the spec.
+    flow = _gpu_flow(gpu_memory_gib = 10)
+    spec = next(s for s in compile_flow(flow) if s.name == 'g')
+    assert spec.gpu_memory_gib == 10
+    # Round-trips through the spec-dict boundary; old specs default to None.
+    from videoflow.core.compiler import NodeSpec
+    clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
+    assert clone.gpu_memory_gib == 10
+    old = {k: v for k, v in spec.to_dict().items() if k != 'gpu_memory_gib'}
+    assert NodeSpec.from_dict(old).gpu_memory_gib is None
+    # Validation: positive number, GPU-only, and never combined with a span.
+    with pytest.raises(ValueError, match = 'gpu_memory_gib'):
+        IdentityProcessor(name = 'g', device_type = GPU, gpu_memory_gib = 0)
+    with pytest.raises(ValueError, match = 'device_type=GPU'):
+        IdentityProcessor(name = 'g', gpu_memory_gib = 10)
+    with pytest.raises(ValueError, match = 'mutually exclusive'):
+        IdentityProcessor(name = 'g', device_type = GPU, gpu_count = 2, gpu_memory_gib = 10)
+    node = IdentityProcessor(name = 'g', device_type = GPU, gpu_memory_gib = 10)
+    with pytest.raises(ValueError, match = 'gpu_memory_gib'):
+        node.change_device('cpu')
+
 def test_gpu_kwargs_are_validated():
     with pytest.raises(ValueError, match = 'gpu_count'):
         IdentityProcessor(name = 'g', device_type = GPU, gpu_count = 0)
-    with pytest.raises(ValueError, match = 'gpu_resource_name'):
-        IdentityProcessor(name = 'g', device_type = GPU, gpu_resource_name = '')
+    # Bug 7 regression: a GPU grant on a CPU node is a build error, not a silent no-op.
+    with pytest.raises(ValueError, match = 'device_type=GPU'):
+        IdentityProcessor(name = 'g', gpu_count = 4)
+    # ...including via change_device after construction.
+    node = IdentityProcessor(name = 'g', device_type = GPU, gpu_count = 2)
+    with pytest.raises(ValueError, match = 'gpu_count=2'):
+        node.change_device('cpu')
 
 def test_gpu_fields_round_trip_through_spec_serialization():
-    # The flow-spec ConfigMap round-trips specs as JSON; the GPU knobs must survive.
+    # The flow-spec ConfigMap round-trips specs as JSON; the GPU knobs must survive
+    # (gpu_resource_name is strategy-set, so it is stamped post-compile here).
     from videoflow.core.compiler import NodeSpec
-    spec = compile_flow(_gpu_flow(gpu_count = 4, gpu_resource_name = 'amd.com/gpu'))[1]
+    spec = compile_flow(_gpu_flow(gpu_count = 4))[1]
+    spec.gpu_resource_name = 'amd.com/gpu'
     clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
     assert clone.gpu_count == 4
     assert clone.gpu_resource_name == 'amd.com/gpu'
@@ -313,6 +391,59 @@ def test_manifests_are_valid_yaml():
     assert len(parsed) == len(manifests)
     scaled = [m for m in parsed if m['kind'] == 'ScaledObject']
     assert len(scaled) == 3  # identity, identity1, joined
+
+# -- partitioning: policy, compiled specs, rendered workload -----------------
+#
+# A partitioned node is the one shape whose identity has to survive all three
+# hops: JoinPolicy round-tripping through get_params() (the worker rebuilds the
+# node from them), compile_flow carrying partition_by/nb_tasks into the spec, and
+# render_manifests turning that into a StatefulSet with a stable replica id. The
+# end-to-end "each message handled by exactly one replica" check needs a broker
+# and lives in tests/integration/local/test_partitioning.py.
+
+def _partitioned_flow():
+    p = IntProducer(0, 5, name = 'producer')
+    a = IdentityProcessor(name = 'a')(p)
+    joined = JoinerProcessor(name = 'joined', nb_tasks = 3, partition_by = 'trace_id')(p, a)
+    out = CommandlineConsumer(name = 'out')(joined)
+    return Flow([out], flow_type = REALTIME, flow_id = 'part')
+
+def test_join_policy_round_trips_through_get_params():
+    j = JoinerProcessor(name = 'j', nb_tasks = 2, partition_by = 'trace_id',
+                        join_policy = JoinPolicy(timeout_seconds = 5, missing = MISSING_DROP))
+    params = j.get_params()
+    json.dumps(params)  # must be JSON-serializable
+    j2 = JoinerProcessor(**params)
+    assert j2.partition_by == 'trace_id'
+    assert j2.join_policy.timeout_seconds == 5
+    assert j2.join_policy.missing == MISSING_DROP
+
+def test_join_policy_defaults_per_flow_type():
+    assert JoinPolicy.default_for(BATCH).missing == MISSING_WAIT
+    assert JoinPolicy.default_for(REALTIME).timeout_seconds == 10.0
+
+def test_compiler_carries_partition_and_join_policy():
+    specs = {s.name: s for s in compile_flow(_partitioned_flow())}
+    assert specs['joined'].partition_by == 'trace_id'
+    assert specs['joined'].nb_tasks == 3
+
+def test_partitioned_node_renders_statefulset_and_headless_service():
+    specs = compile_flow(_partitioned_flow())
+    manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, autoscaling = True)
+    by = {(m['kind'], m['metadata']['name']): m for m in manifests}
+    assert ('StatefulSet', 'vf-part-joined') in by
+    assert ('Service', 'vf-part-joined-hl') in by
+    # Non-partitioned processor 'a' stays a Deployment.
+    assert ('Deployment', 'vf-part-a') in by
+    # Partitioned nodes are not KEDA-autoscaled (rehash on scale is unsafe).
+    scaled = [m for m in manifests if m['kind'] == 'ScaledObject']
+    scaled_names = {m['metadata']['name'] for m in scaled}
+    assert 'vf-part-joined-scaler' not in scaled_names
+    # The StatefulSet pod gets POD_NAME via the downward API for its replica id.
+    ss = by[('StatefulSet', 'vf-part-joined')]
+    env = ss['spec']['template']['spec']['containers'][0].get('env', [])
+    assert any(e['name'] == 'POD_NAME' for e in env)
 
 def test_video_file_reader_is_finite():
     reader = VideoFileReader('/tmp/x.mp4', name = 'reader')

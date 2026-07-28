@@ -1,3 +1,4 @@
+from videoflow.v1 import error_pb2 as _error_pb2
 from videoflow.v1 import value_pb2 as _value_pb2
 from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
@@ -13,12 +14,14 @@ class MsgType(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
     MSG_TYPE_UNSPECIFIED: _ClassVar[MsgType]
     MSG_TYPE_DATA: _ClassVar[MsgType]
     MSG_TYPE_EOS: _ClassVar[MsgType]
+    MSG_TYPE_ABORT: _ClassVar[MsgType]
 MSG_TYPE_UNSPECIFIED: MsgType
 MSG_TYPE_DATA: MsgType
 MSG_TYPE_EOS: MsgType
+MSG_TYPE_ABORT: MsgType
 
 class Envelope(_message.Message):
-    __slots__ = ("v", "type", "producer_name", "flow_id", "run_id", "trace_id", "seq", "event_ts", "span_id", "parent_span_id", "replica_id", "metadata", "payload_type", "payload")
+    __slots__ = ("v", "type", "producer_name", "flow_id", "run_id", "trace_id", "seq", "event_ts", "span_id", "parent_span_id", "replica_id", "metadata", "payload_type", "payload", "error")
     class MetadataEntry(_message.Message):
         __slots__ = ("key", "value")
         KEY_FIELD_NUMBER: _ClassVar[int]
@@ -40,6 +43,7 @@ class Envelope(_message.Message):
     METADATA_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_TYPE_FIELD_NUMBER: _ClassVar[int]
     PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    ERROR_FIELD_NUMBER: _ClassVar[int]
     v: int
     type: MsgType
     producer_name: str
@@ -54,4 +58,5 @@ class Envelope(_message.Message):
     metadata: _containers.MessageMap[str, _value_pb2.Value]
     payload_type: str
     payload: bytes
-    def __init__(self, v: _Optional[int] = ..., type: _Optional[_Union[MsgType, str]] = ..., producer_name: _Optional[str] = ..., flow_id: _Optional[str] = ..., run_id: _Optional[str] = ..., trace_id: _Optional[str] = ..., seq: _Optional[int] = ..., event_ts: _Optional[float] = ..., span_id: _Optional[str] = ..., parent_span_id: _Optional[str] = ..., replica_id: _Optional[int] = ..., metadata: _Optional[_Mapping[str, _value_pb2.Value]] = ..., payload_type: _Optional[str] = ..., payload: _Optional[bytes] = ...) -> None: ...
+    error: _error_pb2.Error
+    def __init__(self, v: _Optional[int] = ..., type: _Optional[_Union[MsgType, str]] = ..., producer_name: _Optional[str] = ..., flow_id: _Optional[str] = ..., run_id: _Optional[str] = ..., trace_id: _Optional[str] = ..., seq: _Optional[int] = ..., event_ts: _Optional[float] = ..., span_id: _Optional[str] = ..., parent_span_id: _Optional[str] = ..., replica_id: _Optional[int] = ..., metadata: _Optional[_Mapping[str, _value_pb2.Value]] = ..., payload_type: _Optional[str] = ..., payload: _Optional[bytes] = ..., error: _Optional[_Union[_error_pb2.Error, _Mapping]] = ...) -> None: ...

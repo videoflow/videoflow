@@ -87,7 +87,45 @@ def test_explain_prints_nodes_and_dlq():
         out = buf.getvalue()
         assert 'explaindemo' in out
         assert 'producer' in out and 'identity' in out and 'printer' in out
-        assert 'vf-explaindemo-r1-dlq' in out
+        # The DLQ is flow-scoped, not run-scoped: it must survive this run's
+        # teardown, which is exactly when its contents are wanted.
+        assert 'vf-explaindemo-dlq' in out
+        assert 'videoflow dlq ls' in out
+
+
+_GPU_GRAPH_SRC = '''
+from videoflow.core import Flow
+from videoflow.core.constants import BATCH, GPU
+from videoflow.producers import IntProducer
+from videoflow.processors import IdentityProcessor
+from videoflow.consumers import CommandlineConsumer
+
+def build_flow():
+    p = IntProducer(0, 5, name='producer')
+    a = IdentityProcessor(name='identity', device_type=GPU, gpu_count=3, nb_tasks=2)(p)
+    out = CommandlineConsumer(name='printer')(a)
+    return Flow([out], flow_type=BATCH, flow_id='gpuexplain')
+'''
+
+def test_explain_prints_gpu_totals_and_the_per_pod_one_node_bound():
+    '''Totals alone can look satisfiable (6 devices across small nodes) while a 3-GPU
+    pod never schedules; explain — offline, no kubectl — must also print the largest
+    single-pod claim that deploy's preflight checks against the largest node.'''
+    from videoflow.deploy.cli import build_parser
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, 'graph.py')
+        with open(path, 'w') as f:
+            f.write(_GPU_GRAPH_SRC)
+        parser = build_parser()
+        args = parser.parse_args(['explain', path, '--run-id', 'r1'])
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            args.func(args)
+        out = buf.getvalue()
+        assert 'identity: 2 x 3 nvidia.com/gpu' in out
+        assert 'total: 6 x nvidia.com/gpu' in out
+        assert 'largest single pod: 3 x nvidia.com/gpu' in out
+        assert 'one cluster node' in out
 
 # -- structured logging ----------------------------------------------------
 

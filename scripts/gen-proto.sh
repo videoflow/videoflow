@@ -21,6 +21,7 @@ PYTHON="${PYTHON:-python}"
 
 PROTOS=(
   "videoflow/v1/value.proto"
+  "videoflow/v1/error.proto"
   "videoflow/v1/envelope.proto"
   "videoflow/v1/payloads.proto"
 )
@@ -38,4 +39,4 @@ if [ ! -f videoflow/v1/__init__.py ]; then
   echo "# Generated protobuf bindings for videoflow protocol v1 (see spec/proto/)." > videoflow/v1/__init__.py
 fi
 
-echo "Generated: videoflow/v1/{value,envelope,payloads}_pb2.py"
+echo "Generated: videoflow/v1/{value,error,envelope,payloads}_pb2.py"

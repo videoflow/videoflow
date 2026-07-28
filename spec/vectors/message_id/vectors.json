@@ -18,6 +18,15 @@
     "expected_id": "8964c2a84d154cd86b5f42b060899f77"
   },
   {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "detector",
+    "trace_id": "abort-r2",
+    "seq": 11,
+    "msg_type": "abort",
+    "expected_id": "2a87f320c56cde8ff6e3266c2a1018ee"
+  },
+  {
     "flow_id": "f",
     "run_id": "r",
     "producer_name": "proc",

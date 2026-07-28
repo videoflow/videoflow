@@ -11,6 +11,7 @@ from __future__ import absolute_import, division, print_function
 
 import pytest
 
+from videoflow.core.errors import ConfigError, NodeContractError
 from videoflow.core.node import ConsumerNode, ProcessorNode, ProducerNode
 from videoflow.runtime.worker import build_node_from_env, require_node_kind
 
@@ -45,7 +46,7 @@ def test_require_node_kind_rejects_mismatch(node_factory, expected, kind):
     A kind/class disagreement must fail immediately with a message naming the fix,
     not as an opaque AttributeError deep in the run loop.
     '''
-    with pytest.raises(ValueError, match = r'VF_NODE_KIND') as exc:
+    with pytest.raises(NodeContractError, match = r'VF_NODE_KIND') as exc:
         require_node_kind(node_factory(), expected, kind)
     message = str(exc.value)
     assert expected.__name__ in message
@@ -66,7 +67,7 @@ def test_build_node_from_env_without_class_names_the_remote_case(monkeypatch):
     '''A remote component scheduled onto the Python worker image is a deploy error.'''
     monkeypatch.delenv('VF_NODE_CLASS', raising = False)
     monkeypatch.setenv('VF_COMPONENT_REF', 'acme/thing:1.0.0')
-    with pytest.raises(RuntimeError, match = 'VF_NODE_CLASS'):
+    with pytest.raises(ConfigError, match = 'VF_NODE_CLASS'):
         build_node_from_env()
 
 

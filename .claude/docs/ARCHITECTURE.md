@@ -55,8 +55,13 @@ Inside, [`core/task.py`](../../videoflow/core/task.py) runs the loop:
 
 - `ProducerTask` calls `next()` until `StopIteration`.
 - `ProcessorTask` blocks on `receive_message()`, **reorders inputs to match `parent_names`**,
-  calls `process(*inputs)`, publishes, then **acks after processing** (so a crash redelivers).
-  On exception it calls `fail_inputs(e)` — a poison message never takes down the pod.
+  calls `process(*inputs)` through `invoke_node` (the one seam where a user exception
+  becomes a classified `VideoflowRuntimeError`), publishes, then **acks after
+  processing** (so a crash redelivers). On exception it calls `fail_inputs(e)`, and
+  what that costs comes from the error's *disposition*, not the flow type alone: a
+  poison message is dead-lettered at once, a transient one retried, a worker-fatal
+  one handed back while the worker stops. A bad message never takes down the pod;
+  a sick worker never dead-letters a healthy stream.
 - `_call()` injects a `ctx`/`context` argument only if the node's method declares it, and bridges
   `async def` node methods onto a task-owned event loop.
 
@@ -135,7 +140,11 @@ change to the wire needs an RFC under `spec/rfcs/` and updated vectors.
 Places where adding a variant is a registration rather than an edit. All follow the same
 shape — a module-level registry seeded with the built-ins, an explicit `register_*()`, and a
 `get_*()`/`make_*()` that raises on an unknown name with a message naming the known values and
-the fix. That error is a `ValueError` everywhere except `get_cluster_flavor`, which raises
+the fix. `register_error_classifier` (`core/errors.py`) is the newest one: it maps a
+third-party exception type onto a disposition, because a component cannot subclass
+`torch.cuda.OutOfMemoryError` but can classify it. Later registrations win.
+
+That error is a `ValueError` everywhere except `get_cluster_flavor`, which raises
 `RuntimeError` because `load_images` always has and callers catch that type. Registries are
 pre-seeded with exactly today's behavior, so with nothing registered the observable output is
 unchanged.
@@ -145,7 +154,8 @@ unchanged.
 | Blob store | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_blob_store(scheme, factory)` — selected by the blob URL's scheme |
 | Payload encoding (v4) | [wire/serialization.py](../../videoflow/wire/serialization.py) | `register_payload_encoder(type, encoder)`, paired with `register_payload_type` for decode |
 | Cluster flavor | [deploy/cluster.py](../../videoflow/deploy/cluster.py) | `register_cluster_flavor(handler)` — one class covers detection, image loading, hostPath warning |
-| GPU allocation | [deploy/gpu.py](../../videoflow/deploy/gpu.py) | `register_gpu_mode(strategy)` — pod resources, preflight, and per-run prepare/cleanup |
+| GPU allocation | [deploy/gpu.py](../../videoflow/deploy/gpu.py) | `register_gpu_mode(strategy)` — pod resources, spec resolution (`resolve_specs`, how mix stamps MIG profiles), preflight, and per-run prepare/cleanup |
+| MIG geometry | [deploy/mig.py](../../videoflow/deploy/mig.py) | `register_mig_table(table)` — a new GPU family's profiles for the mix layout solver |
 | `x-questions` type | [deploy/solution.py](../../videoflow/deploy/solution.py) | `register_question_type(qtype, coercer)` |
 
 Registration normally happens on import of the package that provides it. Where nothing would
@@ -168,7 +178,7 @@ These were considered and rejected. The reasoning matters more than the verdict 
 changes, so should the decision.
 
 - **Execution engine registry.** Blocked on a real prerequisite, not on effort: the CLI-facing
-  lifecycle (`wait_for_completion`, `teardown`, `dump_failed_logs`, `schedulability_report`) is
+  lifecycle (`wait_for_completion`, `teardown`, `dump_failed_logs`, `rollout_report`) is
   not part of the `ExecutionEngine` ABC, and the two engines' constructors share no signature. A
   registry over that is worthless. Unify the lifecycle into the ABC when a third engine actually
   exists, and do both together.

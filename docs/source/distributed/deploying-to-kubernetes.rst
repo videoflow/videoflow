@@ -94,7 +94,13 @@ What ``videoflow deploy`` does, step by step
    the run's workloads, broker streams, *and* the infra it created in step 7
    (``--keep`` keeps everything for debugging; ``--keep-infra`` keeps just
    NATS/Redis so the next deploy reuses them). A REALTIME flow is left running
-   and deploy prints the matching ``videoflow teardown`` command.
+   and deploy prints the matching ``videoflow teardown`` command — but only
+   after a bounded rollout check: deploy waits for every pod to become Ready
+   (i.e. ``open()`` completed), and if a pod crash-loops, is OOM-killed, cannot
+   pull its image, or sits unschedulable past a grace period, it dumps the pod
+   logs and exits non-zero, leaving the flow running for inspection. A pod that
+   is merely still loading when the check's deadline (~150 s, sized to the
+   startup-probe window) expires is reported as a warning, not a failure.
 
 ``--dry-run`` prints all manifests to stdout — including the dev-infra
 manifests whenever the broker would have been auto-provisioned — and
@@ -111,6 +117,23 @@ Prerequisites
 - For GPU flows: cluster nodes with the NVIDIA device plugin and the
   ``videoflow.io/gpu-pool=true`` label (deploy tells you the exact commands if
   they are missing).
+
+A disposable cluster
+--------------------
+
+``./scripts/kind-up.sh`` builds a local kind cluster set up exactly the way this
+page describes — images side-loaded, NATS and Redis installed in a namespace, the
+broker also published on the host — and ``./scripts/kind-down.sh`` deletes it. It
+is what the ``tests/integration/k8s`` suite deploys against on every CI build, so
+it is also the shortest way to try a deploy without a real cluster. See
+``tests/integration/README.md``.
+
+One thing it has to arrange is worth knowing before you point a solution at any
+kind cluster: a solution's ``work_dir`` is hostPath-mounted into the worker pods at
+the absolute path baked in at compile time, and a kind node has its own filesystem.
+The cluster config bind-mounts the work root into the node at the *same* path, so
+host, node and pod agree. Without that the flow runs, every pod exits zero, and the
+artifacts are nowhere to be found.
 
 Building the image manually
 ---------------------------
@@ -227,9 +250,10 @@ How graph concepts map onto Kubernetes
 |                                       | not autoscaled                                              |
 +---------------------------------------+-------------------------------------------------------------+
 | ``device_type='gpu'``                 | pod requests ``gpu_count`` x ``nvidia.com/gpu`` (or         |
-|                                       | ``gpu_resource_name``) + GPU-pool nodeSelector; exclusive — |
-|                                       | see :doc:`gpu-sharing` (``--gpu-mode shared`` omits the     |
-|                                       | request so pods share the physical GPUs)                    |
+|                                       | ``--gpu-resource-name``) + GPU-pool nodeSelector; whole     |
+|                                       | physical devices — see :doc:`gpu-sharing`                   |
+|                                       | (``--gpu-mode mix`` packs ``gpu_memory_gib`` nodes onto     |
+|                                       | solver-chosen exclusive MIG slices)                         |
 +---------------------------------------+-------------------------------------------------------------+
 | finite producer (``is_finite=True``)  | a Kubernetes **Job**                                        |
 +---------------------------------------+-------------------------------------------------------------+

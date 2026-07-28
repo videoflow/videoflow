@@ -1,0 +1,34 @@
+# Toy-recovery configuration, fully documented. Copy to config.yaml and edit (or
+# let `videoflow deploy` / `videoflow run-local` generate one from
+# config.template.yaml by asking questions). Relative paths resolve against the
+# directory this file lives in.
+
+# Where every artifact lands: expected_recovery.json (from prepare.py),
+# ledger.jsonl and recovery_report.json. Mounted into the worker pods at the
+# same absolute path, so results appear on your machine.
+work_dir: ./out
+
+# The stream is simply 0..events-1, paced at rate_fps messages per second
+# (<= 0 = as fast as possible).
+events: 40
+rate_fps: 200
+
+# How many times a message is redelivered before it is dead-lettered. It only
+# affects *transient* failures: a poison message is dead-lettered on its first
+# failure, because retrying something that failed on its own content cannot help.
+max_retries: 3
+
+fragile:
+  # Events rejected as unparseable. These raise a poison-classified error, so
+  # each is dead-lettered immediately and appears in `dead_lettered` — the rest
+  # of the stream is untouched.
+  poison_values: [7, 23]
+
+  # The event at which the worker declares itself unusable, once. That is a
+  # worker-fatal error: the message is handed back to the broker rather than
+  # blamed, the worker exits, the supervisor restarts it, and the fresh worker
+  # processes the message successfully. It ends up delivered, not dead-lettered
+  # — which is the whole distinction this solution exists to show.
+  #
+  # Set to null to skip the crash and keep only the poison path.
+  crash_at: 15

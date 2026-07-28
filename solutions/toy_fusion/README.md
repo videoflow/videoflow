@@ -82,13 +82,22 @@ python toy_fusion.py --config config.yaml
 
 ## In the test suite
 
-`tests/integration/test_toy_solutions.py` runs this solution end to end on
+`tests/integration/local/test_toy_solutions.py` runs this solution end to end on
 every CI build: it copies the solution to a temp directory, writes a config
 with a small `duration_s` so the unbounded sources become a bounded run, drives
 it with `videoflow run-local`, and asserts `fusion_summary.json` reports
 complete moments carrying IMU samples. This is the only integration test that
 exercises the REALTIME path with independent producers, so keep the solution
 runnable with a short `duration_s`.
+
+`tests/integration/k8s/test_k8s_solutions.py` runs it on a kind cluster too, with
+two deliberate differences. `duration_s` is `0` there, because a bounded producer
+renders as a Job, the consumer Deployment reaches end-of-stream and exits, and the
+kubelet restarts it — which the deploy's rollout check correctly calls a failing
+deploy. And it asserts `latest.json`, rewritten on every fused moment, rather than
+`fusion_summary.json`, which is only written from `close()`: nothing in an unbounded
+cluster flow ever closes. Both configs live in
+`tests/integration/support_solutions.py`.
 
 ## Configuration reference (`config.yaml`)
 

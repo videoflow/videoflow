@@ -10,6 +10,7 @@ import sys
 
 import pytest
 
+from videoflow.core.errors import EXIT_ENVIRONMENT, EXIT_FLOW_FAILED, EXIT_USER
 from videoflow.deploy import cli, localinfra, solution
 
 GRAPH = '''
@@ -82,7 +83,8 @@ def wiring(tmp_path, monkeypatch):
 
 
 def _run(tmp_path, *extra):
-    cli.main(['run-local', str(tmp_path / 'graph.py'), *extra])
+    '''Runs the CLI and returns its exit status (main() no longer raises SystemExit).'''
+    return cli.main(['run-local', str(tmp_path / 'graph.py'), *extra])
 
 
 def test_provisions_and_tears_down_by_default(wiring):
@@ -156,22 +158,25 @@ def test_failed_node_exits_non_zero(wiring, monkeypatch):
         original(self, **kwargs)
         self._failures = [('work', 0, 1)]
     monkeypatch.setattr(_FakeEngine, '__init__', failing_init)
-    with pytest.raises(SystemExit, match = 'work'):
-        _run(tmp_path)
+    # The flow ran and lost a node: exit 4, distinct from a bad flow (2) or a
+    # broken environment (3), so CI can triage without parsing stderr.
+    assert _run(tmp_path) == EXIT_FLOW_FAILED
 
 
-def test_prepare_failure_is_a_clean_error(wiring, monkeypatch):
+def test_prepare_failure_is_a_clean_error(wiring, monkeypatch, capsys):
     tmp_path, _calls = wiring
     def boom(graph_dir, config_path = None):
         raise subprocess.CalledProcessError(1, 'prepare.py')
     monkeypatch.setattr(solution, 'run_prepare_local', boom)
-    with pytest.raises(SystemExit, match = 'prepare.py failed'):
-        _run(tmp_path)
+    assert _run(tmp_path) == EXIT_ENVIRONMENT
+    assert 'prepare.py failed' in capsys.readouterr().err
 
 
-def test_missing_graph_is_reported(tmp_path):
-    with pytest.raises(SystemExit, match = 'Graph module not found'):
-        cli.main(['run-local', str(tmp_path / 'nope.py')])
+def test_missing_graph_is_reported(tmp_path, capsys):
+    assert cli.main(['run-local', str(tmp_path / 'nope.py')]) == EXIT_USER
+    err = capsys.readouterr().err
+    assert 'Graph module not found' in err
+    assert 'Traceback' not in err       # a message, not a stack of framework internals
 
 
 def _spec(name, node_class = None, image = None, descriptor = None):

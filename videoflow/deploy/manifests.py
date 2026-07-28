@@ -38,14 +38,17 @@ from ..core.compiler import (
     validate_wire_compatibility,
 )
 from ..core.constants import BATCH
+from ..core.supervision import SupervisionPolicy
 
 # GPU allocation lives in .gpu; these four are used below.
 # Re-export only: DEFAULT_GPU_RESOURCE was a public name of this module before the
 # GPU strategies were extracted, so external callers may still import it from here.
 from .gpu import (
     DEFAULT_GPU_RESOURCE,  # noqa: F401
+    GPU_OWNER_LABEL,
     GPU_POOL_LABEL,
     GPU_TAINT_KEY,
+    flow_owner_value,
     get_gpu_mode,
     resolve_gpu_resource,
 )
@@ -69,6 +72,20 @@ DELETABLE_KINDS = _CORE_DELETABLE_KINDS + _CRD_DELETABLE_KINDS
 # GC safety net on batch Jobs: even if the launching client dies mid-run, k8s reaps
 # completed Job objects (and their pods) after this many seconds.
 _BATCH_JOB_TTL_SECONDS = 600
+
+# Outer wall-clock bound on a BATCH node's Job. A BATCH pod has no liveness probe
+# (probes are stripped from Job pods), so this is the last line against a run that
+# would otherwise hang forever. Deliberately far above any realistic batch: the
+# worker's own progress deadline is the precise instrument, and this is the blunt
+# one behind it.
+_BATCH_JOB_DEADLINE_SECONDS = 24 * 3600
+
+# Startup-probe window: period × threshold is how long a worker gets to finish
+# ``open()`` (slow model loads) before the kubelet kills the container. The
+# rollout watchdog in engines/kubernetes.py derives its deadline from these, so a
+# probe change automatically retunes the post-apply check.
+STARTUP_PROBE_PERIOD_SECONDS = 2
+STARTUP_PROBE_FAILURE_THRESHOLD = 60
 
 _DNS1123_RE = re.compile(r'[^a-z0-9-]+')
 
@@ -162,10 +179,26 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    # Per-node failure handling. Absent (the usual case) ⇒ the worker takes the
+    # flow type's preset, so a flow that never touches these renders exactly the
+    # manifests it always did.
+    if spec.delivery:
+        if spec.delivery.get('delivery'):
+            env['VF_DELIVERY'] = spec.delivery['delivery']
+        if spec.delivery.get('on_error'):
+            env['VF_ON_ERROR'] = spec.delivery['on_error']
     if spec.blob_readers is not None:
         # Downstream read count of this node's messages — enables refcounted blob
         # reclamation (PROTOCOL.md BLOB-5). Omitted (legacy spec) ⇒ TTL-only blobs.
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
+    if spec.device_type == 'gpu':
+        # The worker's GPU grant (RFC 0003): informational for native components,
+        # which never see the Python node's reconstruction params. Visible devices
+        # are exactly 0..count-1 — true in every registered mode (the device plugin
+        # masks the container to its exclusive claim).
+        env['VF_GPU_COUNT'] = str(spec.gpu_count)
+        if spec.gpu_resource_name:
+            env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
     return env
 
 def _is_partitioned(spec : NodeSpec) -> bool:
@@ -210,6 +243,61 @@ def gpu_demand(specs : List[NodeSpec],
         demand[resource] = demand.get(resource, 0) + spec.nb_tasks * spec.gpu_count
     return demand
 
+def validate_gpu_specs(specs : List[NodeSpec],
+                       default_resource : Optional[str] = None) -> None:
+    '''
+    Hard build-time GPU validation — the checks that are provable from the specs
+    alone, with no cluster in sight. Distinct from preflight (which compares
+    against live cluster state and is skippable): what fails here can never work
+    on any cluster, so it raises instead of warning.
+
+    Today that is one rule: a multi-device grant (``gpu_count > 1``) against a MIG
+    resource. MIG slices are hardware-isolated partitions — one CUDA process
+    addresses one MIG instance and there is no P2P between instances — so the pod
+    would receive devices its model cannot span (RFC 0003).
+
+    - Raises:
+        - ValueError: naming the node and the fix.
+    '''
+    for spec in specs:
+        if spec.device_type != 'gpu' or spec.gpu_count <= 1:
+            continue
+        resource = resolve_gpu_resource(spec, default_resource)
+        if resource.rsplit('/', 1)[-1].startswith('mig-'):
+            raise ValueError(
+                f'node {spec.name!r} requests gpu_count={spec.gpu_count} x {resource}, but MIG '
+                f'slices are hardware-isolated partitions a model cannot span — a multi-GPU '
+                f'grant needs whole physical devices. Fix: drop --gpu-resource-name (request '
+                f'whole GPUs), or set gpu_count=1.')
+
+def gpu_max_per_pod(specs : List[NodeSpec],
+                    default_resource : Optional[str] = None) -> dict[str, int]:
+    '''
+    The largest single-pod claim per extended-resource name — ``gpu_demand``'s
+    sibling and the other half of preflight's input. Total demand answers "will
+    the whole flow schedule"; this answers "can any single node host the biggest
+    pod": all of one replica's ``gpu_count`` devices must sit on one Kubernetes
+    host, so a flow can satisfy the total and still never schedule (RFC 0003).
+
+    Same ``dict[str, int]``-not-dataclass shape as ``gpu_demand``, for the same
+    reason: the keys are open-ended cluster-defined extended-resource names.
+
+    - Arguments:
+        - specs: the compiled flow. Non-GPU nodes contribute nothing.
+        - default_resource: as on ``gpu_demand``.
+
+    - Returns:
+        - resource name -> the largest ``gpu_count`` any one replica requests. \
+            Empty when no node requests a GPU.
+    '''
+    largest : dict[str, int] = {}
+    for spec in specs:
+        if spec.device_type != 'gpu':
+            continue
+        resource = resolve_gpu_resource(spec, default_resource)
+        largest[resource] = max(largest.get(resource, 0), spec.gpu_count)
+    return largest
+
 def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
               nats_configmap : str, mounts : Optional[List[Mount]] = None,
               gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
@@ -249,14 +337,34 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
 
     resources = {}
     node_selector = None
+    node_affinity = None
     tolerations = None
     runtime_class = None
     if spec.device_type == 'gpu':
         # Resolved here, not only in render_manifests: a direct workload()/_pod_spec
-        # caller with a typo'd mode must get an error, not a silent fall-through to
-        # the no-limit shared branch.
+        # caller with a typo'd mode must get an error, not a silently wrong claim.
         resources.update(get_gpu_mode(gpu_mode).pod_resources(spec, gpu_resource_name))
-        node_selector = {GPU_POOL_LABEL: 'true'}
+        if gpu_mode == 'mix':
+            # Mix stamps the nodes it MIG's with the owning flow's GPU_OWNER_LABEL.
+            # The planner keeps flows on disjoint nodes, but only the scheduler can
+            # enforce that: two flows requesting the same MIG profile resource would
+            # otherwise let this flow's pods bind another flow's slices — whose
+            # teardown then reverts the geometry under them. So: unowned pool nodes
+            # OR pool nodes this flow owns.
+            node_affinity = {'requiredDuringSchedulingIgnoredDuringExecution': {
+                'nodeSelectorTerms': [
+                    {'matchExpressions': [
+                        {'key': GPU_POOL_LABEL, 'operator': 'In', 'values': ['true']},
+                        {'key': GPU_OWNER_LABEL, 'operator': 'DoesNotExist'},
+                    ]},
+                    {'matchExpressions': [
+                        {'key': GPU_POOL_LABEL, 'operator': 'In', 'values': ['true']},
+                        {'key': GPU_OWNER_LABEL, 'operator': 'In',
+                         'values': [flow_owner_value(flow_id)]},
+                    ]},
+                ]}}
+        else:
+            node_selector = {GPU_POOL_LABEL: 'true'}
         tolerations = [{
             'key': GPU_TAINT_KEY, 'operator': 'Exists', 'effect': 'NoSchedule',
         }]
@@ -266,7 +374,6 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # distros that register it as an opt-in RuntimeClass instead (k3s ships an
         # 'nvidia' handler but leaves runc default), a pod without runtimeClassName
         # starts with no device — so --gpu-runtime-class names the handler to use.
-        # In shared mode it is the only thing that grants device access at all.
         runtime_class = gpu_runtime_class
     if resources:
         container['resources'] = resources
@@ -285,9 +392,15 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     # tens of seconds) without letting the liveness probe kill the pod meanwhile.
     container['startupProbe'] = {
         'httpGet': {'path': '/readyz', 'port': 8080},
-        'periodSeconds': 2, 'failureThreshold': 60,
+        'periodSeconds': STARTUP_PROBE_PERIOD_SECONDS,
+        'failureThreshold': STARTUP_PROBE_FAILURE_THRESHOLD,
     }
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
+    # The worker writes a structured death reason to /dev/termination-log, which the
+    # API server surfaces in containerStatuses — so rollout_report can say
+    # "VF_DEVICE: CUDA out of memory" instead of "crash-looping, see the logs".
+    # FallbackToLogsOnError covers the deaths too abrupt to write anything.
+    container['terminationMessagePolicy'] = 'FallbackToLogsOnError'
 
     pod_spec: dict = {'containers': [container]}
     if mounts:
@@ -313,6 +426,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
             {'name': m.name, 'hostPath': {'path': m.host_path}} for m in mounts]
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
+    if node_affinity:
+        pod_spec['affinity'] = {'nodeAffinity': node_affinity}
     if tolerations:
         pod_spec['tolerations'] = tolerations
     if runtime_class:
@@ -354,7 +469,16 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
              nats_cm_name : str, mounts : Optional[List[Mount]] = None,
              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
              gpu_resource_name : Optional[str] = None,
-             image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> dict:
+             image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+             supervision : Optional[SupervisionPolicy] = None) -> dict:
+    '''
+    - Arguments:
+        - supervision: restart policy for this node's workload. Rendered into the \
+            Job ``backoffLimit``; the local engine honours the *same object* in \
+            its supervisor, which is what keeps the two engines' failure behaviour \
+            identical instead of merely similar.
+    '''
+    supervision = supervision or SupervisionPolicy()
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
@@ -383,10 +507,17 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # health server contract; drop them.
         for probe in ('readinessProbe', 'livenessProbe', 'startupProbe'):
             pod_template['spec']['containers'][0].pop(probe, None)
-        job_spec: dict = {'backoffLimit': 3, 'template': pod_template}
+        job_spec: dict = {'backoffLimit': supervision.max_restarts,
+                        'template': pod_template}
         if batch:
             # Reap completed Jobs (and pods) even if the launching client dies.
             job_spec['ttlSecondsAfterFinished'] = _BATCH_JOB_TTL_SECONDS
+            # Outer backstop for a wedged worker. A BATCH Job has no probes (they
+            # were stripped above), so without this the only thing between a hung
+            # node and an eternal run is the worker's own progress deadline — and
+            # that cannot fire if the worker is wedged badly enough. Generous, since
+            # a legitimately long batch is not a failure.
+            job_spec['activeDeadlineSeconds'] = _BATCH_JOB_DEADLINE_SECONDS
             if partitioned:
                 # N distinct, stable replica ids → Indexed Job (completion index is
                 # the replica id, see _pod_spec).
@@ -491,6 +622,10 @@ def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str
         'image': image,
         'imagePullPolicy': image_pull_policy,
         'command': ['python', '-m', 'videoflow.provision'],
+        # A provision failure is one of the harder things to diagnose — the only
+        # symptom the CLI can otherwise report is "did not complete within 180s" —
+        # so surface this pod's last output through the API too.
+        'terminationMessagePolicy': 'FallbackToLogsOnError',
         'envFrom': [{'configMapRef': {'name': nats_cm_name}}],
         'env': [
             {'name': 'VF_FLOW_ID', 'value': flow_id},
@@ -595,7 +730,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     mounts : Optional[List[Mount]] = None,
                     gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
                     gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False,
-                    image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> list:
+                    image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+                    supervision : Optional[SupervisionPolicy] = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -603,6 +739,9 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     - run_id: per-run identifier stamped into each node's env (scopes broker streams).
     - blob_ttl_seconds: TTL override for offloaded payloads (``--blob-ttl-seconds``, \
         PROTOCOL.md BLOB-7); ``None`` lets workers pick the flow-type default.
+    - supervision: restart policy for every node workload, rendered into the Job \
+        ``backoffLimit``. The local engine honours the same object, which is what \
+        makes the two engines' failure behaviour identical rather than merely similar.
     - default_image: image ref used for any node that didn't declare its own (``--image``).
     - image_overrides: mapping of node name to image ref (``--image-override``).
     - autoscaling: if True, emit a KEDA ScaledObject per processor node.
@@ -624,13 +763,13 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         Needed where the NVIDIA container runtime is registered as an opt-in \
         RuntimeClass rather than the node default — on k3s, ``nvidia``. Without it \
         such a pod schedules onto a GPU node and then runs with no device visible.
-    - gpu_mode: ``'exclusive'`` (default — each GPU replica claims whole devices \
-        via the extended resource) or ``'shared'`` (no resource limit; all GPU pods \
-        co-schedule onto the pool and share the physical GPUs through the NVIDIA \
-        runtime — LocalProcessEngine semantics, dev clusters only).
-    - gpu_resource_name: deploy-level default extended-resource name for GPU claims \
-        (``--gpu-resource-name``); a node's own ``gpu_resource_name`` wins. Defaults \
-        to ``nvidia.com/gpu``.
+    - gpu_mode: GPU strategy name (``'exclusive'``, the default — each GPU replica \
+        claims whole physical devices via the extended resource; see ``deploy.gpu``).
+    - gpu_resource_name: deploy-level extended-resource name for GPU claims \
+        (``--gpu-resource-name``), for clusters advertising whole devices under a \
+        non-default name. Defaults to ``nvidia.com/gpu``. Must denote whole \
+        physical devices — a MIG profile here is rejected (see \
+        ``validate_gpu_specs``).
     - gpu_autoscaling: emit KEDA ScaledObjects for GPU nodes too. Off by default: \
         each autoscaled replica claims its own GPUs, so scaling to ``max_replicas`` \
         can demand more devices than the cluster has and strand pods Pending.
@@ -650,6 +789,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
 
     # Fail before any manifest is built, rather than at the first GPU node.
     get_gpu_mode(gpu_mode)
+    validate_gpu_specs(specs, gpu_resource_name)
     validate_image_pull_policy(image_pull_policy)
 
     # The whole-run wire version: the single language-neutral protobuf envelope (v4).
@@ -681,6 +821,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
+                                  supervision = supervision,
                                   mounts = mounts, gpu_runtime_class = gpu_runtime_class,
                                   gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name,
                                   image_pull_policy = image_pull_policy))
@@ -692,8 +833,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         for spec in specs:
             # GPU nodes are excluded from autoscaling unless explicitly opted in:
             # every extra replica claims its own whole GPUs, so scaling on broker lag
-            # can demand max_replicas x gpu_count devices and strand pods Pending
-            # (and in shared mode it multiplies VRAM pressure instead).
+            # can demand max_replicas x gpu_count devices and strand pods Pending.
             if spec.device_type == 'gpu' and not gpu_autoscaling:
                 continue
             so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)

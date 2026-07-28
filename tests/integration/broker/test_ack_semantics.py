@@ -65,12 +65,14 @@ def _read_dlq(flow_id, run_id):
     async def _go():
         nc = await nats.connect(NATS_URL)
         js = nc.jetstream()
-        stream = topology.dlq_stream_name(flow_id, run_id)
+        # Flow-scoped since RFC 0005; the run id lives in the subject instead.
+        stream = topology.dlq_stream_name(flow_id)
         info = await js.stream_info(stream)
         n = info.state.messages
         out = []
         if n:
-            sub = await js.pull_subscribe(f'vf.{flow_id}.{run_id}._dlq.>', durable = 'dlqreader', stream = stream)
+            sub = await js.pull_subscribe(f'vf.{flow_id}._dlq.{run_id}.>', durable = 'dlqreader',
+                                        stream = stream)
             msgs = await sub.fetch(n, timeout = 3)
             for m in msgs:
                 out.append({'headers': dict(m.headers or {}), 'data': m.data})
@@ -86,6 +88,12 @@ def _cleanup(flow_id, run_id):
     async def _go():
         nc = await nats.connect(NATS_URL)
         await topology.delete_run_streams(nc, flow_id, run_id)
+        # delete_run_streams deliberately spares the flow's DLQ; a test that
+        # asserts on its emptiness has to remove it itself.
+        try:
+            await nc.jetstream().delete_stream(topology.dlq_stream_name(flow_id))
+        except Exception:
+            pass
         await nc.drain()
 
     asyncio.run(_go())
@@ -115,8 +123,17 @@ def test_dlq_on_exhausted_retries():
         m.close()
         _cleanup(flow_id, run_id)
 
-def test_realtime_failure_drops_without_dlq():
-    '''REALTIME never redelivers or dead-letters: a failed message is terminated (dropped).'''
+def test_realtime_failure_drops_the_message_but_not_the_evidence():
+    '''
+    REALTIME never redelivers — a failed message is terminated, freshest wins.
+
+    What it does *not* do any more is delete the evidence. "It's realtime, we drop
+    things" is true of load shedding and false of exceptions, so a bounded sample
+    of each distinct failure is dead-lettered: enough to diagnose the bug, never
+    enough to fill a stream. The bounding itself is asserted in
+    ``test_failure_invariants.py``; here the claim is simply that one failure
+    leaves a trace and does not come back.
+    '''
     flow_id, run_id = _ids()
     specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, REALTIME)
@@ -126,9 +143,26 @@ def test_realtime_failure_drops_without_dlq():
         inputs = m.receive_message()
         assert inputs['parent']['message'] == {'value': 7}
         m.fail_inputs(ValueError('boom'))
-        # REALTIME dead-letters nothing.
+
         dlq = _read_dlq(flow_id, run_id)
-        assert dlq == []
+        assert len(dlq) == 1
+        assert 'boom' in dlq[0]['headers'].get('VF-Error', '')
+
+        # And it is gone from the flow: no redelivery, whatever the sample says.
+        stream = topology.stream_name_for(flow_id, run_id, 'parent')
+        durable = topology.durable_name_for('child', 'parent')
+
+        import nats
+
+        async def _pending():
+            nc = await nats.connect(NATS_URL)
+            try:
+                info = await nc.jetstream().consumer_info(stream, durable)
+                return info.num_pending, info.num_ack_pending
+            finally:
+                await nc.drain()
+
+        assert asyncio.run(_pending()) == (0, 0)
     finally:
         m.close()
         _cleanup(flow_id, run_id)

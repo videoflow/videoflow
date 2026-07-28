@@ -87,9 +87,40 @@ Constructor arguments on `ProcessorNode`:
   with `nb_tasks > 1` — graph validation rejects it otherwise.
 - **`join_policy`** — a `JoinPolicy` for multi-parent nodes; see
   [ARCHITECTURE.md](ARCHITECTURE.md#joins).
-- **`gpu_count`** — whole GPUs each replica requests on Kubernetes. Not overcommittable.
-- **`gpu_resource_name`** — for clusters not exposing plain `nvidia.com/gpu`, e.g. a MIG profile
-  (`nvidia.com/mig-1g.10gb`) or a renamed time-sliced resource (`nvidia.com/gpu.shared`).
+- **`gpu_count`** — whole GPUs each replica requests on Kubernetes. Not overcommittable. This is
+  the knob for a model that spans multiple GPUs, and it comes with a contract (RFC 0003): **inside
+  the worker, the visible GPUs are exactly the granted GPUs, numbered `cuda:0..N-1`, and
+  `N == self.gpu_count`.** True on Kubernetes in exclusive mode (the device plugin masks the
+  container) and under `run-local` (the local engine partitions `CUDA_VISIBLE_DEVICES`). The
+  framework does *not* shard the model — that's the node's `open()`:
+
+  ```python
+  def open(self) -> None:
+      import torch  # heavy import stays in open()
+      # HF-style sharding across all granted devices — zero device arithmetic:
+      self._model = AutoModelForCausalLM.from_pretrained(..., device_map = 'auto')
+      # or explicit per-submodel placement:
+      self._reid.to(f'cuda:{min(1, self.gpu_count - 1)}')
+  ```
+
+  Non-torch/native code can enumerate its grant with `videoflow.utils.system.granted_gpus()`,
+  which returns valid CUDA indices `[0..n-1]` — safe both for `.to(f'cuda:{i}')` placement and
+  for a hard device minimum via `len(granted_gpus())` in `open()` (raise if short).
+  Native components (no Python params) read `VF_GPU_COUNT`/`VF_GPU_RESOURCE_NAME` from env —
+  the count is the *delivered* grant (a shrunken local grant reports what was masked in).
+  Multi-GPU needs whole physical devices: MIG slices can't be combined into one model
+  (one CUDA process ↔ one MIG instance, no P2P between instances) and time-sliced units are
+  shares of one card — both are hard errors, at build time (MIG names) or preflight
+  (GFD classification).
+- **`gpu_memory_gib`** — the node's GPU memory demand in GiB (RFC 0004). Under
+  `--gpu-mode mix` each replica gets an exclusive MIG slice of at least this size, chosen by
+  the layout solver; other modes grant a whole device (deploy prints a NOTE). Mutually
+  exclusive with `gpu_count > 1` — a node declares a fraction of one device or whole devices,
+  never both. A remote component's descriptor declares defaults via `spec.resources.gpu`
+  (`count`/`memoryGiB`); explicit `gpu_count=`/`gpu_memory_gib=` arguments override. There is
+  no user-facing resource-name knob: extended-resource names are strategy-internal (the mix
+  solver stamps a sharer's MIG profile into `NodeSpec.gpu_resource_name`), and the deploy-level
+  `--gpu-resource-name` exists only for clusters advertising whole devices under another name.
 
 On `Node` itself: **`name`** (the node's identity everywhere outside the build process — broker
 subjects, k8s resource names, logs; auto-generated from the class name and a counter if omitted,
@@ -102,6 +133,15 @@ in, when the node intrinsically needs a specific environment).
   `_eos` subject, not as a `None` sentinel in the data stream.
 - **Input order is `parent_names` order**, which comes from the call site
   `child(parent_a, parent_b)` — not from any sorting.
+- **Raise from the taxonomy** (`videoflow.core.errors`), because the class decides
+  what the message costs: `SchemaError`/`PoisonMessage` is dead-lettered on the
+  first failure, `TransientFailure` is retried, `WorkerFatal`/`DeviceError` hands
+  the message back and stops the worker. An unclassified exception is treated as
+  transient, so nothing changes until a node opts in. Always pass `remedy = ...`.
+  For a type you cannot subclass, call `register_error_classifier` once on import.
+- **`on_error=` and `delivery=`** on a processor or consumer override the flow
+  type's defaults for that node — an at-least-once sink inside a REALTIME flow, or
+  a node whose failures are known to be data-shaped (`on_error='poison'`).
 - **Acks happen after processing**, so a crash mid-process causes redelivery. Nodes with external
   side effects should be idempotent; `ConsumerNode` has an `idempotent = True` flag that
   deduplicates across redelivery when a Redis store is configured.

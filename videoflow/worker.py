@@ -11,4 +11,6 @@ from videoflow.runtime.worker import *  # noqa: F401,F403
 from videoflow.runtime.worker import main  # noqa: F401
 
 if __name__ == '__main__':
-    main()
+    # main() returns the exit status rather than raising, so a typed failure exits
+    # with the code its error class carries.
+    raise SystemExit(main())

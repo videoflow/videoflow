@@ -19,9 +19,12 @@ import site
 import subprocess
 import sys
 import sysconfig
+import tempfile
+import threading
+import time
 from typing import List, Optional
 
-import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
+import nats  # also an import guard: fail fast if the broker client is missing
 
 from ..core.compiler import (
     NodeSpec,
@@ -29,7 +32,22 @@ from ..core.compiler import (
     validate_wire_compatibility,
 )
 from ..core.engine import ExecutionEngine
-from ..messaging.topology import control_subject_for, delete_run_streams, provision_flow_sync
+from ..core.errors import BrokerUnavailable, ConfigError
+from ..core.supervision import (
+    EventLog,
+    NodeExited,
+    NodeGaveUp,
+    NodeRestarted,
+    NodeStarted,
+    SupervisionPolicy,
+    render_event,
+)
+
+# The module, not the symbols: tests monkeypatch ``topology.provision_flow_sync``,
+# which only works while the name resolves at call time (CLAUDE.md's plugin-registry
+# rule — the same trap, for the same reason).
+from ..messaging import topology
+from ..utils.system import visible_physical_gpus
 
 logger = logging.getLogger(__package__)
 
@@ -38,6 +56,14 @@ DEFAULT_NATS_URL = 'nats://localhost:4222'
 # Bound on the up-front stream provisioning. Locally an unreachable broker is a
 # setup mistake worth reporting, not a transient worth blocking on indefinitely.
 PROVISION_TIMEOUT_SECONDS = 15
+
+# How often the supervisor repeats its control-abort while workers are still
+# alive. The control stop is a plain (non-JetStream) publish, so it reaches only
+# the workers subscribed at that instant — and a node can die before its siblings
+# have finished connecting. Repeating is what makes the announcement reliable:
+# a worker that was still starting up hears the next one instead of waiting
+# forever on an end-of-stream that is not coming.
+ABORT_REANNOUNCE_SECONDS = 2.0
 
 async def _quiet_error_cb(_e : BaseException) -> None:
     '''Swallows the NATS client's per-retry error logging; we report the failure ourselves.'''
@@ -109,13 +135,23 @@ class LocalProcessEngine(ExecutionEngine):
         - blob_ttl_seconds: TTL override for offloaded payloads (PROTOCOL.md \
             BLOB-7); ``None`` lets workers pick the flow-type default \
             (3600s realtime / 86400s batch).
+        - supervision: how a dead worker is restarted. Defaults to \
+            ``SupervisionPolicy.local()`` — the same restart count Kubernetes \
+            uses, with a compressed backoff. This is the point of the parameter: \
+            a crash used to recover in the cluster and hang here, which made \
+            local development the one place the recovery path was never \
+            exercised. Pass ``SupervisionPolicy.disabled()`` (``--no-restart``) \
+            for a tight debug loop.
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
                 specs : List[NodeSpec] | None = None,
                 local_docker_nats_url : str | None = None,
                 python_path : list | None = None, inherit_python_path : bool = True,
                 default_image : str | None = None,
-                blob_ttl_seconds : int | None = None) -> None:
+                blob_ttl_seconds : int | None = None,
+                supervision : SupervisionPolicy | None = None) -> None:
+        self._supervision = supervision or SupervisionPolicy.local()
+        self._events = EventLog()
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
         # Blob TTL override (BLOB-7); None ⇒ workers use the flow-type default.
@@ -133,8 +169,21 @@ class LocalProcessEngine(ExecutionEngine):
         self._python_path = extra
         self._procs: list = []
         self._failures: list = []
+        # (node, replica) -> (spec, env), so a restart relaunches the identical worker.
+        self._launchers: dict = {}
+        # (node, replica) -> restarts already spent.
+        self._attempts: dict = {}
+        # (node, replica) -> file the worker writes its structured death reason to.
+        # The local stand-in for Kubernetes' termination-message path, and the only
+        # way the supervisor learns *why* a worker died rather than just that it did.
+        self._termination_logs: dict = {}
+        self._termination_dir: Optional[str] = None
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
+        # Abort announcer: repeats the control stop until every worker has been
+        # reaped (see _abort_flow). _abort_done ends it.
+        self._abort_thread: Optional[threading.Thread] = None
+        self._abort_done = threading.Event()
         super(LocalProcessEngine, self).__init__()
 
     def _al_create_and_start_processes(self, tasks_data : Optional[list], flow_id : str,
@@ -147,8 +196,9 @@ class LocalProcessEngine(ExecutionEngine):
         if self._specs is not None:
             specs = self._specs
         elif tasks_data is None:
-            raise ValueError('no specs to run: construct the engine with specs = ... or '
-                            'pass tasks_data from Flow.build_tasks_data()')
+            raise ConfigError('No specs to run.',
+                            remedy = 'Construct the engine with specs = ..., or pass '
+                                    'tasks_data from Flow.build_tasks_data().')
         else:
             specs = specs_from_tasks_data(tasks_data)
 
@@ -163,31 +213,55 @@ class LocalProcessEngine(ExecutionEngine):
         # Fail fast rather than retrying forever: locally, an unreachable broker is a
         # setup mistake to report, not a transient the run should wait out.
         try:
-            provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type,
+            topology.provision_flow_sync(self._nats_url, specs, flow_id, run_id, flow_type,
                                 connect_options = {'allow_reconnect': False,
                                                    'connect_timeout': 5,
                                                    'max_reconnect_attempts': 0,
                                                    'error_cb': _quiet_error_cb},
                                 timeout = PROVISION_TIMEOUT_SECONDS)
         except Exception as e:
-            raise RuntimeError(
-                f'could not reach NATS at {self._nats_url} ({type(e).__name__}: {e}). '
-                f'Start one with `videoflow run-local` (it provisions a dev broker), '
-                f'`docker compose up -d`, or `nats-server -js` — or point --nats at a '
-                f'running server.') from e
+            raise BrokerUnavailable(
+                f'Could not reach NATS at {self._nats_url} ({type(e).__name__}: {e}).',
+                remedy = ('Start one with `videoflow run-local` (it provisions a dev '
+                        'broker), `docker compose up -d`, or `nats-server -js` — or '
+                        'point --nats at a running server.'),
+                nats_url = self._nats_url) from e
 
+        # Only probe the host's GPUs (nvidia-smi) when the flow actually has GPU
+        # nodes — a CPU-only flow must not depend on the probe in any way.
+        gpu_assignment = (assign_local_gpus(specs, visible_physical_gpus())
+                        if any(s.device_type == 'gpu' for s in specs) else {})
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
-                                self._python_path, blob_ttl_seconds = self._blob_ttl_seconds)
-                cmd, run_env = self._launch_command(spec, env)
-                proc = subprocess.Popen(cmd, env = run_env)
-                self._procs.append((spec.name, replica_idx, proc))
-                logger.info(
-                    f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx} '
-                    f'({"remote" if spec.is_remote else "python"})'
-                )
+                                self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
+                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)))
+                env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
+                # Kept so a restart relaunches the identical worker, and so the
+                # supervisor never has to re-derive an environment.
+                self._launchers[(spec.name, replica_idx)] = (spec, env)
+                self._start_worker(spec, replica_idx, attempt = 0)
+
+    def _termination_log_path(self, node : str, replica_idx : int) -> str:
+        if self._termination_dir is None:
+            self._termination_dir = tempfile.mkdtemp(prefix = 'videoflow-term-')
+        path = os.path.join(self._termination_dir, f'{node}-{replica_idx}.json')
+        self._termination_logs[(node, replica_idx)] = path
+        return path
+
+    def _start_worker(self, spec : NodeSpec, replica_idx : int, attempt : int) -> None:
+        _spec, env = self._launchers[(spec.name, replica_idx)]
+        cmd, run_env = self._launch_command(spec, env)
+        proc = subprocess.Popen(cmd, env = run_env)
+        self._procs.append((spec.name, replica_idx, proc))
+        self._attempts[(spec.name, replica_idx)] = attempt
+        self._events.emit(NodeStarted(spec.name, replica_idx, attempt))
+        logger.info(
+            f'Started worker pid={proc.pid} node={spec.name} replica={replica_idx} '
+            f'({"remote" if spec.is_remote else "python"})'
+            + (f' [restart {attempt}]' if attempt else '')
+        )
 
     def _launch_command(self, spec : NodeSpec, env : dict) -> tuple:
         '''
@@ -216,9 +290,11 @@ class LocalProcessEngine(ExecutionEngine):
             docker += ['-e', f'{k}={v}']
         image = spec.image or self._default_image
         if not image:
-            raise ValueError(
-                f'remote component node {spec.name!r} has no image to run locally — give it an '
-                f'`image=` or a `runtime.localCommand` in its component descriptor.')
+            raise ConfigError(
+                f'Remote component node {spec.name!r} has no image to run locally.',
+                remedy = 'Give it an `image=`, or a `runtime.localCommand` in its '
+                        'component descriptor.',
+                node = spec.name)
         docker.append(image)
         if spec.command:
             docker += list(spec.command)
@@ -232,26 +308,45 @@ class LocalProcessEngine(ExecutionEngine):
 
     def wait_for_completion(self) -> List[str]:
         '''
-        Blocks until every worker process exits. Returns the names of nodes that had
-        at least one replica exit non-zero (empty when the flow ran cleanly) — the
-        same contract as ``KubernetesExecutionEngine.wait_for_completion``.
+        Blocks until every worker process exits, **restarting failed ones** per the
+        supervision policy. Returns the names of nodes that ran out of restarts
+        (empty when the flow ran cleanly) — the same contract as
+        ``KubernetesExecutionEngine.wait_for_completion``, and now the same
+        behaviour: a crash that the cluster would recover from recovers here too,
+        because the restarted worker rebinds the same durable and its un-acked
+        messages are redelivered.
 
-        A worker killed by SIGINT/SIGTERM is not counted: that is Ctrl-C or
-        ``flow.stop()`` propagating, not a failure.
+        A worker killed by SIGINT/SIGTERM is not counted and not restarted: that
+        is Ctrl-C or ``flow.stop()`` propagating, not a failure.
         '''
         stopped = {-signal.SIGINT, -signal.SIGTERM}
         self._failures = []
-        for name, replica_idx, proc in self._procs:
-            while True:
-                try:
-                    proc.wait()
-                    break
-                except KeyboardInterrupt:
-                    # The children got the same SIGINT; keep reaping rather than
-                    # abandoning them (a second Ctrl-C used to escape here).
+        pending = list(self._procs)
+        self._procs = []
+        try:
+            while pending:
+                name, replica_idx, proc = pending.pop(0)
+                while True:
+                    try:
+                        proc.wait()
+                        break
+                    except KeyboardInterrupt:
+                        # The children got the same SIGINT; keep reaping rather than
+                        # abandoning them (a second Ctrl-C used to escape here).
+                        continue
+                code = proc.returncode or 0
+                if code == 0 or code in stopped:
                     continue
-            if proc.returncode and proc.returncode not in stopped:
-                self._failures.append((name, replica_idx, proc.returncode))
+                reason = self._termination_reason(name, replica_idx)
+                self._events.emit(NodeExited(name, replica_idx, code, reason))
+                restarted = self._maybe_restart(name, replica_idx, reason)
+                if restarted is not None:
+                    pending.append(restarted)
+                    continue
+                self._failures.append((name, replica_idx, code))
+        finally:
+            # Every worker is accounted for, so there is nobody left to tell.
+            self._stop_abort_announcer()
         failed, seen = [], set()
         for name, _replica, _code in self._failures:
             if name not in seen:
@@ -259,18 +354,124 @@ class LocalProcessEngine(ExecutionEngine):
                 failed.append(name)
         return failed
 
+    def _termination_reason(self, name : str, replica_idx : int) -> dict | None:
+        '''
+        The structured cause a worker wrote before dying, when it managed to.
+
+        Local workers inherit stdout/stderr, so the traceback is already on the
+        terminal; this is for the *supervisor*, which needs the disposition to
+        decide whether restarting is worth anything.
+        '''
+        path = self._termination_logs.get((name, replica_idx))
+        if not path or not os.path.isfile(path):
+            return None
+        try:
+            with open(path) as f:
+                return json.loads(f.read() or '{}')
+        except Exception:
+            return None
+
+    def _maybe_restart(self, name : str, replica_idx : int,
+                    reason : dict | None) -> tuple | None:
+        '''
+        Restarts a dead worker if the policy says it is worth it, returning the
+        new ``(name, replica, proc)`` to keep waiting on, else ``None``.
+        '''
+        attempt = self._attempts.get((name, replica_idx), 0)
+        disposition = reason.get('disposition') if reason else None
+        if not self._supervision.should_restart(attempt, disposition):
+            self._events.emit(NodeGaveUp(name, replica_idx, attempt + 1, reason))
+            # Immediately, not once every worker has been reaped: this node will
+            # never publish its end-of-stream, so its children are already waiting
+            # for one that is not coming — and this loop is waiting for *them*.
+            # Deferring the signal to the end of the loop deadlocks against
+            # exactly the situation it is meant to resolve.
+            self._abort_flow(name)
+            return None
+        delay = self._supervision.delay_for(attempt)
+        self._events.emit(NodeRestarted(name, replica_idx, attempt, delay))
+        logger.warning(f'node {name} replica {replica_idx} failed; restarting in {delay:g}s '
+                    f'(attempt {attempt + 1}/{self._supervision.max_restarts})')
+        time.sleep(delay)
+        spec, _env = self._launchers[(name, replica_idx)]
+        before = len(self._procs)
+        self._start_worker(spec, replica_idx, attempt = attempt + 1)
+        return self._procs[before]
+
+    def _abort_flow(self, node : str) -> None:
+        '''
+        Publishes the flow-wide stop so surviving workers end instead of waiting
+        for an end-of-stream that a dead node will never send.
+
+        This is the supervisor layer of abort propagation (``ABORT-6``): it covers
+        the worker that died too abruptly to publish an ABORT marker of its own —
+        an ``os._exit``, an OOM kill, a SIGKILL.
+
+        The stop is **repeated** until every worker has been reaped, in a
+        background thread so the reaping loop keeps running. One publish is not
+        enough: the control subject is core NATS, delivered only to whoever is
+        subscribed at that instant, and a node that dies on its first message
+        typically dies while the workers further down the graph are still
+        connecting. Those are exactly the workers that need to hear it, and a
+        missed announcement hangs the run until something else times out.
+        '''
+        logger.error(f'node {node} gave up; stopping the flow so its children do not '
+                    f'wait for an end-of-stream that is not coming')
+        if self._abort_thread is not None:          # already announcing this run's death
+            return
+        if self._flow_id is None or self._run_id is None:
+            return
+        self._abort_done.clear()
+        self._abort_thread = threading.Thread(
+            target = self._announce_abort, name = 'vf-abort-announcer', daemon = True)
+        self._abort_thread.start()
+
+    def _announce_abort(self) -> None:
+        '''Republishes the control stop every ``ABORT_REANNOUNCE_SECONDS`` until reaping ends.'''
+        flow_id, run_id = self._flow_id, self._run_id
+        assert flow_id is not None and run_id is not None   # checked by _abort_flow
+
+        async def _go() -> None:
+            nc = await nats.connect(self._nats_url, error_cb = _quiet_error_cb)
+            subject = topology.control_subject_for(flow_id, run_id)
+            try:
+                while not self._abort_done.is_set():
+                    await nc.publish(subject, b'stop')
+                    await nc.flush()
+                    await asyncio.sleep(ABORT_REANNOUNCE_SECONDS)
+            finally:
+                await nc.drain()
+
+        try:
+            asyncio.run(_go())
+        except Exception:
+            logger.debug('could not signal termination after a node gave up', exc_info = True)
+
+    def _stop_abort_announcer(self) -> None:
+        '''Ends the repeated stop announcement (no-op when nothing aborted).'''
+        self._abort_done.set()
+        thread, self._abort_thread = self._abort_thread, None
+        if thread is not None:
+            thread.join(timeout = ABORT_REANNOUNCE_SECONDS + 5)
+
+    def events(self) -> EventLog:
+        '''Lifecycle events for this run — the same records the Kubernetes engine emits.'''
+        return self._events
+
     def failures(self) -> List[tuple]:
-        '''``(node_name, replica_idx, returncode)`` for each worker that failed.'''
+        '''``(node_name, replica_idx, returncode)`` for each worker that gave up.'''
         return list(self._failures)
 
     def report_failures(self) -> None:
         '''
-        Prints one line per failed worker. Local workers inherit stdout/stderr, so
-        their tracebacks are already on the terminal — this is the index, not a dump.
+        Prints one line per lifecycle event worth reading — restarts included, so a
+        run that recovered says so. Local workers inherit stdout/stderr, so their
+        tracebacks are already on the terminal; this is the index, not a dump.
         '''
-        for name, replica_idx, code in self._failures:
-            print(f'--- node {name} replica {replica_idx} exited with code {code}',
-                  file = sys.stderr)
+        for event in self._events.events:
+            line = render_event(event)
+            if line:
+                print(f'--- {line}', file = sys.stderr)
 
     def join_task_processes(self) -> None:
         try:
@@ -286,7 +487,7 @@ class LocalProcessEngine(ExecutionEngine):
         async def _go() -> None:
             nc = await nats.connect(self._nats_url)
             try:
-                await delete_run_streams(nc, flow_id, run_id)
+                await topology.delete_run_streams(nc, flow_id, run_id)
             finally:
                 await nc.drain()
 
@@ -295,10 +496,70 @@ class LocalProcessEngine(ExecutionEngine):
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
 
+def _runs_via_docker(spec : NodeSpec) -> bool:
+    '''
+    Whether ``_launch_command`` will run this spec with ``docker run``: a native
+    component with no ``localCommand``. Such a worker cannot receive a GPU grant
+    locally — the env filter passes only VF_* variables and no ``--gpus`` flag is
+    injected (a documented non-goal) — so the assignment and env code below must
+    treat it as ungrantable rather than hand it devices it can never see.
+    '''
+    if spec.node_class:
+        return False
+    runtime = (spec.descriptor or {}).get('spec', {}).get('runtime', {})
+    return not runtime.get('localCommand')
+
+def assign_local_gpus(specs : List[NodeSpec],
+                    host_gpus : list[int]) -> dict[tuple[str, int], list[int]]:
+    '''
+    Deterministic device assignment for a local run: walking specs in order, each
+    replica of each GPU node takes the next ``gpu_count`` ordinals from
+    ``host_gpus`` — the local twin of the exclusive Kubernetes grant (RFC 0003),
+    so a worker's ``CUDA_VISIBLE_DEVICES`` shows exactly its granted devices.
+    Docker-run native components are skipped: they cannot receive the mask (see
+    ``_runs_via_docker``), so granting them ordinals would only starve the
+    workers that can.
+
+    When demand exceeds ``len(host_gpus)`` the walk wraps around (duplicates
+    within one replica are collapsed, with a per-replica warning naming the
+    short grant) and a single aggregate warning is logged: sharing devices is
+    fine for dev, but the same flow will not schedule that way on Kubernetes.
+    An empty ``host_gpus`` returns an empty mapping — no env gets set, so
+    CPU-fallback GPU nodes on a GPU-less machine behave exactly as before.
+    '''
+    if not host_gpus:
+        return {}
+    assignment : dict[tuple[str, int], list[int]] = {}
+    cursor = 0
+    demand = 0
+    for spec in specs:
+        if spec.device_type != 'gpu' or _runs_via_docker(spec):
+            continue
+        for replica_idx in range(spec.nb_tasks):
+            devices = [host_gpus[(cursor + i) % len(host_gpus)] for i in range(spec.gpu_count)]
+            cursor += spec.gpu_count
+            demand += spec.gpu_count
+            # dict.fromkeys collapses wrap-around duplicates while keeping order.
+            granted = list(dict.fromkeys(devices))
+            if len(granted) < spec.gpu_count:
+                logger.warning(
+                    f'node {spec.name} replica {replica_idx} asked for gpu_count='
+                    f'{spec.gpu_count} but only {len(granted)} distinct device(s) are '
+                    f'visible — VF_GPU_COUNT will report {len(granted)}, the delivered '
+                    f'grant.')
+            assignment[(spec.name, replica_idx)] = granted
+    if demand > len(host_gpus):
+        logger.warning(
+            f'local GPU demand ({demand} device claims) exceeds the {len(host_gpus)} visible '
+            f'device(s) — workers will share devices. Fine for dev; the same flow will not '
+            f'schedule this way on Kubernetes.')
+    return assignment
+
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
                 python_path : list | None = None,
-                blob_ttl_seconds : int | None = None) -> dict:
+                blob_ttl_seconds : int | None = None,
+                gpu_devices : list[int] | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -329,6 +590,15 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    # Per-node failure handling, exactly as the manifests render it. A node that
+    # overrides nothing ships nothing, so an unchanged flow gets the environment
+    # it always did — and one that does override something behaves the same way
+    # here as it will in the cluster, which is the entire point.
+    if spec.delivery:
+        if spec.delivery.get('delivery'):
+            env['VF_DELIVERY'] = spec.delivery['delivery']
+        if spec.delivery.get('on_error'):
+            env['VF_ON_ERROR'] = spec.delivery['on_error']
     if blob_redis_url:
         env['VF_BLOB_REDIS_URL'] = blob_redis_url
     if spec.blob_readers is not None:
@@ -336,12 +606,27 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
+    if spec.device_type == 'gpu' and not _runs_via_docker(spec):
+        # The worker's GPU grant (RFC 0003): informational for native components,
+        # which never see the Python node's reconstruction params. The count is the
+        # *delivered* grant — when an oversubscribed host shrank the device list,
+        # reporting spec.gpu_count would promise devices that don't exist. A
+        # docker-run native gets neither variable: it receives no devices at all
+        # (see _runs_via_docker), so a count would be a lie.
+        env['VF_GPU_COUNT'] = str(len(gpu_devices) if gpu_devices is not None
+                                  else spec.gpu_count)
+        if spec.gpu_resource_name:
+            env['VF_GPU_RESOURCE_NAME'] = spec.gpu_resource_name
+    if gpu_devices:
+        # Cooperative masking: the worker sees exactly its granted devices, so the
+        # visibility contract holds locally too (see assign_local_gpus).
+        env['CUDA_VISIBLE_DEVICES'] = ','.join(str(d) for d in gpu_devices)
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:
     async def _go() -> None:
         nc = await nats.connect(nats_url)
-        await nc.publish(control_subject_for(flow_id, run_id), b'stop')
+        await nc.publish(topology.control_subject_for(flow_id, run_id), b'stop')
         await nc.flush()
         await nc.drain()
 

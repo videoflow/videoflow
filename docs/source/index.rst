@@ -28,7 +28,9 @@ Developer friendly
 Reliable
     At-least-once delivery with ack-after-process, per-message de-duplication,
     retries and a dead-letter queue, so a crash or a bad message never silently
-    loses or double-emits data.
+    loses or double-emits data. Failures are *classified*: a bad message is
+    quarantined, a blip is retried, and a sick worker hands its work back and is
+    replaced.
 
 Easy to extend
     Writing your own producers, processors and consumers is straightforward — sync
@@ -59,6 +61,7 @@ Free and open source
     user-documentation/nodes-and-flows
     user-documentation/writing-your-own-components
     user-documentation/batch-versus-realtime-mode
+    user-documentation/error-handling-and-recovery
     user-documentation/task-allocation
     user-documentation/time-synchronized-joins
     user-documentation/common-patterns

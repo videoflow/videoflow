@@ -108,6 +108,25 @@ def test_envelope_vector_decodes_to_expected_fields(case):
     else:
         raise AssertionError(f'unknown payload descriptor: {payload}')
 
+    # RFC 0005: an ABORT carries the error that killed the emitting node; every
+    # other type carries none. Absent optional fields must round-trip as absent,
+    # not as empty strings, or an SDK cannot tell "no remedy" from "".
+    assert d['error'] == case.get('error')
+
+
+@pytest.mark.parametrize('case', _load_manifest(), ids = lambda c: c['name'])
+def test_terminators_stop_a_reader_that_does_not_know_the_type(case):
+    '''
+    Both terminator types set ``is_stop_signal``, which is the compatibility
+    property RFC 0005 turns on: a reader that predates MSG_TYPE_ABORT sees an
+    unknown terminator and still *stops*, rather than waiting forever for an
+    end-of-stream that already happened.
+    '''
+    with open(os.path.join(VECTORS, 'envelope', case['file']), 'rb') as f:
+        d = s.decode_envelope(f.read())
+    assert d['is_stop_signal'] == (case['type'] in ('eos', 'abort'))
+    assert d['is_abort'] == (case['type'] == 'abort')
+
 def test_envelope_vectors_are_v4_protobuf():
     # Every envelope vector is protobuf on the wire (leading byte is a field tag,
     # not a msgpack map header) — the discriminator decode_envelope relies on.

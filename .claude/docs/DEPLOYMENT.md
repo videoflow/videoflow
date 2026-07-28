@@ -77,11 +77,31 @@ its outputs are baked into the compiled specs.
 3. Compile — locally if the graph's dependencies import on the host, otherwise inside the image
    (specs round-trip as JSON, the same format as the specs ConfigMap).
 4. Provision the broker, apply manifests.
-5. For `BATCH`, wait for completion and tear down (`--keep` / `--keep-infra` to skip).
+5. For `BATCH`, wait for completion and tear down (`--keep` / `--keep-infra` to skip). For
+   `REALTIME`, run a bounded rollout check (`rollout_report` in
+   [engines/kubernetes.py](../../videoflow/engines/kubernetes.py)): wait until every pod is Ready
+   (`open()` completed) — early-exiting on a confirmed failure (crash-loop, OOM kill, image-pull
+   failure, or unschedulable past a grace period), in which case deploy dumps the pod logs and
+   exits non-zero, leaving the flow running for inspection. The deadline is derived from the
+   startup-probe window (~150s) so a probe kill of a slow `open()` is observable; a pod merely
+   still loading at the deadline is a warning, not a failure.
+
+A failing pod reports its *own* cause where it can. Workers write a structured
+reason to `/dev/termination-log`, which the API server surfaces in
+`containerStatuses[].lastState.terminated.message`, and `_failure_detail` prefers
+it over anything it could infer — so the abort says `VF_DEVICE: CUDA out of
+memory — lower the batch size` rather than "crash-looping, see the logs". The pod
+spec sets `terminationMessagePolicy: FallbackToLogsOnError` so a death too abrupt
+to write anything still surfaces its last log lines the same way.
 
 `--dry-run` / `--render-only` never touch the cluster. Other flags worth knowing:
 `--image-override name=ref`, `--mount`, `--namespace`, `--autoscaling`, `--gpu-mode`,
 `--strict-preflight`, `--envelope-version`, `--image-pull-policy`.
+
+**Exit codes are typed** (`videoflow.core.errors`): 2 the flow/config, 3 the
+cluster/broker, 4 the flow ran and nodes failed, 5 the flow stalled, 130
+interrupted. There is exactly one converter, in `cli.main`; command functions
+raise a typed error and stop. `VF_DEBUG=1` restores the traceback.
 
 Every rendered container carries an explicit `imagePullPolicy`, defaulting to `IfNotPresent`
 (`DEFAULT_IMAGE_PULL_POLICY` in [images.py](../../videoflow/deploy/images.py)). This is
@@ -93,7 +113,16 @@ when every image comes from a registry the nodes can reach.
 
 `run-local` mirrors this: config → `prepare.py` on the host → **build the solution image if (and
 only if) some node needs one** → start or reuse dev NATS/Redis containers → `LocalProcessEngine` →
-report non-zero worker exits → tear down only what it started. The build is gated on
+supervise and restart failed workers → report what gave up → tear down only what it started.
+
+The supervision is the part worth knowing: `LocalProcessEngine` honours the same
+`SupervisionPolicy` object the manifests render into a Job's `backoffLimit`, so a
+crash the cluster absorbs is absorbed locally too. Only the backoff differs
+(1/2/4s rather than 10/20/40s) so a genuinely broken node still surfaces in
+seconds; `--no-restart` turns it off. When a node exhausts its restarts the
+supervisor publishes the flow-wide stop immediately — not after reaping everything
+— because its children are already waiting for an end-of-stream that is not coming,
+and the reaping loop is waiting for *them*. The build is gated on
 `needs_container_image` ([engines/local.py](../../videoflow/engines/local.py)): only a *native*
 component (no `pythonClass`, no `runtime.localCommand`) is `docker run` and needs an image. A
 pure-Python flow spawns host subprocesses, so it never builds — which is every solution in
@@ -125,13 +154,42 @@ guessing** if none apply:
 ## GPU
 
 The contract a GPU node produces in its manifest: `resources.limits: {nvidia.com/gpu: N}`, a
-`nodeSelector` on `videoflow.io/gpu-pool: "true"`, and a toleration for the `nvidia.com/gpu` taint.
-Deploy preflights both the label and the taint — it warns but does not block.
+`nodeSelector` on `videoflow.io/gpu-pool: "true"` (under mix, a required nodeAffinity instead:
+pool AND (unowned OR owned by this flow's `videoflow.io/gpu-owner` stamp)), and a toleration for
+the `nvidia.com/gpu` taint. Deploy preflights both the label and the taint — it warns but does not
+block. Every capacity/inventory read in `deploy/cluster.py` is pool-scoped, and capacity checks
+compare demand against **free** units (allocatable minus running pods' requests,
+`cluster.gpu_availability`/`gpu_units_in_use`) — the pool is multi-tenant.
 
-`--gpu-mode shared` drops the resource limit for dev clusters using time-slicing.
-`gpu_resource_name` (per node) or `--gpu-resource-name` (per deploy) targets MIG profiles or
-renamed time-sliced resources. The full cluster-preparation walkthrough is in
-[`README.md`](../../README.md).
+Two modes (`deploy/gpu.py` strategy registry). `exclusive` (default): units are whole physical
+devices, `gpu_count > 1` spans devices on one host, sharing is inexpressible. `mix`: nodes
+declaring `gpu_memory_gib` get solver-chosen exclusive MIG slices (`deploy/mig.py` computes the
+layout from GFD-label inventory after `gpu._partition_inventory` drops other flows' / time-sliced /
+pre-MIG'd nodes and marks busy ones spanner-only; the strategy's `resolve_specs` hook stamps each
+sharer's profile into `NodeSpec.gpu_resource_name`, and `prepare`/`cleanup` apply/restore geometry
+through the GPU Operator: CAS-claim the target nodes with `videoflow.io/gpu-owner=<flow-id>`,
+merge the generated mig-parted config into the operator's — preserving other flows' published
+entries, resourceVersion-CAS publish — patch ClusterPolicy `migManager.config.name` at the merged
+copy, wait for the mig-manager DaemonSet rollout, label nodes `nvidia.com/mig.config` and wait for
+`mig.config.state=success` — teardown verifies the same state before restoring, restores only the
+named flow's nodes, and only the last flow out restores the policy and deletes the ConfigMap; the
+lifecycle hooks take `flow_id` as a keyword). The deploy-level `--gpu-resource-name` covers
+clusters advertising whole devices under another name; there is no node-level resource-name knob.
+The full cluster-preparation walkthrough is in [`README.md`](../../README.md).
+
+Multi-GPU nodes (`gpu_count > 1`, RFC 0003): preflight additionally checks the **largest single
+node's** allocatable count (`cluster.max_allocatable_gpus_per_node` vs `manifests.gpu_max_per_pod`
+— all of one replica's devices must sit on one host, so the cluster total is not sufficient) and
+**classifies the resource** (`cluster.classify_gpu_resource`, from GFD labels): a multi-unit claim
+against a MIG or time-sliced pool is fatal regardless of `--strict-preflight`
+(`gpu.IMPOSSIBLE_GPU_REQUEST` marker), an unclassifiable pool gets an assuming-physical note, and
+`manifests.validate_gpu_specs` hard-errors a `mig-*` resolved name at render. `run-local`
+partitions the host's visible devices into disjoint `CUDA_VISIBLE_DEVICES` blocks per GPU replica
+(wrap-around with per-replica warnings when oversubscribed, `VF_GPU_COUNT` reporting the
+*delivered* count; nothing is set on a GPU-less host; docker-run native components get neither
+devices nor `VF_GPU_*`). Non-goals, deliberately: injecting `--gpus` into the docker-run path for
+native components, local MIG addressing, and any local enforcement beyond cooperative
+`CUDA_VISIBLE_DEVICES` masking.
 
 ## Infrastructure ownership
 

@@ -178,6 +178,48 @@ then records each processed message id and skips re-applying it::
 
     writer = MyApiWriter(name='writer', idempotent=True)(result)
 
+Raising errors from a node
+--------------------------
+
+When a node raises, what videoflow does with the message depends on **which
+exception** it was. Getting this right is the difference between a bad frame being
+quarantined and a healthy stream being dead-lettered by a broken worker::
+
+    from videoflow.core.errors import DeviceError, SchemaError, UpstreamUnavailable
+
+    class Detector(ProcessorNode):
+        def process(self, frame):
+            if frame.ndim != 3:
+                # The message is bad: dead-lettered on the first failure, because
+                # retrying something that failed on its own content cannot help.
+                raise SchemaError(f'expected an HWC frame, got {frame.shape}',
+                                  remedy = 'Insert a reshape upstream.')
+            try:
+                return self._model(frame)
+            except ConnectionError as e:
+                # The world blipped: retried with backoff.
+                raise UpstreamUnavailable('the model server is unreachable') from e
+            except OutOfMemoryError as e:
+                # *This worker* is sick: the message goes back for a healthy
+                # replica and is never blamed, and this worker stops.
+                raise DeviceError('the GPU is out of memory') from e
+
+An exception you do not classify is treated as transient — retried, then
+dead-lettered — which is the historical behaviour, so nothing changes until you
+opt in. Always give a ``remedy``: it is what the CLI and the dead-letter inspector
+print under the error, and naming the fix is the strongest convention in this
+codebase.
+
+For exception types you do not own (``torch.cuda.OutOfMemoryError`` cannot be
+subclassed), register them once on import instead::
+
+    from videoflow.core.errors import WORKER_FATAL, register_error_classifier
+
+    register_error_classifier(torch.cuda.OutOfMemoryError, WORKER_FATAL)
+
+The full model — dispositions, retries, the dead-letter queue and restarts — is in
+:doc:`error-handling-and-recovery`.
+
 Choosing a container image
 --------------------------
 

@@ -120,7 +120,7 @@ reclamation does not change that contract.
 
 - New conformance-map rows for `BLOB-5`, `BLOB-6`, `BLOB-7` (unit coverage in
   `tests/test_blob_refcount.py`; broker-backed coverage in
-  `tests/integration/test_blob_reclamation.py`).
+  `tests/integration/broker/test_blob_reclamation.py`).
 - Scenario IDs for the eventual `conformance/` suite: fan-out ack-reclaim (all
   readers ack → both keys gone), partial fan-out (one of two acks → blob survives,
   counter = 1), dead-letter-preserves-blob, partitioned ack-skip decrement.

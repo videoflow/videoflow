@@ -53,6 +53,11 @@ class ComponentDescriptor:
         constraints = spec.get('constraints', {}) or {}
         self.partitionable : bool = constraints.get('partitionable', False)
         self.singleton : bool = constraints.get('singleton', False)
+        # spec.resources.gpu (RFC 0003/0004): the component's default GPU request.
+        # Graph-side gpu_count=/gpu_memory_gib= override these — defaults, not floors.
+        gpu = ((spec.get('resources') or {}).get('gpu')) or {}
+        self.gpu_count : int = gpu.get('count', 1)
+        self.gpu_memory_gib : int | float | None = gpu.get('memoryGiB')
 
     @classmethod
     def from_dict(cls, raw : dict, source : str | None = None) -> 'ComponentDescriptor':
@@ -129,6 +134,9 @@ _VALID_DEVICES = ('cpu', 'gpu')
 
 def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     where = f' ({source})' if source else ''
+    # Cross-field GPU check first: JSON Schema cannot express "count > 1 requires
+    # the gpu device type", so it runs regardless of jsonschema availability.
+    _validate_gpu_resources(raw.get('spec') or {}, where)
     # Prefer full JSON Schema validation when jsonschema is available.
     try:
         import jsonschema  # optional dependency (extra): full validation only when installed
@@ -162,6 +170,42 @@ def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     devices = spec.get('device') or []
     if not devices or any(d not in _VALID_DEVICES for d in devices):
         raise ValueError(f'component descriptor{where}: spec.device must be a non-empty subset of {_VALID_DEVICES}')
+
+def _validate_gpu_resources(spec : dict, where : str) -> None:
+    '''
+    Validate ``spec.resources.gpu`` (RFC 0003): the block belongs to processors,
+    the count is an integer >= 1, and a multi-GPU component supports the gpu
+    device. Cross-field rules JSON Schema cannot express, so they run regardless
+    of jsonschema availability.
+    '''
+    resources = spec.get('resources') or {}
+    if 'gpu' not in resources:
+        return
+    if spec.get('role') != 'processor':
+        # A silently ignored GPU need would schedule an underprovisioned pod.
+        raise ValueError(f"component descriptor{where}: spec.resources.gpu applies to processor "
+                        f"components only, but spec.role is {spec.get('role')!r} — drop the "
+                        f"resources.gpu block")
+    gpu = resources.get('gpu') or {}
+    count = gpu.get('count', 1)
+    if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+        raise ValueError(f'component descriptor{where}: spec.resources.gpu.count must be an integer >= 1, got {count!r}')
+    if count > 1 and 'gpu' not in (spec.get('device') or []):
+        raise ValueError(f"component descriptor{where}: spec.resources.gpu.count > 1 requires 'gpu' in spec.device "
+                        f"— add gpu to the device list or drop the resources.gpu block")
+    memory = gpu.get('memoryGiB')
+    if memory is not None:
+        if isinstance(memory, bool) or not isinstance(memory, (int, float)) or memory <= 0:
+            raise ValueError(f'component descriptor{where}: spec.resources.gpu.memoryGiB must be a '
+                            f'positive number, got {memory!r}')
+        if 'gpu' not in (spec.get('device') or []):
+            raise ValueError(f"component descriptor{where}: spec.resources.gpu.memoryGiB requires 'gpu' "
+                            f"in spec.device — add gpu to the device list or drop the field")
+        if count > 1:
+            raise ValueError(f'component descriptor{where}: spec.resources.gpu.memoryGiB and count > 1 '
+                            f'are mutually exclusive — a model cannot span MIG slices, so a component '
+                            f'declares either a memory demand (a fraction of one device) or a '
+                            f'whole-device count, never both (RFC 0004)')
 
 # -- minimal params validation (JSON Schema subset) ------------------------
 

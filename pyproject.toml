@@ -123,6 +123,10 @@ markers = [
     # hook excludes them, so run them with `pytest tests/integration` (or
     # `pytest -m integration`) once a server is up.
     "integration: requires a reachable NATS JetStream server.",
+    # Also applied automatically, to tests/integration/k8s/ only. Those run whole
+    # flows on a kind cluster via `videoflow deploy` and gate themselves on the
+    # cluster rather than on VF_TEST_NATS_URL — see ./scripts/kind-up.sh.
+    "k8s: requires a kind cluster provisioned by scripts/kind-up.sh.",
 ]
 filterwarnings = [
     # nats-py schedules a background flusher task that, in the short-lived

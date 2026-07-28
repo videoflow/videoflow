@@ -10,18 +10,30 @@ per-component images already built and pushed (see ``docker/``).
 from __future__ import absolute_import, division, print_function
 
 import asyncio
+import json
 import logging
 import subprocess
 import sys
 import time
+from dataclasses import dataclass
 from typing import List, Optional
 
 from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
+from ..core.errors import (
+    BrokerUnavailable,
+    ClusterError,
+    ConfigError,
+    FlowStalled,
+    ResourceUnavailable,
+)
+from ..core.supervision import SupervisionPolicy
 from ..deploy.images import DEFAULT_IMAGE_PULL_POLICY
 from ..deploy.manifests import (
     LABEL_NODE,
     LABEL_RUN_ID,
+    STARTUP_PROBE_FAILURE_THRESHOLD,
+    STARTUP_PROBE_PERIOD_SECONDS,
     Mount,
     delete_resources,
     dump_manifests,
@@ -34,6 +46,104 @@ logger = logging.getLogger(__package__)
 
 # Upper bound on the best-effort broker stop/stream-delete during teardown.
 _PUBLISH_STOP_TIMEOUT = 8
+
+# Container-waiting reasons that are kubelet steady states reached only after
+# failure. Transient reasons (ErrImagePull, ContainerCreating, PodInitializing)
+# are deliberately absent: they either resolve on their own or harden into one
+# of these.
+_FATAL_WAITING_REASONS = frozenset({
+    'CrashLoopBackOff', 'ImagePullBackOff', 'InvalidImageName',
+    'CreateContainerConfigError',
+})
+
+_STARTUP_WINDOW_SECS = STARTUP_PROBE_PERIOD_SECONDS * STARTUP_PROBE_FAILURE_THRESHOLD
+# The rollout watchdog must outlive the startup-probe window: a worker whose
+# open() exceeds it is killed at ~window seconds, so its first restart cannot be
+# observed any sooner. The margin covers scheduling, image pull and the kubelet
+# stamping CrashLoopBackOff.
+_ROLLOUT_DEADLINE_SECS = _STARTUP_WINDOW_SECS + 30
+
+@dataclass(frozen = True)
+class _ContainerState:
+    '''
+    One pod's worker-container status, as read by ``_container_states`` (the pod
+    renders exactly one container, so a single record per pod is faithful).
+    ``node_label`` is the pod's ``videoflow.io/node`` label — the k8s_name-mangled
+    node name, which ``dump_failed_logs`` accepts as-is (k8s_name is idempotent).
+    '''
+    pod : str
+    node_label : str
+    phase : str
+    ready : bool
+    restart_count : int
+    waiting_reason : str
+    last_terminated_reason : str
+    # What the worker itself said on the way out, from its termination-message
+    # path. Present only when the worker died of a *typed* failure and managed to
+    # write it — which is exactly when the generic "crash-looping, see the logs"
+    # text is least useful.
+    last_terminated_message : str = ''
+
+    def reported_error(self) -> dict:
+        '''The worker's structured death reason, or ``{}`` if it did not leave one.'''
+        raw = self.last_terminated_message.strip()
+        if not raw.startswith('{'):
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
+
+@dataclass(frozen = True)
+class RolloutReport:
+    '''
+    Outcome of ``rollout_report``. ``failing`` are confirmed failures the deploy
+    should abort on — ``(node label, human detail)`` pairs; ``warnings`` are
+    ambiguous findings (slow startup, no pods yet, autoscaler scale-up in flight)
+    that deserve stderr but not a non-zero exit.
+    '''
+    failing : list[tuple[str, str]]
+    warnings : list[str]
+
+def _is_failing(state : _ContainerState) -> bool:
+    '''
+    Whether a pod is confirmed broken: a fatal waiting reason, or repeated
+    restarts while still not Ready — the latter catches the window between
+    restarts where the container is briefly Running before the kubelet stamps
+    CrashLoopBackOff. One restart is tolerated (a rocky startup that recovered).
+    '''
+    if state.waiting_reason in _FATAL_WAITING_REASONS:
+        return True
+    return state.restart_count >= 2 and not state.ready
+
+def _failure_detail(state : _ContainerState) -> str:
+    '''Human problem statement for a confirmed-failing pod, naming the likely fix.'''
+    # The worker's own account beats any inference we can make from pod status: it
+    # knows the error code and the fix, where the kubelet only knows that a process
+    # exited. This is why workers write a termination message at all.
+    reported = state.reported_error()
+    if reported.get('code'):
+        remedy = reported.get('remedy')
+        return (f'pod {state.pod} failed with {reported["code"]}: '
+                f'{reported.get("message", "")}'
+                + (f' — {remedy}' if remedy else ''))
+    if state.waiting_reason in ('ImagePullBackOff', 'InvalidImageName'):
+        return (f'pod {state.pod} cannot pull its image ({state.waiting_reason}) — check '
+                'the image name/tag, that the cluster can reach the registry, and '
+                '--image-pull-policy (a locally loaded image needs IfNotPresent).')
+    if state.waiting_reason == 'CreateContainerConfigError':
+        return (f'pod {state.pod} cannot start ({state.waiting_reason}) — a ConfigMap '
+                'or Secret it references is missing or invalid; check the pod events.')
+    if state.last_terminated_reason == 'OOMKilled':
+        return (f'pod {state.pod} was OOM-killed ({state.restart_count} restarts) — the '
+                'container exceeded its memory limit; raise the limit, or if a model '
+                'load is the culprit, use a smaller model or grant more memory/VRAM.')
+    return (f'pod {state.pod} is crash-looping '
+            f'({state.waiting_reason or "repeated restarts"}, '
+            f'{state.restart_count} restarts) — see the logs above; if the model load '
+            f'is just slow, the {_STARTUP_WINDOW_SECS}s startup-probe window may be '
+            f'killing open() before it finishes.')
 
 class KubernetesExecutionEngine(ExecutionEngine):
     '''
@@ -54,11 +164,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
         - gpu_runtime_class: ``runtimeClassName`` for GPU pods (``nvidia`` on k3s and \
             other distros where the NVIDIA runtime is opt-in rather than the node \
             default). Without it a GPU pod schedules but sees no device.
-        - gpu_mode: ``'exclusive'`` (whole-device claims, default) or ``'shared'`` \
-            (no resource limit — GPU pods co-schedule and share physical devices; \
-            dev clusters only, see ``manifests.render_manifests``).
-        - gpu_resource_name: deploy-level default extended-resource name for GPU \
-            claims; a node's own ``gpu_resource_name`` wins.
+        - gpu_mode: GPU strategy name (``'exclusive'``, the default: whole-device \
+            claims via the extended resource; see ``deploy.gpu``).
+        - gpu_resource_name: deploy-level extended-resource name for GPU claims \
+            (clusters advertising whole devices under a non-default name).
         - gpu_autoscaling: include GPU nodes in KEDA autoscaling (off by default — \
             each extra replica claims whole GPUs).
         - image_pull_policy: ``imagePullPolicy`` for every rendered container. \
@@ -74,7 +183,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 nats_monitoring_endpoint : str | None = None, mounts : list[Mount] | None = None,
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
                 gpu_resource_name : str | None = None, gpu_autoscaling : bool = False,
-                image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> None:
+                image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+                supervision : SupervisionPolicy | None = None) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -94,6 +204,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._gpu_resource_name = gpu_resource_name
         self._gpu_autoscaling = gpu_autoscaling
         self._image_pull_policy = image_pull_policy
+        # The same object the local engine hands to its supervisor thread; here it
+        # becomes the Job backoffLimit. One policy, two mechanisms.
+        self._supervision = supervision or SupervisionPolicy()
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -108,8 +221,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         if self._specs is not None:
             specs = self._specs
         elif tasks_data is None:
-            raise ValueError('no specs to deploy: construct the engine with specs = ... or '
-                            'pass tasks_data from Flow.build_tasks_data()')
+            raise ConfigError('No specs to deploy.',
+                            remedy = 'Construct the engine with specs = ..., or pass '
+                                    'tasks_data from Flow.build_tasks_data().')
         else:
             specs = specs_from_tasks_data(tasks_data)
         manifests = render_manifests(
@@ -124,6 +238,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             gpu_resource_name = self._gpu_resource_name,
             gpu_autoscaling = self._gpu_autoscaling,
             image_pull_policy = self._image_pull_policy,
+            supervision = self._supervision,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
@@ -142,16 +257,34 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 capture_output = True,
             )
         except FileNotFoundError as e:
-            raise RuntimeError(f'{self._kubectl!r} not found on PATH — install kubectl and '
-                               'point it at your cluster.') from e
+            raise ClusterError(f'{self._kubectl!r} not found on PATH.',
+                            remedy = 'Install kubectl and point it at your cluster.') from e
         if proc.returncode != 0:
-            raise RuntimeError(f'kubectl apply failed: {proc.stderr.decode("utf-8")}')
+            raise ClusterError(f'kubectl apply failed: {proc.stderr.decode("utf-8")}',
+                            namespace = self._namespace)
         logger.info(proc.stdout.decode('utf-8').strip())
 
     def _job_states(self, selector : str) -> List[tuple]:
-        '''Returns ``(job_name, node_name, succeeded, failed)`` for each Job matching selector.'''
-        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}{.status.succeeded}{"|"}'
-                    '{.status.failed}{"|"}{.metadata.labels.videoflow\\.io/node}{"\\n"}{end}')
+        '''
+        Returns ``(job_name, node_name, succeeded, failed)`` for each Job matching
+        selector, where both flags mean *terminally* — the Job controller is done
+        with it and will not create another pod.
+
+        This reads the Job's ``Complete``/``Failed`` conditions rather than its
+        ``.status.succeeded``/``.status.failed`` pod counters, and the difference is
+        load-bearing. Node Jobs render with ``restartPolicy: Never`` and
+        ``backoffLimit = supervision.max_restarts``, so the controller increments
+        ``.status.failed`` on the *first* pod failure and then creates a replacement
+        pod. Reading that counter called a node dead while it was still retrying —
+        exactly the recoverable crash that solutions/toy_recovery exists to prove
+        survivable, and that a worker restart on Kubernetes is supposed to absorb.
+        The conditions are set only when the Job is genuinely finished (its
+        backoffLimit is exhausted, or activeDeadlineSeconds fired).
+        '''
+        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}'
+                    '{.status.conditions[?(@.type=="Complete")].status}{"|"}'
+                    '{.status.conditions[?(@.type=="Failed")].status}{"|"}'
+                    '{.metadata.labels.videoflow\\.io/node}{"\\n"}{end}')
         proc = subprocess.run(
             [self._kubectl, 'get', 'jobs', '-n', self._namespace, '-l', selector, '-o', f'jsonpath={jsonpath}'],
             capture_output = True, text = True, check = False,
@@ -161,7 +294,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             if not line:
                 continue
             name, succ, fail, node = (line.split('|') + ['', '', '', ''])[:4]
-            states.append((name, node, bool(succ and int(succ) >= 1), bool(fail and int(fail) >= 1)))
+            states.append((name, node, succ == 'True', fail == 'True'))
         return states
 
     def _run_selector(self) -> str:
@@ -194,6 +327,50 @@ class KubernetesExecutionEngine(ExecutionEngine):
         '''``(pod_name, message)`` for pods the scheduler has declared Unschedulable.'''
         return [(name, message) for name, phase, reason, message in self._pod_states(selector)
                 if phase == 'Pending' and reason == 'Unschedulable']
+
+    def _container_states(self, selector : str) -> list[_ContainerState]:
+        '''
+        Worker-container status for each pod matching selector — what
+        ``_pod_states`` cannot see: readiness, restart count and the waiting /
+        last-terminated reasons that reveal a crash-loop. Kept a sibling rather
+        than an extension because ``_pod_states``'s trailing field is free text
+        (parsed with maxsplit); every field here is enum-ish or numeric, so a
+        plain split is safe. Index ``[0]`` is correct: the pod spec renders
+        exactly one container and no init containers. A not-yet-scheduled pod has
+        no containerStatuses — its fields come back empty and parse to defaults.
+
+        The termination *message* is read last and split with ``maxsplit``: it is
+        the worker's own JSON death note (see ``runtime.worker``), free text as far
+        as this parser is concerned, so a ``|`` inside it must not shift the
+        enum-ish fields before it.
+        '''
+        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}'
+                    '{.metadata.labels.videoflow\\.io/node}{"|"}{.status.phase}{"|"}'
+                    '{.status.containerStatuses[0].ready}{"|"}'
+                    '{.status.containerStatuses[0].restartCount}{"|"}'
+                    '{.status.containerStatuses[0].state.waiting.reason}{"|"}'
+                    '{.status.containerStatuses[0].lastState.terminated.reason}{"|"}'
+                    '{.status.containerStatuses[0].lastState.terminated.message}{"\\n"}{end}')
+        proc = subprocess.run(
+            [self._kubectl, 'get', 'pods', '-n', self._namespace, '-l', selector,
+             '-o', f'jsonpath={jsonpath}'],
+            capture_output = True, text = True, check = False,
+        )
+        states : list[_ContainerState] = []
+        for line in proc.stdout.splitlines():
+            if not line:
+                continue
+            fields = (line.split('|', 7) + [''] * 8)[:8]
+            pod, node, phase, ready, restarts, waiting, last_term, last_msg = fields
+            states.append(_ContainerState(
+                pod = pod, node_label = node, phase = phase,
+                ready = ready == 'true',
+                restart_count = int(restarts or 0),
+                waiting_reason = waiting,
+                last_terminated_reason = last_term,
+                last_terminated_message = last_msg,
+            ))
+        return states
 
     def _scaleup_in_flight(self, pod_names : List[str]) -> bool:
         '''
@@ -228,20 +405,28 @@ class KubernetesExecutionEngine(ExecutionEngine):
                     return
                 if failed:
                     self.dump_failed_logs(['provision'], node_label = name)
-                    raise RuntimeError('provision Job failed — broker streams were not created.')
+                    raise BrokerUnavailable(
+                        'The provision Job failed, so the broker streams were not created.',
+                        remedy = 'See the provision logs above; the usual causes are an '
+                                'unreachable NATS URL or an image the cluster cannot pull.')
             # An unschedulable provision pod would otherwise burn the whole timeout.
             stuck = self._unschedulable_pods(f'job-name={name}')
             if stuck:
                 unschedulable_since = unschedulable_since or time.time()
                 if (time.time() - unschedulable_since >= 30
                         and not self._scaleup_in_flight([n for n, _ in stuck])):
-                    raise RuntimeError(f'provision pod cannot be scheduled '
-                                       f'({stuck[0][1] or "Unschedulable"}) — broker streams '
-                                       f'were not created.')
+                    raise ResourceUnavailable(
+                        f'The provision pod cannot be scheduled '
+                        f'({stuck[0][1] or "Unschedulable"}), so the broker streams were '
+                        f'not created.',
+                        remedy = 'Free capacity in the namespace, or relax the pod\'s '
+                                'resource requests.')
             else:
                 unschedulable_since = None
             time.sleep(2)
-        raise RuntimeError(f'provision Job did not complete within {timeout_secs}s.')
+        raise BrokerUnavailable(
+            f'The provision Job did not complete within {timeout_secs}s.',
+            remedy = 'Check that the cluster can pull the provision image and reach NATS.')
 
     def wait_for_completion(self, poll_secs : int = 3,
                             unschedulable_grace_secs : int = 60) -> List[str]:
@@ -285,50 +470,118 @@ class KubernetesExecutionEngine(ExecutionEngine):
                          f'({detail}).')
                 # GPU-specific remedies only when the scheduler actually named a GPU
                 # resource — for a CPU/memory/affinity stall they would mislead.
+                remedy = None
                 if any('gpu' in (message or '') for _, message in overdue):
-                    error += (' The flow demands more GPUs than the cluster has allocatable — '
-                              'reduce GPU nodes/replicas, enable device-plugin time-slicing, '
-                              'or deploy with --gpu-mode shared.')
-                raise RuntimeError(error)
+                    remedy = ('The flow demands more GPUs than the cluster has allocatable — '
+                              'reduce GPU nodes/replicas, or enable device-plugin time-slicing '
+                              '(dev clusters).')
+                raise FlowStalled(error, remedy = remedy)
             time.sleep(poll_secs)
 
-    def schedulability_report(self, grace_secs : int = 30, poll_secs : int = 3) -> List[str]:
+    def rollout_report(self, deadline_secs : int = _ROLLOUT_DEADLINE_SECS, poll_secs : int = 3,
+                       unschedulable_grace_secs : int = 30) -> RolloutReport:
         '''
-        Bounded post-apply check that every pod of this run found a node — the
-        REALTIME counterpart of the ``wait_for_completion`` watchdog (a REALTIME
-        deploy otherwise returns immediately, and an unschedulable node fails
-        silently: producers keep publishing, frames are evicted, downstream output
-        never appears). Returns problem strings, empty when everything scheduled
-        within the grace window.
+        Bounded post-apply health check for a REALTIME run — the counterpart of
+        the ``wait_for_completion`` watchdog (a REALTIME deploy otherwise returns
+        immediately, and a broken node fails silently: producers keep publishing,
+        frames are evicted, downstream output never appears). Success means every
+        pod is Ready (the readiness probe passes only after ``node.open()``
+        completes) or Succeeded (a finite-producer Job); merely being *scheduled*
+        is not enough — a pod that finds a node and then dies in ``open()`` (CUDA
+        OOM, a bad image, the startup-probe window killing a slow model load)
+        crash-loops with no Unschedulable condition to see.
+
+        Exits early both ways: as soon as every pod is Ready on two consecutive
+        polls (seconds, in the healthy case), and as soon as any pod is confirmed
+        failing — a fatal waiting reason or repeated restarts on two consecutive
+        polls, or scheduler-Unschedulable past ``unschedulable_grace_secs`` with
+        no autoscaler scale-up in flight. The default deadline exceeds the
+        startup-probe window so a probe kill of a slow ``open()`` is observable
+        at all.
+
+        - Arguments:
+            - deadline_secs: give up after this long without a verdict; pods \
+                still not Ready are then reported as warnings, not failures \
+                (a slow model load is slow, not proven dead).
+            - poll_secs: seconds between kubectl polls.
+            - unschedulable_grace_secs: how long a pod may sit Unschedulable \
+                before it is a confirmed failure (tolerates scheduling churn).
+        - Returns:
+            - A ``RolloutReport`` — ``failing`` non-empty means the deploy \
+                should dump logs and exit non-zero.
         '''
-        deadline = time.time() + grace_secs
-        stuck : List[tuple] = []
+        deadline = time.time() + deadline_secs
         clean_polls = 0
         saw_pods = False
+        failing_streak : dict[str, int] = {}
+        unschedulable_since : dict[str, float] = {}
+        states : list[_ContainerState] = []
+        scaleup_muted = False
         while time.time() < deadline:
-            states = self._pod_states(self._run_selector())
+            now = time.time()
+            states = self._container_states(self._run_selector())
             saw_pods = saw_pods or bool(states)
-            stuck = [(name, message) for name, phase, reason, message in states
-                     if phase == 'Pending' and reason == 'Unschedulable']
-            # Success needs pods to exist AND two consecutive clean polls: right
-            # after apply the controllers may not have created the pods yet (or the
-            # scheduler may not have stamped PodScheduled), and a single empty
-            # snapshot would pass the check vacuously.
-            if states and not stuck:
+            node_of = {s.pod: s.node_label or s.pod for s in states}
+
+            # Confirmed container failures, debounced over two consecutive polls
+            # (symmetric with the two-clean-polls success guard below) so a
+            # momentary blip or a just-recovered pod doesn't abort the deploy.
+            failing_now = {s.pod: s for s in states if _is_failing(s)}
+            failing_streak = {pod: failing_streak.get(pod, 0) + 1 for pod in failing_now}
+            confirmed = [failing_now[pod] for pod, streak in sorted(failing_streak.items())
+                         if streak >= 2]
+            if confirmed:
+                return RolloutReport(
+                    failing = [(node_of[s.pod], _failure_detail(s)) for s in confirmed],
+                    warnings = [],
+                )
+
+            # Scheduler-Unschedulable past grace is equally fatal — such a pod
+            # never starts, so it can never crash-loop. Same per-pod grace
+            # bookkeeping as wait_for_completion; the abort is skipped while a
+            # cluster-autoscaler scale-up is in flight for these pods.
+            stuck = self._unschedulable_pods(self._run_selector())
+            names = {name for name, _ in stuck}
+            unschedulable_since = {n: t for n, t in unschedulable_since.items() if n in names}
+            for name, _message in stuck:
+                unschedulable_since.setdefault(name, now)
+            overdue = [(name, message) for name, message in stuck
+                       if now - unschedulable_since[name] >= unschedulable_grace_secs]
+            scaleup_muted = bool(overdue) and self._scaleup_in_flight([n for n, _ in overdue])
+            if overdue and not scaleup_muted:
+                return RolloutReport(
+                    failing = [(node_of.get(name, name),
+                                f'pod {name} cannot be scheduled: {message or "Unschedulable"}')
+                               for name, message in overdue],
+                    warnings = [],
+                )
+
+            # Success needs pods to exist AND two consecutive all-ready polls:
+            # right after apply the controllers may not have created the pods
+            # yet, and a single empty snapshot would pass the check vacuously.
+            if states and all(s.ready or s.phase == 'Succeeded' for s in states):
                 clean_polls += 1
                 if clean_polls >= 2:
-                    return []
+                    return RolloutReport(failing = [], warnings = [])
             else:
                 clean_polls = 0
             time.sleep(poll_secs)
         if not saw_pods:
-            return [f'no pods appeared for this run within {grace_secs}s — check the '
-                    f'workloads with kubectl get pods -n {self._namespace}']
-        if stuck and self._scaleup_in_flight([name for name, _ in stuck]):
-            return [f'{len(stuck)} pod(s) Pending, but a cluster-autoscaler scale-up is '
-                    f'in flight — they should schedule once the new node joins.']
-        return [f'pod {name} cannot be scheduled: {message or "Unschedulable"}'
-                for name, message in stuck]
+            return RolloutReport(failing = [], warnings = [
+                f'no pods appeared for this run within {deadline_secs}s — check the '
+                f'workloads with kubectl get pods -n {self._namespace}'])
+        warnings : list[str] = []
+        if scaleup_muted:
+            warnings.append('pod(s) are Pending, but a cluster-autoscaler scale-up is '
+                            'in flight — they should schedule once the new node joins.')
+        for s in states:
+            if s.ready or s.phase == 'Succeeded':
+                continue
+            warnings.append(f'pod {s.pod} is not Ready after {deadline_secs}s '
+                            f'({s.waiting_reason or s.phase}, {s.restart_count} restarts) '
+                            f'— a slow model load? watch it with '
+                            f'kubectl get pods -n {self._namespace}')
+        return RolloutReport(failing = [], warnings = warnings)
 
     def dump_failed_logs(self, nodes : List[str], node_label : str | None = None) -> None:
         '''Prints the recent pod logs of each failed node (before teardown removes them).'''

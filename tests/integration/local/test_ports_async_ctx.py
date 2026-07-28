@@ -3,12 +3,13 @@ API expressivity: async component methods and optional ctx injection, exercised
 end-to-end through worker subprocesses. Needs a reachable NATS JetStream server.
 '''
 import os
+import pathlib
 import sys
 import tempfile
 
 import pytest
 
-TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS_DIR = str(pathlib.Path(__file__).resolve().parents[2])
 sys.path.insert(0, TESTS_DIR)  # so this process can import support_nodes as the workers will
 
 from support_nodes import AsyncDoubler, CtxPartitionTagger  # noqa: E402

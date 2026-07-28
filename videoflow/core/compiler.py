@@ -7,7 +7,7 @@ Kubernetes pod as environment variables / a ConfigMap.
 '''
 from __future__ import absolute_import, division, print_function
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
 from .flow import Flow
@@ -30,7 +30,8 @@ def _node_kind(node : Node) -> str:
 @dataclass
 class NodeSpec:
     '''
-    A flat, serializable description of one node's deployment.
+    A flat, serializable description of one node's deployment. Here a node refers to a
+    videoflow graph node (producer/processor/consumer), not a physical machine in a Kubernetes cluster.
 
     - Attributes:
         - name: node's stable name (unique in the flow).
@@ -41,9 +42,13 @@ class NodeSpec:
         - has_children: whether anything downstream consumes this node's output.
         - nb_tasks: desired replica count (processors only; 1 otherwise).
         - device_type: 'cpu' or 'gpu' (processors only).
-        - gpu_count: GPUs each replica requests (GPU processors only; default 1).
-        - gpu_resource_name: extended-resource name each replica requests, or None \
-            to use the deploy-time default (``nvidia.com/gpu``).
+        - gpu_count: whole physical GPUs each replica requests (GPU processors \
+            only; default 1).
+        - gpu_memory_gib: declared GPU memory demand in GiB (RFC 0004) — drives \
+            the mix strategy's MIG slice choice; None when undeclared.
+        - gpu_resource_name: internal — the resolved extended-resource name, set \
+            only by a GPU strategy (e.g. the mix solver's chosen MIG profile); \
+            None means the deploy-time default (``nvidia.com/gpu``).
         - is_finite: for producers, whether ``next()`` self-terminates.
         - image: the container image ref declared on the node, or None (the \
             deploy-time default/override supplies it — see ``videoflow.deploy.images``).
@@ -51,6 +56,9 @@ class NodeSpec:
             receives (Σ over children of ``nb_tasks`` if partitioned else 1); drives \
             refcounted blob reclamation (PROTOCOL.md BLOB-5). 0 for leaves; ``None`` \
             when unknown (a legacy spec), which disables reclamation.
+        - delivery: this node's ``delivery=``/``on_error=`` overrides as a dict, \
+            or ``None`` to inherit the flow type's preset. Read by provisioning \
+            (it sets the durables' ``max_deliver``) and by the worker.
 
     The field order below *is* the constructor signature — callers pass these
     positionally (``NodeSpec('n', 'pkg.Cls', {}, [], 'processor', ...)``), so
@@ -84,9 +92,22 @@ class NodeSpec:
     protocol_version : Optional[int] = None
     # GPU scheduling knobs, meaningful only when device_type == 'gpu'.
     gpu_count : int = 1
+    # Internal: the resolved extended-resource name, set only by a GPU strategy
+    # (the mix solver assigns a sharer's MIG profile here). Never user-set — the
+    # node API has no such knob; None means "the deploy default resource".
     gpu_resource_name : Optional[str] = None
-    # Appended last (field order is the constructor signature — see class docstring).
+    # Appended in arrival order (field order is the constructor signature — see
+    # class docstring).
     blob_readers : Optional[int] = None
+    # GPU memory demand in GiB (RFC 0004): drives the mix strategy's MIG slice
+    # choice; other modes ignore it. None = no declared demand (whole device).
+    gpu_memory_gib : Optional[float] = None
+    # Per-node failure handling (``delivery=``/``on_error=`` on the node), as a
+    # dict for ``DeliveryPolicy.resolve``. None = inherit the flow type's preset,
+    # which is what every flow that never touches these ships. Lifted out of
+    # params like partition_by/join_policy, because provisioning needs it before
+    # any worker exists: a node's delivery mode decides its durables' max_deliver.
+    delivery : Optional[Dict[str, Any]] = None
 
     @property
     def is_remote(self) -> bool:
@@ -99,27 +120,7 @@ class NodeSpec:
         return self.component_ref is not None and self.node_class is None
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            'name': self.name,
-            'node_class': self.node_class,
-            'params': self.params,
-            'parents': self.parents,
-            'kind': self.kind,
-            'has_children': self.has_children,
-            'nb_tasks': self.nb_tasks,
-            'device_type': self.device_type,
-            'gpu_count': self.gpu_count,
-            'gpu_resource_name': self.gpu_resource_name,
-            'is_finite': self.is_finite,
-            'image': self.image,
-            'partition_by': self.partition_by,
-            'join_policy': self.join_policy,
-            'component_ref': self.component_ref,
-            'descriptor': self.descriptor,
-            'command': self.command,
-            'protocol_version': self.protocol_version,
-            'blob_readers': self.blob_readers,
-        }
+        return asdict(self)
 
     @classmethod
     def from_dict(cls, d : Dict[str, Any]) -> "NodeSpec":
@@ -132,13 +133,25 @@ class NodeSpec:
             component_ref = d.get('component_ref'), descriptor = d.get('descriptor'),
             command = d.get('command'), protocol_version = d.get('protocol_version'),
             gpu_count = d.get('gpu_count', 1), gpu_resource_name = d.get('gpu_resource_name'),
+            gpu_memory_gib = d.get('gpu_memory_gib'),
             blob_readers = d.get('blob_readers'),
+            delivery = d.get('delivery'),
         )
 
 def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
     '''
     Converts ``build_tasks_data`` output — tuples of
     ``(node, parent_names, is_last)`` — into a list of serializable ``NodeSpec``.
+
+    It defaults GPU scheduling knobs to 1 GPU per replica, and leaves the GPU resource name
+    unset (None) so the deploy-time default is used. The mix strategy's solver will
+    override those fields with the chosen MIG profile if the node is a sharer.
+
+    It defaults ``is_finite`` to True for non-producers, and leaves ``blob_readers`` unset (None)
+    for non-leaves, so the engine can compute it once all specs are known.
+
+    It defaults ``component_ref``, ``descriptor``, ``command``, and ``protocol_version`` to None for native Python nodes,
+    and fills them in for remote components (Python or native) from the node's descriptor.
     '''
     specs : List[NodeSpec] = []
     for node, parent_names, is_last in tasks_data:
@@ -146,13 +159,15 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
         nb_tasks = node.nb_tasks if isinstance(node, ProcessorNode) else 1
         device_type = node.device_type if isinstance(node, ProcessorNode) else 'cpu'
         gpu_count = node.gpu_count if isinstance(node, ProcessorNode) else 1
-        gpu_resource_name = node.gpu_resource_name if isinstance(node, ProcessorNode) else None
+        gpu_memory_gib = node.gpu_memory_gib if isinstance(node, ProcessorNode) else None
         is_finite = node.is_finite if isinstance(node, ProducerNode) else True
         # partition_by and _join_policy live on ProcessorNode/ConsumerNode; a producer
         # has neither. isinstance (not getattr) so the checker verifies the families.
         joinable = isinstance(node, (ProcessorNode, ConsumerNode))
         partition_by = node.partition_by if joinable else None
         join_policy = node._join_policy if joinable else None
+        # Same families: a producer has no inputs to retry or dead-letter.
+        delivery = node.delivery_policy() if joinable else None
         node_class: Optional[str]
         component_ref: Optional[str]
         descriptor: Optional[Dict[str, Any]]
@@ -181,11 +196,12 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             nb_tasks = nb_tasks,
             device_type = device_type,
             gpu_count = gpu_count,
-            gpu_resource_name = gpu_resource_name,
+            gpu_memory_gib = gpu_memory_gib,
             is_finite = is_finite,
             image = node.image,
             partition_by = partition_by,
             join_policy = join_policy,
+            delivery = delivery,
             component_ref = component_ref,
             descriptor = descriptor,
             command = command,

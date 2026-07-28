@@ -55,6 +55,11 @@ class HealthState:
         self._metrics : dict[str, _MetricAggregate] = {}
         # counter name -> int (rendered as videoflow_<name>_total)
         self._counters : dict[str, int] = {}
+        # (code, disposition) -> int, rendered as videoflow_errors_total with those
+        # labels. Kept apart from _counters because "how many failed" is nearly
+        # useless on its own — *what* is failing is the question an alert asks, and
+        # an undimensioned counter cannot answer it.
+        self._errors : dict[tuple, int] = {}
 
     def mark_ready(self) -> None:
         with self._lock:
@@ -76,6 +81,12 @@ class HealthState:
         with self._lock:
             self._counters[counter] = self._counters.get(counter, 0) + amount
 
+    def record_error(self, code : str, disposition : str) -> None:
+        '''Counts one failure under its stable code, so an alert can say *what* is failing.'''
+        with self._lock:
+            key = (code or 'VF_UNKNOWN', disposition or '')
+            self._errors[key] = self._errors.get(key, 0) + 1
+
     def is_ready(self) -> bool:
         with self._lock:
             return self._ready
@@ -94,6 +105,12 @@ class HealthState:
                 lines.append(f'videoflow_{metric}_sum{labels} {m.total}')
             for counter, value in self._counters.items():
                 lines.append(f'videoflow_{counter}_total{labels} {value}')
+            for (code, disposition), value in self._errors.items():
+                safe_code = code.replace('"', '')
+                safe_disposition = disposition.replace('"', '')
+                lines.append(
+                    f'videoflow_errors_total{{node="{safe_node}",code="{safe_code}",'
+                    f'disposition="{safe_disposition}"}} {value}')
             return '\n'.join(lines) + '\n'
 
 def _make_handler(state : HealthState) -> type:
@@ -159,6 +176,12 @@ class InstrumentedMessenger(Messenger):
     def publish_stop_signal(self) -> None:
         return self._inner.publish_stop_signal()
 
+    def publish_abort(self, error : Any) -> None:
+        return self._inner.publish_abort(error)
+
+    def pending_count(self) -> int:
+        return self._inner.pending_count()
+
     def check_for_termination(self) -> bool:
         self._state.beat()
         return self._inner.check_for_termination()
@@ -175,6 +198,11 @@ class InstrumentedMessenger(Messenger):
 
     def fail_inputs(self, exc : BaseException) -> None:
         self._state.incr('messages_failed')
+        # Counted here rather than in the messenger so a sampled (and therefore
+        # undelivered) dead letter is still visible in the metric: the DLQ is
+        # bounded on purpose, the counter is not.
+        self._state.record_error(getattr(exc, 'code', f'VF_{type(exc).__name__.upper()}'),
+                                getattr(exc, 'disposition', ''))
         return self._inner.fail_inputs(exc)
 
     def set_output_partition_key(self, value : Any) -> None:

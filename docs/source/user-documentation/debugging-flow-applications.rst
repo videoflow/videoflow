@@ -38,13 +38,33 @@ hardware (see :doc:`task-allocation`).
 Dead-lettered messages
 ----------------------
 
-A BATCH message that keeps failing ends up on the per-run DLQ stream
-(``vf-<flow_id>-<run_id>-dlq``) after exhausting its retries. Read it to see what
-failed and why — each message keeps the original payload and headers recording the
-origin node, the error, and the delivery count::
+A message that cannot be processed ends up on the flow's dead-letter stream
+(``vf-<flow_id>-dlq``) — a poison message on its first failure, a transient one
+after exhausting its retries. The stream is scoped to the **flow**, not the run,
+so it survives ``videoflow teardown``: the moment you want it is usually right
+after a run that failed and was cleaned up.
 
-    nats stream info vf-<flow_id>-<run_id>-dlq
-    nats stream view vf-<flow_id>-<run_id>-dlq
+``videoflow dlq`` is the way in. ``ls`` is the triage view — what failed, where,
+and under which stable error code::
+
+    videoflow dlq ls --flow-id <flow_id>
+    videoflow dlq ls --flow-id <flow_id> --code VF_DEVICE   # one failure mode
+    videoflow dlq show --flow-id <flow_id> --id 3           # full decode, payload included
+
+The error codes are the useful part: ``VF_POISON_SCHEMA`` means the message was
+malformed, ``VF_DEVICE`` means a worker was sick when it happened to hold it.
+Their meanings and what each one costs are in
+:doc:`error-handling-and-recovery`.
+
+Once the bug is fixed, put the messages back rather than losing the work::
+
+    videoflow dlq replay --flow-id <flow_id> --to-run <run_id>
+    videoflow dlq replay --flow-id <flow_id> --code VF_POISON_SCHEMA --dry-run
+
+The raw stream is still there if you prefer the NATS CLI::
+
+    nats stream info vf-<flow_id>-dlq
+    nats stream view vf-<flow_id>-dlq
 
 Metrics and health
 ------------------
@@ -54,6 +74,8 @@ probes:
 
 - ``/metrics`` — per-node processing-time counters, labelled by node name. Scrape
   these with Prometheus and chart them in Grafana to find the slow stage of a flow.
+  ``videoflow_errors_total{node,code,disposition}`` is the one to alert on: it
+  answers *what* is failing, which an undimensioned failure count cannot.
 - ``/readyz`` — reports ready only after the node's ``open()`` returns. If a pod
   never becomes ready, its ``open()`` is failing or hanging (a bad model path, an
   unreachable data source).
@@ -62,7 +84,15 @@ probes:
   ``process()``.
 
 On Kubernetes, ``kubectl logs`` and ``kubectl describe pod`` for a node's pod show
-its output and probe status.
+its output and probe status. A worker that died of a typed failure also records
+*why* in its termination message, which the API carries whether or not the logs
+are still around::
+
+    kubectl get pod <pod> -o jsonpath='{.status.containerStatuses[0].lastState.terminated.message}'
+
+That is the same structured reason ``videoflow deploy`` prints when it aborts a
+rollout, so a crash-looping pod reports ``VF_DEVICE: CUDA out of memory`` rather
+than "see the logs".
 
 Common issues
 -------------
@@ -72,6 +102,18 @@ Nothing is produced downstream of a join
     branch is dropping messages (realtime mode) or has stalled, the join can never
     complete. Check each parent branch's stream backlog, and prefer ``BATCH`` mode
     when completeness matters.
+
+The flow stopped and a node exited non-zero
+    Something died. ``videoflow dlq ls`` shows what was quarantined, the pod's
+    termination message shows what killed the worker, and the exit code says which
+    kind of problem it was (2 your flow, 3 your cluster, 4 nodes failed, 5
+    stalled). See :doc:`error-handling-and-recovery`.
+
+A BATCH run never finishes
+    A node has stopped making progress. Workers stop themselves after
+    ``VF_PROGRESS_TIMEOUT_SECONDS`` (default 300) of acking nothing while work is
+    pending, and log which parent they were waiting on; if a node is legitimately
+    slower than that, raise the timeout rather than disabling it.
 
 A replicated join was rejected
     A processor with more than one parent and ``nb_tasks > 1`` must set
