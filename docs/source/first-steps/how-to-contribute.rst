@@ -44,6 +44,10 @@ The test suite needs a running NATS JetStream server::
     docker compose up -d          # or: nats-server -js
     uv run pytest tests/
 
+Without a broker the tests under ``tests/integration/`` skip silently, so a green run
+may mean none of them ran. ``tests/integration/README.md`` covers starting the broker,
+the optional Redis service, and how to confirm the tests actually executed.
+
 Pull requests
 -------------
 
