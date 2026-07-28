@@ -119,6 +119,38 @@ tests skip with the reason when it is missing. Don't make a test create a cluste
 kubectl context — a silent retarget deploys test workloads into whatever cluster the operator was
 actually pointed at.
 
+## Third-party APIs: look them up with context7, don't recall them
+
+Almost everything that breaks in production here is a third-party API used slightly wrong — a
+JetStream consumer config, a Kubernetes object field, a protobuf descriptor-pool subtlety. Those
+APIs move faster than any model's memory of them, and the failures are quiet: a manifest that
+applies but schedules nothing, a consumer that acks a message it hasn't processed.
+
+**So: before writing or reviewing code that touches a third-party library, fetch its current docs
+with the context7 MCP tools** (`resolve-library-id` to find the library, then `get-library-docs`
+for the specific topic). Do this even when the call looks obvious — that is exactly when a
+remembered signature is most likely to be a version behind. If context7 has no entry for the
+library, or the tools aren't available in the session, say so and fall back to reading the
+installed package's own source under `.venv/` — don't quietly answer from memory.
+
+The libraries this applies to most, and the modules they live in:
+
+| Library | Where it's used |
+|---|---|
+| `nats-py` (JetStream) | `messaging/`, `runtime/worker.py` |
+| `kubernetes` | `engines/kubernetes.py`, `deploy/cluster.py`, `deploy/manifests.py` |
+| `protobuf` | `wire/serialization.py`, `spec/proto/`, `videoflow/v1/` |
+| `msgpack`, `redis` | `wire/serialization.py`, blob-store offload |
+| `oras`, `jsonschema` | `components/oci.py`, `components/descriptor.py` |
+| `opencv-python-headless` | `producers/`, `processors/` |
+
+Two things worth writing down after a lookup: put the version-specific behaviour you relied on in
+a comment next to the call, and if it changes a convention, update the relevant `.claude/docs/`
+page in the same commit (see [Keep docs in sync with code](#keep-docs-in-sync-with-code)).
+
+The same rule applies in `../videoflow-contrib`, where the model and CV libraries change even
+faster than these do.
+
 ## Python conventions
 
 Python 3.12. The guidance below is split deliberately: the codebase predates some of these

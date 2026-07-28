@@ -146,3 +146,8 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+
+# Claude
+.claude/worktrees/
+.mcp.json
