@@ -16,14 +16,18 @@ NATS server, so the whole chain — worker, wire, drain, propagation — is invo
 '''
 from __future__ import absolute_import, division, print_function
 
+import asyncio
 import os
+import pathlib
 import sys
 import tempfile
+import time
 
+import nats
 import pytest
 from support_broker import NATS_URL, cleanup, ids
 
-TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS_DIR = str(pathlib.Path(__file__).resolve().parents[2])
 if TESTS_DIR not in sys.path:
     sys.path.insert(0, TESTS_DIR)      # so the workers can import support_errors
 
@@ -37,7 +41,8 @@ from support_errors import (  # noqa: E402
 from videoflow.core import Flow  # noqa: E402
 from videoflow.core.constants import BATCH  # noqa: E402
 from videoflow.core.supervision import SupervisionPolicy  # noqa: E402
-from videoflow.engines.local import LocalProcessEngine  # noqa: E402
+from videoflow.engines.local import ABORT_REANNOUNCE_SECONDS, LocalProcessEngine  # noqa: E402
+from videoflow.messaging.topology import control_subject_for  # noqa: E402
 from videoflow.processors import IdentityProcessor, JoinerProcessor  # noqa: E402
 from videoflow.producers import IntProducer  # noqa: E402
 
@@ -54,6 +59,23 @@ def _run(flow, engine):
     failed = engine.wait_for_completion()
     engine._teardown_streams()
     return failed
+
+
+def _wait_for_stop(flow_id, run_id, timeout):
+    '''True when a control stop for this run arrives within ``timeout`` of subscribing.'''
+    async def _go():
+        nc = await nats.connect(NATS_URL)
+        try:
+            sub = await nc.subscribe(control_subject_for(flow_id, run_id))
+            try:
+                await sub.next_msg(timeout = timeout)
+                return True
+            except Exception:
+                return False
+        finally:
+            await nc.drain()
+
+    return asyncio.run(_go())
 
 
 @pytest.mark.timeout(90)
@@ -124,6 +146,31 @@ def test_a_hard_kill_still_ends_the_flow_via_the_supervisor():
         failed = _run(flow, engine)
         assert 'crash' in failed
         cleanup(flow_id, flow.run_id)
+
+
+@pytest.mark.timeout(60)
+def test_the_supervisors_abort_reaches_a_worker_that_was_still_connecting():
+    '''
+    The control stop rides core NATS, so a single publish reaches only whoever is
+    subscribed at that instant — and the worker that most needs to hear it is
+    typically the one still connecting when its parent died on its first message.
+    A missed announcement used to hang the run until the test's own timeout.
+
+    So the supervisor keeps announcing until every worker is reaped. This drives
+    that repeat directly: subscribe *after* the first publish is long gone and
+    still expect a stop, which is the guarantee a real late-starting worker
+    depends on.
+    '''
+    flow_id, run_id = ids('abort')
+    engine = LocalProcessEngine(nats_url = NATS_URL, supervision = NO_RESTART)
+    engine._flow_id, engine._run_id = flow_id, run_id
+    engine._abort_flow('left')
+    try:
+        # Comfortably after the first announcement, comfortably before the second.
+        time.sleep(ABORT_REANNOUNCE_SECONDS / 2)
+        assert _wait_for_stop(flow_id, run_id, timeout = 15)
+    finally:
+        engine._stop_abort_announcer()
 
 
 @pytest.mark.timeout(120)

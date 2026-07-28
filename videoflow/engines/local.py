@@ -20,10 +20,11 @@ import subprocess
 import sys
 import sysconfig
 import tempfile
+import threading
 import time
 from typing import List, Optional
 
-import nats  # noqa: F401  (import guard: fail fast if the broker client is missing)
+import nats  # also an import guard: fail fast if the broker client is missing
 
 from ..core.compiler import (
     NodeSpec,
@@ -55,6 +56,14 @@ DEFAULT_NATS_URL = 'nats://localhost:4222'
 # Bound on the up-front stream provisioning. Locally an unreachable broker is a
 # setup mistake worth reporting, not a transient worth blocking on indefinitely.
 PROVISION_TIMEOUT_SECONDS = 15
+
+# How often the supervisor repeats its control-abort while workers are still
+# alive. The control stop is a plain (non-JetStream) publish, so it reaches only
+# the workers subscribed at that instant — and a node can die before its siblings
+# have finished connecting. Repeating is what makes the announcement reliable:
+# a worker that was still starting up hears the next one instead of waiting
+# forever on an end-of-stream that is not coming.
+ABORT_REANNOUNCE_SECONDS = 2.0
 
 async def _quiet_error_cb(_e : BaseException) -> None:
     '''Swallows the NATS client's per-retry error logging; we report the failure ourselves.'''
@@ -171,6 +180,10 @@ class LocalProcessEngine(ExecutionEngine):
         self._termination_dir: Optional[str] = None
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
+        # Abort announcer: repeats the control stop until every worker has been
+        # reaped (see _abort_flow). _abort_done ends it.
+        self._abort_thread: Optional[threading.Thread] = None
+        self._abort_done = threading.Event()
         super(LocalProcessEngine, self).__init__()
 
     def _al_create_and_start_processes(self, tasks_data : Optional[list], flow_id : str,
@@ -310,26 +323,30 @@ class LocalProcessEngine(ExecutionEngine):
         self._failures = []
         pending = list(self._procs)
         self._procs = []
-        while pending:
-            name, replica_idx, proc = pending.pop(0)
-            while True:
-                try:
-                    proc.wait()
-                    break
-                except KeyboardInterrupt:
-                    # The children got the same SIGINT; keep reaping rather than
-                    # abandoning them (a second Ctrl-C used to escape here).
+        try:
+            while pending:
+                name, replica_idx, proc = pending.pop(0)
+                while True:
+                    try:
+                        proc.wait()
+                        break
+                    except KeyboardInterrupt:
+                        # The children got the same SIGINT; keep reaping rather than
+                        # abandoning them (a second Ctrl-C used to escape here).
+                        continue
+                code = proc.returncode or 0
+                if code == 0 or code in stopped:
                     continue
-            code = proc.returncode or 0
-            if code == 0 or code in stopped:
-                continue
-            reason = self._termination_reason(name, replica_idx)
-            self._events.emit(NodeExited(name, replica_idx, code, reason))
-            restarted = self._maybe_restart(name, replica_idx, reason)
-            if restarted is not None:
-                pending.append(restarted)
-                continue
-            self._failures.append((name, replica_idx, code))
+                reason = self._termination_reason(name, replica_idx)
+                self._events.emit(NodeExited(name, replica_idx, code, reason))
+                restarted = self._maybe_restart(name, replica_idx, reason)
+                if restarted is not None:
+                    pending.append(restarted)
+                    continue
+                self._failures.append((name, replica_idx, code))
+        finally:
+            # Every worker is accounted for, so there is nobody left to tell.
+            self._stop_abort_announcer()
         failed, seen = [], set()
         for name, _replica, _code in self._failures:
             if name not in seen:
@@ -389,13 +406,53 @@ class LocalProcessEngine(ExecutionEngine):
         This is the supervisor layer of abort propagation (``ABORT-6``): it covers
         the worker that died too abruptly to publish an ABORT marker of its own —
         an ``os._exit``, an OOM kill, a SIGKILL.
+
+        The stop is **repeated** until every worker has been reaped, in a
+        background thread so the reaping loop keeps running. One publish is not
+        enough: the control subject is core NATS, delivered only to whoever is
+        subscribed at that instant, and a node that dies on its first message
+        typically dies while the workers further down the graph are still
+        connecting. Those are exactly the workers that need to hear it, and a
+        missed announcement hangs the run until something else times out.
         '''
         logger.error(f'node {node} gave up; stopping the flow so its children do not '
                     f'wait for an end-of-stream that is not coming')
+        if self._abort_thread is not None:          # already announcing this run's death
+            return
+        if self._flow_id is None or self._run_id is None:
+            return
+        self._abort_done.clear()
+        self._abort_thread = threading.Thread(
+            target = self._announce_abort, name = 'vf-abort-announcer', daemon = True)
+        self._abort_thread.start()
+
+    def _announce_abort(self) -> None:
+        '''Republishes the control stop every ``ABORT_REANNOUNCE_SECONDS`` until reaping ends.'''
+        flow_id, run_id = self._flow_id, self._run_id
+        assert flow_id is not None and run_id is not None   # checked by _abort_flow
+
+        async def _go() -> None:
+            nc = await nats.connect(self._nats_url, error_cb = _quiet_error_cb)
+            subject = topology.control_subject_for(flow_id, run_id)
+            try:
+                while not self._abort_done.is_set():
+                    await nc.publish(subject, b'stop')
+                    await nc.flush()
+                    await asyncio.sleep(ABORT_REANNOUNCE_SECONDS)
+            finally:
+                await nc.drain()
+
         try:
-            self.signal_flow_termination()
+            asyncio.run(_go())
         except Exception:
             logger.debug('could not signal termination after a node gave up', exc_info = True)
+
+    def _stop_abort_announcer(self) -> None:
+        '''Ends the repeated stop announcement (no-op when nothing aborted).'''
+        self._abort_done.set()
+        thread, self._abort_thread = self._abort_thread, None
+        if thread is not None:
+            thread.join(timeout = ABORT_REANNOUNCE_SECONDS + 5)
 
     def events(self) -> EventLog:
         '''Lifecycle events for this run — the same records the Kubernetes engine emits.'''

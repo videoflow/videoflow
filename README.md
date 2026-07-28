@@ -148,7 +148,7 @@ videoflow run-local toy_calculator.py     # or: videoflow deploy toy_calculator.
 Each writes a self-checking artifact (`report.json`, `counts.json`,
 `fusion_summary.json`) saying whether the distributed run computed the right
 answer — which is also how they serve as the framework's end-to-end test suite,
-run on every CI build by `tests/integration/test_toy_solutions.py`.
+run on every CI build by `tests/integration/local/test_toy_solutions.py`.
 
 ---
 

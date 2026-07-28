@@ -201,7 +201,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # --dry-run / --render-only never touch the cluster (they include the dev-infra
     # manifests whenever the broker would have been auto-provisioned).
     if args.dry_run or args.render_only:
-        _render_manifests_to_disk(args, flow_id, flow_type, specs, run_id, overrides, mounts)
+        _render_manifests_to_disk(args, image, flow_id, flow_type, specs, run_id,
+                                  overrides, mounts)
         return
 
     # 4. Cluster mechanics: detect the flavor, load locally built images into it,
@@ -435,10 +436,19 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
         raise ConfigError(str(e)) from e
     return flow.flow_id, flow.flow_type, specs
 
-def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_type : str,
-                              specs : list, run_id : str, overrides : dict,
+def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flow_id : str,
+                              flow_type : str, specs : list, run_id : str, overrides : dict,
                               mounts : list) -> None:
-    '''--dry-run (stdout) / --render-only (files) — the manifest-generation escape hatch.'''
+    '''
+    --dry-run (stdout) / --render-only (files) — the manifest-generation escape hatch.
+
+    ``image`` is the *resolved* default image — ``--image`` when given, otherwise
+    whatever ``autobuild`` produced — and not ``args.image``. Reading the flag here
+    instead made these two paths disagree: a plain
+    ``videoflow deploy graph.py --render-only`` built the image, then rendered
+    manifests that referenced none and died with "node 'x' has no container image",
+    while the same command without ``--render-only`` deployed fine.
+    '''
     # optional dep: infra and manifests both import yaml at module scope
     from .infra import infra_urls, nats_manifests, redis_manifests
     from .manifests import dump_manifests, render_manifests
@@ -459,7 +469,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_typ
     try:
         manifests = render_manifests(
             specs, flow_id, flow_type, nats_url, run_id,
-            namespace = args.namespace, default_image = args.image,
+            namespace = args.namespace, default_image = image,
             image_overrides = overrides, blob_redis_url = blob_redis_url,
             blob_ttl_seconds = args.blob_ttl_seconds,
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,

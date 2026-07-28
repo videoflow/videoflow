@@ -77,12 +77,21 @@ python toy_calculator.py --config config.yaml
 
 ## In the test suite
 
-`tests/integration/test_toy_solutions.py` runs this solution end to end on
+`tests/integration/local/test_toy_solutions.py` runs this solution end to end on
 every CI build: it copies the solution to a temp directory, writes a small fast
 config, drives it with `videoflow run-local`, and asserts
-`report.json["matches_expected"]` is `true`. Changing the graph, the nodes or
-the config keys means updating that test — it is the regression gate that keeps
-the framework path working, so keep the solution runnable with a short stream.
+`report.json["matches_expected"]` is `true`.
+
+`tests/integration/k8s/test_k8s_solutions.py` then runs the same solution on a kind
+cluster through `videoflow deploy` — six Jobs instead of six subprocesses — with the
+same config and the same assertion. `matches_expected` is also the narrowest check
+on the prepare hook there: the ground truth it compares against was written by
+`prepare.py` in a container, into a hostPath-mounted work dir a *different*
+container reads later.
+
+Changing the graph, the nodes or the config keys means updating the shared config
+dict in `tests/integration/support_solutions.py` — it is the regression gate that
+keeps the framework path working, so keep the solution runnable with a short stream.
 
 ## Configuration reference (`config.yaml`)
 

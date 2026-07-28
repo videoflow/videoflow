@@ -39,14 +39,26 @@ Videoflow uses `uv <https://docs.astral.sh/uv/>`_ for packaging and environments
     cd videoflow
     uv sync              # creates .venv with all dependencies, including dev tools
 
-The test suite needs a running NATS JetStream server::
+The unit tests need nothing but the checkout::
+
+    uv run pytest --ignore=tests/integration -q
+
+The integration tests come in three buckets, and each one gates itself on the
+infrastructure it needs. ``broker/`` and ``local/`` want a NATS JetStream server::
 
     docker compose up -d          # or: nats-server -js
-    uv run pytest tests/
+    uv run pytest tests/integration/broker tests/integration/local -q -rs
 
-Without a broker the tests under ``tests/integration/`` skip silently, so a green run
-may mean none of them ran. ``tests/integration/README.md`` covers starting the broker,
-the optional Redis service, and how to confirm the tests actually executed.
+``k8s/`` runs the same flows on a kind cluster through ``videoflow deploy``::
+
+    ./scripts/kind-up.sh          # cluster, images and broker; ~5 min the first time
+    uv run pytest tests/integration/k8s -q -rs
+    ./scripts/kind-down.sh
+
+Pass ``-rs`` in both cases. A bucket whose infrastructure is missing **skips
+silently**, so without it a run that tested nothing looks exactly like one that
+passed. ``tests/integration/README.md`` covers what each bucket needs, how to
+confirm it actually executed, and what the usual failures mean.
 
 Pull requests
 -------------

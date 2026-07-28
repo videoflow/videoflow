@@ -5,15 +5,21 @@ on:
     branches: [master]
   pull_request:
 
+# A second push to the same branch supersedes the first. The k8s job builds images
+# and stands up a cluster, so a superseded run is expensive to leave running.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   # File hygiene, ruff and mypy, straight from .pre-commit-config.yaml so CI and the
   # local hooks can never disagree about what "clean" means. Runs in parallel with
-  # `test` and needs no broker.
+  # the test jobs and needs no broker.
   #
   # This deliberately does not run the config's pytest hook: that hook is pre-push
   # stage (so `run --all-files` skips it) and it excludes tests/integration, while
-  # the `test` job below runs the whole suite against a live NATS. Adding it here
-  # would be a slower, strictly weaker duplicate.
+  # the jobs below run the whole suite against a live broker and a real cluster.
+  # Adding it here would be a slower, strictly weaker duplicate.
   pre-commit:
     runs-on: ubuntu-latest
     steps:
@@ -41,8 +47,33 @@ jobs:
       - name: Run pre-commit hooks
         run: uv run pre-commit run --all-files --show-diff-on-failure
 
-  test:
+  # Everything that needs neither a broker nor a cluster. Same set the pre-push hook
+  # runs, so a green hook and a green job mean the same thing.
+  unit:
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run unit tests
+        run: uv run pytest --ignore=tests/integration -q
+
+  # tests/integration/{broker,local}: the transport contract driven straight against
+  # JetStream, and whole flows run as worker subprocesses. Redis is a service
+  # container rather than a binary because it gates test_blob_reclamation.py, which
+  # skipped in CI for as long as there was no Redis here to run it against.
+  integration-local:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
     steps:
       - uses: actions/checkout@v4
 
@@ -60,5 +91,77 @@ jobs:
       - name: Start NATS JetStream
         run: nats-server -js -sd /tmp/nats-jetstream &
 
-      - name: Run tests
-        run: uv run pytest tests/ -q
+      # -rs prints skip reasons. These suites skip themselves silently when the
+      # broker is unreachable, so without it a misconfigured job is a green run
+      # that tested nothing.
+      - name: Run broker and local-engine integration tests
+        run: uv run pytest tests/integration/broker tests/integration/local -q -rs
+
+  # tests/integration/k8s: the same toy solutions, deployed to a kind cluster as one
+  # workload per node. Runs in parallel with integration-local — they share no
+  # ports, no broker and no work directory, deliberately.
+  integration-k8s:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Primed here rather than left to kind-up.sh so it can use the GHA layer
+      # cache: it is the only expensive image (apt ffmpeg/libGL plus
+      # `uv pip install .[all]`, which pulls opencv), and it changes only when the
+      # package or the base Dockerfile does. kind-up.sh rebuilds it unconditionally
+      # afterwards — deliberately, since a tag says nothing about which source it
+      # was built from — but by then every layer is warm and it takes seconds.
+      # The fixture and solution images on top of it are COPY-only.
+      - name: Prime the videoflow-base layer cache
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/base/Dockerfile
+          build-args: PYTHON_VERSION=3.12
+          tags: videoflow-base:py3.12
+          load: true
+          cache-from: type=gha,scope=videoflow-base
+          cache-to: type=gha,mode=max,scope=videoflow-base
+
+      # kind binds extraMounts when the node container is created, so the work root
+      # has to exist before the cluster does — afterwards the node gets an empty
+      # mount that silently swallows everything the pods write.
+      - name: Create the work root
+        run: mkdir -p /tmp/videoflow-k8s
+
+      - name: Create the kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: videoflow          # must match k8s/kind-cluster.yaml
+          config: k8s/kind-cluster.yaml
+          # Pinned: a floating tag re-pulls ~350MB whenever kind's default moves,
+          # and a kubernetes version bump should be a visible change here.
+          node_image: kindest/node:v1.31.4
+
+      # Idempotent: reuses the cluster created above, rebuilds videoflow-base
+      # against the warm cache, then builds the fixture and solution images,
+      # side-loads them, installs the broker and verifies the work root.
+      - name: Build images and provision the cluster
+        run: ./scripts/kind-up.sh
+
+      - name: Run Kubernetes integration tests
+        run: uv run pytest tests/integration/k8s -q -rs
+
+      # A cluster failure is unreadable from pytest output alone: the pod that
+      # explains it is usually already gone.
+      - name: Cluster diagnostics
+        if: failure()
+        run: |
+          kubectl get pods,jobs -A -o wide
+          kubectl -n videoflow-test describe pods
+          kubectl -n videoflow-test logs -l app.kubernetes.io/managed-by=videoflow \
+            --tail=200 --all-containers --prefix || true

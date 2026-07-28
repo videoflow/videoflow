@@ -106,7 +106,7 @@ def test_wait_does_not_abort_before_grace_or_during_scaleup(monkeypatch, engine)
     original_jobs = cluster.jobs
     def complete_later(cmd, **kwargs):
         if k8s_engine.time.time() > 200:
-            cluster.jobs = 'vf-f-g|1||g\n'      # job succeeded
+            cluster.jobs = 'vf-f-g|True||g\n'   # job Complete
             cluster.pods = ''
         return _FakeCluster(cluster.jobs, cluster.pods, cluster.events)(cmd, **kwargs)
     monkeypatch.setattr(k8s_engine.subprocess, 'run', complete_later)
@@ -116,8 +116,43 @@ def test_wait_does_not_abort_before_grace_or_during_scaleup(monkeypatch, engine)
 
 
 def test_wait_still_fails_fast_on_job_failure(monkeypatch, engine):
-    _install(monkeypatch, _FakeCluster(jobs = 'vf-f-g||1|g\n'))
+    _install(monkeypatch, _FakeCluster(jobs = 'vf-f-g||True|g\n'))
     assert engine.wait_for_completion(poll_secs = 0) == ['g']
+
+
+def test_a_retrying_job_is_not_reported_as_failed(monkeypatch, engine):
+    # A node Job renders with restartPolicy Never and backoffLimit = max_restarts,
+    # so the controller sets .status.failed = 1 on the FIRST pod failure and then
+    # creates a replacement pod. Reading that counter called a node dead while it
+    # was still retrying — which is exactly the recoverable crash that a worker
+    # restart is supposed to absorb (solutions/toy_recovery is built on it). Only
+    # the terminal Failed condition counts.
+    cluster = _FakeCluster(jobs = 'vf-f-g||\n')      # a pod died; no condition yet
+    _install(monkeypatch, cluster)
+
+    def succeeds_on_retry(cmd, **kwargs):
+        if k8s_engine.time.time() > 20:
+            cluster.jobs = 'vf-f-g|True||g\n'
+        return cluster(cmd, **kwargs)
+    monkeypatch.setattr(k8s_engine.subprocess, 'run', succeeds_on_retry)
+
+    assert engine.wait_for_completion(poll_secs = 0) == []
+
+
+def test_a_provision_job_retry_does_not_abort_the_deploy(monkeypatch, engine):
+    # Same trap on the other wait path: the provision Job is OnFailure with
+    # backoffLimit 6, so a single failed attempt must not be read as "the broker
+    # streams were not created".
+    cluster = _FakeCluster(jobs = 'vf-f-provision||\n')
+    _install(monkeypatch, cluster)
+
+    def succeeds_on_retry(cmd, **kwargs):
+        if k8s_engine.time.time() > 20:
+            cluster.jobs = 'vf-f-provision|True||\n'
+        return cluster(cmd, **kwargs)
+    monkeypatch.setattr(k8s_engine.subprocess, 'run', succeeds_on_retry)
+
+    engine._wait_provision('f')       # returns rather than raising BrokerUnavailable
 
 
 # Scheduler-clean _pod_states view for a pod that found a node.

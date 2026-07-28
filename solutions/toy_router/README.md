@@ -74,12 +74,19 @@ python toy_router.py --config config.yaml
 
 ## In the test suite
 
-`tests/integration/test_toy_solutions.py` runs this solution end to end on
+`tests/integration/local/test_toy_solutions.py` runs this solution end to end on
 every CI build: it copies the solution to a temp directory, writes a small fast
 config, drives it with `videoflow run-local`, and asserts `counts.json` reports
 both `matches_expected` and `sticky` — the two claims partitioned routing makes.
-It is the regression gate for `partition_by`, so keep the solution runnable with
-a short stream.
+
+`tests/integration/k8s/test_k8s_solutions.py` runs the same solution on a kind
+cluster with the same config and the same assertions, where `sticky` becomes a
+sharper claim: the replicas are StatefulSet pods that learn their identity from
+their own name through the downward API, not from a constructor argument.
+
+It is the regression gate for `partition_by`, so keep the solution runnable with a
+short stream, and change its config in `tests/integration/support_solutions.py`
+where both tests read it.
 
 ## Configuration reference (`config.yaml`)
 

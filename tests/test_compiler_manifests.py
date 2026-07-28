@@ -10,7 +10,8 @@ import yaml
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
-from videoflow.core.constants import GPU, REALTIME
+from videoflow.core.constants import BATCH, GPU, REALTIME
+from videoflow.core.policies import MISSING_DROP, MISSING_WAIT, JoinPolicy
 from videoflow.deploy.images import parse_override, resolve_image
 from videoflow.deploy.manifests import dump_manifests, render_manifests
 from videoflow.processors import IdentityProcessor, JoinerProcessor
@@ -390,6 +391,59 @@ def test_manifests_are_valid_yaml():
     assert len(parsed) == len(manifests)
     scaled = [m for m in parsed if m['kind'] == 'ScaledObject']
     assert len(scaled) == 3  # identity, identity1, joined
+
+# -- partitioning: policy, compiled specs, rendered workload -----------------
+#
+# A partitioned node is the one shape whose identity has to survive all three
+# hops: JoinPolicy round-tripping through get_params() (the worker rebuilds the
+# node from them), compile_flow carrying partition_by/nb_tasks into the spec, and
+# render_manifests turning that into a StatefulSet with a stable replica id. The
+# end-to-end "each message handled by exactly one replica" check needs a broker
+# and lives in tests/integration/local/test_partitioning.py.
+
+def _partitioned_flow():
+    p = IntProducer(0, 5, name = 'producer')
+    a = IdentityProcessor(name = 'a')(p)
+    joined = JoinerProcessor(name = 'joined', nb_tasks = 3, partition_by = 'trace_id')(p, a)
+    out = CommandlineConsumer(name = 'out')(joined)
+    return Flow([out], flow_type = REALTIME, flow_id = 'part')
+
+def test_join_policy_round_trips_through_get_params():
+    j = JoinerProcessor(name = 'j', nb_tasks = 2, partition_by = 'trace_id',
+                        join_policy = JoinPolicy(timeout_seconds = 5, missing = MISSING_DROP))
+    params = j.get_params()
+    json.dumps(params)  # must be JSON-serializable
+    j2 = JoinerProcessor(**params)
+    assert j2.partition_by == 'trace_id'
+    assert j2.join_policy.timeout_seconds == 5
+    assert j2.join_policy.missing == MISSING_DROP
+
+def test_join_policy_defaults_per_flow_type():
+    assert JoinPolicy.default_for(BATCH).missing == MISSING_WAIT
+    assert JoinPolicy.default_for(REALTIME).timeout_seconds == 10.0
+
+def test_compiler_carries_partition_and_join_policy():
+    specs = {s.name: s for s in compile_flow(_partitioned_flow())}
+    assert specs['joined'].partition_by == 'trace_id'
+    assert specs['joined'].nb_tasks == 3
+
+def test_partitioned_node_renders_statefulset_and_headless_service():
+    specs = compile_flow(_partitioned_flow())
+    manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1',
+                                default_image = IMG, autoscaling = True)
+    by = {(m['kind'], m['metadata']['name']): m for m in manifests}
+    assert ('StatefulSet', 'vf-part-joined') in by
+    assert ('Service', 'vf-part-joined-hl') in by
+    # Non-partitioned processor 'a' stays a Deployment.
+    assert ('Deployment', 'vf-part-a') in by
+    # Partitioned nodes are not KEDA-autoscaled (rehash on scale is unsafe).
+    scaled = [m for m in manifests if m['kind'] == 'ScaledObject']
+    scaled_names = {m['metadata']['name'] for m in scaled}
+    assert 'vf-part-joined-scaler' not in scaled_names
+    # The StatefulSet pod gets POD_NAME via the downward API for its replica id.
+    ss = by[('StatefulSet', 'vf-part-joined')]
+    env = ss['spec']['template']['spec']['containers'][0].get('env', [])
+    assert any(e['name'] == 'POD_NAME' for e in env)
 
 def test_video_file_reader_is_finite():
     reader = VideoFileReader('/tmp/x.mp4', name = 'reader')

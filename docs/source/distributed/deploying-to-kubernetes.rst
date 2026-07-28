@@ -118,6 +118,23 @@ Prerequisites
   ``videoflow.io/gpu-pool=true`` label (deploy tells you the exact commands if
   they are missing).
 
+A disposable cluster
+--------------------
+
+``./scripts/kind-up.sh`` builds a local kind cluster set up exactly the way this
+page describes — images side-loaded, NATS and Redis installed in a namespace, the
+broker also published on the host — and ``./scripts/kind-down.sh`` deletes it. It
+is what the ``tests/integration/k8s`` suite deploys against on every CI build, so
+it is also the shortest way to try a deploy without a real cluster. See
+``tests/integration/README.md``.
+
+One thing it has to arrange is worth knowing before you point a solution at any
+kind cluster: a solution's ``work_dir`` is hostPath-mounted into the worker pods at
+the absolute path baked in at compile time, and a kind node has its own filesystem.
+The cluster config bind-mounts the work root into the node at the *same* path, so
+host, node and pod agree. Without that the flow runs, every pod exits zero, and the
+artifacts are nowhere to be found.
+
 Building the image manually
 ---------------------------
 

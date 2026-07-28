@@ -265,9 +265,26 @@ class KubernetesExecutionEngine(ExecutionEngine):
         logger.info(proc.stdout.decode('utf-8').strip())
 
     def _job_states(self, selector : str) -> List[tuple]:
-        '''Returns ``(job_name, node_name, succeeded, failed)`` for each Job matching selector.'''
-        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}{.status.succeeded}{"|"}'
-                    '{.status.failed}{"|"}{.metadata.labels.videoflow\\.io/node}{"\\n"}{end}')
+        '''
+        Returns ``(job_name, node_name, succeeded, failed)`` for each Job matching
+        selector, where both flags mean *terminally* — the Job controller is done
+        with it and will not create another pod.
+
+        This reads the Job's ``Complete``/``Failed`` conditions rather than its
+        ``.status.succeeded``/``.status.failed`` pod counters, and the difference is
+        load-bearing. Node Jobs render with ``restartPolicy: Never`` and
+        ``backoffLimit = supervision.max_restarts``, so the controller increments
+        ``.status.failed`` on the *first* pod failure and then creates a replacement
+        pod. Reading that counter called a node dead while it was still retrying —
+        exactly the recoverable crash that solutions/toy_recovery exists to prove
+        survivable, and that a worker restart on Kubernetes is supposed to absorb.
+        The conditions are set only when the Job is genuinely finished (its
+        backoffLimit is exhausted, or activeDeadlineSeconds fired).
+        '''
+        jsonpath = ('{range .items[*]}{.metadata.name}{"|"}'
+                    '{.status.conditions[?(@.type=="Complete")].status}{"|"}'
+                    '{.status.conditions[?(@.type=="Failed")].status}{"|"}'
+                    '{.metadata.labels.videoflow\\.io/node}{"\\n"}{end}')
         proc = subprocess.run(
             [self._kubectl, 'get', 'jobs', '-n', self._namespace, '-l', selector, '-o', f'jsonpath={jsonpath}'],
             capture_output = True, text = True, check = False,
@@ -277,7 +294,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             if not line:
                 continue
             name, succ, fail, node = (line.split('|') + ['', '', '', ''])[:4]
-            states.append((name, node, bool(succ and int(succ) >= 1), bool(fail and int(fail) >= 1)))
+            states.append((name, node, succ == 'True', fail == 'True'))
         return states
 
     def _run_selector(self) -> str:

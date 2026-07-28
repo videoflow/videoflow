@@ -1,0 +1,40 @@
+# The kind cluster tests/integration/k8s/ runs against. Stand it up with
+# ./scripts/kind-up.sh, which also builds and side-loads the images and installs
+# the broker; tear it down with ./scripts/kind-down.sh.
+#
+# Two settings carry the whole bucket.
+#
+# extraMounts maps the work root to the SAME absolute path inside the node. A
+# solution's work_dir is resolved against its config file's directory and baked
+# into the node parameters at compile time, hostPath-mounted into every worker pod,
+# and written to by the prepare container on the host — so unless every hop is an
+# identity mapping, the pods write somewhere the test cannot read and every
+# artifact assertion fails with "report.json was not written". kind's nodes are
+# containers with their own filesystem, which is what videoflow.deploy.cluster's
+# hostpath_warning is warning about; this is the answer to it.
+#
+# extraPortMappings exposes the in-cluster NATS on 127.0.0.1:4223 (paired with the
+# nats-nodeport Service in nats-nodeport.yaml), so the test host can read the DLQ
+# and run `videoflow teardown` with no kubectl port-forward process to supervise
+# and reconnect. 4223 rather than 4222 so the docker-compose broker the local
+# bucket uses keeps its port and both suites can run at the same time.
+#
+# The cluster name matters: `kind-videoflow` is what kubectl calls the context, and
+# videoflow.deploy.cluster detects the KIND flavor from that `kind-` prefix and
+# derives `kind load docker-image --name videoflow` from the rest of it.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: videoflow
+nodes:
+  - role: control-plane
+    extraMounts:
+      # Kept in sync with VF_K8S_WORK_ROOT by scripts/kind-up.sh, which rewrites
+      # both paths when the variable is set. Changing it means recreating the
+      # cluster — extraMounts bind once, at node creation.
+      - hostPath: /tmp/videoflow-k8s
+        containerPath: /tmp/videoflow-k8s
+    extraPortMappings:
+      - containerPort: 30422
+        hostPort: 4223
+        listenAddress: "127.0.0.1"
+        protocol: TCP

@@ -637,6 +637,12 @@ Reference: `nats_messenger.py` (`_owns`), `topology.py`.
 - **CTRL-1** (stop subject): a flow-wide stop is a plain-NATS (not JetStream)
   message with payload `stop` on `vf.{flow}.{run}._control.stop` (`NAME-8`). A
   worker subscribes to it; receipt sets a termination flag.
+- **CTRL-1a** (no retention): because the subject is plain NATS, a stop reaches
+  only the workers subscribed at the instant it is published — there is no
+  history for a worker that connects later to read. A publisher that needs a stop
+  to be *observed* rather than merely sent MUST repeat it (see `ABORT-6`); a
+  one-shot publish is sufficient only for an operator-initiated stop of a run that
+  is already fully up.
 - **CTRL-2** (producer honors stop): a producer checks the termination flag each
   iteration and stops pulling new input when set (then publishes EOS if it has
   children).
@@ -822,8 +828,14 @@ blocked on an end-of-stream that was never coming.
   publish its own ABORT carrying the originating error, and MUST exit non-zero.
   Failure walks the graph the way end-of-stream does.
 - **ABORT-6** (supervisor abort): a control plane that gives up restarting a worker
-  MUST signal flow termination on the control subject (`NAME-8`). This covers the
-  worker that died too abruptly to publish anything.
+  MUST signal flow termination on the control subject (`NAME-8`), and MUST keep
+  repeating that signal until every worker of the run is gone. This covers the
+  worker that died too abruptly to publish anything. Repetition is required
+  because the subject has no retention (`CTRL-1a`) and the death that triggers
+  this is typically an early one: the workers deeper in the graph are still
+  connecting when it happens, so a single publish reaches precisely the nodes that
+  did not need it. The reference republishes every 2s until the last worker is
+  reaped.
 - **ABORT-7** (in-flight work): a node that receives an ABORT MUST finish and ack
   the input group it already holds before stopping. The abort ends the stream; it
   does not discard work already done.

@@ -25,20 +25,22 @@ convention below follows from that.
 | `videoflow/utils/` | Graph algorithms, model downloader, parsers, transforms |
 | `videoflow/*.py` (root) | Only `version.py` and five frozen compatibility shims — see below |
 | `spec/` | Language-agnostic protocol contract: `PROTOCOL.md`, `proto/`, golden `vectors/`, `rfcs/` |
-| `docker/`, `k8s/` | Base images (CPU + CUDA) and dev broker manifests |
+| `docker/`, `k8s/` | Base images (CPU + CUDA); dev broker manifests plus the kind cluster the k8s tests run on |
 | `docs/` | Sphinx site (`docs/source/`) |
-| `solutions/` | The three dependency-free `toy_*` solutions — deployable apps that double as the end-to-end test fixtures (see below) |
-| `tests/`, `tests/integration/`, `examples/` | Unit tests, broker-backed tests, runnable examples |
+| `solutions/` | The four dependency-free `toy_*` solutions — deployable apps that double as the end-to-end test fixtures (see below) |
+| `tests/`, `examples/` | Unit tests (no broker, no cluster) and runnable examples |
+| `tests/integration/` | Three buckets: `broker/` (JetStream contract), `local/` (worker subprocesses), `k8s/` (a kind cluster) — see its `README.md` |
 
 Sibling repo: `../videoflow-contrib` — community components and the ML solutions. It has its
 own `CLAUDE.md`.
 
 ## The toy solutions are the end-to-end tests
 
-`solutions/{toy_calculator,toy_fusion,toy_router}` are complete, deployable solutions built from
-core nodes only — no models, no footage, no `videoflow_contrib` packages — and
-`tests/integration/test_toy_solutions.py` runs all three on every CI build. Between them they
-cover the framework paths no in-process test reaches:
+`solutions/{toy_calculator,toy_fusion,toy_router,toy_recovery}` are complete, deployable solutions
+built from core nodes only — no models, no footage, no `videoflow_contrib` packages — and they run
+on every CI build **twice**: `tests/integration/local/test_toy_solutions.py` drives them with
+`videoflow run-local`, and `tests/integration/k8s/test_k8s_solutions.py` deploys them to a kind
+cluster. Between them they cover the framework paths no in-process test reaches:
 
 | Solution | Flow type | What it gates | Success artifact |
 |---|---|---|---|
@@ -47,30 +49,48 @@ cover the framework paths no in-process test reaches:
 | `toy_fusion` | REALTIME | independent producers fused by event time, `tolerance_ms`/`quorum`/`collect`, unbounded sources, `ctx.input_info` | `fusion_summary.json` → complete moments |
 | `toy_recovery` | BATCH | the error taxonomy end to end: a poison message dead-lettered on its first failure, a worker-fatal error handed back and the worker restarted, DLQ inspection | `recovery_report.json` → `matches_expected: true` |
 
-Two things to know before touching them:
+Three things to know before touching them:
 
 - **They are tests *and* published examples.** A change to a graph, a node or a config key means
   updating the solution's `README.md`, its `config.example.yaml`/`config.template.yaml`, and the
-  test's config dict together. Keep every stream short enough that a full run stays ~10s.
-- **The test copies each solution to a tmpdir and drives it with `videoflow run-local`.** That is
-  not incidental: `load_flow` calls `build_flow()` with no arguments, so a solution always reads
-  the `config.yaml` next to its own module (`--config` reaches only `prepare.py`), and all three
-  ship a `common.py`, so importing two into one interpreter would collide. Don't "simplify" the
-  test into an in-process `build_flow()` call.
+  shared config dict in `tests/integration/support_solutions.py` together. Keep every stream short
+  enough that a full local run stays ~10s.
+- **The local and cluster runs share their configs and assertions**, both imported from
+  `tests/integration/support_solutions.py`. That is the point: a graph built on one machine is
+  supposed to run unchanged on many, so anything asserted in only one of them is a claim nobody is
+  checking. The only legitimate divergence is `K8S_FUSION_CONFIG` — `toy_fusion` needs
+  `duration_s: 0` on a cluster, because a bounded producer renders as a Job whose Deployment
+  consumers the kubelet then restarts at EOS, which the rollout check calls a failing deploy.
+- **Each test stages a copy of the solution and drives it through the CLI in a subprocess.** That
+  is not incidental: `load_flow` calls `build_flow()` with no arguments, so a solution always reads
+  the `config.yaml` next to its own module (`--config` reaches only `prepare.py`), and all four
+  ship a `common.py`, so importing two into one interpreter would collide. Don't "simplify" either
+  test into an in-process `build_flow()` call. The k8s staging additionally copies
+  `config.template.yaml`, without which `deploy` renders no hostPath mount and the pods write their
+  artifacts where nothing can read them.
 
 ## Commands
 
 ```bash
 uv sync                                        # install (uv is the tool of record)
 uv run pytest --ignore=tests/integration       # unit tests — what the pre-push hook runs
-uv run pytest tests/integration                # needs a live NATS; auto-skipped if absent
-uv run pytest tests/integration/test_toy_solutions.py   # the three solutions/, end to end (~25s)
 uv run mypy                                    # type check (files = ["videoflow"])
 uv run ruff check --fix .                      # lint + import sort
-docker compose up -d                           # dev NATS (:4222) + Redis (:6379)
 ./scripts/gen-proto.sh                         # regenerate videoflow/v1/ from spec/proto/
 ./scripts/build-docs.sh                        # preview the Sphinx site locally (docs/public/, gitignored)
+
+docker compose up -d                                        # dev NATS (:4222) + Redis (:6379)
+uv run pytest tests/integration/broker tests/integration/local -q -rs   # needs that broker
+uv run pytest tests/integration/local/test_toy_solutions.py # the four solutions/, end to end (~25s)
+
+./scripts/kind-up.sh                           # kind cluster + images + broker (~5 min cold)
+uv run pytest tests/integration/k8s -q -rs     # the same solutions, deployed as pods
+./scripts/kind-down.sh                         # --purge also deletes the work root
 ```
+
+Both halves gate themselves and **skip silently** when their infrastructure is missing, so always
+pass `-rs`: without it a suite that ran nothing looks exactly like one that passed. See
+[tests/integration/README.md](tests/integration/README.md) for what each bucket needs.
 
 First-time setup also needs **both** pre-commit hooks — the pytest hook is on pre-push, so
 installing only the commit hook silently skips tests:
@@ -88,9 +108,16 @@ often far too old (Ubuntu ships 2.17.0 at `/usr/bin/pre-commit`), so install it 
 `PATH`. Note the git hooks pin their own interpreter at install time, so commits can keep working
 while a manual `pre-commit run --all-files` fails — check `pre-commit --version`, not the hook.
 
-Integration tests probe `VF_TEST_NATS_URL` (default `nats://localhost:4222`) with a raw socket
-connect and skip if nothing is listening. Don't "fix" that probe to use `nats.connect` — an
-import-time nats probe made test collection take ~14 minutes.
+`tests/integration/broker` and `tests/integration/local` probe `VF_TEST_NATS_URL` (default
+`nats://localhost:4222`) with a raw socket connect and skip if nothing is listening; the `k8s`
+bucket is exempt from that gate (its broker is inside the cluster, reached via
+`VF_K8S_NATS_URL`) and checks the cluster instead. Don't "fix" either probe to use `nats.connect` —
+an import-time nats probe made test collection take ~14 minutes.
+
+The k8s bucket **gates, it never provisions**: `scripts/kind-up.sh` builds the cluster and the
+tests skip with the reason when it is missing. Don't make a test create a cluster or switch the
+kubectl context — a silent retarget deploys test workloads into whatever cluster the operator was
+actually pointed at.
 
 ## Python conventions
 
@@ -301,9 +328,11 @@ finishing, check each of these and update the ones your change invalidates:
   the retry ladder, restarts, the DLQ or an exit code changed.
 - `CLAUDE.md` and `.claude/docs/*.md` — conventions, layout, or commands changed.
 - `examples/` — an example is now wrong or misleading.
+- `tests/integration/README.md` — what a bucket needs to run, or how to stand it up, changed.
+  `scripts/kind-up.sh` and `k8s/kind-cluster.yaml` describe the same cluster and go stale together.
 - `solutions/` — a toy solution's graph, nodes or config keys changed. Its `README.md`,
-  `config.example.yaml`, `config.template.yaml` and the config dict in
-  `tests/integration/test_toy_solutions.py` all describe the same thing and go stale together.
+  `config.example.yaml`, `config.template.yaml` and the shared config dict in
+  `tests/integration/support_solutions.py` all describe the same thing and go stale together.
 - `../videoflow-contrib` — the node contract changed in a way components must follow.
 
 ## Where to look next

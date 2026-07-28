@@ -11,6 +11,7 @@ Needs a reachable NATS JetStream server.
 from __future__ import absolute_import, division, print_function
 
 import os
+import pathlib
 import sys
 import tempfile
 
@@ -26,7 +27,7 @@ from support_broker import (
     spec,
 )
 
-TESTS_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+TESTS_DIR = str(pathlib.Path(__file__).resolve().parents[2])
 if TESTS_DIR not in sys.path:
     sys.path.insert(0, TESTS_DIR)
 

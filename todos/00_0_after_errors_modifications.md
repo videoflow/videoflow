@@ -7,3 +7,5 @@
 5. Ask from ideal_error_handling.md file, why is it that BATCJ and REALTIME behave differently under node failure.
 6. Confirm that DeviceErrors and other kind of fatal errors reintroduce the worker back.
 8. Check why mypy errors is not detecting things that the editor detects in the ui.
+
+A latent bug I did not fix, since it's outside this scope: cli.py:373 catches RuntimeError around wait_for_completion, but FlowStalled is a VideoflowError, not a RuntimeError. Cleanup still runs and the exit code is still 5, but the Flow aborted: message at line 395 is unreachable. Worth its own change.

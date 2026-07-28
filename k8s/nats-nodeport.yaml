@@ -1,0 +1,37 @@
+# Host access to the dev NATS running inside a kind cluster, paired with the
+# extraPortMapping in kind-cluster.yaml: the node's 30422 is published on
+# 127.0.0.1:4223, so tests/integration/k8s/ can read the dead-letter queue and run
+# `videoflow teardown` from the host. Workers are unaffected — they reach the
+# broker at nats.<namespace>.svc:4222 like any other in-cluster client.
+#
+# Apply into the same namespace as the broker:
+#   kubectl apply -n videoflow-test -f k8s/nats-nodeport.yaml
+#
+# Two naming constraints, both load-bearing:
+#
+#   - The name must NOT be `nats`. videoflow.deploy.infra.service_exists keys on
+#     that name to decide whether a deploy should install its own broker, and a
+#     second Service called `nats` would make `ensure_infra` report an install it
+#     never did.
+#   - It must NOT carry the videoflow.io/infra label. teardown_infra deletes by
+#     that label, so a labelled Service here would be removed as part of a flow's
+#     cleanup and take host access down with it.
+#
+# For dev and test clusters only: a NodePort publishes an unauthenticated broker
+# on every node.
+apiVersion: v1
+kind: Service
+metadata:
+  name: nats-nodeport
+  labels:
+    app.kubernetes.io/managed-by: videoflow-tests
+spec:
+  type: NodePort
+  selector:
+    app: nats
+  ports:
+    - name: client
+      port: 4222
+      targetPort: 4222
+      nodePort: 30422
+      protocol: TCP
