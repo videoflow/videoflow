@@ -9,7 +9,8 @@ logger = logging.getLogger(__package__)
 
 from ..utils.graph import has_cycle, topological_sort
 from .constants import CPU, DEVICE_TYPES, GPU, LOGGING_LEVEL
-from .policies import JoinPolicy
+from .errors import DISPOSITIONS
+from .policies import DELIVERY_MODES, JoinPolicy
 
 _SLUG_RE = re.compile(r'[^a-z0-9]+')
 
@@ -193,6 +194,74 @@ class Node:
             return None
         return set(self._children)
 
+class ErrorHandlingMixin:
+    '''
+    The two knobs that let a node opt out of its flow's failure defaults.
+
+    They live on the node types that *receive* messages (processors and
+    consumers); a producer has no input to retry or dead-letter. Both are plain
+    strings so ``get_params()`` stays JSON-serializable across the worker
+    boundary, and both default to ``None`` meaning "inherit the flow type's
+    preset" (see ``videoflow.core.policies.DeliveryPolicy.default_for``).
+
+    The reason these exist at all: loss tolerance is a property of what a node
+    *does with a message*, not of the flow it happens to live in. A REALTIME flow
+    whose frame pipeline wants freshest-wins may still have a final sink writing
+    alerts to a database, where a dropped message is a missed incident rather
+    than a stale frame.
+    '''
+    _delivery : Optional[str]
+    _on_error : Optional[str]
+
+    def _set_error_handling(self, delivery : Optional[str],
+                            on_error : Optional[str]) -> None:
+        '''
+        - Arguments:
+            - delivery: ``'at-least-once'`` (retry, then dead-letter) or \
+                ``'best-effort'`` (drop on failure); ``None`` inherits the flow's.
+            - on_error: disposition for an exception nothing classifies — \
+                ``'poison'``, ``'transient'`` or ``'worker_fatal'``. Set \
+                ``'poison'`` on a node whose failures are known to be data-shaped, \
+                so a bad message is dead-lettered on the first attempt instead of \
+                retried until its budget runs out.
+
+        - Raises:
+            - ValueError: on an unknown value, naming the accepted ones.
+        '''
+        if delivery is not None and delivery not in DELIVERY_MODES:
+            raise ValueError(f'delivery must be one of {DELIVERY_MODES} or None, '
+                            f'got {delivery!r}')
+        if on_error is not None and on_error not in DISPOSITIONS:
+            raise ValueError(f'on_error must be one of {DISPOSITIONS} or None, '
+                            f'got {on_error!r}')
+        self._delivery = delivery
+        self._on_error = on_error
+
+    @property
+    def delivery(self) -> Optional[str]:
+        '''This node's delivery-mode override, or None to inherit the flow's.'''
+        return self._delivery
+
+    @property
+    def on_error(self) -> Optional[str]:
+        '''This node's default disposition for unclassified exceptions, or None.'''
+        return self._on_error
+
+    def delivery_policy(self) -> Optional[Dict[str, Any]]:
+        '''
+        The overrides as a dict for ``NodeSpec.delivery``, or ``None`` when the
+        node overrides nothing — so a flow that never touches these ships exactly
+        the manifests and env it always did.
+        '''
+        if self._delivery is None and self._on_error is None:
+            return None
+        out : Dict[str, Any] = {}
+        if self._delivery is not None:
+            out['delivery'] = self._delivery
+        if self._on_error is not None:
+            out['on_error'] = self._on_error
+        return out
+
 class Leaf(Node):
     '''
     Node with no children.
@@ -201,20 +270,28 @@ class Leaf(Node):
         self._children = None
         super(Leaf, self).__init__(*args, **kwargs)
 
-class ConsumerNode(Leaf):
+class ConsumerNode(ErrorHandlingMixin, Leaf):
     '''
     - Arguments:
         - metadata (boolean): By default is False. If True, instead of receiving \
             output of parent nodes, receives metadata produced by parent nodes.
+        - delivery (str): ``'at-least-once'`` or ``'best-effort'`` — see \
+            ``ErrorHandlingMixin``. A sink is the usual reason to override the \
+            flow's preset: a REALTIME flow may want freshest-wins frames but a \
+            durable alert sink.
+        - on_error (str): see ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
     '''
     def __init__(self, metadata : bool = False, name : Optional[str] = None,
-                join_policy : JoinPolicyArg = None, idempotent : bool = False, **kwargs : Any) -> None:
+                join_policy : JoinPolicyArg = None, idempotent : bool = False,
+                delivery : Optional[str] = None, on_error : Optional[str] = None,
+                **kwargs : Any) -> None:
         self._metadata = metadata
         self._idempotent = idempotent
         if isinstance(join_policy, JoinPolicy):
             join_policy = join_policy.to_dict()
         self._join_policy = join_policy
+        self._set_error_handling(delivery, on_error)
         super(ConsumerNode, self).__init__(name = name, **kwargs)
 
     @property
@@ -245,7 +322,7 @@ class ConsumerNode(Leaf):
         raise NotImplementedError('consume function needs to be implemented\
                             by subclass')
 
-class ProcessorNode(Node):
+class ProcessorNode(ErrorHandlingMixin, Node):
     '''
     - Arguments:
         - nb_tasks (int): number of parallel replicas to allocate for this processor.
@@ -271,12 +348,18 @@ class ProcessorNode(Node):
             ignore it (the node gets a whole device). Mutually exclusive with \
             ``gpu_count > 1``: a model cannot span MIG slices, so a node either \
             declares a fraction of one device or whole devices, never both.
+        - delivery (str): ``'at-least-once'`` or ``'best-effort'``, overriding \
+            the flow type's preset — see ``ErrorHandlingMixin``.
+        - on_error (str): disposition for exceptions nothing classifies — see \
+            ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
     '''
     def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
                 partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
                 gpu_count : int = 1, gpu_memory_gib : int | float | None = None,
+                delivery : Optional[str] = None, on_error : Optional[str] = None,
                 **kwargs : Any) -> None:
+        self._set_error_handling(delivery, on_error)
         self._nb_tasks = nb_tasks
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))

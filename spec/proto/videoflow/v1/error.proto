@@ -1,0 +1,45 @@
+// videoflow.v1.Error — the language-neutral form of a videoflow failure
+// (PROTOCOL.md §15). It travels three ways: inside an ABORT envelope, in a
+// dead-letter record, and in a worker's Kubernetes termination message.
+//
+// It exists as a proto rather than only as a Python exception hierarchy because
+// components may be written in any language: a taxonomy that lives in one SDK's
+// class tree is invisible to every other implementation, and to the tooling that
+// has to aggregate failures across them.
+//
+// Field numbers are a public contract: append-only, never reused.
+syntax = "proto3";
+
+package videoflow.v1;
+
+// What the receiving SDK should do with the in-flight message. This, not the
+// flow type alone, is what selects the retry ladder (PROTOCOL.md §7.3).
+enum Disposition {
+  DISPOSITION_UNSPECIFIED = 0;   // treat as DISPOSITION_TRANSIENT
+  DISPOSITION_POISON = 1;        // the data is bad: dead-letter now, never retry
+  DISPOSITION_TRANSIENT = 2;     // the world blipped: retry with backoff
+  DISPOSITION_WORKER_FATAL = 3;  // this worker is sick: hand off, never dead-letter
+}
+
+message Error {
+  // Stable, greppable identifier, e.g. "VF_POISON_DECODE". Messages may be
+  // reworded freely; codes may not, because metrics and dead-letter queries key
+  // on them.
+  string code = 1;
+
+  string message = 2;
+
+  // What the reader should *do*. Carried as its own field so every renderer —
+  // CLI, DLQ inspector, termination log — presents it the same way.
+  string remedy = 3;
+
+  Disposition disposition = 4;
+
+  string node = 5;       // node that raised it
+  string trace_id = 6;   // lineage id of the message being processed, if any
+  uint32 num_delivered = 7;
+
+  // Free-form structured detail (replica index, pending counts, paths). Kept as
+  // strings so it survives any SDK without a variant type.
+  map<string, string> context = 8;
+}

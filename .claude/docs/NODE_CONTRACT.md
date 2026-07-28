@@ -133,6 +133,15 @@ in, when the node intrinsically needs a specific environment).
   `_eos` subject, not as a `None` sentinel in the data stream.
 - **Input order is `parent_names` order**, which comes from the call site
   `child(parent_a, parent_b)` — not from any sorting.
+- **Raise from the taxonomy** (`videoflow.core.errors`), because the class decides
+  what the message costs: `SchemaError`/`PoisonMessage` is dead-lettered on the
+  first failure, `TransientFailure` is retried, `WorkerFatal`/`DeviceError` hands
+  the message back and stops the worker. An unclassified exception is treated as
+  transient, so nothing changes until a node opts in. Always pass `remedy = ...`.
+  For a type you cannot subclass, call `register_error_classifier` once on import.
+- **`on_error=` and `delivery=`** on a processor or consumer override the flow
+  type's defaults for that node — an at-least-once sink inside a REALTIME flow, or
+  a node whose failures are known to be data-shaped (`on_error='poison'`).
 - **Acks happen after processing**, so a crash mid-process causes redelivery. Nodes with external
   side effects should be idempotent; `ConsumerNode` has an `idempotent = True` flag that
   deduplicates across redelivery when a Redis store is configured.

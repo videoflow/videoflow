@@ -87,7 +87,10 @@ def test_explain_prints_nodes_and_dlq():
         out = buf.getvalue()
         assert 'explaindemo' in out
         assert 'producer' in out and 'identity' in out and 'printer' in out
-        assert 'vf-explaindemo-r1-dlq' in out
+        # The DLQ is flow-scoped, not run-scoped: it must survive this run's
+        # teardown, which is exactly when its contents are wanted.
+        assert 'vf-explaindemo-dlq' in out
+        assert 'videoflow dlq ls' in out
 
 
 _GPU_GRAPH_SRC = '''

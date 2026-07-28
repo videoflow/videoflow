@@ -9,12 +9,19 @@ syntax = "proto3";
 
 package videoflow.v1;
 
+import "videoflow/v1/error.proto";
 import "videoflow/v1/value.proto";
 
 enum MsgType {
   MSG_TYPE_UNSPECIFIED = 0;  // never emitted; guards against an unset field
   MSG_TYPE_DATA = 1;         // a normal payload on the data subject
   MSG_TYPE_EOS = 2;          // end-of-stream marker on the _eos subject, empty payload
+  // Abnormal end of stream: the emitting node died. Rides the same _eos subject
+  // as MSG_TYPE_EOS (so it reuses the per-replica EOS consumers and the
+  // provisioning interest anchor) and carries `error`. A clean end and a crash
+  // are different facts; without the second one, a node that dies mid-run leaves
+  // every child blocking forever on an EOS that is never coming. (PROTOCOL.md §16)
+  MSG_TYPE_ABORT = 3;
 }
 
 message Envelope {
@@ -44,4 +51,9 @@ message Envelope {
   // carried through opaquely. Empty payload for MSG_TYPE_EOS. (PROTOCOL.md §4.4)
   string payload_type = 13;
   bytes payload = 14;
+
+  // Why the emitting node terminated abnormally. Set only for MSG_TYPE_ABORT;
+  // absent on DATA and EOS. `optional` so "no error" and "an empty error" stay
+  // distinguishable. (PROTOCOL.md §16)
+  optional Error error = 15;
 }

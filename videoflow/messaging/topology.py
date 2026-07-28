@@ -25,6 +25,7 @@ from nats.js.api import ConsumerConfig, DiscardPolicy, RetentionPolicy, StreamCo
 
 from ..core.compiler import NodeSpec
 from ..core.constants import REALTIME
+from ..core.policies import DEFAULT_MAX_RETRIES, DeliveryPolicy
 
 logger = logging.getLogger(__package__)
 
@@ -72,11 +73,34 @@ def eos_anchor_durable_name_for(node_name : str) -> str:
     '''The provision-time interest anchor on a node's EOS subject (see eos_anchor_config).'''
     return f'{sanitize(node_name)}--eos--anchor'
 
-def dlq_stream_name(flow_id : str, run_id : str) -> str:
-    return f'vf-{sanitize(flow_id)}-{sanitize(run_id)}-dlq'
+def dlq_stream_name(flow_id : str) -> str:
+    '''
+    The dead-letter stream, scoped to the **flow** rather than the run.
+
+    Everything else about a run is disposable and is deleted with it; dead letters
+    are the opposite — they are the forensic record of what went wrong, and they
+    are most wanted precisely after a run that failed and was torn down. Run
+    scoping meant ``delete_run_streams`` destroyed the evidence on the way out and
+    the stream's week-long retention never applied to anybody. The run id lives in
+    the *subject* instead, so entries stay attributable and filterable.
+    '''
+    return f'vf-{sanitize(flow_id)}-dlq'
 
 def dlq_subject_for(flow_id : str, run_id : str, node_name : str) -> str:
-    return f'vf.{sanitize(flow_id)}.{sanitize(run_id)}._dlq.{sanitize(node_name)}'
+    '''``vf.{flow}._dlq.{run}.{node}`` — filterable by run, by node, or by both.'''
+    return f'vf.{sanitize(flow_id)}._dlq.{sanitize(run_id)}.{sanitize(node_name)}'
+
+def dlq_subject_filter(flow_id : str, run_id : str | None = None,
+                    node_name : str | None = None) -> str:
+    '''
+    A subject wildcard selecting dead letters for inspection: the whole flow, one
+    run of it, or one node of one run. Used by ``videoflow dlq``.
+    '''
+    run = sanitize(run_id) if run_id else '*'
+    node = sanitize(node_name) if node_name else '*'
+    if run_id is None and node_name is None:
+        return f'vf.{sanitize(flow_id)}._dlq.>'
+    return f'vf.{sanitize(flow_id)}._dlq.{run}.{node}'
 
 def stream_label_selector(flow_id : str, run_id : str) -> str:
     '''Prefix shared by every stream of one run — used for teardown by name prefix.'''
@@ -117,28 +141,33 @@ def stream_config_for(flow_id : str, run_id : str, node_name : str, flow_type : 
         duplicate_window = DUPLICATE_WINDOW_SECONDS,
     )
 
-def dlq_stream_config(flow_id : str, run_id : str) -> StreamConfig:
+def dlq_stream_config(flow_id : str) -> StreamConfig:
     return StreamConfig(
-        name = dlq_stream_name(flow_id, run_id),
-        subjects = [f'vf.{sanitize(flow_id)}.{sanitize(run_id)}._dlq.>'],
+        name = dlq_stream_name(flow_id),
+        subjects = [f'vf.{sanitize(flow_id)}._dlq.>'],
         retention = RetentionPolicy.LIMITS,
         discard = DiscardPolicy.OLD,
         max_age = 7 * 24 * 3600,  # keep dead-lettered messages for a week
     )
 
-#: Default number of times a BATCH message is *retried* (redelivered) after the
-#: first delivery attempt before it is dead-lettered. max_deliver = retries + 1.
-DEFAULT_MAX_RETRIES = 3
+def max_deliver_for(flow_type : str, max_retries : int = DEFAULT_MAX_RETRIES,
+                    delivery : dict | None = None) -> int:
+    '''
+    Broker-side delivery cap for one node's durables.
 
-def max_deliver_for(flow_type : str, max_retries : int = DEFAULT_MAX_RETRIES) -> int:
+    Derived from the node's effective ``DeliveryPolicy`` rather than from the flow
+    type alone, because delivery is overridable per node: an at-least-once sink in
+    a REALTIME flow needs a cap above 1 or its retries would be silently
+    impossible, and a best-effort node in a BATCH flow should not be retried at
+    all. Provisioning and the messenger both call this so the durable they create
+    and the durable they bind agree.
+
+    - Arguments:
+        - flow_type: supplies the preset.
+        - max_retries: deployment-level retry count (``VF_MAX_RETRIES``).
+        - delivery: the node's own override, as a dict (``NodeSpec.delivery``).
     '''
-    REALTIME never redelivers (freshest wins; a failed frame is dropped), so
-    max_deliver is 1. BATCH redelivers up to ``max_retries`` times, then the
-    message is dead-lettered.
-    '''
-    if flow_type == REALTIME:
-        return 1
-    return max_retries + 1
+    return DeliveryPolicy.resolve(flow_type, delivery, max_retries).max_deliver
 
 def consumer_config_for(flow_id : str, run_id : str, consumer_node_name : str,
                         parent_node_name : str, ack_wait : int = 60, max_deliver : int = 1,
@@ -236,7 +265,6 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
     '''
     js = nc.jetstream()
     by_name = {spec.name: spec for spec in specs}
-    max_deliver = max_deliver_for(flow_type, max_retries)
 
     # 1. One stream per node — plus, for any node something consumes from, an
     #    interest *anchor* on its EOS subject. The per-process EOS durables are
@@ -249,8 +277,9 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
             await _ensure_consumer(js, stream_name_for(flow_id, run_id, spec.name),
                                    eos_anchor_config(flow_id, run_id, spec.name))
 
-    # 2. DLQ stream — where messages that exhaust their retries land.
-    await _ensure_stream(js, dlq_stream_config(flow_id, run_id))
+    # 2. DLQ stream — where messages that exhaust their retries land. Flow-scoped,
+    #    so tearing this run down does not delete the record of what it lost.
+    await _ensure_stream(js, dlq_stream_config(flow_id))
 
     # 3. Durable consumers per (child, parent) edge, on the parent's stream. A
     #    partitioned child gets one durable *per replica* (broadcast + client-side
@@ -258,6 +287,9 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
     for spec in specs:
         partition_by = spec.partition_by
         nb_tasks = spec.nb_tasks
+        # Per node, not per flow: a node may override its delivery mode, and the
+        # durable created here must match the one its worker binds.
+        max_deliver = max_deliver_for(flow_type, max_retries, spec.delivery)
         for parent_name in spec.parents:
             if parent_name not in by_name:
                 continue
@@ -319,17 +351,24 @@ def provision_flow_sync(nats_url : str, specs : list[NodeSpec], flow_id : str, r
     asyncio.run(_bounded() if timeout is not None else _go())
 
 async def delete_run_streams(nc : Client, flow_id : str, run_id : str) -> None:
-    '''Best-effort teardown: delete every stream belonging to this run.'''
+    '''
+    Best-effort teardown: delete every stream belonging to this run.
+
+    The flow's dead-letter stream is deliberately **not** one of them. Teardown
+    runs in a ``finally`` on success, failure, stall and Ctrl-C alike, so deleting
+    the DLQ here destroyed exactly the evidence an operator wants after a failed
+    run. It ages out on its own retention instead, and ``videoflow dlq purge``
+    removes it on purpose.
+    '''
     js = nc.jetstream()
     prefix = stream_label_selector(flow_id, run_id)
-    dlq = dlq_stream_name(flow_id, run_id)
     try:
         names = await js.streams_info()
     except Exception:
         return
     for info in names:
         name = info.config.name
-        if name and (name.startswith(prefix) or name == dlq):
+        if name and name.startswith(prefix):
             try:
                 await js.delete_stream(name)
             except Exception:

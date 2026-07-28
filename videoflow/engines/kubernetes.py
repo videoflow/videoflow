@@ -10,6 +10,7 @@ per-component images already built and pushed (see ``docker/``).
 from __future__ import absolute_import, division, print_function
 
 import asyncio
+import json
 import logging
 import subprocess
 import sys
@@ -19,6 +20,14 @@ from typing import List, Optional
 
 from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
+from ..core.errors import (
+    BrokerUnavailable,
+    ClusterError,
+    ConfigError,
+    FlowStalled,
+    ResourceUnavailable,
+)
+from ..core.supervision import SupervisionPolicy
 from ..deploy.images import DEFAULT_IMAGE_PULL_POLICY
 from ..deploy.manifests import (
     LABEL_NODE,
@@ -69,6 +78,22 @@ class _ContainerState:
     restart_count : int
     waiting_reason : str
     last_terminated_reason : str
+    # What the worker itself said on the way out, from its termination-message
+    # path. Present only when the worker died of a *typed* failure and managed to
+    # write it — which is exactly when the generic "crash-looping, see the logs"
+    # text is least useful.
+    last_terminated_message : str = ''
+
+    def reported_error(self) -> dict:
+        '''The worker's structured death reason, or ``{}`` if it did not leave one.'''
+        raw = self.last_terminated_message.strip()
+        if not raw.startswith('{'):
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except ValueError:
+            return {}
+        return parsed if isinstance(parsed, dict) else {}
 
 @dataclass(frozen = True)
 class RolloutReport:
@@ -94,6 +119,15 @@ def _is_failing(state : _ContainerState) -> bool:
 
 def _failure_detail(state : _ContainerState) -> str:
     '''Human problem statement for a confirmed-failing pod, naming the likely fix.'''
+    # The worker's own account beats any inference we can make from pod status: it
+    # knows the error code and the fix, where the kubelet only knows that a process
+    # exited. This is why workers write a termination message at all.
+    reported = state.reported_error()
+    if reported.get('code'):
+        remedy = reported.get('remedy')
+        return (f'pod {state.pod} failed with {reported["code"]}: '
+                f'{reported.get("message", "")}'
+                + (f' — {remedy}' if remedy else ''))
     if state.waiting_reason in ('ImagePullBackOff', 'InvalidImageName'):
         return (f'pod {state.pod} cannot pull its image ({state.waiting_reason}) — check '
                 'the image name/tag, that the cluster can reach the registry, and '
@@ -149,7 +183,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 nats_monitoring_endpoint : str | None = None, mounts : list[Mount] | None = None,
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
                 gpu_resource_name : str | None = None, gpu_autoscaling : bool = False,
-                image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> None:
+                image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+                supervision : SupervisionPolicy | None = None) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -169,6 +204,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._gpu_resource_name = gpu_resource_name
         self._gpu_autoscaling = gpu_autoscaling
         self._image_pull_policy = image_pull_policy
+        # The same object the local engine hands to its supervisor thread; here it
+        # becomes the Job backoffLimit. One policy, two mechanisms.
+        self._supervision = supervision or SupervisionPolicy()
         self._flow_id: Optional[str] = None
         self._run_id: Optional[str] = None
         super(KubernetesExecutionEngine, self).__init__()
@@ -183,8 +221,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
         if self._specs is not None:
             specs = self._specs
         elif tasks_data is None:
-            raise ValueError('no specs to deploy: construct the engine with specs = ... or '
-                            'pass tasks_data from Flow.build_tasks_data()')
+            raise ConfigError('No specs to deploy.',
+                            remedy = 'Construct the engine with specs = ..., or pass '
+                                    'tasks_data from Flow.build_tasks_data().')
         else:
             specs = specs_from_tasks_data(tasks_data)
         manifests = render_manifests(
@@ -199,6 +238,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             gpu_resource_name = self._gpu_resource_name,
             gpu_autoscaling = self._gpu_autoscaling,
             image_pull_policy = self._image_pull_policy,
+            supervision = self._supervision,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
@@ -217,10 +257,11 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 capture_output = True,
             )
         except FileNotFoundError as e:
-            raise RuntimeError(f'{self._kubectl!r} not found on PATH — install kubectl and '
-                               'point it at your cluster.') from e
+            raise ClusterError(f'{self._kubectl!r} not found on PATH.',
+                            remedy = 'Install kubectl and point it at your cluster.') from e
         if proc.returncode != 0:
-            raise RuntimeError(f'kubectl apply failed: {proc.stderr.decode("utf-8")}')
+            raise ClusterError(f'kubectl apply failed: {proc.stderr.decode("utf-8")}',
+                            namespace = self._namespace)
         logger.info(proc.stdout.decode('utf-8').strip())
 
     def _job_states(self, selector : str) -> List[tuple]:
@@ -280,13 +321,19 @@ class KubernetesExecutionEngine(ExecutionEngine):
         plain split is safe. Index ``[0]`` is correct: the pod spec renders
         exactly one container and no init containers. A not-yet-scheduled pod has
         no containerStatuses — its fields come back empty and parse to defaults.
+
+        The termination *message* is read last and split with ``maxsplit``: it is
+        the worker's own JSON death note (see ``runtime.worker``), free text as far
+        as this parser is concerned, so a ``|`` inside it must not shift the
+        enum-ish fields before it.
         '''
         jsonpath = ('{range .items[*]}{.metadata.name}{"|"}'
                     '{.metadata.labels.videoflow\\.io/node}{"|"}{.status.phase}{"|"}'
                     '{.status.containerStatuses[0].ready}{"|"}'
                     '{.status.containerStatuses[0].restartCount}{"|"}'
                     '{.status.containerStatuses[0].state.waiting.reason}{"|"}'
-                    '{.status.containerStatuses[0].lastState.terminated.reason}{"\\n"}{end}')
+                    '{.status.containerStatuses[0].lastState.terminated.reason}{"|"}'
+                    '{.status.containerStatuses[0].lastState.terminated.message}{"\\n"}{end}')
         proc = subprocess.run(
             [self._kubectl, 'get', 'pods', '-n', self._namespace, '-l', selector,
              '-o', f'jsonpath={jsonpath}'],
@@ -296,13 +343,15 @@ class KubernetesExecutionEngine(ExecutionEngine):
         for line in proc.stdout.splitlines():
             if not line:
                 continue
-            pod, node, phase, ready, restarts, waiting, last_term = (line.split('|') + [''] * 7)[:7]
+            fields = (line.split('|', 7) + [''] * 8)[:8]
+            pod, node, phase, ready, restarts, waiting, last_term, last_msg = fields
             states.append(_ContainerState(
                 pod = pod, node_label = node, phase = phase,
                 ready = ready == 'true',
                 restart_count = int(restarts or 0),
                 waiting_reason = waiting,
                 last_terminated_reason = last_term,
+                last_terminated_message = last_msg,
             ))
         return states
 
@@ -339,20 +388,28 @@ class KubernetesExecutionEngine(ExecutionEngine):
                     return
                 if failed:
                     self.dump_failed_logs(['provision'], node_label = name)
-                    raise RuntimeError('provision Job failed — broker streams were not created.')
+                    raise BrokerUnavailable(
+                        'The provision Job failed, so the broker streams were not created.',
+                        remedy = 'See the provision logs above; the usual causes are an '
+                                'unreachable NATS URL or an image the cluster cannot pull.')
             # An unschedulable provision pod would otherwise burn the whole timeout.
             stuck = self._unschedulable_pods(f'job-name={name}')
             if stuck:
                 unschedulable_since = unschedulable_since or time.time()
                 if (time.time() - unschedulable_since >= 30
                         and not self._scaleup_in_flight([n for n, _ in stuck])):
-                    raise RuntimeError(f'provision pod cannot be scheduled '
-                                       f'({stuck[0][1] or "Unschedulable"}) — broker streams '
-                                       f'were not created.')
+                    raise ResourceUnavailable(
+                        f'The provision pod cannot be scheduled '
+                        f'({stuck[0][1] or "Unschedulable"}), so the broker streams were '
+                        f'not created.',
+                        remedy = 'Free capacity in the namespace, or relax the pod\'s '
+                                'resource requests.')
             else:
                 unschedulable_since = None
             time.sleep(2)
-        raise RuntimeError(f'provision Job did not complete within {timeout_secs}s.')
+        raise BrokerUnavailable(
+            f'The provision Job did not complete within {timeout_secs}s.',
+            remedy = 'Check that the cluster can pull the provision image and reach NATS.')
 
     def wait_for_completion(self, poll_secs : int = 3,
                             unschedulable_grace_secs : int = 60) -> List[str]:
@@ -396,11 +453,12 @@ class KubernetesExecutionEngine(ExecutionEngine):
                          f'({detail}).')
                 # GPU-specific remedies only when the scheduler actually named a GPU
                 # resource — for a CPU/memory/affinity stall they would mislead.
+                remedy = None
                 if any('gpu' in (message or '') for _, message in overdue):
-                    error += (' The flow demands more GPUs than the cluster has allocatable — '
+                    remedy = ('The flow demands more GPUs than the cluster has allocatable — '
                               'reduce GPU nodes/replicas, or enable device-plugin time-slicing '
                               '(dev clusters).')
-                raise RuntimeError(error)
+                raise FlowStalled(error, remedy = remedy)
             time.sleep(poll_secs)
 
     def rollout_report(self, deadline_secs : int = _ROLLOUT_DEADLINE_SECS, poll_secs : int = 3,

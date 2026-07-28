@@ -34,7 +34,7 @@ import numpy as np
 from google.protobuf.message import Message
 
 from ..utils import plugins
-from ..v1 import envelope_pb2, payloads_pb2, value_pb2
+from ..v1 import envelope_pb2, error_pb2, payloads_pb2, value_pb2
 
 # -- payload types / versions ----------------------------------------------
 
@@ -57,15 +57,78 @@ EMITTABLE_ENVELOPE_VERSIONS = (4,)
 COMPATIBLE_ENVELOPE_VERSIONS = (4,)
 
 #: Message kinds carried in the envelope ``type`` field. ``data`` is a normal
-#: payload; ``eos`` is an end-of-stream marker with no payload.
+#: payload; ``eos`` is a clean end-of-stream marker with no payload; ``abort`` is
+#: an *abnormal* one, carrying the error that killed the emitting node. Both
+#: terminators ride the same ``_eos`` subject.
 MSG_TYPE_DATA = 'data'
 MSG_TYPE_EOS = 'eos'
+MSG_TYPE_ABORT = 'abort'
+
+#: Kinds that mean "no more data from this producer". Anything that terminates a
+#: stream belongs here, so a reader that does not know about a newer terminator
+#: still stops rather than waiting forever.
+MSG_TYPE_TERMINATORS = (MSG_TYPE_EOS, MSG_TYPE_ABORT)
 
 _PROTO_MSG_TYPE = {
     MSG_TYPE_DATA: envelope_pb2.MSG_TYPE_DATA,
     MSG_TYPE_EOS: envelope_pb2.MSG_TYPE_EOS,
+    MSG_TYPE_ABORT: envelope_pb2.MSG_TYPE_ABORT,
 }
 _PROTO_MSG_TYPE_REV = {v: k for k, v in _PROTO_MSG_TYPE.items()}
+
+#: Longest error message/remedy carried in an ABORT envelope. Bounded because an
+#: abort marker travels on the terminator path, where an unbounded string from a
+#: node's exception text could otherwise outgrow a broker message.
+MAX_ERROR_TEXT_BYTES = 2048
+
+def error_to_proto(error : dict) -> error_pb2.Error:
+    '''
+    Builds the wire form of an error record (as produced by
+    ``videoflow.core.errors.error_to_dict``). Unknown dispositions degrade to
+    ``UNSPECIFIED`` rather than raising: an abort marker's job is to end a flow
+    cleanly, and it must not itself fail to encode.
+    '''
+    proto = error_pb2.Error(
+        code = str(error.get('code', 'VF_UNKNOWN'))[:MAX_ERROR_TEXT_BYTES],
+        message = str(error.get('message', ''))[:MAX_ERROR_TEXT_BYTES],
+        remedy = str(error.get('remedy') or '')[:MAX_ERROR_TEXT_BYTES],
+        disposition = _PROTO_DISPOSITION.get(str(error.get('disposition') or ''),
+                                            error_pb2.DISPOSITION_UNSPECIFIED),
+        node = str(error.get('node') or ''),
+        trace_id = str(error.get('trace_id') or ''),
+        num_delivered = int(error.get('num_delivered') or 0),
+    )
+    for key, value in (error.get('context') or {}).items():
+        proto.context[str(key)] = str(value)[:MAX_ERROR_TEXT_BYTES]
+    return proto
+
+def error_from_proto(proto : error_pb2.Error) -> dict:
+    '''Inverse of ``error_to_proto``; empty optional fields are omitted rather than emitted as ''.'''
+    out : dict = {'code': proto.code, 'message': proto.message}
+    if proto.remedy:
+        out['remedy'] = proto.remedy
+    disposition = _PROTO_DISPOSITION_REV.get(proto.disposition)
+    if disposition:
+        out['disposition'] = disposition
+    if proto.node:
+        out['node'] = proto.node
+    if proto.trace_id:
+        out['trace_id'] = proto.trace_id
+    if proto.num_delivered:
+        out['num_delivered'] = proto.num_delivered
+    if proto.context:
+        out['context'] = dict(proto.context)
+    return out
+
+#: Disposition names as ``videoflow.core.errors`` spells them, mapped onto the
+#: proto enum. Spelled out here rather than imported so the wire layer keeps no
+#: dependency on core (it is imported by SDK-facing code that may have neither).
+_PROTO_DISPOSITION = {
+    'poison': error_pb2.DISPOSITION_POISON,
+    'transient': error_pb2.DISPOSITION_TRANSIENT,
+    'worker_fatal': error_pb2.DISPOSITION_WORKER_FATAL,
+}
+_PROTO_DISPOSITION_REV = {v: k for k, v in _PROTO_DISPOSITION.items()}
 
 def derive_message_id(flow_id : str, run_id : str, producer_name : str,
                     trace_id : str, seq : int, msg_type : str) -> str:
@@ -468,7 +531,8 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
                         span_id : str | None, parent_span_id : str | None, replica_id : int,
                         event_ts : float | None, blob_store : BlobStore | None,
                         blob_readers : int | None = None,
-                        blob_ttl_seconds : int | None = None) -> bytes:
+                        blob_ttl_seconds : int | None = None,
+                        error : dict | None = None) -> bytes:
     env = envelope_pb2.Envelope(
         v = 4,
         type = _PROTO_MSG_TYPE[msg_type],
@@ -486,9 +550,14 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
     for k, v in (metadata or {}).items():
         env.metadata[k].CopyFrom(_value_to_proto(v, allow_tensor = False))
 
-    if msg_type == MSG_TYPE_EOS:
+    if msg_type in MSG_TYPE_TERMINATORS:
+        # Neither terminator carries a payload; an ABORT carries its cause in the
+        # dedicated `error` field instead, so it stays decodable by a reader that
+        # has no blob store configured.
         env.payload_type = ''
         env.payload = b''
+        if msg_type == MSG_TYPE_ABORT:
+            env.error.CopyFrom(error_to_proto(error or {}))
     else:
         payload_type, payload_buf = _encode_payload_v4(payload)
         # Blob offload: over the inline threshold, stash the encoded bytes and carry
@@ -520,7 +589,11 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
     msg_type = _PROTO_MSG_TYPE_REV.get(env.type)
     if msg_type is None:
         raise ValueError(f'Unspecified/unknown envelope message type {env.type!r}')
-    is_stop_signal = msg_type == MSG_TYPE_EOS
+    # Both terminators mean "no more data from this producer", so is_stop_signal
+    # covers ABORT too: a reader that only knows about EOS still stops rather than
+    # waiting forever. is_abort is what distinguishes a clean end from a crash.
+    is_stop_signal = msg_type in MSG_TYPE_TERMINATORS
+    is_abort = msg_type == MSG_TYPE_ABORT
     # Surface the blob ref (if any) so the messenger can release it after the
     # message is acked (BLOB-6). Re-parsing the tiny BlobRef here is cheaper than a
     # second full-envelope parse at the messenger layer.
@@ -539,6 +612,8 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
         'event_ts': env.event_ts if env.HasField('event_ts') else None,
         'type': msg_type,
         'is_stop_signal': is_stop_signal,
+        'is_abort': is_abort,
+        'error': error_from_proto(env.error) if env.HasField('error') else None,
         'span_id': env.span_id,
         'parent_span_id': env.parent_span_id,
         'replica_id': env.replica_id,
@@ -556,12 +631,16 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
                     span_id : str = '', parent_span_id : str = '', replica_id : int = 0,
                     event_ts : float | None = None, blob_store : BlobStore | None = None,
                     version : int | None = None, blob_readers : int | None = None,
-                    blob_ttl_seconds : int | None = None) -> bytes:
+                    blob_ttl_seconds : int | None = None,
+                    error : dict | None = None) -> bytes:
     '''
     Encodes a full wire message and returns the bytes to publish to a broker subject.
 
     - Arguments:
-        - msg_type: ``MSG_TYPE_DATA`` or ``MSG_TYPE_EOS``. EOS carries no payload.
+        - msg_type: ``MSG_TYPE_DATA``, ``MSG_TYPE_EOS`` or ``MSG_TYPE_ABORT``. \
+            Neither terminator carries a payload.
+        - error: the failure record an ``MSG_TYPE_ABORT`` marker carries (see \
+            ``videoflow.core.errors.error_to_dict``). Ignored for other types.
         - run_id: the per-run identifier that scopes this flow execution.
         - span_id / parent_span_id: hex ids for log/trace correlation (optional).
         - replica_id: index of the emitting replica (0 for single-task nodes); \
@@ -581,7 +660,7 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
         return _encode_envelope_v4(producer_name, flow_id, run_id, trace_id, seq, msg_type,
                                 metadata, payload, span_id, parent_span_id, replica_id,
                                 event_ts, blob_store, blob_readers = blob_readers,
-                                blob_ttl_seconds = blob_ttl_seconds)
+                                blob_ttl_seconds = blob_ttl_seconds, error = error)
     raise ValueError(f'Cannot emit envelope version {version!r}; emittable: {EMITTABLE_ENVELOPE_VERSIONS}')
 
 def _is_msgpack_map(first_byte : int) -> bool:
@@ -595,9 +674,12 @@ def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
     '''
     Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \
         ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` when absent), \
-        ``type``, ``is_stop_signal`` (derived: True iff ``type == MSG_TYPE_EOS``), \
+        ``type``, ``is_stop_signal`` (derived: True for *either* terminator, so a \
+        reader that predates ``MSG_TYPE_ABORT`` still stops), ``is_abort`` \
+        (True only for ``MSG_TYPE_ABORT``), ``error`` (the failure record an \
+        abort carries, else ``None``), \
         ``span_id``, ``parent_span_id``, ``replica_id``, ``metadata``, \
-        ``message`` (the fully decoded payload — ``None`` for EOS), and \
+        ``message`` (the fully decoded payload — ``None`` for a terminator), and \
         ``blob_ref`` (the blob store reference the payload was resolved from, or \
         ``None`` when the payload was inline — lets the caller release the blob \
         after the message is acked, BLOB-6). Only the protobuf \

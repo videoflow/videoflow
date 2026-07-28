@@ -1,5 +1,5 @@
 '''
-End-to-end tests for the three toy solutions under ``solutions/``.
+End-to-end tests for the four toy solutions under ``solutions/``.
 
 These are the widest integration tests in the suite. The other modules here
 assemble a graph in-process and run it; these drive the whole *user* path
@@ -178,6 +178,32 @@ def test_toy_router(tmp_path):
     assert counts['matches_expected'] is True, counts
     assert counts['sticky'] is True, counts
     assert sum(counts['totals'].values()) == 120, counts
+
+def test_toy_recovery(tmp_path):
+    '''
+    Error handling end to end: a bad message and a sick worker, handled
+    differently, in one run.
+
+    ``matches_expected`` is a conservation claim, and it is the only assertion
+    that matters: **every event either arrived exactly once or was dead-lettered
+    — never both, never neither.** The poison events are absent because they were
+    quarantined; the crash event is present because the message was handed back
+    rather than blamed, the worker was restarted, and the redelivery succeeded.
+    A regression in either direction breaks it — dead-lettering the recoverable
+    event, or delivering the unparseable one.
+    '''
+    work_dir = run_solution(tmp_path, 'toy_recovery', {
+        'work_dir': './out',
+        'events': 24,
+        'rate_fps': 400,
+        'max_retries': 3,
+        'fragile': {'poison_values': [7, 19], 'crash_at': 12},
+    })
+    report = read_artifact(work_dir, 'recovery_report.json')
+    assert report['matches_expected'] is True, report
+    assert report['dead_lettered'] == [7, 19], report
+    # The crash event came back: a sick worker never blames its message.
+    assert 12 in report['delivered'], report
 
 def test_toy_fusion(tmp_path):
     '''

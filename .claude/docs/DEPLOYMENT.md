@@ -86,9 +86,22 @@ its outputs are baked into the compiled specs.
    startup-probe window (~150s) so a probe kill of a slow `open()` is observable; a pod merely
    still loading at the deadline is a warning, not a failure.
 
+A failing pod reports its *own* cause where it can. Workers write a structured
+reason to `/dev/termination-log`, which the API server surfaces in
+`containerStatuses[].lastState.terminated.message`, and `_failure_detail` prefers
+it over anything it could infer — so the abort says `VF_DEVICE: CUDA out of
+memory — lower the batch size` rather than "crash-looping, see the logs". The pod
+spec sets `terminationMessagePolicy: FallbackToLogsOnError` so a death too abrupt
+to write anything still surfaces its last log lines the same way.
+
 `--dry-run` / `--render-only` never touch the cluster. Other flags worth knowing:
 `--image-override name=ref`, `--mount`, `--namespace`, `--autoscaling`, `--gpu-mode`,
 `--strict-preflight`, `--envelope-version`, `--image-pull-policy`.
+
+**Exit codes are typed** (`videoflow.core.errors`): 2 the flow/config, 3 the
+cluster/broker, 4 the flow ran and nodes failed, 5 the flow stalled, 130
+interrupted. There is exactly one converter, in `cli.main`; command functions
+raise a typed error and stop. `VF_DEBUG=1` restores the traceback.
 
 Every rendered container carries an explicit `imagePullPolicy`, defaulting to `IfNotPresent`
 (`DEFAULT_IMAGE_PULL_POLICY` in [images.py](../../videoflow/deploy/images.py)). This is
@@ -100,7 +113,16 @@ when every image comes from a registry the nodes can reach.
 
 `run-local` mirrors this: config → `prepare.py` on the host → **build the solution image if (and
 only if) some node needs one** → start or reuse dev NATS/Redis containers → `LocalProcessEngine` →
-report non-zero worker exits → tear down only what it started. The build is gated on
+supervise and restart failed workers → report what gave up → tear down only what it started.
+
+The supervision is the part worth knowing: `LocalProcessEngine` honours the same
+`SupervisionPolicy` object the manifests render into a Job's `backoffLimit`, so a
+crash the cluster absorbs is absorbed locally too. Only the backoff differs
+(1/2/4s rather than 10/20/40s) so a genuinely broken node still surfaces in
+seconds; `--no-restart` turns it off. When a node exhausts its restarts the
+supervisor publishes the flow-wide stop immediately — not after reaping everything
+— because its children are already waiting for an end-of-stream that is not coming,
+and the reaping loop is waiting for *them*. The build is gated on
 `needs_container_image` ([engines/local.py](../../videoflow/engines/local.py)): only a *native*
 component (no `pythonClass`, no `runtime.localCommand`) is `docker run` and needs an image. A
 pure-Python flow spawns host subprocesses, so it never builds — which is every solution in

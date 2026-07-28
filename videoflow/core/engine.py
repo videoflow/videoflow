@@ -29,6 +29,22 @@ class Messenger:
         '''
         raise NotImplementedError('Messenger subclass must implement method')
 
+    def publish_abort(self, error : Any) -> None:
+        '''
+        Publishes an *abnormal* termination marker carrying why this node died. \
+            A clean end-of-stream and a crash are different facts, and only the \
+            first one used to exist on the wire — so a node that died mid-run \
+            left every child blocking forever on an EOS that was never coming. \
+            Downstream treats ABORT as end-of-stream-with-an-error: it stops, \
+            propagates the marker to its own children, and exits non-zero.
+
+        - Arguments:
+            - error: a ``videoflow.core.errors.VideoflowError``, a bare \
+                exception, or an already-normalized error dict being relayed \
+                from further upstream.
+        '''
+        raise NotImplementedError('Messenger subclass must implement method')
+
     def check_for_termination(self) -> bool:
         '''
         Returns true if a flow-wide termination signal has been received on the \
@@ -49,11 +65,24 @@ class Messenger:
 
     def fail_inputs(self, exc : BaseException) -> None:
         '''
-        Report that the node raised while processing the last input group. The \
-            messenger decides whether to redeliver (BATCH, up to a retry limit, then \
-            dead-letter) or drop (REALTIME).
+        Report that the node raised while processing the last input group. What \
+            that costs is decided by the node's \
+            ``videoflow.core.policies.DeliveryPolicy`` together with how the \
+            error classified (see ``videoflow.core.errors``): a poison message \
+            is dead-lettered immediately, a transient one is redelivered until \
+            its budget runs out, and a worker-fatal one is handed back for \
+            another replica and never blamed.
         '''
         raise NotImplementedError('Messenger subclass must implement method')
+
+    def pending_count(self) -> int:
+        '''
+        How many messages are waiting for this node across its parents. Used by \
+            ``videoflow.core.supervision.ProgressDeadline`` to tell a stalled \
+            node (work available, nothing acked) from an idle one. Default: 0, \
+            which reads as "idle" and so never trips the deadline.
+        '''
+        return 0
 
     def set_output_partition_key(self, value : Any) -> None:
         '''
@@ -100,8 +129,14 @@ class Messenger:
             — or until every parent has signaled termination.
 
         - Returns:
-            - a dict ``{parent_name: {"message": ..., "metadata": ..., "is_stop_signal": bool}}`` \
-                with exactly one entry per real parent of this node.
+            - a dict ``{parent_name: entry}`` with exactly one entry per real \
+                parent of this node. Each entry carries ``message``, \
+                ``metadata``, ``event_ts``, and two termination flags: \
+                ``is_stop_signal`` (that parent ended cleanly) and ``is_abort`` \
+                (it died). An aborted entry also carries ``abort_origin`` and \
+                ``abort_error`` — the originating node and its error record — \
+                so the failure can be reported and relayed downstream rather \
+                than degenerating into a hang.
         '''
         raise NotImplementedError('Messenger subclass must implement method.')
 

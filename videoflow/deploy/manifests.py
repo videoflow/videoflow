@@ -38,6 +38,7 @@ from ..core.compiler import (
     validate_wire_compatibility,
 )
 from ..core.constants import BATCH
+from ..core.supervision import SupervisionPolicy
 
 # GPU allocation lives in .gpu; these four are used below.
 # Re-export only: DEFAULT_GPU_RESOURCE was a public name of this module before the
@@ -71,6 +72,13 @@ DELETABLE_KINDS = _CORE_DELETABLE_KINDS + _CRD_DELETABLE_KINDS
 # GC safety net on batch Jobs: even if the launching client dies mid-run, k8s reaps
 # completed Job objects (and their pods) after this many seconds.
 _BATCH_JOB_TTL_SECONDS = 600
+
+# Outer wall-clock bound on a BATCH node's Job. A BATCH pod has no liveness probe
+# (probes are stripped from Job pods), so this is the last line against a run that
+# would otherwise hang forever. Deliberately far above any realistic batch: the
+# worker's own progress deadline is the precise instrument, and this is the blunt
+# one behind it.
+_BATCH_JOB_DEADLINE_SECONDS = 24 * 3600
 
 # Startup-probe window: period × threshold is how long a worker gets to finish
 # ``open()`` (slow model loads) before the kubelet kills the container. The
@@ -171,6 +179,14 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
         env['VF_PARTITION_BY'] = spec.partition_by
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
+    # Per-node failure handling. Absent (the usual case) ⇒ the worker takes the
+    # flow type's preset, so a flow that never touches these renders exactly the
+    # manifests it always did.
+    if spec.delivery:
+        if spec.delivery.get('delivery'):
+            env['VF_DELIVERY'] = spec.delivery['delivery']
+        if spec.delivery.get('on_error'):
+            env['VF_ON_ERROR'] = spec.delivery['on_error']
     if spec.blob_readers is not None:
         # Downstream read count of this node's messages — enables refcounted blob
         # reclamation (PROTOCOL.md BLOB-5). Omitted (legacy spec) ⇒ TTL-only blobs.
@@ -380,6 +396,11 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         'failureThreshold': STARTUP_PROBE_FAILURE_THRESHOLD,
     }
     container['ports'] = [{'containerPort': 8080, 'name': 'health'}]
+    # The worker writes a structured death reason to /dev/termination-log, which the
+    # API server surfaces in containerStatuses — so rollout_report can say
+    # "VF_DEVICE: CUDA out of memory" instead of "crash-looping, see the logs".
+    # FallbackToLogsOnError covers the deaths too abrupt to write anything.
+    container['terminationMessagePolicy'] = 'FallbackToLogsOnError'
 
     pod_spec: dict = {'containers': [container]}
     if mounts:
@@ -448,7 +469,16 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
              nats_cm_name : str, mounts : Optional[List[Mount]] = None,
              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
              gpu_resource_name : Optional[str] = None,
-             image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> dict:
+             image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+             supervision : Optional[SupervisionPolicy] = None) -> dict:
+    '''
+    - Arguments:
+        - supervision: restart policy for this node's workload. Rendered into the \
+            Job ``backoffLimit``; the local engine honours the *same object* in \
+            its supervisor, which is what keeps the two engines' failure behaviour \
+            identical instead of merely similar.
+    '''
+    supervision = supervision or SupervisionPolicy()
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
@@ -477,10 +507,17 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # health server contract; drop them.
         for probe in ('readinessProbe', 'livenessProbe', 'startupProbe'):
             pod_template['spec']['containers'][0].pop(probe, None)
-        job_spec: dict = {'backoffLimit': 3, 'template': pod_template}
+        job_spec: dict = {'backoffLimit': supervision.max_restarts,
+                        'template': pod_template}
         if batch:
             # Reap completed Jobs (and pods) even if the launching client dies.
             job_spec['ttlSecondsAfterFinished'] = _BATCH_JOB_TTL_SECONDS
+            # Outer backstop for a wedged worker. A BATCH Job has no probes (they
+            # were stripped above), so without this the only thing between a hung
+            # node and an eternal run is the worker's own progress deadline — and
+            # that cannot fire if the worker is wedged badly enough. Generous, since
+            # a legitimately long batch is not a failure.
+            job_spec['activeDeadlineSeconds'] = _BATCH_JOB_DEADLINE_SECONDS
             if partitioned:
                 # N distinct, stable replica ids → Indexed Job (completion index is
                 # the replica id, see _pod_spec).
@@ -585,6 +622,10 @@ def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str
         'image': image,
         'imagePullPolicy': image_pull_policy,
         'command': ['python', '-m', 'videoflow.provision'],
+        # A provision failure is one of the harder things to diagnose — the only
+        # symptom the CLI can otherwise report is "did not complete within 180s" —
+        # so surface this pod's last output through the API too.
+        'terminationMessagePolicy': 'FallbackToLogsOnError',
         'envFrom': [{'configMapRef': {'name': nats_cm_name}}],
         'env': [
             {'name': 'VF_FLOW_ID', 'value': flow_id},
@@ -689,7 +730,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     mounts : Optional[List[Mount]] = None,
                     gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
                     gpu_resource_name : Optional[str] = None, gpu_autoscaling : bool = False,
-                    image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY) -> list:
+                    image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
+                    supervision : Optional[SupervisionPolicy] = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
@@ -697,6 +739,9 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     - run_id: per-run identifier stamped into each node's env (scopes broker streams).
     - blob_ttl_seconds: TTL override for offloaded payloads (``--blob-ttl-seconds``, \
         PROTOCOL.md BLOB-7); ``None`` lets workers pick the flow-type default.
+    - supervision: restart policy for every node workload, rendered into the Job \
+        ``backoffLimit``. The local engine honours the same object, which is what \
+        makes the two engines' failure behaviour identical rather than merely similar.
     - default_image: image ref used for any node that didn't declare its own (``--image``).
     - image_overrides: mapping of node name to image ref (``--image-override``).
     - autoscaling: if True, emit a KEDA ScaledObject per processor node.
@@ -776,6 +821,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
+                                  supervision = supervision,
                                   mounts = mounts, gpu_runtime_class = gpu_runtime_class,
                                   gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name,
                                   image_pull_policy = image_pull_policy))

@@ -193,6 +193,60 @@
     }
   },
   {
+    "name": "abort",
+    "file": "abort.bin",
+    "version": 4,
+    "type": "abort",
+    "producer_name": "detector",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "abort-r2",
+    "seq": 11,
+    "event_ts": null,
+    "replica_id": 2,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "none": true
+    },
+    "error": {
+      "code": "VF_DEVICE",
+      "message": "CUDA out of memory on device 0",
+      "remedy": "Lower the batch size, or grant the node more VRAM.",
+      "disposition": "worker_fatal",
+      "node": "detector",
+      "trace_id": "cam:41",
+      "num_delivered": 2,
+      "context": {
+        "replica": "2"
+      }
+    }
+  },
+  {
+    "name": "abort_minimal",
+    "file": "abort_minimal.bin",
+    "version": 4,
+    "type": "abort",
+    "producer_name": "cam",
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "trace_id": "abort-r0",
+    "seq": 0,
+    "event_ts": null,
+    "replica_id": 0,
+    "metadata": {
+      "map": {}
+    },
+    "payload": {
+      "none": true
+    },
+    "error": {
+      "code": "VF_UNKNOWN",
+      "message": "producer died"
+    }
+  },
+  {
     "name": "unicode_names_big_seq",
     "file": "unicode_names_big_seq.bin",
     "version": 4,

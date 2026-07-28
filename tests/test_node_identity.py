@@ -6,6 +6,7 @@ graph support.
 import pytest
 
 from videoflow.consumers import CommandlineConsumer
+from videoflow.core.errors import GraphError
 from videoflow.core.graph import GraphEngine
 from videoflow.core.node import Node
 from videoflow.processors import IdentityProcessor, JoinerProcessor
@@ -27,8 +28,30 @@ def test_duplicate_explicit_names_rejected_at_graph_build():
     a = IntProducer(name = 'dup')
     b = IdentityProcessor(name = 'dup')(a)
     c = CommandlineConsumer()(b)
-    with pytest.raises(ValueError):
+    with pytest.raises(GraphError):
         GraphEngine([a], [c])
+
+def test_error_handling_kwargs_survive_the_worker_round_trip():
+    '''
+    The hard rule: a worker rebuilds a node from get_params() alone, so anything
+    that changes its failure behaviour has to survive the trip as JSON.
+    '''
+    import json
+
+    a = IdentityProcessor(name = 'p', delivery = 'best-effort', on_error = 'poison')
+    params = a.get_params()
+    json.dumps(params)                               # must be serializable
+    b = IdentityProcessor(**params)
+    assert (b.delivery, b.on_error) == ('best-effort', 'poison')
+    assert b.delivery_policy() == {'delivery': 'best-effort', 'on_error': 'poison'}
+
+
+def test_invalid_error_handling_kwargs_name_the_valid_ones():
+    with pytest.raises(ValueError, match = 'delivery must be one of'):
+        IdentityProcessor(name = 'p', delivery = 'eventually')
+    with pytest.raises(ValueError, match = 'on_error must be one of'):
+        IdentityProcessor(name = 'p', on_error = 'catastrophic')
+
 
 def test_get_params_round_trip():
     a = IntProducer(start_value = 1, end_value = 10, fps = 5, name = 'p1')
@@ -74,7 +97,7 @@ def test_replicated_join_without_partition_by_is_rejected():
     # would receive the two halves of a join on different workers.
     joined = JoinerProcessor(name = 'joined', nb_tasks = 3)(a, b)
     out = CommandlineConsumer(name = 'out')(joined)
-    with pytest.raises(ValueError):
+    with pytest.raises(GraphError):
         GraphEngine([a], [out])
 
 def test_replicated_join_with_partition_by_is_accepted():

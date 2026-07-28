@@ -56,6 +56,9 @@ class NodeSpec:
             receives (Σ over children of ``nb_tasks`` if partitioned else 1); drives \
             refcounted blob reclamation (PROTOCOL.md BLOB-5). 0 for leaves; ``None`` \
             when unknown (a legacy spec), which disables reclamation.
+        - delivery: this node's ``delivery=``/``on_error=`` overrides as a dict, \
+            or ``None`` to inherit the flow type's preset. Read by provisioning \
+            (it sets the durables' ``max_deliver``) and by the worker.
 
     The field order below *is* the constructor signature — callers pass these
     positionally (``NodeSpec('n', 'pkg.Cls', {}, [], 'processor', ...)``), so
@@ -99,6 +102,12 @@ class NodeSpec:
     # GPU memory demand in GiB (RFC 0004): drives the mix strategy's MIG slice
     # choice; other modes ignore it. None = no declared demand (whole device).
     gpu_memory_gib : Optional[float] = None
+    # Per-node failure handling (``delivery=``/``on_error=`` on the node), as a
+    # dict for ``DeliveryPolicy.resolve``. None = inherit the flow type's preset,
+    # which is what every flow that never touches these ships. Lifted out of
+    # params like partition_by/join_policy, because provisioning needs it before
+    # any worker exists: a node's delivery mode decides its durables' max_deliver.
+    delivery : Optional[Dict[str, Any]] = None
 
     @property
     def is_remote(self) -> bool:
@@ -126,6 +135,7 @@ class NodeSpec:
             gpu_count = d.get('gpu_count', 1), gpu_resource_name = d.get('gpu_resource_name'),
             gpu_memory_gib = d.get('gpu_memory_gib'),
             blob_readers = d.get('blob_readers'),
+            delivery = d.get('delivery'),
         )
 
 def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
@@ -156,6 +166,8 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
         joinable = isinstance(node, (ProcessorNode, ConsumerNode))
         partition_by = node.partition_by if joinable else None
         join_policy = node._join_policy if joinable else None
+        # Same families: a producer has no inputs to retry or dead-letter.
+        delivery = node.delivery_policy() if joinable else None
         node_class: Optional[str]
         component_ref: Optional[str]
         descriptor: Optional[Dict[str, Any]]
@@ -189,6 +201,7 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             image = node.image,
             partition_by = partition_by,
             join_policy = join_policy,
+            delivery = delivery,
             component_ref = component_ref,
             descriptor = descriptor,
             command = command,

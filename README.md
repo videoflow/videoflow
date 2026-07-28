@@ -210,10 +210,18 @@ so stdout stays valid YAML — or `--render-only` to write them plus a
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),
 `videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...] [--infra]`
 (stop a run and delete its streams and workloads — `--infra` also removes
-auto-provisioned NATS/Redis), `videoflow debug decode`
-(decode wire envelopes from a file or a run's DLQ), and the
+auto-provisioned NATS/Redis), the
+`videoflow dlq ls|show|replay|purge --flow-id ...` family for
+[dead-lettered messages](#error-handling), `videoflow debug decode`
+(decode wire envelopes from a file), and the
 `videoflow component validate|push|pull|inspect` family for
 [language-agnostic components](#language-agnostic-components).
+
+Every command exits with a code that says what *kind* of thing went wrong, so CI
+can triage without parsing stderr: `2` your flow or config, `3` your cluster or
+broker, `4` the flow ran and nodes failed, `5` the flow stalled, `130`
+interrupted. Errors print as a message and a fix rather than a traceback; set
+`VF_DEBUG=1` when you want the traceback.
 
 ### Preparing a cluster with GPU access
 
@@ -539,15 +547,43 @@ fresh set of streams instead of colliding with the previous run.
 Delivery is **at-least-once with ack-after-process**: a worker acknowledges a
 message to the broker only after it has processed it (and published its output), so
 a crash mid-processing causes redelivery, not loss. Content-derived message ids give
-the broker publish-dedup, so the retry after a crash doesn't double-emit. In BATCH
-mode a failing message is retried up to a limit and then **dead-lettered** to a DLQ
-stream (`vf-<flow>-<run>-dlq`) with the error attached, instead of being silently
-dropped or crashing the pod. REALTIME favors freshness and drops on failure.
+the broker publish-dedup, so the retry after a crash doesn't double-emit.
+
+<a name="error-handling"></a>
+What happens to a *failed* message depends on **why** it failed, not just on the
+flow type:
+
+| The failure means | What videoflow does |
+|---|---|
+| the **message** is bad (`SchemaError`, a decode failure) | dead-letter it on the first attempt — retrying something that failed on its own content cannot help |
+| the **world** blipped (`UpstreamUnavailable`, a timeout) | retry with jittered backoff, then dead-letter |
+| this **worker** is sick (`DeviceError`, out of memory) | hand the message back for a healthy replica, never blame it, and stop the worker |
+
+An exception you do not classify is treated as the middle case, so nothing changes
+until you opt in. Workers also protect themselves: a run of unexplained failures
+trips a circuit breaker, and a node that stops acking while work is pending is
+declared stalled rather than hanging the run forever.
+
+Dead letters land on the flow's DLQ stream (`vf-<flow>-dlq`) with the error code
+attached. It is scoped to the flow, not the run, so tearing a run down does not
+delete the record of what it lost — and `videoflow dlq replay` puts the messages
+back once the bug is fixed.
+
+When a node dies, it says so: an **abort** marker propagates through the graph the
+way end-of-stream does, so a dead producer ends its descendants instead of leaving
+them blocked forever. Crashed workers are restarted — three attempts in Kubernetes
+via the Job `backoffLimit`, and the same three locally, so a crash the cluster
+absorbs is absorbed in development too.
 
 Multi-parent **joins** support timeout + missing-input policies (drop / wait /
 error) so a stalled or dropped branch can't hang the join forever. End-of-stream is
 **replica-safe**: every replica of a node observes it and drains its inputs before
 terminating.
+
+The full model — dispositions, the retry ladder, restarts, the dead-letter queue
+and the exit codes — is in
+[Error handling and recovery](https://videoflow.github.io/videoflow/user-documentation/error-handling-and-recovery.html),
+and `solutions/toy_recovery` is a runnable demonstration of it.
 
 ### Time-synchronized joins (fusing independent streams)
 

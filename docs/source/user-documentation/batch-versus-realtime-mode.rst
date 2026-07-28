@@ -47,12 +47,14 @@ Crash recovery, retries and the dead-letter queue
 
 Because batch mode acknowledges only *after* processing, a message whose worker
 crashes before acking is redelivered — a reliability property the old single-machine
-queues never had. If processing a message *raises*, it is retried up to a limit
-(``VF_MAX_RETRIES``, default 3); a message that exhausts its retries is
-**dead-lettered** to a per-run DLQ stream (``vf-<flow>-<run>-dlq``) with the error
-and origin recorded in message headers, and the worker keeps running — one poison
-message never crashes the pod or stalls the flow. Inspect the DLQ with the ``nats``
-CLI (see :doc:`debugging-flow-applications`).
+queues never had. If processing a message *raises*, what happens next depends on
+**why** it failed: an unparseable message is dead-lettered on its first failure,
+a transient one is retried up to ``VF_MAX_RETRIES`` (default 3) and then
+dead-lettered, and a failure that means the *worker* is sick hands the message
+back for a healthy replica rather than blaming it. Either way the flow keeps
+moving — one bad message never crashes a pod. Dead letters land on the flow's DLQ
+stream (``vf-<flow>-dlq``), readable with ``videoflow dlq ls``. The full model is
+in :doc:`error-handling-and-recovery`.
 
 Retries are safe because each message carries a content-derived id: if a worker
 crashes *after* publishing its output but before acking its input, the re-run
@@ -60,7 +62,22 @@ republishes the same id and the broker de-duplicates it, so downstream nodes nev
 see the duplicate.
 
 Realtime mode makes none of these guarantees by design — its whole point is to
-discard anything that is not the latest, so a failed message is simply dropped.
+discard anything that is not the latest, so a failed message is dropped. It does
+keep a bounded *sample* of each distinct failure in the dead-letter queue, though:
+dropping a message under load shedding is a policy, and deleting the evidence of
+an exception is just losing the bug report.
+
+Per-node overrides
+------------------
+
+The flow type sets these as *defaults*, not as law. Loss tolerance is really a
+property of what a node does with a message, so a node can opt out::
+
+    alerts = AlertSink(name = 'alerts', delivery = 'at-least-once')(detect)
+
+That is the case that forces the distinction: a REALTIME flow whose frame
+pipeline genuinely wants freshest-wins, and whose final sink writes alerts to a
+database where a dropped message is a missed incident rather than a stale frame.
 
 .. warning::
     Do not read a video **file** in ``REALTIME`` mode. A file reader emits frames

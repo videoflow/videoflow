@@ -2,7 +2,7 @@
 The single process entrypoint that runs exactly one graph node — used identically
 whether the node is launched as a local subprocess (``LocalProcessEngine``) or as a
 Kubernetes pod. It's fully driven by environment variables so it needs no access to
-the original graph-building script.
+the original graph-building script::
 
     VF_NODE_CLASS       fully-qualified class, e.g. videoflow.processors.basic.IdentityProcessor
     VF_NODE_PARAMS_JSON JSON dict of constructor kwargs (from NodeSpec.params)
@@ -39,6 +39,19 @@ the original graph-building script.
     VF_GPU_RESOURCE_NAME optional; extended-resource name the GPUs were requested
                         as, e.g. a MIG profile (RFC 0003).
     VF_ENVELOPE_VERSION optional; wire envelope version to emit (only 4, protobuf)
+    VF_DELIVERY         optional; 'at-least-once' | 'best-effort', overriding the
+                        flow type's preset for this node (PROTOCOL.md §7)
+    VF_ON_ERROR         optional; disposition for exceptions nothing classifies —
+                        'poison' | 'transient' | 'worker_fatal' (default transient)
+    VF_BREAKER_THRESHOLD optional; consecutive failures before the worker declares
+                        itself unhealthy and exits so its inputs go to another
+                        replica (default 10; 0 disables)
+    VF_PROGRESS_TIMEOUT_SECONDS optional; seconds this node may ack nothing while
+                        work is pending before it is declared stalled (default 300;
+                        0 disables)
+    VF_TERMINATION_LOG  optional; path the structured termination reason is written
+                        to (default /dev/termination-log, which Kubernetes surfaces
+                        in the pod's containerStatuses)
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -51,13 +64,53 @@ from typing import Type, TypeVar
 from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
 from ..core.context import RuntimeContext
 from ..core.engine import Messenger
+from ..core.errors import (
+    DEFAULT_DISPOSITION,
+    DISPOSITIONS,
+    ConfigError,
+    NodeContractError,
+    VideoflowError,
+    error_to_dict,
+)
 from ..core.node import ConsumerNode, Node, ProcessorNode, ProducerNode
+from ..core.supervision import (
+    DEFAULT_BREAKER_THRESHOLD,
+    DEFAULT_PROGRESS_TIMEOUT_SECONDS,
+    ConsecutiveFailureBreaker,
+    ProgressDeadline,
+)
 from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
 from .health import HealthServer, HealthState, InstrumentedMessenger
 from .idempotency import RedisIdempotencyStore
 from .logging_config import configure_logging
 
 logger = logging.getLogger('videoflow.worker')
+
+#: Where the structured termination reason is written. Kubernetes reads this path
+#: by default and surfaces its contents in
+#: ``pod.status.containerStatuses[].state.terminated.message``, which is how the
+#: deploy watchdog learns *why* a pod died without scraping its logs.
+DEFAULT_TERMINATION_LOG = '/dev/termination-log'
+
+def write_termination_reason(error : BaseException,
+                            path : str | None = None) -> None:
+    '''
+    Records why this worker is exiting, in machine-readable form.
+
+    Deliberately best-effort and completely silent on failure: the file may not
+    exist outside Kubernetes, and a worker that cannot explain its death must
+    still die of the original cause rather than of a logging problem.
+
+    - Arguments:
+        - error: the exception that ended the worker.
+        - path: override for the termination-log path (``VF_TERMINATION_LOG``).
+    '''
+    target = path or os.environ.get('VF_TERMINATION_LOG') or DEFAULT_TERMINATION_LOG
+    try:
+        with open(target, 'w') as f:
+            f.write(json.dumps(error_to_dict(error), sort_keys = True))
+    except Exception:
+        logger.debug(f'could not write termination reason to {target}', exc_info = True)
 
 def _import_class(fq_class : str) -> type:
     module_path, class_name = fq_class.rsplit('.', 1)
@@ -101,10 +154,12 @@ def require_node_kind(node : Node, expected : Type[_N], kind : str) -> _N:
     '''
     if not isinstance(node, expected):
         actual = f'{type(node).__module__}.{type(node).__name__}'
-        raise ValueError(
+        raise NodeContractError(
             f'VF_NODE_KIND={kind!r} requires a {expected.__name__}, but VF_NODE_CLASS '
-            f'({actual}) is not one. These two are set together by the compiler — '
-            'redeploy the flow rather than editing the ConfigMap by hand.')
+            f'({actual}) is not one.',
+            remedy = ('These two are set together by the compiler — redeploy the flow '
+                    'rather than editing the ConfigMap by hand.'),
+            expected = expected.__name__, actual = actual)
     return node
 
 def build_node_from_env() -> Node:
@@ -114,10 +169,11 @@ def build_node_from_env() -> Node:
         # not the Python worker. Reaching here means a remote node was scheduled onto
         # a Python worker image — a deploy/image mismatch.
         ref = os.environ.get('VF_COMPONENT_REF', '<unknown>')
-        raise RuntimeError(
+        raise ConfigError(
             f'VF_NODE_CLASS is not set (component_ref={ref!r}). The Python worker only '
-            'runs native videoflow nodes; a remote component must run its own image. '
-            'Check that the node\'s image and descriptor command are set correctly.')
+            'runs native videoflow nodes; a remote component must run its own image.',
+            remedy = "Check that the node's image and descriptor command are set correctly.",
+            component_ref = ref)
     node_class = _import_class(fq_class)
     params = json.loads(os.environ.get('VF_NODE_PARAMS_JSON', '{}'))
     return node_class(**params)
@@ -143,12 +199,27 @@ def run_from_env() -> None:
     join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
     join_policy = json.loads(join_policy_json) if join_policy_json else None
 
+    # Per-node failure handling. Absent ⇒ the flow type's preset, which is what a
+    # flow that never touches these gets.
+    delivery = os.environ.get('VF_DELIVERY') or None
+    on_error = os.environ.get('VF_ON_ERROR') or None
+    if on_error is not None and on_error not in DISPOSITIONS:
+        raise ConfigError(
+            f'VF_ON_ERROR={on_error!r} is not a known disposition.',
+            remedy = f'Use one of: {", ".join(DISPOSITIONS)}.')
+    delivery_policy = {'delivery': delivery, 'on_error': on_error} if (delivery or on_error) else None
+    breaker_threshold = int(os.environ.get('VF_BREAKER_THRESHOLD',
+                                        str(DEFAULT_BREAKER_THRESHOLD)))
+    progress_timeout = float(os.environ.get('VF_PROGRESS_TIMEOUT_SECONDS',
+                                        str(DEFAULT_PROGRESS_TIMEOUT_SECONDS)))
+
     # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
     envelope_version = int(os.environ.get('VF_ENVELOPE_VERSION', str(DEFAULT_ENVELOPE_VERSION)))
     if envelope_version not in EMITTABLE_ENVELOPE_VERSIONS:
-        raise ValueError(f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this '
-                        f'build (supported: {EMITTABLE_ENVELOPE_VERSIONS})')
+        raise ConfigError(
+            f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this build.',
+            remedy = f'Supported versions: {EMITTABLE_ENVELOPE_VERSIONS}.')
 
     blob_store = None
     # Env var name is historical: any registered URL scheme works, not just Redis.
@@ -178,7 +249,7 @@ def run_from_env() -> None:
         eos_quiescence_ms = eos_quiescence_ms, nb_tasks = nb_tasks,
         partition_by = partition_by, join_policy = join_policy,
         envelope_version = envelope_version, blob_readers = blob_readers,
-        blob_ttl_seconds = blob_ttl_seconds,
+        blob_ttl_seconds = blob_ttl_seconds, delivery_policy = delivery_policy,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
@@ -196,35 +267,71 @@ def run_from_env() -> None:
         logging.getLogger(f'videoflow.node.{node_name}'), messenger = messenger,
     )
 
+    # Self-protection, constructed here and handed down (the task lives in core,
+    # which must not depend on runtime). A producer gets neither: it has no inputs
+    # to fail on and no durable to be pending against.
+    breaker = None
+    deadline = None
+    if kind != NODE_KIND_PRODUCER:
+        breaker = ConsecutiveFailureBreaker(breaker_threshold, node_name)
+        deadline = ProgressDeadline(progress_timeout, messenger.pending_count, node_name)
+
     task: Task
     if kind == NODE_KIND_PRODUCER:
         task = ProducerTask(require_node_kind(node, ProducerNode, kind),
-                            messenger, has_children, ctx = ctx)
+                            messenger, has_children, ctx = ctx,
+                            on_error = on_error or DEFAULT_DISPOSITION)
     elif kind == NODE_KIND_PROCESSOR:
         task = ProcessorTask(require_node_kind(node, ProcessorNode, kind),
-                            messenger, has_children, parent_names, ctx = ctx)
+                            messenger, has_children, parent_names, ctx = ctx,
+                            breaker = breaker, deadline = deadline,
+                            on_error = on_error or DEFAULT_DISPOSITION)
     elif kind == NODE_KIND_CONSUMER:
         consumer = require_node_kind(node, ConsumerNode, kind)
         idem_store = None
         if consumer.idempotent and blob_redis_url:
             idem_store = RedisIdempotencyStore(blob_redis_url)
         task = ConsumerTask(consumer, messenger, has_children, parent_names, ctx = ctx,
-                            idempotency_store = idem_store)
+                            idempotency_store = idem_store,
+                            breaker = breaker, deadline = deadline,
+                            on_error = on_error or DEFAULT_DISPOSITION)
     else:
-        raise ValueError(f'Unknown VF_NODE_KIND: {kind}')
+        raise ConfigError(f'Unknown VF_NODE_KIND: {kind!r}.',
+                        remedy = f'Expected one of: {NODE_KIND_PRODUCER}, '
+                                f'{NODE_KIND_PROCESSOR}, {NODE_KIND_CONSUMER}.')
 
     logger.info(f'Worker starting: node={node_name} kind={kind} parents={parent_names}')
     try:
         task.run()
+    except BaseException as e:
+        # Record *why* before dying, so the deploy watchdog can report the cause
+        # from the Kubernetes API instead of guessing from a crash-loop.
+        if not isinstance(e, KeyboardInterrupt):
+            write_termination_reason(e)
+        raise
     finally:
         messenger.close()
         if health_server is not None:
             health_server.stop()
     logger.info(f'Worker finished: node={node_name}')
 
-def main() -> None:
+def main() -> int:
+    '''
+    Entrypoint. Returns the process exit status rather than raising, so a typed
+    failure exits with the code its class carries (see
+    ``videoflow.core.errors``) and an operator can tell a bad node from a bad
+    cluster without reading the log.
+    '''
     configure_logging()
-    run_from_env()
+    try:
+        run_from_env()
+    except VideoflowError as e:
+        logger.error(f'{e.code}: {e.message}' + (f' {e.remedy}' if e.remedy else ''))
+        write_termination_reason(e)
+        return e.exit_code
+    except KeyboardInterrupt:
+        return 130
+    return 0
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

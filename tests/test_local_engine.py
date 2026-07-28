@@ -5,6 +5,7 @@ reporting that makes a dead worker visible instead of silent.
 
 Pure/unit: subprocess.Popen and broker provisioning are monkeypatched — no NATS.
 '''
+import json
 import os
 import signal
 import subprocess
@@ -14,6 +15,7 @@ from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH
+from videoflow.core.supervision import SupervisionPolicy
 from videoflow.engines.local import LocalProcessEngine, _worker_env, assign_local_gpus, inherited_python_path
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
@@ -36,7 +38,14 @@ class _FakeProc:
 
 
 def _run_engine(monkeypatch, engine = None, returncodes = None):
-    '''Runs the engine with Popen stubbed; returns (envs, engine).'''
+    '''
+    Runs the engine with Popen stubbed; returns (envs, engine).
+
+    ``returncodes`` is consumed one per *launch*, so a restart takes the next
+    value — which is how the supervision tests express "fails, then succeeds".
+    Restarts are disabled by default here so the exit-code bookkeeping tests stay
+    about bookkeeping; the supervision tests pass their own policy.
+    '''
     envs = []
     codes = list(returncodes or [])
     def fake_popen(cmd, env = None, **kwargs):
@@ -45,8 +54,9 @@ def _run_engine(monkeypatch, engine = None, returncodes = None):
     monkeypatch.setattr(subprocess, 'Popen', fake_popen)
     monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync',
                         lambda *a, **kw: None)
-    engine = engine or LocalProcessEngine()
+    engine = engine or LocalProcessEngine(supervision = SupervisionPolicy.disabled())
     monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    monkeypatch.setattr(engine, 'signal_flow_termination', lambda: None)
     flow = _flow()
     engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
     return envs, engine
@@ -75,6 +85,31 @@ def test_worker_env_without_python_path_is_untouched(monkeypatch):
     spec = compile_flow(_flow())[0]
     env = _worker_env(spec, 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
     assert 'PYTHONPATH' not in env
+
+
+def test_worker_env_carries_the_error_handling_overrides():
+    p = IntProducer(0, 3, name = 'producer')
+    a = IdentityProcessor(name = 'work', delivery = 'best-effort', on_error = 'poison')(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    specs = {s.name: s for s in compile_flow(Flow([out], flow_type = BATCH, flow_id = 'demo'))}
+
+    env = _worker_env(specs['work'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert env['VF_DELIVERY'] == 'best-effort'
+    assert env['VF_ON_ERROR'] == 'poison'
+    # A node that overrides nothing ships nothing: an unchanged flow gets exactly
+    # the environment it always did.
+    plain = _worker_env(specs['printer'], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_DELIVERY' not in plain and 'VF_ON_ERROR' not in plain
+
+
+def test_worker_env_gives_each_worker_its_own_termination_log(monkeypatch):
+    '''
+    The local stand-in for Kubernetes' termination-message path — and the only way
+    the supervisor learns *why* a worker died rather than just that it did.
+    '''
+    envs, engine = _run_engine(monkeypatch)
+    paths = [e['VF_TERMINATION_LOG'] for e in envs]
+    assert len(set(paths)) == len(paths)             # one per worker, never shared
 
 
 def test_worker_env_carries_blob_reclamation_vars():
@@ -267,3 +302,58 @@ def test_report_failures_names_node_and_code(monkeypatch, capsys):
     engine.report_failures()
     err = capsys.readouterr().err
     assert 'exited with code 3' in err
+
+
+def test_failed_worker_is_restarted_and_the_flow_recovers(monkeypatch):
+    '''
+    The parity guarantee: a crash that Kubernetes recovers from (new pod, same
+    durable, un-acked messages redelivered) must recover here too. Before the
+    supervisor, this same failure left run-local hanging while the cluster ran on.
+    '''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    # producer ok, work fails once then succeeds on the restart, printer ok.
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0, 0])
+    assert engine.wait_for_completion() == []
+    assert engine.events().restart_count('work') == 1
+
+
+def test_restarts_are_bounded_and_then_the_node_gives_up(monkeypatch):
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 2, backoff_seconds = (0.0,)))
+    # Launch order is topological (producer, work, printer); each restart pops the
+    # next code, so 'work' fails on its first launch and on both restarts.
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0, 1, 1])
+    assert engine.wait_for_completion() == ['work']
+    assert engine.events().restart_count('work') == 2      # not unbounded
+    assert engine.events().failed_nodes() == ['work']
+
+
+def test_poison_exit_is_not_restarted(monkeypatch, tmp_path):
+    '''
+    A worker that died of a bad *message* will die of it again, so three more
+    identical crashes help nobody. The disposition comes from the death note the
+    worker wrote on its way out.
+    '''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, 1, 0])
+    reason = {'code': 'VF_POISON_SCHEMA', 'message': 'bad frame', 'disposition': 'poison'}
+    path = tmp_path / 'work-0.json'
+    path.write_text(json.dumps(reason))
+    engine._termination_logs[('work', 0)] = str(path)
+    assert engine.wait_for_completion() == ['work']
+    assert engine.events().restart_count('work') == 0
+
+
+def test_sigint_is_not_restarted(monkeypatch):
+    '''Ctrl-C is not a crash: restarting the worker would fight the user.'''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 3, backoff_seconds = (0.0,)))
+    _envs, engine = _run_engine(monkeypatch, engine = engine,
+                                returncodes = [0, -signal.SIGINT, 0])
+    assert engine.wait_for_completion() == []
+    assert engine.events().restart_count() == 0

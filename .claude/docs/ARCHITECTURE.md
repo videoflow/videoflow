@@ -55,8 +55,13 @@ Inside, [`core/task.py`](../../videoflow/core/task.py) runs the loop:
 
 - `ProducerTask` calls `next()` until `StopIteration`.
 - `ProcessorTask` blocks on `receive_message()`, **reorders inputs to match `parent_names`**,
-  calls `process(*inputs)`, publishes, then **acks after processing** (so a crash redelivers).
-  On exception it calls `fail_inputs(e)` — a poison message never takes down the pod.
+  calls `process(*inputs)` through `invoke_node` (the one seam where a user exception
+  becomes a classified `VideoflowRuntimeError`), publishes, then **acks after
+  processing** (so a crash redelivers). On exception it calls `fail_inputs(e)`, and
+  what that costs comes from the error's *disposition*, not the flow type alone: a
+  poison message is dead-lettered at once, a transient one retried, a worker-fatal
+  one handed back while the worker stops. A bad message never takes down the pod;
+  a sick worker never dead-letters a healthy stream.
 - `_call()` injects a `ctx`/`context` argument only if the node's method declares it, and bridges
   `async def` node methods onto a task-owned event loop.
 
@@ -135,7 +140,11 @@ change to the wire needs an RFC under `spec/rfcs/` and updated vectors.
 Places where adding a variant is a registration rather than an edit. All follow the same
 shape — a module-level registry seeded with the built-ins, an explicit `register_*()`, and a
 `get_*()`/`make_*()` that raises on an unknown name with a message naming the known values and
-the fix. That error is a `ValueError` everywhere except `get_cluster_flavor`, which raises
+the fix. `register_error_classifier` (`core/errors.py`) is the newest one: it maps a
+third-party exception type onto a disposition, because a component cannot subclass
+`torch.cuda.OutOfMemoryError` but can classify it. Later registrations win.
+
+That error is a `ValueError` everywhere except `get_cluster_flavor`, which raises
 `RuntimeError` because `load_images` always has and callers catch that type. Registries are
 pre-seeded with exactly today's behavior, so with nothing registered the observable output is
 unchanged.

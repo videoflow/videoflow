@@ -28,6 +28,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import traceback
 import uuid
 from typing import Any
 
@@ -37,7 +38,19 @@ from ..components.descriptor import load_descriptor
 from ..components.oci import inspect_component, pull_component, push_component
 from ..core.compiler import compile_flow, specs_from_tasks_data
 from ..core.constants import BATCH
+from ..core.errors import (
+    EXIT_INTERRUPTED,
+    BrokerUnavailable,
+    ClusterError,
+    ConfigError,
+    FlowFailed,
+    FlowStalled,
+    GraphError,
+    ResourceUnavailable,
+    VideoflowError,
+)
 from ..core.flow import Flow
+from ..core.supervision import SupervisionPolicy
 from ..utils.plugins import load_plugin_group
 from .build import autobuild, docker_gpus_available, image_exists, run_in_image
 from .cluster import (
@@ -101,7 +114,7 @@ def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str,
     undone too.
 
     - Raises:
-        - SystemExit: prepare failed with a RuntimeError/ValueError (the message \
+        - ClusterError: prepare failed with a RuntimeError/ValueError (the message \
             names the mode). Any other exception propagates unchanged, after \
             rollback.
     '''
@@ -110,7 +123,7 @@ def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str,
     except BaseException as e:
         _gpu_cleanup(gpu_strategy, kubectl, flow_id)
         if isinstance(e, (RuntimeError, ValueError)):
-            raise SystemExit(f'GPU mode {gpu_strategy.name!r} could not prepare '
+            raise ClusterError(f'GPU mode {gpu_strategy.name!r} could not prepare '
                              f'the cluster: {e}') from e
         raise
 
@@ -122,12 +135,12 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         try:
             name, ref = parse_override(override)
         except ValueError as e:
-            raise SystemExit(str(e)) from e
+            raise ConfigError(str(e)) from e
         overrides[name] = ref
 
     graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
     if not os.path.isfile(graph_path):
-        raise SystemExit(f'Graph module not found: {graph_path}')
+        raise ConfigError(f'Graph module not found: {graph_path}')
     graph_dir = os.path.dirname(os.path.abspath(graph_path))
     graph_target = os.path.abspath(graph_path) + \
         (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
@@ -151,7 +164,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # (config, prepare.py, work dir) at its host path.
         container_mounts = parse_mounts([graph_dir]) + mounts
     except ValueError as e:
-        raise SystemExit(str(e)) from e
+        raise ConfigError(str(e)) from e
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
     # (base image auto-built from a source checkout when missing).
@@ -161,7 +174,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         try:
             image = autobuild(graph_dir, needs_gpu = gpus, context_override = args.build_context)
         except RuntimeError as e:
-            raise SystemExit(str(e)) from e
+            raise ResourceUnavailable(str(e)) from e
 
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
     # baked into the compiled specs).
@@ -175,7 +188,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             else:
                 run_prepare_local(graph_dir, config_path)
         except (RuntimeError, subprocess.CalledProcessError) as e:
-            raise SystemExit(str(e)) from e
+            raise ClusterError(str(e)) from e
 
     # 3. Compile: locally when the graph's deps import on the host, else inside
     # the image (specs round-trip as JSON — same format as the specs ConfigMap).
@@ -197,13 +210,13 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     try:
         images = sorted({resolve_image(s.name, s.image, image, overrides) for s in specs})
     except ValueError as e:
-        raise SystemExit(str(e)) from e
+        raise ConfigError(str(e)) from e
     local_images = [ref for ref in images if image_exists(ref)]
     if local_images:
         try:
             load_images(flavor, local_images, kubectl = args.kubectl)
         except RuntimeError as e:
-            raise SystemExit(str(e)) from e
+            raise ClusterError(str(e)) from e
     if mounts:
         warning = hostpath_warning(flavor)
         if warning:
@@ -220,7 +233,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
                 specs, kubectl = args.kubectl, default_resource = args.gpu_resource_name,
                 flow_id = flow_id)
         except ValueError as e:
-            raise SystemExit(str(e)) from e
+            raise ConfigError(str(e)) from e
         gpu_specs = [s for s in specs if s.device_type == 'gpu']
         # Whole-flow demand per extended resource: every replica of a GPU node claims
         # its own gpu_count devices, so a partially-schedulable flow deadlocks. The
@@ -236,7 +249,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         if fatal:
             for p in fatal:
                 print(f'ERROR: {p}', file = sys.stderr)
-            raise SystemExit('ERROR: the GPU preflight found impossible requests '
+            raise ResourceUnavailable('ERROR: the GPU preflight found impossible requests '
                              '(above); nothing was applied.')
         if args.autoscaling and args.gpu_autoscaling:
             # Partitioned nodes never autoscale (fixed scale), so they contribute
@@ -252,7 +265,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         for problem in problems:
             print(f'WARNING: {problem}', file = sys.stderr)
         if problems and args.strict_preflight:
-            raise SystemExit('ERROR: --strict-preflight set and the GPU preflight found '
+            raise ResourceUnavailable('ERROR: --strict-preflight set and the GPU preflight found '
                              'problems (above); nothing was applied.')
         # gpu_memory_gib drives the mix strategy's MIG slice choice; every other
         # mode grants whole devices, so a declared demand deserves a heads-up
@@ -277,7 +290,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
                                          need_redis = blob_redis_url is None)
             wait_infra_ready(args.kubectl, args.namespace, created)
         except RuntimeError as e:
-            raise SystemExit(str(e)) from e
+            raise ClusterError(str(e)) from e
         nats_url = urls['nats']
         blob_redis_url = blob_redis_url or urls['redis']
         if created:
@@ -321,7 +334,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # block for minutes and is the likeliest interruption point.
         _gpu_cleanup(gpu_strategy, args.kubectl, flow_id)
         if isinstance(e, (RuntimeError, ValueError)):
-            raise SystemExit(str(e)) from e
+            raise ClusterError(str(e)) from e
         raise
     print(f'Flow {flow_id} run {run_id} applied to namespace {args.namespace}.')
 
@@ -343,7 +356,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             engine.dump_failed_logs(sorted({node for node, _ in report.failing}))
             print('Failing pods were left running for inspection. Tear the flow down with:')
             print(teardown_cmd)
-            raise SystemExit('Flow applied but not healthy: '
+            raise FlowFailed('Flow applied but not healthy: '
                              + '; '.join(detail for _, detail in report.failing))
         print('REALTIME flow is running. Tear it down with:')
         print(teardown_cmd)
@@ -379,9 +392,9 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # _gpu_prepare and allocate_and_run_tasks above.
         _gpu_cleanup(gpu_strategy, args.kubectl, flow_id)
     if stall:
-        raise SystemExit(f'Flow aborted: {stall}')
+        raise FlowStalled(f'Flow aborted: {stall}')
     if failed:
-        raise SystemExit(f'Flow failed: {", ".join(failed)}')
+        raise FlowFailed(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow_id} completed.')
 
 def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : str,
@@ -396,7 +409,7 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
         flow = _load_flow(graph_target)
     except ImportError as e:
         if image is None:
-            raise SystemExit(
+            raise ConfigError(
                 f'Cannot import the graph on this machine ({e}) and there is no '
                 f'solution image to compile it in — pass --image or drop --no-build.') from e
         compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
@@ -406,12 +419,12 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
             out = run_in_image(image, compile_cmd, mounts = container_mounts,
                                workdir = graph_dir, gpus = gpus, capture = True)
         except RuntimeError as e2:
-            raise SystemExit(str(e2)) from e2
+            raise ResourceUnavailable(str(e2)) from e2
         if out is None:
             # capture = True above, so stdout is always captured; a None here would
             # mean run_in_image stopped capturing, and json.loads would fail with a
             # traceback instead of a message the operator can act on.
-            raise SystemExit(f'Compiling the graph in {image} produced no output. '
+            raise ResourceUnavailable(f'Compiling the graph in {image} produced no output. '
                             'Re-run with --no-build and an importable graph, or rebuild the image.') from e
         return specs_from_document(out)
 
@@ -419,7 +432,7 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
     try:
         specs = compile_flow(flow, envelope_version = args.envelope_version)
     except ValueError as e:
-        raise SystemExit(str(e)) from e
+        raise ConfigError(str(e)) from e
     return flow.flow_id, flow.flow_type, specs
 
 def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_type : str,
@@ -458,7 +471,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, flow_id : str, flow_typ
             image_pull_policy = args.image_pull_policy,
         )
     except ValueError as e:
-        raise SystemExit(str(e)) from e
+        raise ConfigError(str(e)) from e
     manifests = infra_manifests + manifests
 
     if args.dry_run:
@@ -500,13 +513,14 @@ def _cmd_component_validate(args : argparse.Namespace) -> None:
         print(f'OK       {desc.name} v{desc.version}  role={desc.role}  protocol={desc.protocol}  '
             f'device={desc.device}  images[{images}]')
     if not ok:
-        raise SystemExit(1)
+        raise ConfigError('One or more component descriptors are invalid (see above).',
+                        remedy = 'Fix the reported problems and re-run `videoflow component validate`.')
 
 def _cmd_component_push(args : argparse.Namespace) -> None:
     try:
         target = push_component(args.path, args.ref)
     except Exception as e:
-        raise SystemExit(f'push failed: {e}') from e
+        raise ClusterError(f'push failed: {e}') from e
     print(f'Pushed component descriptor {args.path} -> oci://{target}')
 
 def _cmd_component_pull(args : argparse.Namespace) -> None:
@@ -514,14 +528,14 @@ def _cmd_component_pull(args : argparse.Namespace) -> None:
         path = pull_component(args.ref, force = args.force, verify = args.verify,
                             cosign_args = args.cosign_arg or None)
     except Exception as e:
-        raise SystemExit(f'pull failed: {e}') from e
+        raise ClusterError(f'pull failed: {e}') from e
     print(f'Resolved {args.ref} -> {path}')
 
 def _cmd_component_inspect(args : argparse.Namespace) -> None:
     try:
         d = inspect_component(args.ref, verify = args.verify)
     except Exception as e:
-        raise SystemExit(f'inspect failed: {e}') from e
+        raise ClusterError(f'inspect failed: {e}') from e
     images = ', '.join(f'{k}={v}' for k, v in sorted(d.images.items()))
     kind = 'python' if not d.is_native else 'native'
     print(f'{d.name} v{d.version}  ({kind}, role={d.role}, protocol={d.protocol})')
@@ -551,7 +565,7 @@ def _needs_local_build(flow : Flow) -> bool:
 def _cmd_run_local(args : argparse.Namespace) -> None:
     graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
     if not os.path.isfile(graph_path):
-        raise SystemExit(f'Graph module not found: {graph_path}')
+        raise ConfigError(f'Graph module not found: {graph_path}')
     graph_dir = os.path.dirname(os.path.abspath(graph_path))
     graph_target = os.path.abspath(graph_path) + \
         (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
@@ -569,7 +583,7 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         try:
             run_prepare_local(graph_dir, config_path)
         except subprocess.CalledProcessError as e:
-            raise SystemExit(f'prepare.py failed: {e}') from e
+            raise ResourceUnavailable(f'prepare.py failed: {e}') from e
 
     # 2. Warn about solution inputs that don't exist yet (nothing is mounted
     # locally, but a bad path is worth catching before spawning N processes).
@@ -591,7 +605,7 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                     need_redis = blob_redis_url is None and not args.no_redis)
                 wait_local_infra_ready(created, urls)
             except RuntimeError as e:
-                raise SystemExit(str(e)) from e
+                raise ClusterError(str(e)) from e
             nats_url = urls['nats']
             blob_redis_url = blob_redis_url or urls['redis']
             if created:
@@ -611,18 +625,23 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
             image = autobuild(graph_dir, needs_gpu = docker_gpus_available(),
                               context_override = args.build_context)
         except RuntimeError as e:
-            raise SystemExit(str(e)) from e
+            raise ResourceUnavailable(str(e)) from e
+    # Restart failed workers by default, exactly as the cluster would — with a
+    # compressed backoff so a genuinely broken node still surfaces in seconds.
+    supervision = (SupervisionPolicy.disabled() if args.no_restart
+                else SupervisionPolicy.local())
     engine = LocalProcessEngine(nats_url = nats_url, blob_redis_url = blob_redis_url,
                                 local_docker_nats_url = args.local_docker_nats_url,
                                 default_image = image,
-                                blob_ttl_seconds = args.blob_ttl_seconds)
+                                blob_ttl_seconds = args.blob_ttl_seconds,
+                                supervision = supervision)
     try:
         try:
             flow.run(engine, run_id = args.run_id)
         except (RuntimeError, ValueError) as e:
             # Broker unreachable / incompatible wire settings: report the message,
             # not a traceback through the engine internals.
-            raise SystemExit(str(e)) from e
+            raise BrokerUnavailable(str(e)) from e
         print(f'Flow {flow.flow_id} run {flow.run_id} running locally against {nats_url}. '
               f'Ctrl-C to stop.')
         try:
@@ -641,7 +660,7 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     failed = sorted({name for name, _replica, _code in engine.failures()})
     if failed:
         engine.report_failures()
-        raise SystemExit(f'Flow failed: {", ".join(failed)}')
+        raise FlowFailed(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow.flow_id} completed.')
 
 def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> None:
@@ -725,7 +744,9 @@ def _cmd_explain(args : argparse.Namespace) -> None:
                 lines.append(f'  largest single pod: {per_pod} x {resource} — all {per_pod} devices '
                              f'must sit on one cluster node; deploy\'s preflight checks the largest '
                              f'node\'s allocatable, not just the total')
-    lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id, run_id)}')
+    # Flow-scoped, so it outlives any single run's teardown.
+    lines.append(f'DLQ stream: {dlq_stream_name(flow.flow_id)} '
+                f'(read it with `videoflow dlq ls --flow-id {flow.flow_id}`)')
     print('\n'.join(lines))
 
 def _cmd_provision(args : argparse.Namespace) -> None:
@@ -776,7 +797,7 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
         print(f'Deleted workloads in namespace {args.namespace} for flow {args.flow_id} run {args.run_id}')
     if args.infra:
         if not args.namespace:
-            raise SystemExit('--infra requires --namespace.')
+            raise ConfigError('--infra requires --namespace.')
         from .infra import teardown_infra  # optional dep: infra imports yaml at module scope
         teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'])
         print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
@@ -834,41 +855,209 @@ def _cmd_debug_decode(args : argparse.Namespace) -> None:
         _print_decoded(buf)
         return
     if not args.dlq:
-        raise SystemExit('Provide a FILE of raw envelope bytes, or --dlq with --flow-id/--run-id.')
-    if not (args.flow_id and args.run_id):
-        raise SystemExit('--dlq requires --flow-id and --run-id.')
+        raise ConfigError('Provide a FILE of raw envelope bytes, or --dlq with --flow-id.',
+                        remedy = 'For richer dead-letter inspection, use `videoflow dlq ls`.')
+    if not args.flow_id:
+        raise ConfigError('--dlq requires --flow-id.')
+    _dlq_scan(args.nats, args.flow_id, args.run_id, None, args.limit, _print_dlq_entry)
 
+# -- dead-letter queue -------------------------------------------------------
+#
+# The DLQ is only half useful if it can be read but not drained: a queue you
+# cannot replay from is a graveyard. These four commands close the loop —
+# find the failures, look at one, fix the bug, put the messages back.
+
+def _dlq_fetch(nats_url : str, flow_id : str, run_id : str | None, node : str | None,
+            limit : int) -> list:
+    '''
+    Reads up to ``limit`` dead letters without consuming them (an ephemeral,
+    no-ack pull), newest-first order not guaranteed — JetStream replays a stream
+    in publish order.
+
+    - Returns:
+        - a list of ``(subject, headers, payload bytes)``.
+
+    - Raises:
+        - BrokerUnavailable: the broker is unreachable or has no DLQ for this flow.
+    '''
+    import nats  # optional dep (distributed/deploy extras)
+
+    # optional dep: topology imports nats at module scope
+    from ..messaging.topology import dlq_stream_name, dlq_subject_filter
+
+    stream = dlq_stream_name(flow_id)
+    subject = dlq_subject_filter(flow_id, run_id, node)
+
+    async def _go() -> list:
+        nc = await nats.connect(nats_url)
+        try:
+            js = nc.jetstream()
+            try:
+                sub = await js.pull_subscribe(subject, stream = stream)
+            except Exception as e:
+                raise BrokerUnavailable(
+                    f'No dead-letter stream {stream} on {nats_url} ({e}).',
+                    remedy = ('Check --flow-id and --nats. A flow that has never '
+                            'dead-lettered anything has no DLQ stream yet.')) from e
+            out : list = []
+            while len(out) < limit:
+                try:
+                    msgs = await sub.fetch(batch = min(20, limit - len(out)), timeout = 2.0)
+                except (nats.errors.TimeoutError, TimeoutError):
+                    break
+                for msg in msgs:
+                    out.append((msg.subject, dict(msg.headers or {}), msg.data))
+            return out
+        finally:
+            # close(), not drain(): a graceful drain also drains the still-registered
+            # JetStream pull subscription above and blocks until its timeout, printing
+            # a DrainTimeoutError for a read that already succeeded. Same trap the
+            # messenger's own close() documents.
+            await nc.close()
+
+    return asyncio.run(_go())
+
+def _dlq_scan(nats_url : str, flow_id : str, run_id : str | None, node : str | None,
+            limit : int, render : Any) -> None:
+    entries = _dlq_fetch(nats_url, flow_id, run_id, node, limit)
+    if not entries:
+        print(f'No dead-lettered messages for flow {flow_id}'
+            + (f' run {run_id}' if run_id else '') + '.')
+        return
+    for index, (subject, headers, data) in enumerate(entries, start = 1):
+        render(index, subject, headers, data)
+    print(f'{len(entries)} dead-lettered message(s) (left in place).')
+
+def _print_dlq_entry(index : int, subject : str, headers : dict, data : bytes) -> None:
+    print(f'--- DLQ message {index} (subject {subject}) ---')
+    _print_decoded(data, headers = headers)
+
+def _cmd_dlq_ls(args : argparse.Namespace) -> None:
+    '''One line per dead letter: what failed, where, and why — the triage view.'''
+    entries = _dlq_fetch(args.nats, args.flow_id, args.run_id, args.node, args.limit)
+    entries = [e for e in entries if not args.code or e[1].get('VF-Code') == args.code]
+    if not entries:
+        print(f'No dead-lettered messages for flow {args.flow_id}.')
+        return
+    print(f'{"#":>3}  {"NODE":<20} {"CODE":<24} {"DELIV":>5}  RUN / ERROR')
+    for index, (_subject, headers, _data) in enumerate(entries, start = 1):
+        print(f'{index:>3}  {headers.get("VF-Origin-Node", "?"):<20} '
+            f'{headers.get("VF-Code", "?"):<24} '
+            f'{headers.get("VF-Num-Delivered", "?"):>5}  '
+            f'{headers.get("VF-Run-Id", "?")} / {headers.get("VF-Error", "")}')
+    by_code : dict = {}
+    for _subject, headers, _data in entries:
+        code = headers.get('VF-Code', '?')
+        by_code[code] = by_code.get(code, 0) + 1
+    print('\nby code: ' + '  '.join(f'{c}={n}' for c, n in sorted(by_code.items())))
+
+def _cmd_dlq_show(args : argparse.Namespace) -> None:
+    '''Full decode of one dead letter, payload included.'''
+    entries = _dlq_fetch(args.nats, args.flow_id, args.run_id, args.node, args.id)
+    if len(entries) < args.id:
+        raise ConfigError(f'No dead-lettered message #{args.id} (found {len(entries)}).',
+                        remedy = 'Run `videoflow dlq ls` to see what is there.')
+    subject, headers, data = entries[args.id - 1]
+    _print_dlq_entry(args.id, subject, headers, data)
+
+def _cmd_dlq_replay(args : argparse.Namespace) -> None:
+    '''
+    Re-publishes dead letters onto the subject they originally failed on, so a
+    fixed flow can finish the work it dropped.
+
+    Two details make this actually work rather than merely look like it does. The
+    replayed copy gets a **fresh** ``Nats-Msg-Id``: reusing the original would put
+    it inside the stream's de-duplication window, and JetStream would silently
+    discard the very message being replayed. And it carries ``VF-Replay`` naming
+    the run it came from, so a replayed message is never mistaken for a first
+    delivery when the numbers are audited.
+    '''
+    import nats  # optional dep (distributed/deploy extras)
+
+    # optional dep: topology imports nats at module scope
+    from ..messaging.topology import subject_for
+
+    entries = _dlq_fetch(args.nats, args.flow_id, args.run_id, args.node, args.limit)
+    entries = [e for e in entries if not args.code or e[1].get('VF-Code') == args.code]
+    if not entries:
+        print('Nothing to replay.')
+        return
+    target_run = args.to_run or args.run_id
+    if not target_run:
+        raise ConfigError('Replay needs a target run: pass --to-run (the run that should '
+                        'process these messages) or --run-id.',
+                        remedy = 'A dead letter records which run produced it, but not '
+                                'which run should retry it.')
+    if args.dry_run:
+        for _subject, headers, _data in entries:
+            print(f'would replay {headers.get("VF-Code")} from '
+                f'{headers.get("VF-Origin-Node")} into run {target_run}')
+        print(f'{len(entries)} message(s) would be replayed (--dry-run).')
+        return
+
+    # optional dep: serialization imports protobuf at module scope
+    from ..wire.serialization import decode_envelope
+
+    async def _go() -> tuple:
+        nc = await nats.connect(args.nats)
+        try:
+            js = nc.jetstream()
+            replayed, skipped = 0, 0
+            for _subject, headers, data in entries:
+                # A dead letter holds the *input* the failing node was given, so it
+                # has to go back onto the subject that node **reads from** — which
+                # is its parent's, not its own. The envelope names that parent in
+                # producer_name; VF-Origin-Node is the node that failed, and
+                # publishing there would put the message somewhere nothing reads.
+                try:
+                    parent = decode_envelope(data)['producer_name']
+                except Exception:
+                    skipped += 1
+                    continue
+                target = subject_for(args.flow_id, target_run, parent)
+                await js.publish(target, data, headers = {
+                    # A fresh id, deliberately: reusing the original would land
+                    # inside the stream's de-duplication window and JetStream
+                    # would silently discard the very message being replayed.
+                    'Nats-Msg-Id': f'replay:{uuid.uuid4().hex}',
+                    'VF-Replay': headers.get('VF-Run-Id', ''),
+                })
+                replayed += 1
+            await nc.flush()
+            return replayed, skipped
+        finally:
+            await nc.close()
+
+    count, skipped = asyncio.run(_go())
+    print(f'Replayed {count} message(s) into run {target_run}.')
+    if skipped:
+        # Never a silent partial: an entry that cannot be decoded cannot be routed.
+        print(f'{skipped} entry(ies) could not be decoded and were left in place.',
+            file = sys.stderr)
+
+def _cmd_dlq_purge(args : argparse.Namespace) -> None:
+    '''Deletes the flow's dead letters — the only thing that ever should.'''
     import nats  # optional dep (distributed/deploy extras)
 
     # optional dep: topology imports nats at module scope
     from ..messaging.topology import dlq_stream_name
 
+    stream = dlq_stream_name(args.flow_id)
+
     async def _go() -> None:
         nc = await nats.connect(args.nats)
-        js = nc.jetstream()
-        stream = dlq_stream_name(args.flow_id, args.run_id)
-        subject = f'vf.{args.flow_id}.{args.run_id}._dlq.>'
         try:
-            # Ephemeral, no-ack inspection: the messages stay in the DLQ.
-            sub = await js.pull_subscribe(subject, stream = stream)
-            printed = 0
-            while printed < args.limit:
-                try:
-                    msgs = await sub.fetch(batch = min(10, args.limit - printed), timeout = 2.0)
-                except (nats.errors.TimeoutError, TimeoutError):
-                    break
-                for msg in msgs:
-                    print(f'--- DLQ message {printed + 1} (subject {msg.subject}) ---')
-                    _print_decoded(msg.data, headers = dict(msg.headers or {}))
-                    printed += 1
-            if printed == 0:
-                print(f'No messages in DLQ stream {stream}.')
-            else:
-                print(f'Decoded {printed} DLQ message(s) from {stream} (left in place).')
+            js = nc.jetstream()
+            try:
+                await js.delete_stream(stream)
+            except Exception as e:
+                raise BrokerUnavailable(f'Could not purge {stream}: {e}.',
+                                    remedy = 'Check --flow-id and --nats.') from e
         finally:
             await nc.drain()
 
     asyncio.run(_go())
+    print(f'Purged dead-letter stream {stream}.')
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
@@ -1041,6 +1230,11 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--build-context', default = None,
                     help = 'docker build context for the auto-build (default: the git root '
                            'enclosing the graph).')
+    run.add_argument('--no-restart', action = 'store_true',
+                    help = 'Do not restart a worker that crashes. By default run-local '
+                           'restarts up to 3 times (backoff 1/2/4s), matching the '
+                           'Kubernetes Job semantics so the recovery path is exercised '
+                           'locally; pass this for a tight debug loop.')
     run.set_defaults(func = _cmd_run_local)
 
     comp = sub.add_parser('component', help = 'Work with component descriptors.')
@@ -1107,12 +1301,80 @@ def build_parser() -> argparse.ArgumentParser:
     decode.add_argument('--limit', type = int, default = 20, help = 'Max DLQ messages to decode (default 20).')
     decode.set_defaults(func = _cmd_debug_decode)
 
+    dlq = sub.add_parser('dlq', help = "Inspect and replay a flow's dead-lettered messages.")
+    dlq_sub = dlq.add_subparsers(dest = 'dlq_command', required = True)
+
+    def _dlq_common(p : argparse.ArgumentParser) -> argparse.ArgumentParser:
+        p.add_argument('--flow-id', required = True, help = 'Flow whose DLQ to read (it is flow-scoped, not per run).')
+        p.add_argument('--run-id', help = 'Only entries produced by this run.')
+        p.add_argument('--node', help = 'Only entries from this node.')
+        p.add_argument('--nats', default = 'nats://localhost:4222')
+        return p
+
+    dlq_ls = _dlq_common(dlq_sub.add_parser('ls', help = 'List dead-lettered messages with their error codes.'))
+    dlq_ls.add_argument('--code', help = 'Only this error code, e.g. VF_POISON_DECODE.')
+    dlq_ls.add_argument('--limit', type = int, default = 50)
+    dlq_ls.set_defaults(func = _cmd_dlq_ls)
+
+    dlq_show = _dlq_common(dlq_sub.add_parser('show', help = 'Fully decode one dead-lettered message.'))
+    dlq_show.add_argument('--id', type = int, required = True, help = 'Index from `dlq ls`.')
+    dlq_show.set_defaults(func = _cmd_dlq_show)
+
+    dlq_replay = _dlq_common(dlq_sub.add_parser(
+        'replay', help = 'Re-publish dead-lettered messages so a fixed flow can process them.'))
+    dlq_replay.add_argument('--code', help = 'Only replay this error code.')
+    dlq_replay.add_argument('--to-run', help = 'Run that should process them (defaults to --run-id).')
+    dlq_replay.add_argument('--limit', type = int, default = 1000)
+    dlq_replay.add_argument('--dry-run', action = 'store_true', help = 'Print what would be replayed.')
+    dlq_replay.set_defaults(func = _cmd_dlq_replay)
+
+    dlq_purge = dlq_sub.add_parser('purge', help = "Delete the flow's dead-letter stream.")
+    dlq_purge.add_argument('--flow-id', required = True)
+    dlq_purge.add_argument('--nats', default = 'nats://localhost:4222')
+    dlq_purge.set_defaults(func = _cmd_dlq_purge)
+
     return parser
 
-def main(argv : list[str] | None = None) -> None:
+def render_error(error : VideoflowError) -> None:
+    '''
+    Prints a failure the way an operator needs to read it: what broke, then what
+    to do about it, then the structured detail — never a traceback, which is a
+    stack of framework internals the reader did not write and cannot act on. Set
+    ``VF_DEBUG=1`` when the traceback *is* the thing you want.
+    '''
+    print(f'ERROR [{error.code}]: {error.message}', file = sys.stderr)
+    if error.remedy:
+        print(f'  {error.remedy}', file = sys.stderr)
+    for key, value in sorted(error.context.items()):
+        print(f'  {key}: {value}', file = sys.stderr)
+    if isinstance(error, GraphError) and len(error.diagnostics) > 1:
+        # Already listed inside the message; the warnings are the extra value.
+        for diagnostic in error.diagnostics:
+            if diagnostic.severity != 'error':
+                print(f'  {diagnostic.render()}', file = sys.stderr)
+
+def main(argv : list[str] | None = None) -> int:
+    '''
+    The one place a videoflow failure becomes an operator-facing message and a
+    process exit status.
+
+    The exit status carries the *class* of failure — 2 your flow, 3 your
+    environment, 4 the flow ran and lost nodes, 5 it stalled — so CI and wrapper
+    scripts can triage without parsing stderr. Everything used to exit 1.
+    '''
     parser = build_parser()
     args = parser.parse_args(argv)
-    args.func(args)
+    try:
+        args.func(args)
+    except VideoflowError as e:
+        render_error(e)
+        if os.environ.get('VF_DEBUG'):
+            traceback.print_exc()
+        return e.exit_code
+    except KeyboardInterrupt:
+        print('\nInterrupted.', file = sys.stderr)
+        return EXIT_INTERRUPTED
+    return 0
 
 if __name__ == '__main__':
-    main()
+    raise SystemExit(main())

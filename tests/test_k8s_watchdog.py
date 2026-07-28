@@ -12,6 +12,7 @@ with a canned kubectl and a fake clock; no cluster required.
 '''
 import pytest
 
+from videoflow.core.errors import EXIT_FLOW_STALLED, FlowStalled
 from videoflow.engines import kubernetes as k8s_engine
 from videoflow.engines.kubernetes import KubernetesExecutionEngine
 
@@ -81,12 +82,14 @@ def test_wait_aborts_on_unschedulable_pod_after_grace(monkeypatch, engine):
         jobs = 'vf-f-g|||g\n',                                    # pending forever
         pods = f'vf-f-g-abc12|Pending|Unschedulable|{INSUFFICIENT}\n',
     ))
-    with pytest.raises(RuntimeError) as e:
+    with pytest.raises(FlowStalled) as e:
         engine.wait_for_completion(poll_secs = 0, unschedulable_grace_secs = 60)
     assert 'Insufficient nvidia.com/gpu' in str(e.value)
     assert 'cannot be scheduled' in str(e.value)
     # The abort names the remedies rather than just the symptom.
     assert 'time-slicing' in str(e.value)
+    # A stall gets its own exit code so CI can tell it from a flow that ran and failed.
+    assert e.value.exit_code == EXIT_FLOW_STALLED
 
 
 def test_wait_does_not_abort_before_grace_or_during_scaleup(monkeypatch, engine):

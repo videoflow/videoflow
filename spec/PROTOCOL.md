@@ -83,7 +83,12 @@ depend on any other configuration channel for routing.
 | `VF_PARTITION_BY` | no | unset | Partition key: `trace_id` or a metadata field name. Enables partitioned consumption when set **and** `VF_NB_TASKS > 1` (§10). |
 | `VF_JOIN_POLICY_JSON` | no | unset | JSON `JoinPolicy` for a multi-parent node (§8.1). Absent ⇒ the flow-type default policy. |
 | `VF_ACK_WAIT_SECONDS` | no | `60` | Per-message ack deadline (§7). |
-| `VF_MAX_RETRIES` | no | `3` | BATCH redelivery attempts before dead-letter; `max_deliver = retries + 1` (§7). |
+| `VF_MAX_RETRIES` | no | `3` | Redelivery attempts before dead-letter for an at-least-once node; `max_deliver = retries + 1` (§7). |
+| `VF_DELIVERY` | no | flow-type preset | `at-least-once` or `best-effort`, overriding the flow type for this node (`DELIV-10`). |
+| `VF_ON_ERROR` | no | `transient` | Disposition for exceptions the SDK cannot classify: `poison`, `transient`, `worker_fatal` (`ERR-2`). |
+| `VF_BREAKER_THRESHOLD` | no | `10` | Consecutive failures before the worker declares itself unhealthy and exits (`ERR-5`); `0` disables. |
+| `VF_PROGRESS_TIMEOUT_SECONDS` | no | `300` | Seconds with no ack while work is pending before the node is declared stalled (`ERR-7`); `0` disables. |
+| `VF_TERMINATION_LOG` | no | `/dev/termination-log` | Path the worker writes its structured death reason to; Kubernetes surfaces it in `containerStatuses` (`ERR-3`). |
 | `VF_EOS_QUIESCENCE_MS` | no | `500` | Drain quiescence window before honoring EOS (§9). |
 | `VF_HEALTH_PORT` | no | `0` (local) / `8080` (k8s) | Health server port; `0` disables it (§12). |
 | `VF_BLOB_REDIS_URL` | no | unset | Enables the external blob store for large payloads (§13). |
@@ -143,9 +148,12 @@ discovery. Reference: `videoflow/messaging/topology.py`.
   running replica (a stable ordinal or a per-process id). Every replica MUST
   observe EOS via its own EOS durable.
 - **NAME-8** (control subject): `vf.{flow}.{run}._control.stop`.
-- **NAME-9** (DLQ stream / subject): stream `vf-{flow}-{run}-dlq`; a node's
-  dead-letter subject is `vf.{flow}.{run}._dlq.{node}` (the DLQ stream binds
-  `vf.{flow}.{run}._dlq.>`).
+- **NAME-9** (DLQ stream / subject): stream `vf-{flow}-dlq`; a node's dead-letter
+  subject is `vf.{flow}._dlq.{run}.{node}` (the DLQ stream binds
+  `vf.{flow}._dlq.>`). The stream is scoped to the **flow**, not the run: teardown
+  deletes a run's streams, and dead letters are wanted precisely after a run that
+  failed and was torn down. The run id lives in the subject so entries stay
+  attributable and filterable (RFC 0005).
 
 ---
 
@@ -193,8 +201,9 @@ the messenger's lazy `add_stream` is an idempotent fallback. Reference:
   (creating an existing stream/consumer is a no-op). Reference:
   `topology.provision_flow`. A component runtime does not provision the flow; it
   MAY lazily ensure its own stream exists as a fallback.
-- **STREAM-8** (DLQ stream): `vf-{flow}-{run}-dlq`, binding `vf.{flow}.{run}._dlq.>`,
-  `retention=LIMITS`, `discard=OLD`, `max_age=7 days`.
+- **STREAM-8** (DLQ stream): `vf-{flow}-dlq`, binding `vf.{flow}._dlq.>`,
+  `retention=LIMITS`, `discard=OLD`, `max_age=7 days`. It MUST NOT be deleted by
+  run teardown (`STREAM-9`).
 
 ---
 
@@ -398,21 +407,44 @@ it yields exactly-once-ish effects. Reference: `nats_messenger.py`.
 
 ### 7.3 Failure, retry, dead-letter
 
-On `fail_inputs(exc)` for the held handles:
+On `fail_inputs(exc)` for the held handles, the action is a function of the error's
+**disposition** (§15) and the node's **delivery mode**, not of the flow type alone.
+Reference: `core/policies.py::DeliveryPolicy.action_for`.
 
-- **DELIV-6** (REALTIME): terminate the message(s) (no redelivery — freshest wins).
-- **DELIV-7** (BATCH, under retry budget): NAK with a delay so it is redelivered.
-  The reference delay is `min(2**num_delivered, 30)s`; the schedule is
-  `implementation-defined`, redelivery is not.
-- **DELIV-8** (BATCH, budget exhausted): once `num_delivered >= max_deliver`
-  (`STREAM-5`), publish the **original raw message bytes** to the node's DLQ
-  subject (`NAME-9`) with headers `VF-Origin-Node`, `VF-Error` (truncated repr),
-  `VF-Num-Delivered`, and an idempotent `Nats-Msg-Id` of
-  `dlq:{flow}:{run}:{node}:{stream_seq}`; then terminate the original so it stops
-  being redelivered. If the DLQ publish itself fails, the message MUST NOT be
-  silently dropped — NAK it (with delay) so a later attempt can dead-letter it.
+- **DELIV-6** (the ladder): given a disposition and the broker's `num_delivered`,
+  the action MUST be:
+
+  | disposition | best-effort | at-least-once |
+  |---|---|---|
+  | `poison` | sampled DLQ (`ERR-6`), then term | DLQ immediately, then term |
+  | `transient` | term | NAK until `num_delivered >= max_deliver`, then DLQ |
+  | `worker_fatal` | NAK | NAK |
+
+  A `poison` message is never retried in either mode: it failed on its content and
+  its content will not change. A `worker_fatal` failure is never dead-lettered in
+  either mode: the message is fine, the worker is not, so it goes back for another
+  replica — and the worker then **stops** (`ERR-5`).
+- **DELIV-7** (retry delay): a NAK carries a delay so the message is redelivered
+  later. The reference delay is `min(2**num_delivered, 30)s` multiplied by a random
+  jitter in `[0.5, 1.5]`. The schedule is `implementation-defined`; redelivery is
+  not, and the jitter SHOULD be reproduced — a deterministic schedule makes N
+  replicas that failed together retry together.
+- **DELIV-8** (dead-letter record): to dead-letter, publish the **original raw
+  message bytes** to the node's DLQ subject (`NAME-9`) with headers
+  `VF-Origin-Node`, `VF-Run-Id`, `VF-Code`, `VF-Disposition`, `VF-Error`
+  (truncated message), `VF-Remedy` (truncated), `VF-Num-Delivered`, and an
+  idempotent `Nats-Msg-Id` of `dlq:{flow}:{run}:{node}:{stream_seq}`; then terminate
+  the original so it stops being redelivered. If the DLQ publish itself fails, the
+  message MUST NOT be silently dropped — NAK it (with delay) so a later attempt can
+  dead-letter it. `VF-Code` is what makes dead letters groupable; a free-text error
+  string is not.
 - **DELIV-9** (poison / undecodable): a message that fails to **decode** MUST be
   terminated (not redelivered forever) — it is a genuinely poisoned wire payload.
+  This is `poison` classified at the transport layer, before any node sees it.
+- **DELIV-10** (delivery mode): a node's mode comes from `VF_DELIVERY`, defaulting
+  to the flow type's preset (REALTIME ⇒ best-effort, BATCH ⇒ at-least-once). It
+  decides `max_deliver` for that node's durables (`STREAM-5`), so provisioning and
+  the worker MUST derive it the same way.
 
 ---
 
@@ -545,11 +577,14 @@ A processor/consumer stops only after every parent is **fully drained**, not
 merely when EOS is seen — otherwise in-flight data behind the EOS marker would be
 lost. Reference: `nats_messenger.py` (`_is_parent_stopped`, `_all_parents_stopped`).
 
-- **EOS-1** (per-replica observation): every replica observes each parent's EOS via
-  its own EOS durable (`NAME-7`, `STREAM-6`). The EOS message is **held un-acked**
-  until that parent is declared drained.
-- **EOS-2** (duplicate EOS): a second EOS from a parent (e.g. another replica's
-  marker) after that parent's EOS is already seen is simply acked and ignored.
+- **EOS-1** (per-replica observation): every replica observes each parent's
+  terminator via its own EOS durable (`NAME-7`, `STREAM-6`). A terminator is either
+  `MSG_TYPE_EOS` (clean) or `MSG_TYPE_ABORT` (abnormal, §16); both ride the same
+  subject. The terminator is **held un-acked** until that parent is declared drained.
+- **EOS-2** (duplicate terminator): a second terminator from a parent (e.g. another
+  replica's marker) after one is already seen is simply acked and ignored — except
+  that an ABORT MUST still be recorded (`ABORT-3`): one replica finishing cleanly
+  does not undo another one dying.
 - **EOS-3** (drain condition): a parent is **stopped** once **all** hold:
   (a) its EOS has been observed;
   (b) no data from it is buffered locally (its prefetch queue is empty);
@@ -565,7 +600,8 @@ lost. Reference: `nats_messenger.py` (`_is_parent_stopped`, `_all_parents_stoppe
 - **EOS-5** (loop termination): when **all** parents are stopped, `receive_message`
   returns an all-parents-stopped result (every parent entry marked `is_stop_signal`),
   which drives the task loop to (publish EOS if it has children, then) run `close()`
-  and exit (§6).
+  and exit (§6). It MUST return the same result early when **any** parent has
+  aborted and drained (`ABORT-4`), without waiting for the others.
 - **EOS-6** (`has_pending_from` for time groups): for a time-mode assembler, a
   parent counts as pending if any staged ready group, any pending group, or (for a
   collect parent) any non-empty collect buffer still holds its message. This MUST be
@@ -628,7 +664,10 @@ A worker with `VF_HEALTH_PORT > 0` MUST serve a plain HTTP server on that port
   `videoflow_<metric>_sum` for observed histograms `proctime_seconds` and
   `actual_proctime_seconds`, and counters `videoflow_messages_published_total`,
   `videoflow_messages_received_total`, `videoflow_messages_processed_total`,
-  `videoflow_messages_failed_total`. Metric names/labels SHOULD match so dashboards
+  `videoflow_messages_failed_total`; plus
+  `videoflow_errors_total{node,code,disposition}`, which is what makes *what* is
+  failing answerable — an undimensioned failure count cannot distinguish a wedged
+  device from a malformed payload. Metric names/labels SHOULD match so dashboards
   are portable.
 - **HEALTH-4** (unknown path): 404.
 
@@ -696,7 +735,102 @@ Reference: `videoflow/wire/serialization.py`.
 
 ---
 
-## 15. Conformance
+## 15. Error taxonomy and dispositions
+
+Reference: `videoflow/core/errors.py`, `spec/proto/videoflow/v1/error.proto`.
+
+An error crossing an SDK boundary is a `videoflow.v1.Error`. It exists as a proto
+rather than as one SDK's exception hierarchy because a taxonomy that lives in one
+language's class tree is invisible to every other implementation and to the tooling
+that aggregates failures across them.
+
+- **ERR-1** (disposition): every runtime failure has one of three dispositions:
+  `poison` (the data is bad), `transient` (the world was briefly unavailable), or
+  `worker_fatal` (this worker cannot process anything). `DISPOSITION_UNSPECIFIED`
+  MUST be treated as `transient`.
+- **ERR-2** (default): an exception the SDK cannot classify is `transient`. This is
+  the pre-taxonomy behaviour, so an SDK that does nothing keeps working. A node MAY
+  override its default via `VF_ON_ERROR`.
+- **ERR-3** (code): every error carries a stable, greppable `code`. Messages may be
+  reworded freely; codes may not, because metrics and dead-letter queries key on
+  them. An SDK MUST NOT synthesize a code from the message text.
+- **ERR-4** (remedy): an error SHOULD carry a `remedy` — what the reader should
+  *do*. It is a separate field so every renderer presents it the same way.
+- **ERR-5** (worker-fatal ends the worker): on a `worker_fatal` failure an SDK
+  MUST NAK the in-flight message (`DELIV-6`) and then **stop the worker**,
+  publishing an ABORT (`ABORT-1`) and exiting non-zero. The disposition is the
+  node asserting that nothing it is given will succeed; staying alive would only
+  NAK the rest of the stream one message at a time before reaching the same
+  conclusion.
+- **ERR-5a** (circuit breaker): for failures that arrive *unclassified*, an SDK
+  MUST stop a worker that fails `VF_BREAKER_THRESHOLD` messages **consecutively**
+  (default 10; any successful ack resets the count), leaving those inputs un-acked
+  so they return to the broker. Data failures are sparse and independent; worker
+  failures are dense and correlated, and counting a run of them separates the two
+  without relying on the taxonomy being right. Without this, one wedged worker
+  whose library error nothing recognizes dead-letters an entire healthy stream a
+  few messages at a time.
+- **ERR-6** (sampled dead-lettering): under a best-effort delivery mode an SDK
+  SHOULD dead-letter a bounded number of specimens per `(code, node)` per minute
+  (reference: 5) rather than none. Dropping a message under load shedding is a
+  policy; dropping the evidence of an exception is losing the bug report.
+- **ERR-7** (progress deadline): an SDK SHOULD stop a node that has acknowledged
+  nothing for `VF_PROGRESS_TIMEOUT_SECONDS` (default 300) **while its durables
+  report pending work**. The pending check is required: a wall-clock deadline
+  cannot tell a slow node from a wedged one, and an idle node is not stalled at all.
+
+---
+
+## 16. Abnormal termination (ABORT)
+
+Reference: `nats_messenger.py::publish_abort`, `core/task.py::raise_if_aborted`.
+
+A clean end of stream and a crash are different facts, and before RFC 0005 only the
+first existed on the wire — so a node that died mid-run left every descendant
+blocked on an end-of-stream that was never coming.
+
+- **ABORT-1** (marker): a node terminating abnormally SHOULD publish a
+  `MSG_TYPE_ABORT` envelope on **its own `_eos` subject** (`NAME-5`), carrying the
+  `Error` that killed it in `Envelope.error`. It reuses the EOS consumers and the
+  provision-time interest anchor unchanged; no new topology is involved. Its dedup
+  id MUST differ from the clean marker's (the reference uses trace id
+  `abort-r{replica}` against `eos-r{replica}`), so an abort is never mistaken for a
+  clean finish.
+- **ABORT-1a** (who announces what): a worker MUST publish an abort only for a
+  death **no restart can fix** — in practice a `poison` disposition, which will
+  repeat identically in any replacement. Every other death is announced by the
+  supervisor (`ABORT-6`) *after* it gives up. The restraint is required, not
+  stylistic: a worker that announced every death would end its children while its
+  own replacement was still starting, turning a recoverable crash into a flow-wide
+  failure. A worker that is dying MUST NOT publish a clean `MSG_TYPE_EOS` in
+  either case.
+- **ABORT-2** (bounded publish): publishing an abort MUST be bounded in time and
+  attempts (reference: 3 attempts, 10s overall) even under BATCH backpressure. The
+  publisher is already dying; the layers behind it (`ABORT-6`, `ERR-7`) cover the
+  case where it never gets out.
+- **ABORT-3** (receiver: recording): a receiver MUST treat `MSG_TYPE_ABORT` as a
+  terminator — `is_stop_signal` is true for **both** terminator types, so a reader
+  that predates this RFC still stops rather than hanging — and MUST additionally
+  record that the parent aborted, with its error. An abort outranks a clean EOS
+  from the same parent.
+- **ABORT-4** (receiver: early stop): once an aborted parent is **drained**
+  (`EOS-3`), the node MUST stop, without waiting for its other parents' end of
+  stream. No further input group involving that parent can ever complete, so
+  waiting is waiting for nothing. Draining first is required: work already
+  published is still processed.
+- **ABORT-5** (receiver: propagation): before stopping, a node with children MUST
+  publish its own ABORT carrying the originating error, and MUST exit non-zero.
+  Failure walks the graph the way end-of-stream does.
+- **ABORT-6** (supervisor abort): a control plane that gives up restarting a worker
+  MUST signal flow termination on the control subject (`NAME-8`). This covers the
+  worker that died too abruptly to publish anything.
+- **ABORT-7** (in-flight work): a node that receives an ABORT MUST finish and ack
+  the input group it already holds before stopping. The abort ends the stream; it
+  does not discard work already done.
+
+---
+
+## 17. Conformance
 
 Protocol v1 remains `stabilizing` until at least two non-Python SDKs pass the full
 conformance suite (`conformance/`, Phase 4). Every MUST above is exercised by a

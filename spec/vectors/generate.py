@@ -120,6 +120,36 @@ def build_cases() -> list:
             'payload': None, 'payload_desc': {'none': True},
         },
         {
+            # RFC 0005: an abnormal terminator. Rides the same _eos subject as a
+            # clean EOS and carries the error that killed the emitting node, so a
+            # crash propagates through the graph instead of hanging its children.
+            'name': 'abort',
+            'fields': {'producer_name': 'detector', 'flow_id': 'flow-A', 'run_id': 'run-1',
+                    'trace_id': 'abort-r2', 'seq': 11, 'msg_type': s.MSG_TYPE_ABORT,
+                    'metadata': None, 'event_ts': None, 'replica_id': 2},
+            'payload': None, 'payload_desc': {'none': True},
+            'error': {
+                'code': 'VF_DEVICE',
+                'message': 'CUDA out of memory on device 0',
+                'remedy': 'Lower the batch size, or grant the node more VRAM.',
+                'disposition': 'worker_fatal',
+                'node': 'detector',
+                'trace_id': 'cam:41',
+                'num_delivered': 2,
+                'context': {'replica': '2'},
+            },
+        },
+        {
+            # The minimum a conformant ABORT must carry: a code and a message.
+            # Everything else is optional and must round-trip as absent.
+            'name': 'abort_minimal',
+            'fields': {'producer_name': 'cam', 'flow_id': 'flow-A', 'run_id': 'run-1',
+                    'trace_id': 'abort-r0', 'seq': 0, 'msg_type': s.MSG_TYPE_ABORT,
+                    'metadata': None, 'event_ts': None, 'replica_id': 0},
+            'payload': None, 'payload_desc': {'none': True},
+            'error': {'code': 'VF_UNKNOWN', 'message': 'producer died'},
+        },
+        {
             'name': 'unicode_names_big_seq',
             'fields': {'producer_name': 'caméra-Ω', 'flow_id': 'flujo', 'run_id': 'ejecución',
                     'trace_id': 'caméra-Ω:1', 'seq': 9_000_000_000, 'msg_type': s.MSG_TYPE_DATA,
@@ -178,7 +208,7 @@ def main() -> None:
         buf = s.encode_envelope(
             f['producer_name'], f['flow_id'], f['run_id'], f['trace_id'], f['seq'],
             f['msg_type'], f['metadata'], case['payload'], replica_id = f['replica_id'],
-            event_ts = f['event_ts'], version = 4,
+            event_ts = f['event_ts'], version = 4, error = case.get('error'),
         )
         fname = case['name'] + '.bin'
         with open(os.path.join(ENVELOPE_DIR, fname), 'wb') as fh:
@@ -198,6 +228,8 @@ def main() -> None:
             'metadata': typed(f['metadata'] or {}),
             'payload': case['payload_desc'],
         })
+        if case.get('error') is not None:
+            manifest[-1]['error'] = case['error']
     with open(os.path.join(ENVELOPE_DIR, 'manifest.json'), 'w') as fh:
         json.dump(manifest, fh, indent = 2, ensure_ascii = False)
         fh.write('\n')
@@ -207,6 +239,9 @@ def main() -> None:
     for args in [
         ('flow-A', 'run-1', 'cam', 'cam:1', 1, s.MSG_TYPE_DATA),
         ('flow-A', 'run-1', 'cam', 'eos-r0', 9, s.MSG_TYPE_EOS),
+        # An abort's id must differ from the clean marker's, or a node that died
+        # would be de-duplicated against one that finished (ABORT-1).
+        ('flow-A', 'run-1', 'detector', 'abort-r2', 11, s.MSG_TYPE_ABORT),
         ('f', 'r', 'proc', 'tw-1700000000500000', 1700000000500000, s.MSG_TYPE_DATA),
         ('flujo', 'ejecución', 'caméra-Ω', 'caméra-Ω:1', 9_000_000_000, s.MSG_TYPE_DATA),
     ]:

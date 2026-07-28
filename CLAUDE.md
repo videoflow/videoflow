@@ -13,7 +13,7 @@ convention below follows from that.
 
 | Path | What lives there |
 |---|---|
-| `videoflow/core/` | The abstractions: `node.py` (Node hierarchy), `flow.py` (Flow), `graph.py` (validation), `task.py` (per-node run loop), `engine.py` (Messenger/ExecutionEngine interfaces), `policies.py` (JoinPolicy), `compiler.py` (Flow → `NodeSpec`s), `remote.py`, `constants.py` |
+| `videoflow/core/` | The abstractions: `node.py` (Node hierarchy), `flow.py` (Flow), `graph.py` (validation + `Diagnostic`s), `task.py` (per-node run loop, `invoke_node`), `engine.py` (Messenger/ExecutionEngine interfaces), `errors.py` (the error taxonomy + dispositions), `policies.py` (JoinPolicy, DeliveryPolicy), `supervision.py` (breaker, progress deadline, restart policy), `compiler.py` (Flow → `NodeSpec`s), `remote.py`, `constants.py` |
 | `videoflow/runtime/` | Runs **inside a worker container**: `worker.py` (the one-node entrypoint), `provision.py`, `health.py`, `idempotency.py`, `logging_config.py` |
 | `videoflow/deploy/` | Runs on the **operator's machine**: `cli.py`, `compile.py`, `manifests.py`, `images.py`, `build.py`, `cluster.py`, `gpu.py`, `solution.py`, `infra.py`, `localinfra.py` |
 | `videoflow/wire/` | `serialization.py` — the transport-independent envelope format (msgpack v2/v3, protobuf v4) |
@@ -45,6 +45,7 @@ cover the framework paths no in-process test reaches:
 | `toy_calculator` | BATCH | fan-out, trace join re-aligning branches, competing replicas, stateful aggregation, two-parent consumer, `metadata=True` consumer, prep hook | `report.json` → `matches_expected: true` |
 | `toy_router` | BATCH | `partition_by` routing, `ctx.set_partition_key`, `async def process`, replica identity, idempotent sink | `counts.json` → `matches_expected` **and** `sticky` |
 | `toy_fusion` | REALTIME | independent producers fused by event time, `tolerance_ms`/`quorum`/`collect`, unbounded sources, `ctx.input_info` | `fusion_summary.json` → complete moments |
+| `toy_recovery` | BATCH | the error taxonomy end to end: a poison message dead-lettered on its first failure, a worker-fatal error handed back and the worker restarted, DLQ inspection | `recovery_report.json` → `matches_expected: true` |
 
 Two things to know before touching them:
 
@@ -256,10 +257,30 @@ register dependencies in the descriptor pool, breaking a cold import of the wire
 **A node's `name` is its identity everywhere outside the building process** — broker subjects,
 Kubernetes resource names, logs. Renaming a node changes its wire identity.
 
-**Errors:** `ValueError` for graph/config validation with a message naming the fix;
-`SystemExit(str(e)) from e` in CLI paths so users see a message rather than a traceback;
-`RuntimeError` for lifecycle misuse; `NotImplementedError` for abstract methods and for nodes
-that can't work in distributed mode. Use `raise ... from e` consistently.
+**Errors: raise from the taxonomy in `core/errors.py`, never a bare builtin.**
+Which class you pick is not cosmetic — three different things branch on it.
+
+- **Build/config problems** → a `VideoflowUserError` subclass (`GraphError`,
+  `ConfigError`, `NodeContractError`, `CapabilityError`). Exit code 2.
+- **The world is wrong** → a `VideoflowEnvironmentError` subclass
+  (`BrokerUnavailable`, `ClusterError`, `ResourceUnavailable`). Exit code 3.
+- **A message was in flight** → a `VideoflowRuntimeError` subclass, and its
+  **disposition** decides what the message costs: `PoisonMessage` (dead-letter on
+  the first failure), `TransientFailure` (retry then dead-letter), `WorkerFatal`
+  (hand the message back, never blame it, stop the worker). Getting this wrong is
+  how a wedged worker dead-letters a healthy stream.
+
+Every error takes `remedy = ...` — the fix, as its own field rather than tacked
+onto the message, because the CLI, the DLQ inspector and the Kubernetes
+termination log all render it. Codes (`VF_POISON_SCHEMA`) are permanent: messages
+may be reworded, codes may not, because metrics and DLQ queries key on them.
+
+`NotImplementedError` still marks abstract methods and nodes that can't work in
+distributed mode. Use `raise ... from e` consistently.
+
+**The CLI does not convert errors.** `deploy/cli.py::main` has exactly one
+`except VideoflowError` that renders and returns `e.exit_code`; a command function
+raises the typed error and stops. Do not add `SystemExit` back.
 
 **Observable wire or routing changes require an RFC** under `spec/rfcs/` plus updated golden
 vectors in `spec/vectors/`. `spec/PROTOCOL.md` has stable requirement IDs (`ENV-1`, `EOS-3`,
@@ -276,6 +297,8 @@ finishing, check each of these and update the ones your change invalidates:
   every push to master. Note it also triggers on `videoflow/**`, because the API reference is
   generated from the package's own docstrings by autodoc.
 - `spec/PROTOCOL.md` + `spec/vectors/` — the wire format or routing changed (also needs an RFC).
+- `docs/source/user-documentation/error-handling-and-recovery.rst` — a disposition,
+  the retry ladder, restarts, the DLQ or an exit code changed.
 - `CLAUDE.md` and `.claude/docs/*.md` — conventions, layout, or commands changed.
 - `examples/` — an example is now wrong or misleading.
 - `solutions/` — a toy solution's graph, nodes or config keys changed. Its `README.md`,

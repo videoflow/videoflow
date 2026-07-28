@@ -21,6 +21,7 @@ import argparse
 
 import pytest
 
+from videoflow.core.errors import EXIT_ENVIRONMENT, ClusterError
 from videoflow.deploy import cli, gpu
 
 
@@ -82,11 +83,12 @@ def test_failed_prepare_rolls_back_then_exits(registry_sandbox):
     events = []
     strategy = _register_recording_strategy(registry_sandbox, events,
                                             prepare_error = RuntimeError('half-applied'))
-    with pytest.raises(SystemExit) as excinfo:
+    with pytest.raises(ClusterError) as excinfo:
         cli._gpu_prepare(strategy, {'nvidia.com/gpu': 1}, 'kubectl')
     assert [e[0] for e in events] == ['prepare', 'cleanup']
     assert 'recording' in str(excinfo.value)          # names the mode
     assert 'half-applied' in str(excinfo.value)       # keeps the cause
+    assert excinfo.value.exit_code == EXIT_ENVIRONMENT   # a cluster problem, not a bad flow
 
 
 def test_interrupted_prepare_rolls_back_and_propagates(registry_sandbox):

@@ -17,6 +17,7 @@ from __future__ import absolute_import, division, print_function
 import asyncio
 import hashlib
 import logging
+import random
 import threading
 import time
 import uuid
@@ -28,10 +29,19 @@ from nats.js import JetStreamContext
 
 from ..core.constants import REALTIME
 from ..core.engine import Messenger
+from ..core.errors import DEFAULT_DISPOSITION, classify, error_to_dict
 from ..core.node import Node
-from ..core.policies import JOIN_TIME, JoinPolicy
+from ..core.policies import (
+    ACTION_DLQ_SAMPLED,
+    ACTION_NAK,
+    ACTION_TERM,
+    JOIN_TIME,
+    DeliveryPolicy,
+    JoinPolicy,
+)
 from ..wire.serialization import (
     DEFAULT_ENVELOPE_VERSION,
+    MSG_TYPE_ABORT,
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
     BlobStore,
@@ -47,7 +57,6 @@ from .topology import (
     durable_name_for,
     eos_consumer_config,
     eos_subject_for,
-    max_deliver_for,
     partitioned_durable_name_for,
     stream_config_for,
     stream_name_for,
@@ -71,10 +80,50 @@ _QUEUE_MAXSIZE = 4
 # before giving up. Each retry rechecks the termination flag so a stopping flow
 # doesn't wedge here forever.
 _PUBLISH_RETRY_BACKOFF = [0.05, 0.1, 0.2, 0.5, 1.0]
+# Hard bound on getting an ABORT marker out. A dying worker should spend seconds,
+# not minutes, trying to tell its children — the supervisor's control-abort and
+# the receiver's progress deadline cover the case where it never manages.
+_ABORT_PUBLISH_TIMEOUT = 10
 
 #: Result type of a coroutine handed to ``_AckHandle._run`` — ties the value the
 #: caller gets back to the coroutine it passed in.
 _T = TypeVar('_T')
+
+class _DlqSampler:
+    '''
+    Rate-limits dead-lettering to a bounded number of specimens per
+    ``(code, node)`` per minute.
+
+    This is what makes a best-effort node's failures visible without making its
+    dead-letter queue unbounded. Dropping a message under load shedding is a
+    policy; dropping the *evidence* of an exception is just losing the bug report.
+    A handful of specimens per distinct failure per minute is enough to diagnose
+    any of them, and the suppressed remainder is still counted in
+    ``videoflow_errors_total``.
+
+    - Arguments:
+        - per_minute: specimens admitted per key per window. 0 admits nothing.
+        - clock: monotonic time source; injected for tests.
+    '''
+    def __init__(self, per_minute : int, clock : Any = time.monotonic) -> None:
+        self._per_minute = per_minute
+        self._clock = clock
+        self._windows : dict[str, tuple[float, int]] = {}
+
+    def admit(self, code : str, node : str) -> bool:
+        '''Whether this failure should be dead-lettered rather than only counted.'''
+        if self._per_minute <= 0:
+            return False
+        key = f'{code}\x00{node}'
+        now = self._clock()
+        started, count = self._windows.get(key, (now, 0))
+        if now - started >= 60.0:
+            started, count = now, 0
+        if count >= self._per_minute:
+            self._windows[key] = (started, count)
+            return False
+        self._windows[key] = (started, count + 1)
+        return True
 
 class _AckHandle:
     '''
@@ -175,7 +224,8 @@ class NATSMessenger(Messenger):
                 eos_quiescence_ms : int = 500, nb_tasks : int = 1,
                 partition_by : str | None = None, join_policy : dict | None = None,
                 envelope_version : int | None = None, blob_readers : int | None = None,
-                blob_ttl_seconds : int | None = None) -> None:
+                blob_ttl_seconds : int | None = None,
+                delivery_policy : dict | None = None) -> None:
         self._node = node
         # Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).
         self._envelope_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
@@ -194,7 +244,11 @@ class NATSMessenger(Messenger):
                                 else DEFAULT_BLOB_TTL_BATCH_SECONDS))
         self._replica_id = replica_id
         self._ack_wait = ack_wait
-        self._max_deliver = max_deliver_for(flow_type, max_retries)
+        # What a failure costs here. Resolved once: the flow-type preset, this
+        # node's own delivery/on_error override, then the deployment's retry count.
+        self._delivery_policy = DeliveryPolicy.resolve(flow_type, delivery_policy, max_retries)
+        self._max_deliver = self._delivery_policy.max_deliver
+        self._dlq_sampler = _DlqSampler(self._delivery_policy.sample_per_minute)
         self._eos_quiescence_s = max(0.0, eos_quiescence_ms / 1000.0)
         self._nb_tasks = nb_tasks
         # Partitioned iff a key is set and there's more than one replica.
@@ -237,6 +291,10 @@ class NATSMessenger(Messenger):
         self._eos_seen: set[str] = set()
         self._eos_handles: dict[str, _AckHandle] = {}
         self._quiescent_since: dict[str, float] = {}
+        # Parents whose terminator was an ABORT rather than a clean EOS, with the
+        # error each carried. Surfaced through receive_message so the task can
+        # report the real cause and relay it, instead of reporting a clean finish.
+        self._aborted_parents: dict[str, dict] = {}
         # Consecutive empty receive polls — drives the periodic EOS-drain stall log.
         self._idle_polls = 0
         # Ack handles: _inflight_handles are the handles of the group last returned
@@ -398,10 +456,11 @@ class NATSMessenger(Messenger):
                 await self._parent_queues[parent_name].put((entry, handle))
 
     async def _eos_pull_loop(self, parent_name : str, sub : JetStreamContext.PullSubscription) -> None:
-        # Observes end-of-stream for one parent. The EOS message is *not* acked
-        # here — it's held (in _eos_handles) and acked only once the parent's data
-        # is fully drained (see _is_parent_stopped), so a crash mid-drain leaves EOS
-        # un-acked and re-observable on restart.
+        # Observes end-of-stream for one parent — clean (EOS) or abnormal (ABORT);
+        # both ride this subject. The marker is *not* acked here: it's held (in
+        # _eos_handles) and acked only once the parent's data is fully drained
+        # (see _is_parent_stopped), so a crash mid-drain leaves it un-acked and
+        # re-observable on restart.
         while not self._closing.is_set():
             try:
                 msgs = await sub.fetch(batch = 1, timeout = _FETCH_TIMEOUT_SECONDS)
@@ -414,9 +473,24 @@ class NATSMessenger(Messenger):
                 await asyncio.sleep(0.5)
                 continue
             for msg in msgs:
+                aborted = False
+                try:
+                    decoded = decode_envelope(msg.data)
+                    aborted = bool(decoded.get('is_abort'))
+                except Exception:
+                    # An undecodable terminator still means "this parent ended".
+                    # Refusing to stop because the *reason* was unreadable would
+                    # trade a diagnosable failure for a hang.
+                    logger.debug(f'could not decode terminator from {parent_name}',
+                                exc_info = True)
+                    decoded = {}
+                if aborted:
+                    # An abort outranks a clean EOS from the same parent: one
+                    # replica finishing normally does not undo another one dying.
+                    self._aborted_parents[parent_name] = decoded.get('error') or {}
                 if parent_name in self._eos_seen:
-                    # Already saw EOS from this parent (another replica's marker):
-                    # ack the extra and move on.
+                    # Already saw a terminator from this parent (another replica's
+                    # marker): ack the extra and move on.
                     try:
                         await msg.ack()
                     except Exception:
@@ -560,16 +634,49 @@ class NATSMessenger(Messenger):
         eos_trace = f'eos-r{self._replica_id}'
         self._publish(None, None, eos_trace, self._last_seq, MSG_TYPE_EOS)
 
+    def publish_abort(self, error : Any) -> None:
+        '''
+        Publishes an abnormal end-of-stream carrying why this node died.
+
+        Rides the same ``_eos`` subject as a clean EOS, which is the point: it
+        reuses the per-replica EOS consumers and the provisioning interest anchor
+        unchanged, so a marker published by a dying node is still retained and
+        still reaches every downstream replica. Its dedup id is distinct from the
+        clean marker's so a node that aborts is never mistaken for one that
+        finished.
+        '''
+        abort_trace = f'abort-r{self._replica_id}'
+        self._publish(None, None, abort_trace, self._last_seq, MSG_TYPE_ABORT,
+                    error = error_to_dict(error))
+
+    def pending_count(self) -> int:
+        '''
+        Messages waiting for this node across all its parents — locally queued,
+        held in incomplete join groups, or still on the broker. Feeds
+        ``ProgressDeadline``, which needs "is there work to do" to tell a stalled
+        node from an idle one.
+        '''
+        total = 0
+        for parent in self._parent_names:
+            queue = self._parent_queues.get(parent)
+            if queue is not None:
+                total += queue.qsize()
+            num_pending, num_ack_pending = self._consumer_pending(parent)
+            total += num_pending + num_ack_pending
+        return total
+
     def _publish(self, message : Any, metadata : Optional[dict], trace_id : str, seq : int,
-                msg_type : str, event_ts : float | None = None) -> None:
+                msg_type : str, event_ts : float | None = None,
+                error : Optional[dict] = None) -> None:
         node_name = self._node.name
         buf = encode_envelope(
             node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
             metadata, message, replica_id = self._replica_id, event_ts = event_ts,
             blob_store = self._blob_store, version = self._envelope_version,
             blob_readers = self._blob_readers, blob_ttl_seconds = self._blob_ttl_seconds,
+            error = error,
         )
-        if msg_type == MSG_TYPE_EOS:
+        if msg_type in (MSG_TYPE_EOS, MSG_TYPE_ABORT):
             subject = eos_subject_for(self._flow_id, self._run_id, node_name)
         else:
             subject = subject_for(self._flow_id, self._run_id, node_name)
@@ -585,6 +692,13 @@ class NATSMessenger(Messenger):
         }
 
         is_realtime = self._flow_type == REALTIME
+        # An ABORT is published by a worker that is already dying, so it must not
+        # inherit BATCH's block-until-there-is-room backpressure: the whole point
+        # of the marker is to reach children *quickly*. If it cannot get out, the
+        # supervisor's control-abort and the receiver-side progress deadline are
+        # the layers behind it.
+        is_abort = msg_type == MSG_TYPE_ABORT
+        max_attempts = 3 if is_abort else None
 
         async def _do_publish() -> None:
             # REALTIME (Discard=OLD): a full stream evicts the oldest message, so a
@@ -604,12 +718,14 @@ class NATSMessenger(Messenger):
                         raise
                     if 'maximum messages' not in str(e).lower() and 'wrong last sequence' not in str(e).lower():
                         raise
+                    if max_attempts is not None and attempt >= max_attempts:
+                        raise
                     delay = _PUBLISH_RETRY_BACKOFF[min(attempt, len(_PUBLISH_RETRY_BACKOFF) - 1)]
                     attempt += 1
                     await asyncio.sleep(delay)
 
         fut = asyncio.run_coroutine_threadsafe(_do_publish(), self._loop)
-        fut.result(timeout = 120)
+        fut.result(timeout = _ABORT_PUBLISH_TIMEOUT if is_abort else 120)
 
     # -- ack / fail (called by the task after process()/consume()) --------
 
@@ -621,31 +737,58 @@ class NATSMessenger(Messenger):
 
     def fail_inputs(self, exc : BaseException) -> None:
         '''
-        The node raised while processing the last input group. REALTIME drops it
-        (no redelivery — freshest wins). BATCH nak's it for redelivery until it
-        exhausts ``max_deliver``, then dead-letters it and terminates it so it
-        stops being redelivered.
+        The node raised while processing the last input group. The action is
+        decided by ``DeliveryPolicy.action_for`` from *how the error classified*
+        and how many times the broker has delivered it — not by the flow type
+        alone. This messenger only executes the verdict.
+
+        The difference that matters: a poison message is dead-lettered on its
+        first failure rather than burning four attempts on its way to the same
+        place, and a worker-fatal error naks without dead-lettering, because the
+        message is fine and this worker is not.
         '''
+        disposition = classify(exc, self._delivery_policy.on_error or DEFAULT_DISPOSITION)
+        error = dict(error_to_dict(exc))
+        # Stamp the disposition that was actually *used*, not the one the exception
+        # happened to carry: a bare ValueError has none, and that is precisely the
+        # case where the classifier did the work and the record must say so.
+        error['disposition'] = disposition
         for handle in self._inflight_handles:
-            if self._flow_type == REALTIME:
+            action = self._delivery_policy.action_for(disposition, handle.num_delivered)
+            if action == ACTION_TERM:
                 handle.term()
-            elif handle.num_delivered >= self._max_deliver:
-                if self._dlq_publish(handle, exc):
+            elif action == ACTION_NAK:
+                delay = self._delivery_policy.retry_delay(
+                    handle.num_delivered, jitter = random.uniform(0.5, 1.5))
+                handle.nak(delay = delay)
+            elif action == ACTION_DLQ_SAMPLED:
+                # Bounded specimens per distinct failure: enough to diagnose,
+                # never enough to fill a stream.
+                code = str(error.get('code', 'VF_UNKNOWN'))
+                if self._dlq_sampler.admit(code, self._node.name):
+                    self._dlq_publish(handle, error)
+                handle.term()
+            else:                                   # ACTION_DLQ
+                if self._dlq_publish(handle, error):
                     handle.term()
                 else:
                     # Never silently drop: if the DLQ publish itself failed, keep
                     # the message alive (nak) so a later attempt can dead-letter it.
                     handle.nak(delay = 5)
-            else:
-                handle.nak(delay = min(2 ** handle.num_delivered, 30))
         self._inflight_handles = []
 
-    def _dlq_publish(self, handle : _AckHandle, exc : BaseException) -> bool:
+    def _dlq_publish(self, handle : _AckHandle, error : dict) -> bool:
         subject = dlq_subject_for(self._flow_id, self._run_id, self._node.name)
         seq = handle.stream_seq
         headers = {
             'VF-Origin-Node': self._node.name,
-            'VF-Error': repr(exc)[:256],
+            'VF-Run-Id': self._run_id,
+            # Structured, so dead letters can be grouped and alerted on. The old
+            # repr(exc) was free text: unaggregatable, and never the same twice.
+            'VF-Code': str(error.get('code', 'VF_UNKNOWN')),
+            'VF-Disposition': str(error.get('disposition', '')),
+            'VF-Error': str(error.get('message', ''))[:256],
+            'VF-Remedy': str(error.get('remedy') or '')[:256],
             'VF-Num-Delivered': str(handle.num_delivered),
             # Idempotent DLQ id (stream seq is unique per original message), so a
             # re-attempt of the same dead-letter doesn't duplicate it.
@@ -675,13 +818,11 @@ class NATSMessenger(Messenger):
             # surface it to the task loop as an all-parents-stopped result so
             # ConsumerTask/ProcessorTask break out and run close(). Otherwise a
             # parent is "stopped" only once its EOS is seen and its data is drained.
-            if self._termination_event.is_set() or self._all_parents_stopped():
+            if (self._termination_event.is_set() or self._all_parents_stopped()
+                    or self._any_parent_aborted_and_drained()):
                 self._last_trace_id = None
                 self._last_input_info = None
-                return {
-                    name: {'message': None, 'metadata': None, 'is_stop_signal': True}
-                    for name in self._parent_names
-                }
+                return self._terminal_result()
 
             self._assembler.sweep()
 
@@ -747,6 +888,35 @@ class NATSMessenger(Messenger):
                 self._assembler.add(parent_name, entry, handle)
 
     # -- EOS drain -------------------------------------------------------
+
+    def _terminal_result(self) -> dict:
+        '''
+        The all-parents-stopped shape ``receive_message`` returns when this node
+        should end. An aborted parent is reported as such so the task raises the
+        real cause and relays it downstream, instead of treating a crashed
+        upstream as a clean end of stream.
+        '''
+        return {
+            name: {
+                'message': None, 'metadata': None, 'is_stop_signal': True,
+                'is_abort': name in self._aborted_parents,
+                'abort_origin': name if name in self._aborted_parents else None,
+                'abort_error': self._aborted_parents.get(name),
+            }
+            for name in self._parent_names
+        }
+
+    def _any_parent_aborted_and_drained(self) -> bool:
+        '''
+        Whether some parent aborted and its data is fully drained.
+
+        This is what keeps a *join* from hanging on a half-dead graph: if one
+        parent died, no further input group involving it can ever complete, so
+        waiting for the surviving parents' end-of-stream would be waiting for
+        nothing. Draining first is deliberate — the work that was already
+        published still gets done before the node stops.
+        '''
+        return any(self._is_parent_stopped(p) for p in self._aborted_parents)
 
     def _all_parents_stopped(self) -> bool:
         if not self._parent_names:
