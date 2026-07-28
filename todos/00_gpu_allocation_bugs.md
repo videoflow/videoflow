@@ -68,7 +68,7 @@ last-one-out. RFC 0004 amended ("Per-run entry names").
 15. **Watchdog GPU hint misses MIG** —
     [kubernetes.py:399](videoflow/engines/kubernetes.py#L399) matches
     `'gpu' in message`; "Insufficient nvidia.com/mig-1g.10gb" doesn't contain
-    "gpu", and the hint text is exclusive-specific.
+    "gpu", and the hint text is exclusive-specific.  kubernetes.py:474 matches 'gpu' in message, and Insufficient nvidia.com/mig-1g.10gb contains no gpu, so the watchdog hint never fires for MIG.
 16. **`--gpu-autoscaling` × mix** — KEDA can scale a sharer past `nb_tasks`, but
     the layout provisioned exactly `nb_tasks` slices; extra replicas can never
     schedule (no re-solve). Exclude sharers or say so in the NOTE.
@@ -77,6 +77,12 @@ last-one-out. RFC 0004 amended ("Per-run entry names").
     ('unknown' should arguably taint like time-sliced does).
 18. **`NodeInventory.memory_gib_per_card` is dead** — collected, never read by
     the solver.
+19. The testing lesson matters more than the bug: a cluster test spawning two videoflow deploy subprocesses can never reliably hit a 2 ms window, so it would pass on the broken code and be cited as proof the CAS works. The right test is a unit test asserting the argv carries a resourceVersion precondition.
+20. gpu.py:1014-1022 documents _stamp_node_owners as a compare-and-swap: "the label is applied WITHOUT --overwrite, so losing a race to a concurrent deploy fails the label command instead of silently stealing the node."
+
+I verified with kubectl -v=8: kubectl label does a GET, then an unconditional merge patch with no resourceVersion precondition (PATCH …?fieldManager=kubectl-label, body {"metadata":{"labels":{…}}}). On an already-labelled node it sends zero PATCH requests — the check is entirely client-side.
+
+To be precise, and correcting the reviewer's stronger claim: kubectl's own GET happens ~2 ms before its PATCH, so this is a narrow TOCTOU window, not an absence of protection. But it is not the CAS the docstring claims, and multi-tenant node ownership is the one place the difference matters. The fix already exists 450 lines above in the same file — _publish_mig_configmap does get → replace carrying resourceVersion → retry on conflict (gpu.py:574-587). ~15 lines.
 
 ## Suggested fix order (if/when we act)
 
