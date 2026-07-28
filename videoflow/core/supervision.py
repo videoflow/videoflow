@@ -221,7 +221,10 @@ class SupervisionPolicy:
     '''
     max_restarts : int = 3
     backoff_seconds : Tuple[float, ...] = (10.0, 20.0, 40.0)
-    restart_on : FrozenSet[str] = frozenset({TRANSIENT, WORKER_FATAL})
+    # The same set ``is_terminal`` reads, not a copy of it: "worth restarting" and
+    # "not final by nature" are one fact, and two frozensets of the same values
+    # would drift the moment a fourth disposition existed.
+    restart_on : FrozenSet[str] = RECOVERABLE_DISPOSITIONS
 
     @classmethod
     def local(cls) -> "SupervisionPolicy":

@@ -22,7 +22,10 @@ def test_names_are_run_scoped():
     assert topology.subject_for('f', 'r', 'node') == 'vf.f.r.node'
     assert topology.stream_name_for('f', 'r', 'node') == 'vf-f-r-node'
     assert topology.control_subject_for('f', 'r') == 'vf.f.r._control.stop'
-    assert topology.dlq_stream_name('f', 'r') == 'vf-f-r-dlq'
+    # The DLQ is the deliberate exception to run scoping: it must outlive the
+    # run's teardown, which is exactly when its contents are wanted (RFC 0005).
+    assert topology.dlq_stream_name('f') == 'vf-f-dlq'
+    assert topology.dlq_subject_for('f', 'r', 'n') == 'vf.f._dlq.r.n'
     # Different runs never collide.
     assert topology.stream_name_for('f', 'r1', 'n') != topology.stream_name_for('f', 'r2', 'n')
 
@@ -73,7 +76,7 @@ def test_provision_is_idempotent():
             for name in ('producer', 'proc', 'sink'):
                 info = await js.stream_info(topology.stream_name_for(flow_id, run_id, name))
                 assert info is not None
-            await js.stream_info(topology.dlq_stream_name(flow_id, run_id))
+            await js.stream_info(topology.dlq_stream_name(flow_id))
             # Durable consumers exist on parent streams.
             cinfo = await js.consumer_info(
                 topology.stream_name_for(flow_id, run_id, 'producer'),

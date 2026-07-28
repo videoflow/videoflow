@@ -17,15 +17,16 @@ from .errors import (
     classify,
 )
 from .node import ConsumerNode, Node, ProcessorNode, ProducerNode
-from .supervision import is_terminal
+from .supervision import ConsecutiveFailureBreaker, ProgressDeadline, is_terminal
 
 if TYPE_CHECKING:
     # Type-only: the store is constructed in the worker (videoflow.runtime) and
     # handed down to the task, so a real import here would invert the
     # core <- runtime dependency direction for nothing but an annotation.
     from ..runtime.idempotency import IdempotencyStore
-    from .supervision import ConsecutiveFailureBreaker, ProgressDeadline
 
+# ``supervision`` is imported plainly rather than deferred: it is core, pure, and
+# has no optional dependencies, so there is nothing to gain by hiding it.
 logger = logging.getLogger(__package__)
 
 def _ctx_kwarg(method : Callable[..., Any]) -> Optional[str]:
@@ -117,8 +118,8 @@ class NodeTask(Task):
     '''
     def __init__(self, computation_node : Node, messenger : Messenger, has_children : bool,
                 ctx : Optional[RuntimeContext] = None,
-                breaker : Optional["ConsecutiveFailureBreaker"] = None,
-                deadline : Optional["ProgressDeadline"] = None,
+                breaker : Optional[ConsecutiveFailureBreaker] = None,
+                deadline : Optional[ProgressDeadline] = None,
                 on_error : str = DEFAULT_DISPOSITION) -> None:
         self._messenger = messenger
         self._computation_node = computation_node
@@ -266,8 +267,8 @@ class ProducerTask(NodeTask):
     '''
     def __init__(self, producer : ProducerNode, messenger : Messenger, has_children : bool,
                 ctx : Optional[RuntimeContext] = None,
-                breaker : Optional["ConsecutiveFailureBreaker"] = None,
-                deadline : Optional["ProgressDeadline"] = None,
+                breaker : Optional[ConsecutiveFailureBreaker] = None,
+                deadline : Optional[ProgressDeadline] = None,
                 on_error : str = DEFAULT_DISPOSITION) -> None:
         self._producer = producer
         super(ProducerTask, self).__init__(producer, messenger, has_children, ctx,
@@ -312,8 +313,8 @@ class ProcessorTask(NodeTask):
     '''
     def __init__(self, processor : ProcessorNode, messenger : Messenger, has_children : bool,
                 parent_names : List[str], ctx : Optional[RuntimeContext] = None,
-                breaker : Optional["ConsecutiveFailureBreaker"] = None,
-                deadline : Optional["ProgressDeadline"] = None,
+                breaker : Optional[ConsecutiveFailureBreaker] = None,
+                deadline : Optional[ProgressDeadline] = None,
                 on_error : str = DEFAULT_DISPOSITION) -> None:
         '''
         - Arguments:
@@ -398,8 +399,8 @@ class ConsumerTask(NodeTask):
     def __init__(self, consumer : ConsumerNode, messenger : Messenger, has_children : bool,
                 parent_names : List[str], ctx : Optional[RuntimeContext] = None,
                 idempotency_store : Optional["IdempotencyStore"] = None,
-                breaker : Optional["ConsecutiveFailureBreaker"] = None,
-                deadline : Optional["ProgressDeadline"] = None,
+                breaker : Optional[ConsecutiveFailureBreaker] = None,
+                deadline : Optional[ProgressDeadline] = None,
                 on_error : str = DEFAULT_DISPOSITION) -> None:
         self._consumer = consumer
         self._parent_names = list(parent_names)
