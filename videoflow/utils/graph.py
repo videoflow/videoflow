@@ -68,7 +68,10 @@ def _topological_sort_util(v : 'Node', visited : dict['Node', bool], stack : lis
         - stack: (list)
     '''
     visited[v] = True
-    for child in (v.children or set()):
+    # `children` is a set; walking it in name order makes the sort deterministic
+    # across processes, so two compiles of one graph emit the same spec order
+    # (and the same provision image choice, which follows specs[0]).
+    for child in sorted(v.children or set(), key = lambda c: c.name):
         if not child in visited or visited[child] == False:
             _topological_sort_util(child, visited, stack)
     stack.insert(0, v)

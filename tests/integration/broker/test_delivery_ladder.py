@@ -214,6 +214,38 @@ def test_an_undecodable_payload_is_terminated_not_retried_forever():
         cleanup(flow_id, run_id)
 
 
+def test_an_undecodable_payload_is_dead_lettered_before_termination_under_rfc0006(monkeypatch):
+    '''
+    DELIV-15 (RFC 0006): the same poison, but its raw bytes reach the DLQ under
+    ``VF_POISON_DECODE`` *before* the delivery is terminated, so its only trace is
+    no longer its own disappearance. The good message behind it still arrives.
+    '''
+    from videoflow.core import constants
+    monkeypatch.setattr(constants, 'RFC0006', True)
+    flow_id, run_id = ids()
+    _flow(flow_id, run_id, BATCH)
+    m = _messenger(flow_id, run_id, BATCH)
+    poison = b'\x80\x81 not an envelope'
+    try:
+        publish_raw(flow_id, run_id, 'parent', poison)
+        publish_parent_message(flow_id, run_id, 'parent', 't2', 2, {'value': 2})
+        inputs = m.receive_message()
+        assert inputs['parent']['message'] == {'value': 2}
+        m.ack_inputs()
+        dlq = read_dlq(flow_id)
+        assert len(dlq) == 1
+        assert dlq[0]['headers']['VF-Code'] == 'VF_POISON_DECODE'
+        assert dlq[0]['headers']['VF-Disposition'] == 'poison'
+        assert dlq[0]['headers']['VF-Origin-Node'] == 'child'
+        assert dlq[0]['data'] == poison                                 # verbatim, for forensics
+        pending, unacked = consumer_state(flow_id, run_id, 'child', 'parent')
+        assert (pending, unacked) == (0, 0)                             # terminated, not stranded
+        assert m.take_drops() == {'undecodable': 1}
+    finally:
+        m.close()
+        cleanup(flow_id, run_id)
+
+
 def test_a_dlq_publish_failure_naks_rather_than_dropping(monkeypatch):
     '''
     "Never silently drop" — if the dead-letter publish itself fails, the message

@@ -24,6 +24,7 @@ if TYPE_CHECKING:
     # handed down to the task, so a real import here would invert the
     # core <- runtime dependency direction for nothing but an annotation.
     from ..runtime.idempotency import IdempotencyStore
+    from ..runtime.watchdog import ProgressWatchdog
 
 # ``supervision`` is imported plainly rather than deferred: it is core, pure, and
 # has no optional dependencies, so there is nothing to gain by hiding it.
@@ -115,12 +116,18 @@ class NodeTask(Task):
             handed down, like ``idempotency_store``.
         - deadline: trips when the node stops acking while work is pending.
         - on_error (str): disposition for exceptions nothing classifies.
+        - watchdog: re-checks ``deadline`` on its own thread while the node is \
+            inside ``process()``/``consume()`` (see ``videoflow.runtime.watchdog``). \
+            Started once ``open()`` has returned and stopped when the loop ends; \
+            it must hold the same ``deadline`` instance, or it measures silence \
+            the loop never resets.
     '''
     def __init__(self, computation_node : Node, messenger : Messenger, has_children : bool,
                 ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         self._messenger = messenger
         self._computation_node = computation_node
         self._has_children = has_children
@@ -128,6 +135,7 @@ class NodeTask(Task):
         self._breaker = breaker
         self._deadline = deadline
         self._on_error = on_error
+        self._watchdog = watchdog
         self._async_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
@@ -232,6 +240,14 @@ class NodeTask(Task):
             # half-open state to release), but downstream must still be told.
             self._abort_downstream(e)
             raise
+        # open() is where a model loads, and a slow load is not silence: the
+        # deadline was constructed before it, so reset the window here or the
+        # first check would read the load time as a stall. Only then may the
+        # watchdog start looking.
+        if self._deadline is not None:
+            self._deadline.record_progress()
+        if self._watchdog is not None:
+            self._watchdog.start()
         try:
             self._run()
         except UpstreamAborted:
@@ -245,6 +261,11 @@ class NodeTask(Task):
                 self._abort_downstream(e)
             raise
         finally:
+            # The watchdog supervises the run loop, not the teardown: stopped
+            # first, so it cannot exit the process mid-close() and overwrite the
+            # real cause of death with a stall report.
+            if self._watchdog is not None:
+                self._watchdog.stop()
             try:
                 self._call(self._computation_node.close)
             except Exception:
@@ -269,10 +290,11 @@ class ProducerTask(NodeTask):
                 ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         self._producer = producer
         super(ProducerTask, self).__init__(producer, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     def _run(self) -> None:
         previous_end_t = time.time()
@@ -315,7 +337,8 @@ class ProcessorTask(NodeTask):
                 parent_names : List[str], ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         '''
         - Arguments:
             - parent_names ([str]): names of this node's real parents, in the exact \
@@ -328,7 +351,7 @@ class ProcessorTask(NodeTask):
         self._processor = processor
         self._parent_names = list(parent_names)
         super(ProcessorTask, self).__init__(processor, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     @property
     def device_type(self) -> str:
@@ -401,13 +424,14 @@ class ConsumerTask(NodeTask):
                 idempotency_store : Optional["IdempotencyStore"] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         self._consumer = consumer
         self._parent_names = list(parent_names)
         # Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).
         self._idem_store = idempotency_store if consumer.idempotent else None
         super(ConsumerTask, self).__init__(consumer, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     def _run(self) -> None:
         while True:

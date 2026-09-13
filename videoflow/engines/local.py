@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import signal
 import site
 import subprocess
@@ -26,8 +27,10 @@ from typing import List, Optional
 
 import nats  # also an import guard: fail fast if the broker client is missing
 
+from ..core import constants
 from ..core.compiler import (
     NodeSpec,
+    blob_reader_ids,
     specs_from_tasks_data,
     validate_wire_compatibility,
 )
@@ -149,8 +152,11 @@ class LocalProcessEngine(ExecutionEngine):
                 python_path : list | None = None, inherit_python_path : bool = True,
                 default_image : str | None = None,
                 blob_ttl_seconds : int | None = None,
-                supervision : SupervisionPolicy | None = None) -> None:
+                supervision : SupervisionPolicy | None = None,
+                profile_requests : dict[str, str] | None = None) -> None:
         self._supervision = supervision or SupervisionPolicy.local()
+        # Explicit channel-profile requests for the workers' env (deploy.admission); empty by default.
+        self._profile_requests = dict(profile_requests or {})
         self._events = EventLog()
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
@@ -236,7 +242,10 @@ class LocalProcessEngine(ExecutionEngine):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
                                 self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
-                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)))
+                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)),
+                                profile_requests = self._profile_requests,
+                                blob_reader_ids = (blob_reader_ids(spec, specs)
+                                                   if constants.RFC0006 else None))
                 env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
                 # Kept so a restart relaunches the identical worker, and so the
                 # supervisor never has to re-derive an environment.
@@ -318,22 +327,33 @@ class LocalProcessEngine(ExecutionEngine):
 
         A worker killed by SIGINT/SIGTERM is not counted and not restarted: that
         is Ctrl-C or ``flow.stop()`` propagating, not a failure.
+
+        Every worker is watched **concurrently**: one waiter thread per child
+        reports its exit on a queue, and this loop drains the queue. Waiting on
+        the children one after another — the previous shape — meant a processor
+        that died while the source ahead of it in the list was still running was
+        not restarted (or the flow not failed) until that source exited, which
+        for an unbounded source is never: a healthy producer hid a dead
+        downstream worker indefinitely.
         '''
         stopped = {-signal.SIGINT, -signal.SIGTERM}
         self._failures = []
         pending = list(self._procs)
         self._procs = []
+        exits : queue.Queue[tuple] = queue.Queue()
+        outstanding = 0
+        for entry in pending:
+            _watch_exit(entry, exits)
+            outstanding += 1
         try:
-            while pending:
-                name, replica_idx, proc = pending.pop(0)
-                while True:
-                    try:
-                        proc.wait()
-                        break
-                    except KeyboardInterrupt:
-                        # The children got the same SIGINT; keep reaping rather than
-                        # abandoning them (a second Ctrl-C used to escape here).
-                        continue
+            while outstanding:
+                try:
+                    name, replica_idx, proc = exits.get()
+                except KeyboardInterrupt:
+                    # The children got the same SIGINT; keep reaping rather than
+                    # abandoning them (a second Ctrl-C used to escape here).
+                    continue
+                outstanding -= 1
                 code = proc.returncode or 0
                 if code == 0 or code in stopped:
                     continue
@@ -341,7 +361,8 @@ class LocalProcessEngine(ExecutionEngine):
                 self._events.emit(NodeExited(name, replica_idx, code, reason))
                 restarted = self._maybe_restart(name, replica_idx, reason)
                 if restarted is not None:
-                    pending.append(restarted)
+                    _watch_exit(restarted, exits)
+                    outstanding += 1
                     continue
                 self._failures.append((name, replica_idx, code))
         finally:
@@ -487,7 +508,13 @@ class LocalProcessEngine(ExecutionEngine):
         async def _go() -> None:
             nc = await nats.connect(self._nats_url)
             try:
-                await topology.delete_run_streams(nc, flow_id, run_id)
+                observation = await topology.delete_run_streams(nc, flow_id, run_id)
+                if not observation.complete:
+                    # Incomplete is not failed-silently: name what is left so a
+                    # retried teardown knows there is something to retry.
+                    logger.warning(f'run {run_id} of flow {flow_id}: broker cleanup incomplete — '
+                                   f'{observation.reason or "some streams remain"}; remaining: '
+                                   f'{", ".join(observation.remaining) or "unknown"}')
             finally:
                 await nc.drain()
 
@@ -495,6 +522,36 @@ class LocalProcessEngine(ExecutionEngine):
             asyncio.run(_go())
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
+
+def _watch_exit(entry : tuple, exits : 'queue.Queue[tuple]') -> threading.Thread:
+    '''
+    Waits for one worker on its own daemon thread and reports ``entry`` — the
+    supervisor's ``(name, replica, proc)`` — on ``exits`` once it has ended.
+
+    The thread reports unconditionally: a waiter that failed to report would
+    leave the supervisor loop counting a worker that nothing will ever deliver.
+    The exit status is read off ``proc.returncode`` by the loop, as before, so a
+    ``wait()`` that raised (it should not; ``Popen.wait`` retries EINTR) is
+    logged and the process is judged by whatever status it recorded.
+
+    Daemon, so a supervisor interrupted out of its loop does not hang the
+    interpreter on a worker it has already given up waiting for.
+    '''
+    name, replica_idx, proc = entry
+
+    def _wait() -> None:
+        try:
+            proc.wait()
+        except Exception:
+            logger.warning(f'waiting on worker node={name} replica={replica_idx} raised',
+                        exc_info = True)
+        finally:
+            exits.put(entry)
+
+    thread = threading.Thread(target = _wait, daemon = True,
+                              name = f'vf-wait-{name}-{replica_idx}')
+    thread.start()
+    return thread
 
 def _runs_via_docker(spec : NodeSpec) -> bool:
     '''
@@ -559,7 +616,9 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
                 python_path : list | None = None,
                 blob_ttl_seconds : int | None = None,
-                gpu_devices : list[int] | None = None) -> dict:
+                gpu_devices : list[int] | None = None,
+                profile_requests : dict[str, str] | None = None,
+                blob_reader_ids : list[str] | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -604,6 +663,9 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
     if spec.blob_readers is not None:
         # Enables refcounted blob reclamation (PROTOCOL.md BLOB-5); absent ⇒ TTL-only.
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
+    if blob_reader_ids:
+        # Reader obligations by identity (RFC 0006 BLOB-13); only rendered under the switch.
+        env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
     if spec.device_type == 'gpu' and not _runs_via_docker(spec):
@@ -621,6 +683,8 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         # Cooperative masking: the worker sees exactly its granted devices, so the
         # visibility contract holds locally too (see assign_local_gpus).
         env['CUDA_VISIBLE_DEVICES'] = ','.join(str(d) for d in gpu_devices)
+    if profile_requests:
+        env.update(profile_requests)
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:

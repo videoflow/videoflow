@@ -116,6 +116,13 @@ register_mig_table(MigTable('H100-80GB', ['H100', '80GB'], 7, [
     MigProfile('4g.40gb', 40, 4, 1),
     MigProfile('7g.80gb', 80, 7, 1),
 ]))
+# RTX PRO 6000 Blackwell Server Edition (96 GiB): four equal partitions — profiles as
+# reported by `nvidia-smi mig -lgip` on the target cluster (driver 595.71, Sep 2026).
+register_mig_table(MigTable('RTX-PRO-6000-Blackwell', ['RTX-PRO-6000', 'Blackwell'], 4, [
+    MigProfile('1g.24gb', 24, 1, 4),
+    MigProfile('2g.48gb', 48, 2, 2),
+    MigProfile('4g.96gb', 96, 4, 1),
+]))
 register_mig_table(MigTable('H100-94GB', ['H100', '94GB'], 7, [
     MigProfile('1g.12gb', 12, 1, 7),
     MigProfile('1g.24gb', 24, 1, 4),
@@ -157,6 +164,10 @@ class NodeInventory:
     #: on busy nodes: repartitioning destroys running workloads, but whole-card
     #: spanner claims are scheduler-accounted and remain safe.
     mig_allowed : bool = True
+    #: False when the pod listing behind ``used_units`` could not be read. Unknown
+    #: occupancy is not zero occupancy: the mix strategy refuses to plan on such a
+    #: node rather than repartition cards another tenant may hold.
+    occupancy_known : bool = True
 
 
 @dataclass
@@ -192,10 +203,13 @@ class GpuLayout:
 
 class _Card:
     '''Mutable per-card packing state used only inside the solver.'''
-    def __init__(self, node : str, index : int, table : Optional[MigTable]) -> None:
+    def __init__(self, node : str, index : int, table : Optional[MigTable],
+                 memory_gib : float = 0.0) -> None:
         self.node = node
         self.index = index
         self.table = table
+        self.memory_gib = memory_gib                 # physical card memory; 0 = unknown
+        self.memory_used = 0.0
         self.whole_owner : Optional[str] = None      # spanner spec name, once taken
         self.mig_counts : Dict[str, int] = {}        # profile name -> count
         self.slices_used = 0
@@ -209,11 +223,16 @@ class _Card:
             return False
         if self.slices_used + profile.slices > self.table.total_slices:
             return False
+        # Compute slices and memory are separate budgets: an H100 fits 4 x 1g.20gb by
+        # slice count (4 of 7) but not by memory with three 1g.10gb beside them.
+        if self.memory_gib > 0 and self.memory_used + profile.memory_gib > self.memory_gib:
+            return False
         return self.mig_counts.get(profile.name, 0) < profile.max_per_gpu
 
     def add(self, profile : MigProfile) -> None:
         self.mig_counts[profile.name] = self.mig_counts.get(profile.name, 0) + 1
         self.slices_used += profile.slices
+        self.memory_used += profile.memory_gib
 
 
 def solve_layout(inventory : List[NodeInventory], specs : List[NodeSpec]) -> GpuLayout:
@@ -244,7 +263,7 @@ def solve_layout(inventory : List[NodeInventory], specs : List[NodeSpec]) -> Gpu
     for node in sorted(inventory, key = lambda n: n.name):
         table = mig_table_for_product(node.product) if node.mig_allowed else None
         for index in range(node.card_count):
-            cards.append(_Card(node.name, index, table))
+            cards.append(_Card(node.name, index, table, node.memory_gib_per_card))
     if not cards:
         raise LayoutError('the GPU pool has no cards to lay out — no node advertises '
                           'GPU Feature Discovery labels (nvidia.com/gpu.count/.product). '

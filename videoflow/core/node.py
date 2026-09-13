@@ -11,6 +11,7 @@ from ..utils.graph import has_cycle, topological_sort
 from .constants import CPU, DEVICE_TYPES, GPU, LOGGING_LEVEL
 from .errors import DISPOSITIONS
 from .policies import DELIVERY_MODES, JoinPolicy
+from .provenance import FIELD_GPU_COUNT, builtin_defaults, node_declarations, resolve_gpu_requirements
 
 _SLUG_RE = re.compile(r'[^a-z0-9]+')
 
@@ -340,7 +341,9 @@ class ProcessorNode(ErrorHandlingMixin, Node):
             (``device_type=GPU`` only — a positive count on a CPU node is a build \
             error). ``N > 1`` grants N whole devices on one host, visible as \
             ``cuda:0..N-1`` (RFC 0003); locally the engine partitions the host's \
-            devices to match.
+            devices to match. Unset (``None``, the default) means one device; \
+            whether the ``1`` was explicit or defaulted is kept in \
+            ``gpu_provenance``.
         - gpu_memory_gib (int | float): GPU memory this node needs, in GiB \
             (``device_type=GPU`` only). Under ``--gpu-mode mix`` each replica gets \
             an exclusive MIG slice of at least this size, chosen by the layout \
@@ -356,7 +359,7 @@ class ProcessorNode(ErrorHandlingMixin, Node):
     '''
     def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
                 partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
-                gpu_count : int = 1, gpu_memory_gib : int | float | None = None,
+                gpu_count : int | None = None, gpu_memory_gib : int | float | None = None,
                 delivery : Optional[str] = None, on_error : Optional[str] = None,
                 **kwargs : Any) -> None:
         self._set_error_handling(delivery, on_error)
@@ -364,13 +367,25 @@ class ProcessorNode(ErrorHandlingMixin, Node):
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
-        if not isinstance(gpu_count, int) or isinstance(gpu_count, bool) or gpu_count < 1:
+        if gpu_count is not None and (not isinstance(gpu_count, int) or isinstance(gpu_count, bool)
+                                      or gpu_count < 1):
             raise ValueError(f'gpu_count must be a positive integer, got {gpu_count!r}')
-        if gpu_count > 1 and device_type != GPU:
-            raise ValueError(f'gpu_count={gpu_count} requires device_type=GPU, got '
+        # One resolver for every source a GPU requirement can come from (RFC
+        # 0003/0004): here the sources are the explicit arguments and the
+        # built-in defaults, and the record says which of the two each value is;
+        # ``core.remote.component`` adds a descriptor's declarations to the same
+        # call. A node contradicting itself (cpu + gpu_count=2 in one call) is
+        # not the resolver's to judge — the checks below reject it with the
+        # messages the API documents.
+        resolution = resolve_gpu_requirements(
+            node_declarations(device_type, gpu_count, gpu_memory_gib) + builtin_defaults(),
+            subject = name or type(self).__name__)
+        resolved_count : int = resolution.values[FIELD_GPU_COUNT]
+        if resolved_count > 1 and device_type != GPU:
+            raise ValueError(f'gpu_count={resolved_count} requires device_type=GPU, got '
                              f'{device_type!r} — a CPU node cannot hold a GPU grant. '
                              f'Pass device_type=GPU, or drop gpu_count.')
-        self._gpu_count = gpu_count
+        self._gpu_count = resolved_count
         if gpu_memory_gib is not None:
             if isinstance(gpu_memory_gib, bool) or not isinstance(gpu_memory_gib, (int, float)) \
                     or gpu_memory_gib <= 0:
@@ -379,12 +394,13 @@ class ProcessorNode(ErrorHandlingMixin, Node):
                 raise ValueError(f'gpu_memory_gib={gpu_memory_gib} requires device_type=GPU, got '
                                  f'{device_type!r} — a memory demand only means something on a GPU. '
                                  f'Pass device_type=GPU, or drop gpu_memory_gib.')
-            if gpu_count > 1:
-                raise ValueError(f'gpu_memory_gib and gpu_count={gpu_count} are mutually exclusive: '
+            if resolved_count > 1:
+                raise ValueError(f'gpu_memory_gib and gpu_count={resolved_count} are mutually exclusive: '
                                  f'a model cannot span MIG slices, so a node declares either a '
                                  f'fraction of one device (gpu_memory_gib) or whole devices '
                                  f'(gpu_count > 1), never both.')
         self._gpu_memory_gib = gpu_memory_gib
+        self._gpu_provenance : Dict[str, str] = resolution.provenance
         self._partition_by = partition_by
         # Stored as a plain dict so get_params() stays JSON-serializable.
         if isinstance(join_policy, JoinPolicy):
@@ -415,6 +431,19 @@ class ProcessorNode(ErrorHandlingMixin, Node):
     def gpu_memory_gib(self) -> int | float | None:
         '''GPU memory demand in GiB (drives the ``mix`` strategy's MIG slice choice), or None.'''
         return self._gpu_memory_gib
+
+    @property
+    def gpu_provenance(self) -> Dict[str, str]:
+        '''
+        Where each GPU requirement value came from, as ``{field: source}`` over \
+            ``device_type``, ``gpu_count`` and ``gpu_memory_gib``: ``'node'`` for an \
+            explicit argument, ``'default'`` for the built-in default, and \
+            ``'descriptor'`` when a remote component's ``component.yaml`` supplied \
+            it (see ``videoflow.core.provenance``). Deliberately not a ``NodeSpec`` \
+            field — the serialized spec is unchanged; \
+            ``videoflow.core.compiler.gpu_provenance`` collects it per flow.
+        '''
+        return dict(self._gpu_provenance)
 
     @property
     def partition_by(self) -> Optional[str]:

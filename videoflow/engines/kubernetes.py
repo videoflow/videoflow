@@ -184,7 +184,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 gpu_runtime_class : str | None = None, gpu_mode : str = 'exclusive',
                 gpu_resource_name : str | None = None, gpu_autoscaling : bool = False,
                 image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
-                supervision : SupervisionPolicy | None = None) -> None:
+                supervision : SupervisionPolicy | None = None,
+                priority_class : str | None = None,
+                profile_requests : dict[str, str] | None = None,
+                stream_replicas : int = 1) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -197,6 +200,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._provision_image = provision_image
         self._autoscaling = autoscaling
         self._max_replicas = max_replicas
+        self._priority_class = priority_class
+        self._profile_requests = dict(profile_requests or {})
+        # Stream copies the provision Job asks for (a replicated broker profile).
+        self._stream_replicas = stream_replicas
         self._nats_monitoring_endpoint = nats_monitoring_endpoint
         self._mounts = mounts
         self._gpu_runtime_class = gpu_runtime_class
@@ -239,6 +246,9 @@ class KubernetesExecutionEngine(ExecutionEngine):
             gpu_autoscaling = self._gpu_autoscaling,
             image_pull_policy = self._image_pull_policy,
             supervision = self._supervision,
+            priority_class = self._priority_class,
+            profile_requests = self._profile_requests,
+            stream_replicas = self._stream_replicas,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
@@ -650,7 +660,11 @@ def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:
         try:
             await nc.publish(control_subject_for(flow_id, run_id), b'stop')
             await nc.flush()
-            await delete_run_streams(nc, flow_id, run_id)
+            observation = await delete_run_streams(nc, flow_id, run_id)
+            if not observation.complete:
+                logger.warning(f'run {run_id} of flow {flow_id}: broker cleanup incomplete — '
+                               f'{observation.reason or "some streams remain"}; remaining: '
+                               f'{", ".join(observation.remaining) or "unknown"}')
         finally:
             await nc.drain()
 

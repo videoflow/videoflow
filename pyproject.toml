@@ -124,9 +124,28 @@ markers = [
     # `pytest -m integration`) once a server is up.
     "integration: requires a reachable NATS JetStream server.",
     # Also applied automatically, to tests/integration/k8s/ only. Those run whole
-    # flows on a kind cluster via `videoflow deploy` and gate themselves on the
-    # cluster rather than on VF_TEST_NATS_URL — see ./scripts/kind-up.sh.
-    "k8s: requires a kind cluster provisioned by scripts/kind-up.sh.",
+    # flows on a Kubernetes cluster via `videoflow deploy` and gate themselves on
+    # the cluster rather than on VF_TEST_NATS_URL — the shared k3s cluster prepared
+    # by ./scripts/k3s-test-up.sh, or a kind cluster from ./scripts/kind-up.sh
+    # when VF_KIND_CLUSTER is set (what CI uses). The gate never provisions.
+    "k8s: requires a Kubernetes test cluster — k3s prepared by scripts/k3s-test-up.sh, or kind (VF_KIND_CLUSTER) from scripts/kind-up.sh.",
+    # The backend conformance suite (tests/conformance/). Every catalog case is a
+    # test; cases whose fixture is absent report NOT_RUN through a prefixed skip
+    # reason — see tests/conformance/_status.py. `level_*` are derived from
+    # `level(name)` by that directory's conftest so `-m level_broker` works.
+    "conformance: a backend conformance case from tests/conformance/catalog.",
+    "case(id): the catalog case ID this test implements.",
+    "level(name): the level this test runs at (model|process|broker|kubernetes|gpu|benchmark).",
+    "variant(name): a named variant of a case (several tests may share one case ID).",
+    "negative_control(of): a test that must detect the reviewed defect for case `of`.",
+    "pending(phase): the case is written as a skeleton until the named phase lands.",
+    "gpu_nodes: needs VF_K8S_GPU_NODES (in-cluster GPU pods).",
+    "level_model: derived from level('model').",
+    "level_process: derived from level('process').",
+    "level_broker: derived from level('broker').",
+    "level_kubernetes: derived from level('kubernetes').",
+    "level_gpu: derived from level('gpu').",
+    "level_benchmark: derived from level('benchmark').",
 ]
 filterwarnings = [
     # nats-py schedules a background flusher task that, in the short-lived

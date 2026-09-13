@@ -1,0 +1,98 @@
+{
+  "consumer": {
+    "ack_policy": "explicit",
+    "ack_wait": 60000000000,
+    "deliver_policy": "all",
+    "durable_name": "child--from--parent",
+    "filter_subject": "vf.f.r.parent",
+    "idle_heartbeat": 0,
+    "inactive_threshold": 0,
+    "max_ack_pending": 8,
+    "max_deliver": 4,
+    "replay_policy": "instant"
+  },
+  "dlq_stream": {
+    "allow_rollup_hdrs": false,
+    "deny_delete": false,
+    "deny_purge": false,
+    "discard": "old",
+    "discard_new_per_subject": false,
+    "duplicate_window": 0,
+    "max_age": 604800000000000,
+    "max_msg_size": -1,
+    "max_msgs_per_subject": -1,
+    "name": "vf-f-dlq",
+    "no_ack": false,
+    "retention": "limits",
+    "sealed": false,
+    "subjects": [
+      "vf.f._dlq.>"
+    ]
+  },
+  "eos_anchor": {
+    "ack_policy": "explicit",
+    "ack_wait": 30000000000,
+    "deliver_policy": "all",
+    "durable_name": "n--eos--anchor",
+    "filter_subject": "vf.f.r.n._eos",
+    "idle_heartbeat": 0,
+    "inactive_threshold": 0,
+    "replay_policy": "instant"
+  },
+  "eos_consumer": {
+    "ack_policy": "explicit",
+    "ack_wait": 30000000000,
+    "deliver_policy": "all",
+    "durable_name": "child--eos--parent--r0-abcd1234",
+    "filter_subject": "vf.f.r.parent._eos",
+    "idle_heartbeat": 0,
+    "inactive_threshold": 3600000000000,
+    "replay_policy": "instant"
+  },
+  "max_deliver/batch/at-least-once": 4,
+  "max_deliver/batch/best-effort": 1,
+  "max_deliver/batch/preset": 4,
+  "max_deliver/realtime/at-least-once": 4,
+  "max_deliver/realtime/best-effort": 1,
+  "max_deliver/realtime/preset": 1,
+  "stream/batch": {
+    "allow_rollup_hdrs": false,
+    "deny_delete": false,
+    "deny_purge": false,
+    "discard": "new",
+    "discard_new_per_subject": false,
+    "duplicate_window": 120000000000,
+    "max_age": 0,
+    "max_msg_size": -1,
+    "max_msgs": 10000,
+    "max_msgs_per_subject": -1,
+    "name": "vf-f-r-n",
+    "no_ack": false,
+    "retention": "interest",
+    "sealed": false,
+    "subjects": [
+      "vf.f.r.n",
+      "vf.f.r.n._eos"
+    ]
+  },
+  "stream/realtime": {
+    "allow_rollup_hdrs": false,
+    "deny_delete": false,
+    "deny_purge": false,
+    "discard": "old",
+    "discard_new_per_subject": false,
+    "duplicate_window": 120000000000,
+    "max_age": 0,
+    "max_msg_size": -1,
+    "max_msgs": 1,
+    "max_msgs_per_subject": -1,
+    "name": "vf-f-r-n",
+    "no_ack": false,
+    "retention": "limits",
+    "sealed": false,
+    "subjects": [
+      "vf.f.r.n",
+      "vf.f.r.n._eos"
+    ]
+  }
+}

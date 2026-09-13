@@ -455,3 +455,33 @@ def test_video_file_reader_is_finite():
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+def _provision_env(manifests):
+    job = next(m for m in manifests if m['kind'] == 'Job' and m['metadata']['name'].endswith('-provision'))
+    return {e['name']: e['value'] for e in job['spec']['template']['spec']['containers'][0]['env']}
+
+def test_stream_replicas_reach_the_provision_job_only_for_a_replicated_profile():
+    specs = compile_flow(_demo_flow())
+    plain = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
+    assert 'VF_STREAM_REPLICAS' not in _provision_env(plain)
+    replicated = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG,
+                                  stream_replicas = 3)
+    assert _provision_env(replicated)['VF_STREAM_REPLICAS'] == '3'
+    # Everything else is byte-identical: only the provision Job's env differs.
+    assert dump_manifests(plain) != dump_manifests(replicated)
+    assert [m for m in plain if m['kind'] != 'Job'] == [m for m in replicated if m['kind'] != 'Job']
+
+def test_reader_ids_are_rendered_only_under_the_switch(monkeypatch):
+    from videoflow.core import constants
+    specs = compile_flow(_demo_flow())
+    def node_cms(manifests):
+        return {m['data']['VF_NODE_NAME']: m['data'] for m in manifests
+                if m['kind'] == 'ConfigMap' and 'VF_NODE_NAME' in m.get('data', {})}
+    off = node_cms(render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG))
+    assert not any('VF_BLOB_READER_IDS' in data for data in off.values())
+    monkeypatch.setattr(constants, 'RFC0006', True)
+    on = node_cms(render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG))
+    assert on['producer']['VF_BLOB_READER_IDS'] == 'identity'
+    assert 'VF_BLOB_READER_IDS' not in on['printer']                    # no readers at all
+    assert {k: v for k, v in on['producer'].items() if k != 'VF_BLOB_READER_IDS'} == off['producer']

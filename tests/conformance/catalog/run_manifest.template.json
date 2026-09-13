@@ -1,0 +1,64 @@
+{
+  "template_only": true,
+  "qualification_status": "NOT_CONFIGURED",
+  "run_id": null,
+  "started_at": null,
+  "manifest_sha256": null,
+  "source": {
+    "core_commit": "1f88ff759dd9392cd6bfb0269f8e2953483074a6",
+    "contrib_commit": "4d70a317b34eb043dd8542ecac44d06e1c2bcc11",
+    "adapter_commit": null
+  },
+  "composition": {
+    "messaging_adapter": null,
+    "messaging_profiles": [],
+    "payload_adapter": null,
+    "state_store": null,
+    "allocation_adapter": null,
+    "execution_adapter": null,
+    "advertised_capabilities": []
+  },
+  "environment": {
+    "broker_image_digest": null,
+    "effective_stream_consumer_config": null,
+    "payload_image_digest": null,
+    "payload_durability_config": null,
+    "kubernetes_version": null,
+    "dra_or_device_plugin_digest": null,
+    "feature_gates": null,
+    "nvidia_driver": null,
+    "container_toolkit": null,
+    "cuda_runtime": null,
+    "gpu_models_and_profiles": null,
+    "node_inventory": null,
+    "framework_image_digests": null
+  },
+  "workload": {
+    "graph_digest": null,
+    "frame_bytes": null,
+    "frame_encoding": null,
+    "camera_count": null,
+    "offered_fps": null,
+    "worker_counts": null,
+    "fanout": null,
+    "batch_size": null
+  },
+  "selection": {
+    "required_case_ids": [],
+    "required_variants_by_case": {},
+    "exclusions_with_capability_justification": {},
+    "selection_reviewed": false
+  },
+  "fixture": {
+    "seed": null,
+    "named_barriers": [],
+    "deadlines_seconds": {},
+    "clock_origins_and_tolerances": {},
+    "retention_horizons_seconds": {},
+    "byte_budgets": {},
+    "performance_SLOs": {},
+    "expected_transfer_budgets": {}
+  },
+  "evidence_root": null,
+  "instructions": "Fill all relevant fields; review explicit case/variant selection. An empty selection cannot certify anything. Pin manifests before execution. No automatic qualification runner is included."
+}

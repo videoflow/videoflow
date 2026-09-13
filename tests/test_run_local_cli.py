@@ -11,7 +11,7 @@ import sys
 import pytest
 
 from videoflow.core.errors import EXIT_ENVIRONMENT, EXIT_FLOW_FAILED, EXIT_USER
-from videoflow.deploy import cli, localinfra, solution
+from videoflow.deploy import admission, cli, localinfra, solution
 
 GRAPH = '''
 from videoflow.consumers import CommandlineConsumer
@@ -44,6 +44,7 @@ class _FakeEngine:
 class _FakeFlow:
     def __init__(self, tasks_data = None):
         self.flow_id = 'demo'
+        self.flow_type = 'realtime'          # run-local admits the composition per flow type
         self.run_id = 'run1'
         self.joined = False
         self._tasks_data = tasks_data or []
@@ -79,6 +80,11 @@ def wiring(tmp_path, monkeypatch):
                         lambda c: calls.append(('teardown', c)))
     monkeypatch.setattr(solution, 'run_prepare_local',
                         lambda d, c = None: calls.append('prepare') or True)
+    # The live read-back of a bring-your-own broker/store, recorded rather than run.
+    monkeypatch.setattr(cli, 'jetstream_capabilities_observed',
+                        lambda url, **kw: calls.append(('probe-nats', url)) or admission.jetstream_capabilities(None))
+    monkeypatch.setattr(cli, 'redis_payload_capabilities_observed',
+                        lambda url, **kw: calls.append(('probe-redis', url)) or admission.redis_payload_capabilities(None))
     return tmp_path, calls
 
 
@@ -112,6 +118,36 @@ def test_no_infra_uses_the_default_url_without_docker(wiring):
     _run(tmp_path, '--no-infra')
     assert not any(c[0] == 'ensure' for c in calls if isinstance(c, tuple))
     assert _FakeEngine.instances[0].kwargs['nats_url'] == localinfra.DEFAULT_NATS_URL
+
+
+def test_a_bring_your_own_broker_is_read_back_not_assumed(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--nats', 'nats://elsewhere:4222')
+    assert ('probe-nats', 'nats://elsewhere:4222') in calls
+    assert not any(c[0] == 'probe-redis' for c in calls if isinstance(c, tuple))
+
+
+def test_no_infra_reads_back_whatever_listens_on_the_default_url(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--no-infra')
+    assert ('probe-nats', localinfra.DEFAULT_NATS_URL) in calls
+
+
+def test_the_dev_containers_are_judged_by_their_declared_shape(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path)
+    assert not any(c[0].startswith('probe-') for c in calls if isinstance(c, tuple))
+
+
+def test_a_bring_your_own_store_is_read_back_beside_dev_infra(wiring, monkeypatch):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--blob-redis-url', 'redis://flag:6379/3')
+    assert ('probe-redis', 'redis://flag:6379/3') in calls
+    assert not any(c[0] == 'probe-nats' for c in calls if isinstance(c, tuple))
+    calls.clear()
+    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
+    _run(tmp_path)
+    assert ('probe-redis', 'redis://env:6379/2') in calls
 
 
 def test_prepare_runs_before_the_graph_is_loaded(wiring):

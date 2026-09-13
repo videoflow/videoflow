@@ -7,13 +7,16 @@ Pure/unit: subprocess.Popen and broker provisioning are monkeypatched — no NAT
 '''
 import json
 import os
+import queue
 import signal
 import subprocess
 import sysconfig
+import threading
+import time
 
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
-from videoflow.core.compiler import compile_flow
+from videoflow.core.compiler import blob_reader_ids, compile_flow
 from videoflow.core.constants import BATCH
 from videoflow.core.supervision import SupervisionPolicy
 from videoflow.engines.local import LocalProcessEngine, _worker_env, assign_local_gpus, inherited_python_path
@@ -357,3 +360,134 @@ def test_sigint_is_not_restarted(monkeypatch):
                                 returncodes = [0, -signal.SIGINT, 0])
     assert engine.wait_for_completion() == []
     assert engine.events().restart_count() == 0
+
+
+# -- concurrent supervision (RUN-048) -------------------------------------------
+
+class _GatedProc:
+    '''A stand-in worker whose exit the test controls: wait() blocks until the gate opens.'''
+    def __init__(self, returncode, gate):
+        self.returncode = returncode
+        self.pid = 4243
+        self._gate = gate
+
+    def wait(self):
+        self._gate.wait()
+        return self.returncode
+
+
+def _run_engine_with_gated_source(monkeypatch, engine, later_codes):
+    '''
+    Launches the flow with the producer blocked on the returned gate; the later
+    launches (work, printer, then any restart) take ``later_codes`` one per
+    launch, exactly as ``_run_engine`` does. Returns ``(gate, launched names)``.
+    '''
+    gate = threading.Event()
+    codes = list(later_codes)
+    launched = []
+    def fake_popen(cmd, env = None, **kwargs):
+        launched.append(env['VF_NODE_NAME'])
+        if len(launched) == 1:
+            return _GatedProc(0, gate)
+        return _FakeProc(codes.pop(0) if codes else 0)
+    monkeypatch.setattr(subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync',
+                        lambda *a, **kw: None)
+    monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    flow = _flow()
+    engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
+    assert launched[0] == 'producer'           # the indefinitely running source is first
+    return gate, launched
+
+
+def _supervise_in_background(engine):
+    '''Runs wait_for_completion on a thread; returns (thread, result list).'''
+    result = []
+    thread = threading.Thread(target = lambda: result.append(engine.wait_for_completion()),
+                              daemon = True)
+    thread.start()
+    return thread, result
+
+
+def _wait_until(predicate, timeout = 5.0):
+    deadline = time.monotonic() + timeout
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_a_later_failure_is_restarted_while_an_earlier_worker_still_runs(monkeypatch):
+    '''
+    RUN-048. The process list is (producer, work, printer) and the producer runs
+    indefinitely. Waiting on the children in list order meant a dead ``work``
+    was not even noticed until the producer exited — which, for an unbounded
+    source, is never. Every worker is watched concurrently now: ``work`` is
+    restarted while the producer is still running.
+    '''
+    engine = LocalProcessEngine(
+        supervision = SupervisionPolicy(max_restarts = 1, backoff_seconds = (0.0,)))
+    gate, launched = _run_engine_with_gated_source(monkeypatch, engine, later_codes = [1, 0, 0])
+    supervisor, result = _supervise_in_background(engine)
+    try:
+        assert _wait_until(lambda: engine.events().restart_count('work') == 1)
+        # ...and the producer is still running: nobody waited on it first.
+        assert supervisor.is_alive() and not gate.is_set()
+        assert launched == ['producer', 'work', 'printer', 'work']
+    finally:
+        gate.set()
+        supervisor.join(timeout = 5.0)
+    assert not supervisor.is_alive()
+    assert result == [[]]
+
+
+def test_giving_up_is_announced_while_an_earlier_worker_still_runs(monkeypatch):
+    '''
+    The exhaustion half of RUN-048: with no restarts left, the dead worker is
+    terminally classified and the flow-wide stop goes out immediately — not once
+    the healthy source happens to exit, which is the deadlock ``_maybe_restart``
+    describes.
+    '''
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled())
+    aborted = []
+    monkeypatch.setattr(engine, '_abort_flow', aborted.append)   # the real one announces over NATS
+    gate, _launched = _run_engine_with_gated_source(monkeypatch, engine, later_codes = [1, 0])
+    supervisor, result = _supervise_in_background(engine)
+    try:
+        assert _wait_until(lambda: aborted == ['work'])
+        assert supervisor.is_alive() and not gate.is_set()
+        assert engine.events().failed_nodes() == ['work']
+    finally:
+        gate.set()
+        supervisor.join(timeout = 5.0)
+    assert result == [['work']]
+    assert engine.failures() == [('work', 0, 1)]
+
+
+def test_ctrl_c_during_the_wait_keeps_reaping(monkeypatch):
+    '''
+    Ctrl-C reaches the supervisor as a KeyboardInterrupt out of its blocking
+    wait — now the exit queue rather than ``proc.wait()`` — and it must keep
+    reaping the children (which got the same SIGINT) rather than escape.
+    '''
+    real_get = queue.Queue.get
+    interrupted = []
+    def get_interrupted_once(self, *args, **kwargs):
+        if not interrupted:
+            interrupted.append(True)
+            raise KeyboardInterrupt()
+        return real_get(self, *args, **kwargs)
+    monkeypatch.setattr(queue.Queue, 'get', get_interrupted_once)
+    _envs, engine = _run_engine(monkeypatch, returncodes = [-signal.SIGINT, -signal.SIGINT, 0])
+    assert engine.wait_for_completion() == []
+    assert interrupted == [True]
+
+
+def test_worker_env_names_reader_obligations_only_when_asked():
+    specs = compile_flow(_flow())
+    plain = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3)
+    assert 'VF_BLOB_READER_IDS' not in plain
+    ids = blob_reader_ids(specs[0], specs)
+    env = _worker_env(specs[0], 'nats://x:4222', 'demo', BATCH, 'run1', None, 0, 3, blob_reader_ids = ids)
+    assert env['VF_BLOB_READER_IDS'] == ','.join(ids) and ids
+    # Nothing else moves: the identity list rides next to the count (RFC 0006 BLOB-13).
+    assert {k: v for k, v in env.items() if k != 'VF_BLOB_READER_IDS'} == plain

@@ -28,9 +28,9 @@ from __future__ import absolute_import, division, print_function
 
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Dict, FrozenSet, Optional, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Optional, Tuple
 
-from .errors import POISON, TRANSIENT, WORKER_FATAL, ProgressStalled, WorkerUnhealthy
+from .errors import POISON, TRANSIENT, WORKER_FATAL, BrokerUnavailable, ProgressStalled, WorkerUnhealthy
 
 #: Consecutive failures before a worker declares itself sick. Ten is high enough
 #: that a run of unlucky-but-independent bad messages does not trip it, and low
@@ -153,16 +153,29 @@ class ProgressDeadline:
             passes its own broker query.
         - node_name: named in the raised error.
         - clock: monotonic time source; injected for tests.
+        - unknown_grace_seconds: how long the probe may keep answering \
+            ``Unknown`` (the broker could not be observed) before that is \
+            raised as ``BrokerUnavailable``. Unknown neither resets the window \
+            (that would hide a stall) nor trips it (that would blame the node \
+            for the broker). Default: twice ``timeout_seconds``.
     '''
     def __init__(self, timeout_seconds : float = DEFAULT_PROGRESS_TIMEOUT_SECONDS,
-                pending_probe : Optional[Callable[[], int]] = None,
+                pending_probe : Optional[Callable[[], Any]] = None,
                 node_name : str = '',
-                clock : Callable[[], float] = time.monotonic) -> None:
+                clock : Callable[[], float] = time.monotonic,
+                unknown_grace_seconds : Optional[float] = None) -> None:
         self._timeout = timeout_seconds
         self._probe = pending_probe
         self._node_name = node_name
         self._clock = clock
         self._last_progress = clock()
+        # How long the broker may stay unobservable before that itself is the
+        # failure. Unknown never resets the window (that would hide a stall) and
+        # never trips it (that would blame the node for the broker).
+        self._unknown_grace = (2 * timeout_seconds if unknown_grace_seconds is None
+                               else unknown_grace_seconds)
+        self._unknown_since : Optional[float] = None
+        self._last_unknown : Optional[str] = None
 
     def record_progress(self) -> None:
         '''Called on every ack (and on every failure — a failure is still work being done).'''
@@ -184,7 +197,26 @@ class ProgressDeadline:
         silence = self.silent_for()
         if silence < self._timeout:
             return
-        pending = self._probe()
+        # Function-level: core must not depend on the backends package at import
+        # time (layering); the probe may return a plain int or an Observation.
+        from ..backends.outcomes import Known, Unknown
+        observed = self._probe()
+        if isinstance(observed, Unknown):
+            now = self._clock()
+            if self._unknown_since is None:
+                self._unknown_since = now
+            self._last_unknown = f'{observed.reason}: {observed.detail}'
+            if now - self._unknown_since >= self._unknown_grace:
+                raise BrokerUnavailable(
+                    f'{self._node_name or "node"} could not observe its pending work for '
+                    f'{now - self._unknown_since:.0f}s ({self._last_unknown}); the broker state is '
+                    f'unknown, which is not the same as empty.',
+                    remedy = 'Restore broker connectivity/permissions (consumer_info must be '
+                             'readable); the node neither completed nor stalled while the query failed.',
+                    node = self._node_name, unknown_seconds = round(now - self._unknown_since, 1))
+            return
+        self._unknown_since = None
+        pending = observed.value if isinstance(observed, Known) else int(observed)
         if pending <= 0:
             # Idle, not stalled: there is simply nothing to do. Reset so the next
             # arrival gets a full window.

@@ -12,7 +12,9 @@ maps to one of:
 - **P1** — concerns the v4 protobuf wire, delivered in Phase 1; tested there.
 
 Paths are under `tests/` unless noted. This map is the source for the
-scenario ↔ requirement cross-index the conformance kit (`conformance/`) will carry.
+scenario ↔ requirement cross-index the conformance suite (`tests/conformance/`)
+carries; see [the backend conformance suite](#the-backend-conformance-suite-testsconformance)
+at the end for the catalogued cases that are implemented today.
 
 ## §1 Environment contract
 
@@ -200,3 +202,60 @@ scenario ↔ requirement cross-index the conformance kit (`conformance/`) will c
   rounding mode). These two, plus **EOS-6** (EOS-while-collect-buffered) and
   **DELIV-9** (poison message), are the highest-priority new scenarios.
 - No requirement is unaccounted for.
+
+## The backend conformance suite (`tests/conformance/`)
+
+The requirement rows above pin the *protocol*. The backend conformance suite pins
+the *backends* underneath it — transport, payload store, accelerator allocator,
+runtime — against the contracts in `videoflow/backends/`. Its catalog,
+`tests/conformance/catalog/test_catalog.json` (130 cases: 26 MSG, 22 PAY, 34 ALLOC,
+48 RUN, at six levels — model, process, broker, kubernetes, gpu, benchmark), is
+checked in verbatim from the validation kit and validated by
+`tests/conformance/test_catalog_lint.py`, which also proves the ID ↔ test mapping
+is 1:1: every case has exactly one primary `@pytest.mark.case(ID)` test, extra
+tests for the same case carry `@pytest.mark.variant(name)`, and every
+non-pending regression case has a `@pytest.mark.negative_control(of = ID)` test
+that must *fail* against the reproduced defect (`tests/conformance/defects.py`).
+
+Outcomes are five, not three: `PASS`, `FAIL`, `UNSUPPORTED` (the backend truthfully
+declines the guarantee and the expected rejection was asserted), `NOT_RUN` (the
+fixture is absent — no broker, no `videoflow-test` namespace, no GPU; evidence of
+nothing) and `INVALID_TEST` (a scheduled fault never fired, or a negative control
+missed its defect). Every case is always collected; a skeleton not yet written
+carries `@pytest.mark.pending('phase N')` and reports `NOT_RUN: pending phase N`.
+
+```bash
+VF_RFC0006=1 uv run pytest tests/conformance -q -rs -p no:cacheprovider
+uv run python tests/conformance/report.py      # tests/conformance/_out/run_results.json
+```
+
+Cases with a real oracle today (everything else is a pending skeleton), case id →
+module. *Primary* is the test at the catalog's primary level whose status is the
+case's; a case whose primary needs a broker (`nats_url`: `VF_TEST_NATS_URL`,
+default `nats://localhost:4222`) or the k3s cluster (`k3s` / `k3s_admin`:
+`scripts/k3s-test-up.sh`) reports `NOT_RUN` without it even when its model-level
+variant passes.
+
+| Case | Module | Primary level | Variants |
+|---|---|---|---|
+| MSG-001 capability negotiation rejects, never downgrades | `test_msg_capabilities.py` | model | — |
+| MSG-019 broker identities are collision-resistant | `test_msg_capabilities.py` | model | — |
+| MSG-020 teardown by exact ownership | `test_msg_capabilities.py` | broker (`nats_url` gate) | `memory` (model) |
+| ALLOC-001 reject layouts exceeding physical MIG memory | `test_alloc_planning.py` | model | — |
+| ALLOC-007 failed occupancy/ownership reads are Unknown | `test_alloc_ownership.py` | kubernetes (`k3s_admin` gate) | `memory-backend`, `mix-strategy` (model) |
+| ALLOC-008 classification and capacity share the pool snapshot | `test_alloc_ownership.py` | kubernetes (**pending** phase 5: needs `VF_K8S_GPU_NODES` and the operator-applied pool label) | `kubectl-fake` (model) |
+| ALLOC-009 recognise MPS and mixed/incomplete sharing evidence | `test_alloc_planning.py` | model | `memory-backend` |
+| ALLOC-010 per-host fragmentation before claiming a whole GPU | `test_alloc_planning.py` | model | — |
+| ALLOC-023 reject unsupported allocation features before any cluster call | `test_alloc_planning.py` | model | `mix-strategy-audit` |
+| ALLOC-034 resolve `gpu_count`/memory defaults with explicit values | `test_alloc_planning.py` | model | — |
+| RUN-011 independent watchdog detects a hung callback | `test_run_progress.py` | model | — |
+| RUN-012 slow inference and idle sources do not trip the watchdog | `test_run_progress.py` | model | — |
+| RUN-027 BATCH scaling targets a supported workload controller | `test_run_scaling.py` | kubernetes (`k3s` gate, plus KEDA installed on the cluster) | `admission` (model) |
+| RUN-045 tail-latency objectives need histogram buckets | `test_run_telemetry.py` | model | — |
+| RUN-046 multi-input demand observes every required parent | `test_run_scaling.py` | model | — |
+| RUN-048 local supervision notices a later worker failure | `test_run_progress.py` | model | — |
+
+The requirement IDs the suite will additionally validate once RFC 0006 lands
+(`EOS-7`, `MSGID-5`/`6`, `JOIN-23`, `STREAM-14`/`15`, `DELIV-15`/`16`,
+`BLOB-13`…`15`, `ENV-10`…`17`, `CTRL-4`) are mapped to cases in that RFC's
+"Conformance impact" section; they join the tables above when it is accepted.

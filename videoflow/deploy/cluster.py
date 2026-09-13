@@ -16,8 +16,9 @@ from __future__ import absolute_import, division, print_function
 import json
 import subprocess
 from dataclasses import dataclass, field
-from typing import AbstractSet, Callable, Dict, List, Optional
+from typing import AbstractSet, Callable, Dict, Iterable, List, Mapping, Optional
 
+from ..backends.outcomes import Observation, Unknown, is_known, known, unknown, value_or
 from .gpu import GPU_OWNER_LABEL, GPU_POOL_LABEL, get_gpu_mode
 from .mig import NodeInventory
 
@@ -40,6 +41,22 @@ def _kubectl_out(kubectl : str, *args : str) -> str:
     except FileNotFoundError:
         return ''
     return proc.stdout.strip() if proc.returncode == 0 else ''
+
+def _kubectl_observed(kubectl : str, *args : str) -> Observation[str]:
+    '''
+    Runs kubectl and says what happened: ``Known(stdout)`` on success, otherwise
+    ``Unknown`` with the reason (``missing`` binary, ``failed`` command). The
+    observed counterpart of ``_kubectl_out`` for reads that gate a decision — an
+    occupancy the API refused to list is unknown, not zero.
+    '''
+    try:
+        proc = subprocess.run([kubectl, *args], capture_output = True, text = True, check = False)
+    except FileNotFoundError:
+        return unknown('missing', f'{kubectl!r} is not on PATH')
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout).strip().splitlines()
+        return unknown('failed', (detail[-1] if detail else f'{kubectl} exited {proc.returncode}')[:300])
+    return known(proc.stdout.strip())
 
 def current_context(kubectl : str = 'kubectl') -> str:
     return _kubectl_out(kubectl, 'config', 'current-context')
@@ -133,6 +150,17 @@ class _DockerDesktopFlavor(ClusterFlavorHandler):
     def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         print('docker-desktop shares the local docker daemon; images need no loading.')
 
+def is_registry_qualified(image : str) -> bool:
+    '''
+    Whether an image reference names a registry — its first path component has
+    a dot or a port, or is ``localhost`` (the Docker reference grammar's rule
+    for telling ``registry.example/ns/img`` from the implicit ``docker.io``
+    ``ns/img``). Such an image was pushed somewhere the cluster pulls from;
+    a bare local tag was only ever built here.
+    '''
+    first = image.split('/', 1)[0]
+    return '/' in image and ('.' in first or ':' in first or first == 'localhost')
+
 class _K3sFlavor(ClusterFlavorHandler):
     name = K3S
 
@@ -142,6 +170,12 @@ class _K3sFlavor(ClusterFlavorHandler):
 
     def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         for image in images:
+            if is_registry_qualified(image):
+                # Pushed to a registry the nodes pull from (containerd's
+                # registries.yaml): importing it into this node's containerd would
+                # be redundant, needs sudo, and reaches only one of the nodes.
+                print(f'Image {image} is registry-qualified; the nodes pull it, no import needed.')
+                continue
             _k3s_import(image)
 
 class _GenericRemoteFlavor(ClusterFlavorHandler):
@@ -300,25 +334,26 @@ def max_allocatable_gpus_per_node(kubectl : str = 'kubectl',
                        'jsonpath={.items[*].status.allocatable.' + path + '}')
     return max((int(v) for v in out.split() if v.isdigit()), default = 0)
 
-def gpu_units_in_use(kubectl : str = 'kubectl') -> Dict[str, Dict[str, int]]:
+def gpu_units_in_use_observed(kubectl : str = 'kubectl') -> Observation[Dict[str, Dict[str, int]]]:
     '''
     Extended-resource units currently claimed by pods, as node name ->
     resource -> units, summed over the ``resources.limits`` of every
     non-terminated pod in the cluster (all namespaces — a foreign workload's
     claim occupies a device just as much as ours). Extended resources always
     carry a domain, so keys containing ``/`` are counted and native resources
-    (cpu, memory, hugepages-*) are not. Returns {} when the cluster is
-    unreachable: occupancy unknown reads as occupancy zero, which keeps this
-    read best-effort like everything else in the module — deploy-time safety
-    decisions layer their own checks on top.
+    (cpu, memory, ``hugepages-*``) are not.
+
+    ``Unknown`` when the pod listing could not be read or parsed. Callers that
+    decide anything destructive on occupancy must branch on that: a failed read
+    does not prove a device idle.
     '''
-    out = _kubectl_out(kubectl, 'get', 'pods', '-A', '-o', 'json')
-    if not out:
-        return {}
+    out = _kubectl_observed(kubectl, 'get', 'pods', '-A', '-o', 'json')
+    if isinstance(out, Unknown):
+        return out
     try:
-        pods = json.loads(out).get('items', [])
+        pods = json.loads(out.value).get('items', [])
     except ValueError:
-        return {}
+        return unknown('malformed', 'pod listing was not JSON')
     used : Dict[str, Dict[str, int]] = {}
     for pod in pods:
         if (pod.get('status') or {}).get('phase') in ('Succeeded', 'Failed'):
@@ -333,7 +368,14 @@ def gpu_units_in_use(kubectl : str = 'kubectl') -> Dict[str, Dict[str, int]]:
                     continue
                 per_node = used.setdefault(node, {})
                 per_node[name] = per_node.get(name, 0) + int(value)
-    return used
+    return known(used, out.generation)
+
+def gpu_units_in_use(kubectl : str = 'kubectl') -> Dict[str, Dict[str, int]]:
+    '''
+    ``gpu_units_in_use_observed`` for display-only callers: ``{}`` when unknown.
+    Anything that plans or mutates on occupancy must use the observed form.
+    '''
+    return value_or(gpu_units_in_use_observed(kubectl), {})
 
 @dataclass
 class GpuAvailability:
@@ -346,6 +388,9 @@ class GpuAvailability:
     '''
     per_node_allocatable : Dict[str, int] = field(default_factory = dict)
     per_node_in_use : Dict[str, int] = field(default_factory = dict)
+    #: False when the pod listing behind ``per_node_in_use`` could not be read:
+    #: ``free`` is then an upper bound, not a fact, and preflight says so.
+    occupancy_known : bool = True
 
     @property
     def allocatable(self) -> int:
@@ -382,9 +427,11 @@ def gpu_availability(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu
         nodes = json.loads(out).get('items', [])
     except ValueError:
         return GpuAvailability()
-    if in_use is None:
-        in_use = gpu_units_in_use(kubectl)
     availability = GpuAvailability()
+    if in_use is None:
+        observed = gpu_units_in_use_observed(kubectl)
+        availability.occupancy_known = is_known(observed)
+        in_use = value_or(observed, {})
     for node in nodes:
         name = (node.get('metadata') or {}).get('name', '')
         if not name or name in exclude_nodes:
@@ -396,8 +443,80 @@ def gpu_availability(kubectl : str = 'kubectl', resource : str = 'nvidia.com/gpu
         availability.per_node_in_use[name] = in_use.get(name, {}).get(resource, 0)
     return availability
 
+GPU_KINDS = ('physical', 'mig', 'time-sliced', 'mps', 'unknown')
+
+def classify_gfd_labels(labels : Mapping[str, str], advertised_units : object = None) -> str:
+    '''
+    What one node's GPU units are, from its GPU Feature Discovery labels:
+    ``'physical'`` (one unit = one whole device), ``'mig'`` (hardware-isolated
+    slices), ``'time-sliced'`` or ``'mps'`` (shares of a device — MPS is
+    recognised from its explicit strategy label alone, with or without the
+    replica/``-SHARED`` auxiliaries), or ``'unknown'`` (no GFD labels to judge
+    by). The pure rule behind ``classify_gpu_resource``; the reference
+    allocator's node fixtures use the same one so both agree on every fixture.
+
+    - Arguments:
+        - advertised_units: the node's allocatable count of the resource, when \
+            known. Under the ``single`` MIG strategy slices are advertised under \
+            the plain resource name, so more units than ``gpu.count`` cards is \
+            geometry evidence; a MIG-*capable* node with MIG disabled advertises \
+            whole cards and is physical.
+    '''
+    product = str(labels.get('nvidia.com/gpu.product', ''))
+    replicas = str(labels.get('nvidia.com/gpu.replicas', '')).strip()
+    card_count = str(labels.get('nvidia.com/gpu.count', '')).strip()
+    advertised = '' if advertised_units is None else str(advertised_units).strip()
+    more_units_than_cards = (card_count.isdigit() and advertised.isdigit()
+                             and int(advertised) > int(card_count))
+    if labels.get('nvidia.com/gpu.sharing-strategy') == 'mps':
+        return 'mps'
+    if (labels.get('nvidia.com/gpu.sharing-strategy') == 'time-slicing'
+            or product.endswith('-SHARED')
+            or (replicas.isdigit() and int(replicas) > 1)):
+        return 'time-sliced'
+    if (labels.get('nvidia.com/mig.strategy') == 'single'
+            and str(labels.get('nvidia.com/mig.capable', '')).lower() == 'true'
+            and ('-MIG-' in product or more_units_than_cards
+                 or (labels.get('nvidia.com/mig.config') not in (None, '', 'all-disabled')
+                     and labels.get('nvidia.com/mig.config.state') == 'success'))):
+        return 'mig'
+    if any(key.startswith('nvidia.com/gpu') for key in labels):
+        return 'physical'
+    return 'unknown'
+
+def combine_classifications(kinds : Iterable[str]) -> str:
+    '''
+    One answer for a pool: worst case wins across advertisers. A share kind
+    anywhere makes multi-unit claims impossible everywhere (the scheduler may
+    place the pod on any advertising node), MIG likewise; and an unlabeled
+    advertiser next to a physical one is not "physical" — nothing proves its
+    units are whole devices — it is unresolved.
+    '''
+    present = set(kinds)
+    for kind in ('time-sliced', 'mps', 'mig', 'unknown', 'physical'):
+        if kind in present:
+            return kind
+    return 'unknown'
+
+def _pool_nodes(kubectl : str) -> Optional[list]:
+    '''
+    The pool's node objects (``videoflow.io/gpu-pool=true``), or None when the
+    listing could not be read or parsed. One listing serves both classification
+    and capacity, so a sharing label on a node *outside* the pool — which the
+    scheduler will never pick for a pool workload — cannot taint the pool's
+    classification, and a label on a pool node is seen by both.
+    '''
+    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'json')
+    if not out:
+        return None
+    try:
+        return json.loads(out).get('items', [])
+    except ValueError:
+        return None
+
 def classify_gpu_resource(kubectl : str = 'kubectl',
-                        resource : str = 'nvidia.com/gpu') -> str:
+                        resource : str = 'nvidia.com/gpu',
+                        exclude_nodes : AbstractSet[str] = frozenset()) -> str:
     '''
     What one advertised GPU extended resource's units actually are, from GPU
     Feature Discovery node labels: ``'physical'`` (one unit = one whole device),
@@ -407,7 +526,10 @@ def classify_gpu_resource(kubectl : str = 'kubectl',
 
     This is what makes ``gpu_count > 1`` checkable: the scheduler happily grants N
     units of any integer resource, but only whole physical devices can be spanned
-    by one model. Classification looks only at nodes that advertise ``resource``:
+    by one model. Classification looks only at **pool** nodes (the same
+    ``videoflow.io/gpu-pool=true`` snapshot the capacity math reads, minus
+    ``exclude_nodes``) that advertise ``resource`` — a time-sliced node outside the
+    pool advertising the same name is not somewhere a pool workload can land:
 
     - a ``mig-`` final path segment, or ``nvidia.com/mig.strategy=single`` on a
       MIG-capable advertising node (slices renamed to ``nvidia.com/gpu``) → mig;
@@ -422,38 +544,20 @@ def classify_gpu_resource(kubectl : str = 'kubectl',
     # The name is definitive on its own: nvidia.com/mig-<profile> is always MIG.
     if resource.rsplit('/', 1)[-1].startswith('mig-'):
         return 'mig'
-    out = _kubectl_out(kubectl, 'get', 'nodes', '-o', 'json')
-    if not out:
+    listed = _pool_nodes(kubectl)
+    if listed is None:
         return 'unknown'
-    try:
-        nodes = json.loads(out).get('items', [])
-    except ValueError:
-        return 'unknown'
+    nodes = [n for n in listed if (n.get('metadata') or {}).get('name') not in exclude_nodes]
     kinds : set[str] = set()
     for node in nodes:
         allocatable = (node.get('status') or {}).get('allocatable') or {}
         if resource not in allocatable:
             continue
         labels = (node.get('metadata') or {}).get('labels') or {}
-        replicas = str(labels.get('nvidia.com/gpu.replicas', '')).strip()
-        if (labels.get('nvidia.com/gpu.sharing-strategy') == 'time-slicing'
-                or str(labels.get('nvidia.com/gpu.product', '')).endswith('-SHARED')
-                or (replicas.isdigit() and int(replicas) > 1)):
-            kinds.add('time-sliced')
-        elif (labels.get('nvidia.com/mig.strategy') == 'single'
-                and str(labels.get('nvidia.com/mig.capable', '')).lower() == 'true'):
-            # single strategy advertises MIG slices under the plain nvidia.com/gpu name.
-            kinds.add('mig')
-        elif any(key.startswith('nvidia.com/gpu') for key in labels):
-            kinds.add('physical')
-        else:
-            kinds.add('unknown')
-    for kind in ('time-sliced', 'mig', 'physical'):
-        if kind in kinds:
-            return kind
-    return 'unknown'
+        kinds.add(classify_gfd_labels(labels, allocatable.get(resource)))
+    return combine_classifications(kinds)
 
-def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
+def gpu_inventory_observed(kubectl : str = 'kubectl') -> Observation[List[NodeInventory]]:
     '''
     The videoflow pool's GPU inventory as ``NodeInventory`` records — only nodes
     labeled ``videoflow.io/gpu-pool=true``, because that is the only place the
@@ -467,15 +571,20 @@ def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
     signals, existing MIG geometry, the ``videoflow.io/gpu-owner`` stamp, units
     in use by running pods). These are facts, not decisions: the cluster is
     multi-tenant, and ``MixGpu`` decides which nodes are usable.
+
+    ``Unknown`` when the node listing itself failed; when only the pod listing
+    failed, every record carries ``occupancy_known=False`` so the mix strategy
+    refuses to plan on it rather than treat the pool as idle.
     '''
-    out = _kubectl_out(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'json')
-    if not out:
-        return []
+    out = _kubectl_observed(kubectl, 'get', 'nodes', '-l', _POOL_SELECTOR, '-o', 'json')
+    if isinstance(out, Unknown):
+        return out
     try:
-        nodes = json.loads(out).get('items', [])
+        nodes = json.loads(out.value).get('items', [])
     except ValueError:
-        return []
-    used = gpu_units_in_use(kubectl)
+        return unknown('malformed', 'node listing was not JSON')
+    used_obs = gpu_units_in_use_observed(kubectl)
+    used = value_or(used_obs, {})
     inventory = []
     for node in nodes:
         labels = (node.get('metadata') or {}).get('labels') or {}
@@ -503,8 +612,13 @@ def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
                                        mig_config = labels.get('nvidia.com/mig.config'),
                                        mig_partitioned = mig_partitioned,
                                        owner = labels.get(GPU_OWNER_LABEL),
-                                       used_units = used.get(name, {})))
-    return sorted(inventory, key = lambda n: n.name)
+                                       used_units = used.get(name, {}),
+                                       occupancy_known = is_known(used_obs)))
+    return known(sorted(inventory, key = lambda n: n.name), out.generation)
+
+def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
+    '''``gpu_inventory_observed`` for display-only callers: ``[]`` when unknown.'''
+    return value_or(gpu_inventory_observed(kubectl), [])
 
 def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
     '''
@@ -522,7 +636,8 @@ def nvidia_runtimeclass(kubectl : str = 'kubectl') -> Optional[str]:
 def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] = None,
                   demand : Optional[dict] = None,
                   gpu_mode : str = 'exclusive',
-                  max_per_pod : Optional[dict] = None) -> List[str]:
+                  max_per_pod : Optional[dict] = None,
+                  pod_claims : Optional[dict] = None) -> List[str]:
     '''
     Checks what a GPU node workload needs (see ``manifests._pod_spec``): a node
     labeled ``videoflow.io/gpu-pool=true``; enough allocatable units of each
@@ -544,6 +659,10 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
         - max_per_pod: dict of extended-resource name -> largest single-pod claim \
             (``manifests.gpu_max_per_pod``), or None to skip the per-node capacity \
             and resource-classification checks (RFC 0003).
+        - pod_claims: dict of extended-resource name -> one claim per pod replica \
+            (``manifests.gpu_pod_claims``), or None to skip the per-host packing \
+            check — the one that catches a pool whose free devices are fragmented \
+            across hosts although the total and the largest node both suffice.
     '''
     problems = []
     # An unreachable cluster makes every check below come back empty, which would
@@ -563,5 +682,5 @@ def gpu_preflight(kubectl : str = 'kubectl', gpu_runtime_class : Optional[str] =
     # merely advisory in exclusive mode but fatal in shared. The strategy owns both.
     problems.extend(get_gpu_mode(gpu_mode).preflight_problems(
         kubectl = kubectl, demand = demand, gpu_runtime_class = gpu_runtime_class,
-        max_per_pod = max_per_pod))
+        max_per_pod = max_per_pod, pod_claims = pod_claims))
     return problems

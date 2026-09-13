@@ -70,8 +70,10 @@ replica pod requests its own GPUs.
     with N GPU replicas needs N allocatable devices, or the excess pods sit
     ``Pending`` and the flow stalls. This is different from local runs, where every
     node subprocess shares the machine's GPUs freely. ``videoflow explain`` prints a
-    flow's total GPU demand, deploy's preflight compares it against the cluster
-    before applying anything, and the wait loop aborts (instead of hanging) when a
+    flow's total GPU demand, deploy's preflight compares it against the cluster's
+    *free* capacity and packs every pod's claim onto the per-node free counts before
+    applying anything (an occupancy read the API refused is reported as unknown,
+    never as an idle pool), and the wait loop aborts (instead of hanging) when a
     pod is unschedulable. To reproduce local-style sharing on a dev cluster, see
     :doc:`/distributed/gpu-sharing`.
 
@@ -83,6 +85,19 @@ to ``videoflow deploy`` to also generate a `KEDA <https://keda.sh>`_ ``ScaledObj
 per processor that scales replicas up (toward ``--max-replicas``) based on the
 node's input backlog on the broker, and back down when the backlog clears. See
 :doc:`../distributed/deploying-to-kubernetes`.
+
+Only a processor that runs as a Deployment can be scaled this way. A BATCH flow's
+nodes are Kubernetes Jobs, whose parallelism is fixed when the Job is created and
+is not what a scaler drives, so ``--autoscaling`` on a BATCH flow is refused at
+render time rather than emitting a scaler that would dangle on a Deployment that
+never exists — set ``nb_tasks`` to the parallelism you want instead. A scaler
+watches the node's first declared parent; with the ``VF_RFC0006`` switch on it
+carries one trigger per parent and scales on the highest, which is also how the
+framework sizes demand in-process (``videoflow.runtime.scaling``): the maximum
+over parents, a parent that could not be observed making the whole decision
+unknown rather than zero, and a **starved** diagnosis — some parents backed up
+while others are empty — for a join that no replica count repairs, only a quorum
+or timeout join policy does.
 
 Running across multiple machines
 --------------------------------

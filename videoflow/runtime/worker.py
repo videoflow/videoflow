@@ -27,6 +27,12 @@ the original graph-building script::
                         The store is chosen by the URL's scheme (redis:// and
                         rediss:// built in; others via register_blob_store), so the
                         name is historical rather than a restriction to Redis.
+    VF_FAULT_SCHEDULE_JSON / VF_FAULT_MARKER_DIR
+                        optional; a conformance test's fault schedule (RFC 0006 ENV-16/17),
+                        installed before the node is built. Never set by a control plane.
+    VF_BLOB_READER_IDS  optional; the reader obligations each payload this node
+                        publishes is held for, comma-separated (RFC 0006 BLOB-13);
+                        honoured only under VF_RFC0006 with a redis:// blob store.
     VF_BLOB_READERS     optional; how many downstream reads each message this node
                         publishes receives — enables refcounted blob reclamation
                         (PROTOCOL.md BLOB-5). Unset ⇒ blobs are TTL-only.
@@ -49,9 +55,35 @@ the original graph-building script::
     VF_PROGRESS_TIMEOUT_SECONDS optional; seconds this node may ack nothing while
                         work is pending before it is declared stalled (default 300;
                         0 disables)
+    VF_PROFILE_REQUESTS_JSON  optional; the operator's explicit channel profiles
+                        (deploy --require-profile), as JSON. Enforced at bind
+                        (RFC 0006 ENV-13): before the node is built or opened,
+                        the streams of this node's own channel and its parents'
+                        are read back and a stream that does not carry its
+                        requested profile ends the worker with
+                        IncompatibleProfile (exit 2); one that could not be read
+                        back, with UnobservableState (exit 3). Absent => the
+                        flow-type presets, i.e. today's behaviour — nothing is
+                        read back.
+    VF_ADMISSION_TIMEOUT_SECONDS optional; how long that read-back may take,
+                        connect included (default 60)
+    VF_WATCHDOG_INTERVAL_SECONDS optional; how often a watchdog thread re-checks
+                        that same progress deadline while the node is *inside*
+                        process()/consume(), so a callback that never returns is
+                        still caught — the run loop only checks between messages
+                        (default 5; 0 disables the thread, leaving the loop's own
+                        check). A stall found this way is written to the
+                        termination log and ends the process with the error's
+                        exit code (ProgressStalled: 5)
     VF_TERMINATION_LOG  optional; path the structured termination reason is written
                         to (default /dev/termination-log, which Kubernetes surfaces
                         in the pod's containerStatuses)
+
+SIGTERM — a pod being deleted, a rollout, a local ``kill`` — first calls
+``messenger.quiesce()`` (stop admitting input; what is already held keeps being
+settled) and then takes the signal's default action, so a worker still dies of
+SIGTERM exactly as it always has: nothing is acked that was not processed, and the
+un-acked inputs are redelivered to its replacement.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -59,20 +91,35 @@ import importlib
 import json
 import logging
 import os
-from typing import Type, TypeVar
+import signal
+import threading
+from types import FrameType
+from typing import Any, Callable, Optional, Sequence, Type, TypeVar
+from urllib.parse import urlparse
 
+from ..backends import faults
+from ..backends.capabilities import (
+    ADMISSION_TIMEOUT_ENV,
+    PROFILE_REQUESTS_ENV,
+    ProfileRequest,
+    admission_timeout_from_env,
+    requests_from_env,
+)
+from ..core import constants
 from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
 from ..core.context import RuntimeContext
 from ..core.engine import Messenger
 from ..core.errors import (
     DEFAULT_DISPOSITION,
     DISPOSITIONS,
+    EXIT_FLOW_STALLED,
     ConfigError,
     NodeContractError,
     VideoflowError,
     error_to_dict,
 )
 from ..core.node import ConsumerNode, Node, ProcessorNode, ProducerNode
+from ..core.policies import DeliveryPolicy
 from ..core.supervision import (
     DEFAULT_BREAKER_THRESHOLD,
     DEFAULT_PROGRESS_TIMEOUT_SECONDS,
@@ -80,9 +127,11 @@ from ..core.supervision import (
     ProgressDeadline,
 )
 from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
+from ..wire.redis_payload_store import RedisPayloadStore
 from .health import HealthServer, HealthState, InstrumentedMessenger
 from .idempotency import RedisIdempotencyStore
 from .logging_config import configure_logging
+from .watchdog import DEFAULT_WATCHDOG_INTERVAL_SECONDS, ProgressWatchdog
 
 logger = logging.getLogger('videoflow.worker')
 
@@ -111,6 +160,130 @@ def write_termination_reason(error : BaseException,
             f.write(json.dumps(error_to_dict(error), sort_keys = True))
     except Exception:
         logger.debug(f'could not write termination reason to {target}', exc_info = True)
+
+def exit_on_stall(error : BaseException,
+                exit_process : Callable[[int], Any] = os._exit) -> None:
+    '''
+    What the progress watchdog does with a stall: record the reason, then end the
+    process. ``os._exit`` rather than an exception, because the watchdog runs on
+    its own thread and the frame that is wedged — a ``process()`` that never
+    returned — belongs to the main thread, which nothing can unwind. The un-acked
+    inputs go back to the broker for the replacement, exactly as they would after
+    any other death.
+
+    - Arguments:
+        - error: the ``ProgressStalled`` (or ``BrokerUnavailable``) the deadline raised.
+        - exit_process: the process-ending call; injected so a test can observe \
+            the exit status instead of losing the interpreter.
+    '''
+    code = error.exit_code if isinstance(error, VideoflowError) else EXIT_FLOW_STALLED
+    logger.error(f'progress watchdog: {error}')
+    write_termination_reason(error)
+    exit_process(code)
+
+def watchdog_interval_from_env() -> float:
+    '''
+    ``VF_WATCHDOG_INTERVAL_SECONDS`` as a number: the default when unset, 0 for
+    "no watchdog thread".
+
+    - Raises:
+        - ConfigError: if the value is not a number, or is negative.
+    '''
+    raw = os.environ.get('VF_WATCHDOG_INTERVAL_SECONDS')
+    if raw in (None, ''):
+        return DEFAULT_WATCHDOG_INTERVAL_SECONDS
+    try:
+        interval = float(raw)
+    except ValueError as e:
+        raise ConfigError(
+            f'VF_WATCHDOG_INTERVAL_SECONDS={raw!r} is not a number.',
+            remedy = 'Set it to the seconds between progress checks, or 0 to disable '
+                    'the watchdog thread.') from e
+    if interval < 0:
+        raise ConfigError(
+            f'VF_WATCHDOG_INTERVAL_SECONDS={raw!r} is negative.',
+            remedy = 'Set it to the seconds between progress checks, or 0 to disable '
+                    'the watchdog thread.')
+    return interval
+
+def build_watchdog(deadline : ProgressDeadline, interval_seconds : float,
+                progress_timeout : float, node_name : str,
+                on_stall : Callable[[BaseException], None] = exit_on_stall,
+                ) -> Optional[ProgressWatchdog]:
+    '''
+    The watchdog for a non-producer node, or ``None`` when either knob disables
+    it: an interval of 0 means no thread, and a progress timeout of 0 means the
+    deadline itself never trips, so a thread would only be re-checking nothing.
+
+    - Arguments:
+        - deadline: the node's ``ProgressDeadline`` — the same instance the task \
+            loop is given, which is what makes the watchdog's reading of \
+            "silence" the loop's own.
+        - interval_seconds: ``VF_WATCHDOG_INTERVAL_SECONDS``.
+        - progress_timeout: ``VF_PROGRESS_TIMEOUT_SECONDS``.
+        - node_name: names the thread.
+        - on_stall: what to do with the stall; the process-ending default is \
+            replaced in tests.
+    '''
+    if interval_seconds <= 0 or progress_timeout <= 0:
+        return None
+    return ProgressWatchdog(deadline, interval_seconds, on_stall, name = node_name)
+
+def install_sigterm_quiesce(messenger : Messenger,
+                            then : Optional[Callable[[int], None]] = None,
+                            ) -> Callable[[], None]:
+    '''
+    SIGTERM → ``messenger.quiesce()``, then the signal's default action.
+
+    Quiescing first is what lets the messenger stop admitting input (and hand
+    back what it prefetched but never delivered) *before* the process is gone,
+    instead of leaving those messages to time out on the broker; the default
+    action afterwards keeps every existing contract about how a SIGTERMed worker
+    dies — exit status, no clean end-of-stream, un-acked inputs redelivered.
+    Finishing the in-flight message before exiting is the rollout drain's job
+    (a later phase), not this hook's.
+
+    Only the main thread may install a signal handler, so from any other thread
+    (a test driving ``run_from_env`` in-process) this installs nothing.
+
+    - Arguments:
+        - messenger: whose ``quiesce()`` runs on SIGTERM.
+        - then: what follows the quiesce, given the signal number. Default: \
+            restore ``SIG_DFL`` and re-raise the signal to this process. \
+            Injected so a test can deliver a real SIGTERM without dying of it.
+
+    - Returns:
+        - a callable that restores the previous SIGTERM disposition (a no-op \
+            when nothing was installed).
+    '''
+    if threading.current_thread() is not threading.main_thread():
+        logger.debug('not on the main thread: SIGTERM quiesce hook not installed')
+        return lambda: None
+
+    def _resignal_default(signum : int) -> None:
+        signal.signal(signum, signal.SIG_DFL)
+        os.kill(os.getpid(), signum)
+
+    follow_up = then if then is not None else _resignal_default
+
+    def _handler(signum : int, frame : Optional[FrameType]) -> None:
+        logger.info('SIGTERM received: quiescing input before exiting')
+        try:
+            messenger.quiesce()
+        except Exception:
+            # A quiesce that fails must not keep a doomed worker alive.
+            logger.debug('quiesce on SIGTERM failed', exc_info = True)
+        finally:
+            follow_up(signum)
+
+    previous = signal.signal(signal.SIGTERM, _handler)
+
+    def _restore() -> None:
+        # Only if ours is still installed: the handler itself may have swapped
+        # in SIG_DFL, and a re-installed default must stay that way.
+        if signal.getsignal(signal.SIGTERM) is _handler:
+            signal.signal(signal.SIGTERM, previous)
+    return _restore
 
 def _import_class(fq_class : str) -> type:
     module_path, class_name = fq_class.rsplit('.', 1)
@@ -178,6 +351,34 @@ def build_node_from_env() -> Node:
     params = json.loads(os.environ.get('VF_NODE_PARAMS_JSON', '{}'))
     return node_class(**params)
 
+def verify_explicit_profiles(nats_url : str, flow_id : str, run_id : str, flow_type : str, node_name : str,
+                             parent_names : Sequence[str], has_children : bool,
+                             requests : Sequence[ProfileRequest], timeout : float) -> None:
+    '''
+    Bind the operator's explicit channel profiles (``VF_PROFILE_REQUESTS_JSON``)
+    to the streams this node touches — its own output channel and its parents'
+    — before it opens. The streams are read back over a connection of their own
+    (``topology.read_back_streams``; nothing reaches into the messenger), and a
+    stream whose effective configuration contradicts the profile it was
+    requested to carry is refused: ``IncompatibleProfile``, which ``main`` turns
+    into exit 2 with the reason in the termination log. A stream that could not
+    be read back is refused too (``UnobservableState``, exit 3): an explicit
+    request does not pass on an unread guarantee. Requests for channels this
+    node neither publishes nor consumes are other workers' to judge; no
+    requests at all means nothing is read and nothing changes.
+    '''
+    channels = ([node_name] if has_children else []) + list(parent_names)
+    mine = [r for r in requests if r.channel in channels]
+    if not mine:
+        return
+    # Deferred: topology imports the optional `nats` client at module scope.
+    from ..messaging import topology
+    read_back = topology.read_back_streams(nats_url, flow_id, run_id, [r.channel for r in mine], flow_type,
+                                           timeout = timeout)
+    topology.verify_channel_profiles(read_back, mine, unknown_is_fatal = True, where = f'worker {node_name}')
+    logger.info('explicit channel profiles verified at bind: '
+                + ', '.join(f'{r.channel}={r.profile}' for r in mine))
+
 def run_from_env() -> None:
     # Deferred: nats_messenger imports the optional `nats` client at module scope.
     from ..messaging.nats_messenger import NATSMessenger
@@ -212,6 +413,7 @@ def run_from_env() -> None:
                                         str(DEFAULT_BREAKER_THRESHOLD)))
     progress_timeout = float(os.environ.get('VF_PROGRESS_TIMEOUT_SECONDS',
                                         str(DEFAULT_PROGRESS_TIMEOUT_SECONDS)))
+    watchdog_interval = watchdog_interval_from_env()
 
     # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION, EMITTABLE_ENVELOPE_VERSIONS
@@ -221,13 +423,33 @@ def run_from_env() -> None:
             f'VF_ENVELOPE_VERSION={envelope_version} is not emittable by this build.',
             remedy = f'Supported versions: {EMITTABLE_ENVELOPE_VERSIONS}.')
 
+    # The operator's explicit channel profiles bind here, before anything else: no
+    # node is built, nothing has opened, a producer has published nothing when a
+    # request is refused. Absent ⇒ nothing is read back (today's behaviour).
+    explicit_profiles = requests_from_env(os.environ.get(PROFILE_REQUESTS_ENV))
+    if explicit_profiles:
+        logger.info('explicit channel profiles requested: ' +
+                    ', '.join(f'{r.channel}={r.profile}' for r in explicit_profiles))
+        verify_explicit_profiles(nats_url, flow_id, run_id, flow_type, node_name, parent_names, has_children,
+                                 explicit_profiles,
+                                 timeout = admission_timeout_from_env(os.environ.get(ADMISSION_TIMEOUT_ENV)))
+
     blob_store = None
+    payload_store = None
     # Env var name is historical: any registered URL scheme works, not just Redis.
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
-        # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
-        from ..wire.serialization import make_blob_store
-        blob_store = make_blob_store(blob_redis_url)
+        if constants.RFC0006 and urlparse(blob_redis_url).scheme in ('redis', 'rediss'):
+            # Obligation-keeping store (RFC 0006 BLOB-13..15) on the same keys the
+            # counter store used, so a blob written either way is readable both ways.
+            payload_store = RedisPayloadStore(blob_redis_url)
+        else:
+            # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
+            from ..wire.serialization import make_blob_store
+            blob_store = make_blob_store(blob_redis_url)
+    # The reader obligations this node's payloads are held for (BLOB-13); absent
+    # or under the switch off ⇒ no identity obligations (the count above applies).
+    blob_reader_ids = [r for r in os.environ.get('VF_BLOB_READER_IDS', '').split(',') if r]
     # Absent ⇒ None ⇒ refcounted reclamation off — the safe default for a manifest
     # rendered by an older CLI (a default of 1 would delete fan-out blobs after the
     # first child's ack while siblings still need them).
@@ -250,6 +472,7 @@ def run_from_env() -> None:
         partition_by = partition_by, join_policy = join_policy,
         envelope_version = envelope_version, blob_readers = blob_readers,
         blob_ttl_seconds = blob_ttl_seconds, delivery_policy = delivery_policy,
+        payload_store = payload_store, blob_reader_ids = blob_reader_ids,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
@@ -260,7 +483,11 @@ def run_from_env() -> None:
         state = HealthState(node_name)
         health_server = HealthServer(state, port = health_port)
         health_server.start()
-        messenger = InstrumentedMessenger(messenger, state)
+        # The resolved policy lets the instrumented messenger count drops by the
+        # verdict it produces (best-effort exhaustion vs poison), not only poison.
+        messenger = InstrumentedMessenger(messenger, state,
+                                          delivery_policy = DeliveryPolicy.resolve(flow_type, delivery_policy,
+                                                                                    max_retries))
 
     ctx = RuntimeContext(
         flow_id, run_id, node_name, replica_id,
@@ -268,13 +495,17 @@ def run_from_env() -> None:
     )
 
     # Self-protection, constructed here and handed down (the task lives in core,
-    # which must not depend on runtime). A producer gets neither: it has no inputs
-    # to fail on and no durable to be pending against.
+    # which must not depend on runtime). A producer gets none of it: it has no
+    # inputs to fail on and no durable to be pending against. The watchdog holds
+    # the *same* deadline the task loop does — the loop resets it on every ack,
+    # the watchdog re-reads it from a thread the wedged callback cannot block.
     breaker = None
     deadline = None
+    watchdog = None
     if kind != NODE_KIND_PRODUCER:
         breaker = ConsecutiveFailureBreaker(breaker_threshold, node_name)
-        deadline = ProgressDeadline(progress_timeout, messenger.pending_count, node_name)
+        deadline = ProgressDeadline(progress_timeout, messenger.pending_observation, node_name)
+        watchdog = build_watchdog(deadline, watchdog_interval, progress_timeout, node_name)
 
     task: Task
     if kind == NODE_KIND_PRODUCER:
@@ -285,7 +516,8 @@ def run_from_env() -> None:
         task = ProcessorTask(require_node_kind(node, ProcessorNode, kind),
                             messenger, has_children, parent_names, ctx = ctx,
                             breaker = breaker, deadline = deadline,
-                            on_error = on_error or DEFAULT_DISPOSITION)
+                            on_error = on_error or DEFAULT_DISPOSITION,
+                            watchdog = watchdog)
     elif kind == NODE_KIND_CONSUMER:
         consumer = require_node_kind(node, ConsumerNode, kind)
         idem_store = None
@@ -294,13 +526,15 @@ def run_from_env() -> None:
         task = ConsumerTask(consumer, messenger, has_children, parent_names, ctx = ctx,
                             idempotency_store = idem_store,
                             breaker = breaker, deadline = deadline,
-                            on_error = on_error or DEFAULT_DISPOSITION)
+                            on_error = on_error or DEFAULT_DISPOSITION,
+                            watchdog = watchdog)
     else:
         raise ConfigError(f'Unknown VF_NODE_KIND: {kind!r}.',
                         remedy = f'Expected one of: {NODE_KIND_PRODUCER}, '
                                 f'{NODE_KIND_PROCESSOR}, {NODE_KIND_CONSUMER}.')
 
     logger.info(f'Worker starting: node={node_name} kind={kind} parents={parent_names}')
+    restore_sigterm = install_sigterm_quiesce(messenger)
     try:
         task.run()
     except BaseException as e:
@@ -310,6 +544,7 @@ def run_from_env() -> None:
             write_termination_reason(e)
         raise
     finally:
+        restore_sigterm()
         messenger.close()
         if health_server is not None:
             health_server.stop()
@@ -324,6 +559,11 @@ def main() -> int:
     '''
     configure_logging()
     try:
+        # A test's fault schedule (ENV-16/ENV-17) is installed before anything the
+        # barriers guard can run; absent, a barrier is one attribute read.
+        schedule = faults.FaultSchedule.from_env()
+        if schedule is not None:
+            schedule.install()
         run_from_env()
     except VideoflowError as e:
         logger.error(f'{e.code}: {e.message}' + (f' {e.remedy}' if e.remedy else ''))

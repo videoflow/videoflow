@@ -52,6 +52,22 @@ from ..core.errors import (
 from ..core.flow import Flow
 from ..core.supervision import SupervisionPolicy
 from ..utils.plugins import load_plugin_group
+from .admission import (
+    admit,
+    enforce_admission,
+    jetstream_capabilities,
+    jetstream_capabilities_observed,
+    local_dev_capabilities,
+    parse_profile_requests,
+    redis_payload_capabilities,
+    redis_payload_capabilities_observed,
+    requests_env,
+    requirements_for,
+    run_stream_names,
+    unknown_admission,
+    verify_topology_shape,
+)
+from .broker_profiles import BROKER_PROFILE_NAMES, BrokerProfile, broker_profiles
 from .build import autobuild, docker_gpus_available, image_exists, run_in_image
 from .cluster import (
     detect_cluster,
@@ -63,6 +79,7 @@ from .compile import load_flow, specs_from_document
 from .gpu import (
     GPU_STRATEGY_ENTRY_POINT_GROUP,
     IMPOSSIBLE_GPU_REQUEST,
+    UNOBSERVABLE_GPU_STATE,
     GpuStrategy,
     get_gpu_mode,
     registered_gpu_modes,
@@ -128,7 +145,8 @@ def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str,
         raise
 
 def _cmd_deploy(args : argparse.Namespace) -> None:
-    from .manifests import parse_mounts  # optional dep: manifests imports yaml at module scope
+    # optional dep: manifests imports yaml at module scope
+    from .manifests import parse_mounts, parse_pvc_mounts
 
     overrides = {}
     for override in args.image_override or []:
@@ -148,7 +166,13 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists) and collect its x-mounts.
     # optional dep: solution imports yaml at module scope
-    from .solution import ensure_config, find_template, load_template, resolve_mounts
+    from .solution import (
+        ensure_config,
+        find_template,
+        load_template,
+        resolve_mounts,
+        split_mount_specs,
+    )
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
     template_path = find_template(graph_dir)
@@ -159,12 +183,24 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             template_mounts = resolve_mounts(load_template(template_path), yaml.safe_load(f),
                                              graph_dir)
     try:
-        mounts = parse_mounts((args.mount or []) + template_mounts)
+        host_specs, claim_specs = split_mount_specs(template_mounts)
+        # Host paths and claims in one list: the two parsers number their volume
+        # names from disjoint prefixes (vf-mount-*, vf-pvc-*), so the pods take the
+        # concatenation as-is. A host path under a claim's path is dropped from the
+        # pods by manifests.pod_mounts and kept for the prep/compile containers.
+        mounts = parse_mounts((args.mount or []) + host_specs) \
+            + parse_pvc_mounts((args.mount_pvc or []) + claim_specs)
         # Prep/compile containers additionally see the solution directory itself
-        # (config, prepare.py, work dir) at its host path.
+        # (config, prepare.py, work dir) at its host path. run_in_image skips the
+        # claim mounts — a claim exists only inside the cluster.
         container_mounts = parse_mounts([graph_dir]) + mounts
     except ValueError as e:
         raise ConfigError(str(e)) from e
+    # Resolved before any step that costs time: a bad --broker-replicas should not
+    # wait for an image build to be reported.
+    broker_profile, redis_profile = broker_profiles(
+        args.broker_profile, replicas = args.broker_replicas,
+        storage_class = args.broker_storage_class, priority_class = args.priority_class)
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
     # (base image auto-built from a source checkout when missing).
@@ -218,14 +254,16 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             load_images(flavor, local_images, kubectl = args.kubectl)
         except RuntimeError as e:
             raise ClusterError(str(e)) from e
-    if mounts:
+    if any(m.claim is None for m in mounts):
+        # Only host paths are affected — a claim resolves inside the cluster on
+        # every flavor.
         warning = hostpath_warning(flavor)
         if warning:
             print(f'WARNING: {warning}', file = sys.stderr)
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
         # optional dep: manifests imports yaml at module scope
-        from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod
+        from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod, gpu_pod_claims
         # The strategy decides names and geometry first (mix resolves each
         # sharer's MIG profile into its spec) so that everything downstream —
         # demand math, preflight, manifests, env — consumes the resolved specs.
@@ -242,11 +280,16 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         demand = gpu_demand(specs, default_resource = args.gpu_resource_name)
         problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
                                  demand = demand, gpu_mode = args.gpu_mode,
-                                 max_per_pod = gpu_max_per_pod(specs, default_resource = args.gpu_resource_name))
+                                 max_per_pod = gpu_max_per_pod(specs, default_resource = args.gpu_resource_name),
+                                 pod_claims = gpu_pod_claims(specs, default_resource = args.gpu_resource_name))
         # An impossible request (multi-unit claim against a MIG/time-sliced
         # resource) can only end in an admission error or a silently broken
         # visibility contract — fatal regardless of --strict-preflight.
-        fatal = [p for p in problems if p.startswith(IMPOSSIBLE_GPU_REQUEST)]
+        # An unobservable occupancy is fatal wherever a mode mutates the cluster on
+        # the strength of it (mix repartitions cards); for exclusive claims it is a
+        # capacity warning the strict gate can promote.
+        fatal = [p for p in problems if p.startswith(IMPOSSIBLE_GPU_REQUEST)
+                 or (args.gpu_mode == 'mix' and p.startswith(UNOBSERVABLE_GPU_STATE))]
         if fatal:
             for p in fatal:
                 print(f'ERROR: {p}', file = sys.stderr)
@@ -277,6 +320,31 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
                   f'--gpu-mode {args.gpu_mode} — each replica gets a whole device. Deploy with '
                   f'--gpu-mode mix to pack these nodes onto MIG slices.', file = sys.stderr)
 
+    # 4b. Composition admission: does the broker and store this flow will run on
+    # provide what every channel asks for? Binding with an explicit
+    # --require-profile (or the RFC 0006 switch), advisory otherwise — see
+    # deploy.admission. An auto-provisioned broker or store is judged by its
+    # declared profile; a bring-your-own one is read back live here, before any
+    # infrastructure exists (a short probe — what it cannot read stays Unknown,
+    # never assumed). An explicit request the flow type's own streams cannot
+    # carry is refused first, with nothing to tear down.
+    explicit_profiles = parse_profile_requests(args.require_profile, specs)
+    verify_topology_shape(flow_type, flow_id, run_id, explicit_profiles)
+    store_configured = args.blob_redis_url is not None or args.nats is None
+    if args.nats is not None:
+        messaging_caps = jetstream_capabilities_observed(
+            args.nats, stream_names = run_stream_names(flow_id, run_id, specs))
+    else:
+        messaging_caps = jetstream_capabilities(broker_profile)
+    payload_caps = (None if not store_configured
+                    else redis_payload_capabilities_observed(args.blob_redis_url)
+                    if args.blob_redis_url is not None
+                    else redis_payload_capabilities(redis_profile))
+    admit(requirements_for(flow_type, specs, explicit_profiles), messaging_caps, payload_caps,
+          payload_refs_in_use = store_configured, enforce = enforce_admission(explicit_profiles),
+          unknown_is_fatal = unknown_admission(explicit_profiles), where = 'deploy')
+    profile_requests = requests_env(explicit_profiles)
+
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
     # (+ Redis for the blob store) in the namespace, owning only what we created.
     # optional dep: infra imports yaml at module scope
@@ -288,8 +356,9 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         try:
             ensure_namespace(args.kubectl, args.namespace)
             urls, created = ensure_infra(args.kubectl, args.namespace,
-                                         need_redis = blob_redis_url is None)
-            wait_infra_ready(args.kubectl, args.namespace, created)
+                                         need_redis = blob_redis_url is None,
+                                         profile = broker_profile, redis_profile = redis_profile)
+            wait_infra_ready(args.kubectl, args.namespace, created, profile = broker_profile)
         except RuntimeError as e:
             raise ClusterError(str(e)) from e
         nats_url = urls['nats']
@@ -301,6 +370,11 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     teardown_cmd = (f'  videoflow teardown --flow-id {flow_id} --run-id {run_id} '
                     f'--nats {nats_url} --namespace {args.namespace}'
                     + (' --infra' if created and not keep_infra else '')
+                    # Same reason as --gpu-mode below: teardown must know the infra
+                    # is a StatefulSet to delete it, and the cluster does not say
+                    # which profile rendered it.
+                    + (f' --broker-profile {args.broker_profile}'
+                       if created and not keep_infra and broker_profile.stateful else '')
                     # The run's GPU mode is not recoverable from the cluster, so the
                     # printed command carries it: teardown needs it to call the
                     # strategy's cleanup() and undo whatever prepare() set up.
@@ -308,6 +382,12 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
 
     # optional dep: the k8s engine pulls in yaml (via manifests) at module scope
     from ..engines.kubernetes import KubernetesExecutionEngine
+    engine_options : dict[str, Any] = {}
+    if args.priority_class:
+        # Passed only when set: the engine forwards it to render_manifests as
+        # `priority_class`, and a deploy that never asked for a priority must not
+        # depend on the keyword at all.
+        engine_options['priority_class'] = args.priority_class
     engine = KubernetesExecutionEngine(
         nats_url = nats_url, namespace = args.namespace, default_image = image,
         image_overrides = overrides, blob_redis_url = blob_redis_url,
@@ -319,6 +399,11 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
         gpu_autoscaling = args.gpu_autoscaling,
         image_pull_policy = args.image_pull_policy,
+        profile_requests = profile_requests,
+        # Only an auto-provisioned broker has a profile to size streams by; a
+        # bring-your-own broker keeps the server default.
+        stream_replicas = broker_profile.jetstream_replicas if args.nats is None else 1,
+        **engine_options,
     )
     # Cluster setup the GPU mode needs for this run (no-op for the built-in modes;
     # the hook exists for strategies that retune the device plugin per run).
@@ -384,7 +469,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         else:
             engine.teardown()
             if created and not keep_infra:
-                teardown_infra(args.kubectl, args.namespace, created)
+                teardown_infra(args.kubectl, args.namespace, created, profile = broker_profile)
             print('Cleaned up all resources.')
         # Restore whatever the GPU mode changed once the run reaches here —
         # succeeded, failed, stalled or interrupted. Runs even under --keep: the
@@ -458,13 +543,18 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
     infra_manifests = []
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url
+    stream_replicas = 1
     if nats_url is None:
+        broker_profile, redis_profile = broker_profiles(
+            args.broker_profile, replicas = args.broker_replicas,
+            storage_class = args.broker_storage_class, priority_class = args.priority_class)
+        stream_replicas = broker_profile.jetstream_replicas
         urls = infra_urls(args.namespace)
         nats_url = urls['nats']
-        infra_manifests += nats_manifests(args.namespace)
+        infra_manifests += nats_manifests(args.namespace, broker_profile)
         if blob_redis_url is None:
             blob_redis_url = urls['redis']
-            infra_manifests += redis_manifests(args.namespace)
+            infra_manifests += redis_manifests(args.namespace, redis_profile)
 
     try:
         manifests = render_manifests(
@@ -479,6 +569,8 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
             gpu_resource_name = args.gpu_resource_name,
             gpu_autoscaling = args.gpu_autoscaling,
             image_pull_policy = args.image_pull_policy,
+            priority_class = args.priority_class,
+            stream_replicas = stream_replicas,
         )
     except ValueError as e:
         raise ConfigError(str(e)) from e
@@ -605,6 +697,9 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     from .localinfra import DEFAULT_NATS_URL, ensure_local_infra, teardown_local_infra, wait_local_infra_ready
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL')
+    # A store the operator brought is read back for admission; the dev one is
+    # judged by the shape localinfra starts it with.
+    byo_redis = blob_redis_url is not None
     created: list[str] = []
     if nats_url is None:
         if args.no_infra:
@@ -625,6 +720,24 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     # re-exports as PYTHONPATH so the workers can import its sibling modules.
     flow = _load_flow(graph_target)
     from ..engines.local import LocalProcessEngine  # optional dep: the local engine imports nats
+    # Composition admission: the dev containers are judged by the shape localinfra
+    # starts them with; a bring-your-own broker (--nats, or whatever listens under
+    # --no-infra) and a bring-your-own store are read back live — see
+    # deploy.admission. Advisory unless --require-profile or the RFC 0006 switch.
+    local_specs = compile_flow(flow)
+    explicit_profiles = parse_profile_requests(args.require_profile, local_specs)
+    verify_topology_shape(flow.flow_type, flow.flow_id, args.run_id or 'run', explicit_profiles)
+    if args.nats is None and not args.no_infra:
+        messaging_caps, dev_payload_caps = local_dev_capabilities()
+    else:
+        messaging_caps = jetstream_capabilities_observed(nats_url)
+        dev_payload_caps = None
+    payload_caps = (None if blob_redis_url is None
+                    else redis_payload_capabilities_observed(blob_redis_url) if byo_redis
+                    else dev_payload_caps)
+    admit(requirements_for(flow.flow_type, local_specs, explicit_profiles), messaging_caps, payload_caps,
+          payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit_profiles),
+          unknown_is_fatal = unknown_admission(explicit_profiles), where = 'run-local')
     # 4a. Image, but only if some node actually needs one. A pure-Python flow runs as
     # host subprocesses, so building the solution image would cost minutes and buy
     # nothing; a native component without a localCommand is docker-run and can't start
@@ -644,7 +757,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                                 local_docker_nats_url = args.local_docker_nats_url,
                                 default_image = image,
                                 blob_ttl_seconds = args.blob_ttl_seconds,
-                                supervision = supervision)
+                                supervision = supervision,
+                                profile_requests = requests_env(explicit_profiles))
     try:
         try:
             flow.run(engine, run_id = args.run_id)
@@ -688,7 +802,12 @@ def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> 
     import yaml  # optional dep (deploy extra)
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    for spec in resolve_mounts(load_template(template_path), config, graph_dir):
+    from .solution import split_mount_specs  # optional dep: solution imports yaml at module scope
+    # Only host paths can be checked here; a claim mount names data inside the
+    # cluster, which a local run neither needs nor can see.
+    host_specs, _claim_specs = split_mount_specs(
+        resolve_mounts(load_template(template_path), config, graph_dir))
+    for spec in host_specs:
         read_only = spec.endswith(':ro')
         path = (spec[:-3] if read_only else spec).split(':', 1)[0]
         if read_only and not os.path.exists(path):
@@ -779,13 +898,22 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
     async def _quiet(_e : Exception) -> None:
         pass  # swallow the client's connect-retry error logging (we handle failure)
 
+    incomplete : list[str] = []
+
     async def _go() -> None:
         nc = await nats.connect(args.nats, allow_reconnect = False, connect_timeout = 3,
                                 max_reconnect_attempts = 0, error_cb = _quiet)
         try:
             await nc.publish(control_subject_for(args.flow_id, args.run_id), b'stop')
             await nc.flush()
-            await delete_run_streams(nc, args.flow_id, args.run_id)
+            observation = await delete_run_streams(nc, args.flow_id, args.run_id)
+            if not observation.complete:
+                # A listing that failed or a delete that did not land is not a
+                # finished cleanup: say what remains, finish the other steps, and
+                # exit non-zero so a retry is the obvious next move.
+                incomplete.append(f'{observation.reason or "some streams remain"}; removed: '
+                                  f'{", ".join(observation.removed) or "none"}; remaining: '
+                                  f'{", ".join(observation.remaining) or "unknown"}')
         finally:
             await nc.drain()
 
@@ -796,7 +924,11 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
     # in-cluster-only URL), still delete the k8s workloads below.
     try:
         asyncio.run(_bounded())
-        print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
+        if incomplete:
+            print(f'WARNING: broker cleanup incomplete for flow {args.flow_id} run {args.run_id}: '
+                  f'{incomplete[0]}', file = sys.stderr)
+        else:
+            print(f'Sent stop + deleted run streams for flow {args.flow_id} run {args.run_id}')
     except Exception as e:
         print(f'Broker teardown skipped (could not reach NATS at {args.nats}): {e}', file = sys.stderr)
     if args.namespace:
@@ -809,7 +941,10 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
         if not args.namespace:
             raise ConfigError('--infra requires --namespace.')
         from .infra import teardown_infra  # optional dep: infra imports yaml at module scope
-        teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'])
+        # The profile decides the kinds deleted (a durable NATS is a StatefulSet);
+        # the persistent claims of a durable profile are kept, see deploy.infra.
+        profile, _redis_profile = broker_profiles(args.broker_profile)
+        teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'], profile = profile)
         print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
     # Undo any per-run cluster reconfiguration the GPU mode applied at deploy time.
     # This is the terminal hook for a REALTIME run, which stays up past deploy and
@@ -826,6 +961,12 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
             print(f'WARNING: skipping GPU cleanup: {e}', file = sys.stderr)
             strategy = None
         _gpu_cleanup(strategy, args.kubectl, args.flow_id)
+    if incomplete:
+        # Every other step ran (they are the guarantee); the broker half is what a
+        # retry must finish, so say so with the exit code and not only on stderr.
+        raise BrokerUnavailable(
+            f'Broker cleanup incomplete for flow {args.flow_id} run {args.run_id}: {incomplete[0]}',
+            remedy = 'Re-run the same `videoflow teardown` command once the broker is reachable; it is idempotent.')
 
 def _format_payload(message : Any) -> str:
     '''One-line human summary of a decoded payload for the debug inspector.'''
@@ -998,51 +1139,88 @@ def _cmd_dlq_replay(args : argparse.Namespace) -> None:
                         'process these messages) or --run-id.',
                         remedy = 'A dead letter records which run produced it, but not '
                                 'which run should retry it.')
-    if args.dry_run:
-        for _subject, headers, _data in entries:
-            print(f'would replay {headers.get("VF-Code")} from '
-                f'{headers.get("VF-Origin-Node")} into run {target_run}')
-        print(f'{len(entries)} message(s) would be replayed (--dry-run).')
-        return
-
     # optional dep: serialization imports protobuf at module scope
     from ..wire.serialization import decode_envelope
 
-    async def _go() -> tuple:
+    # Routing reads envelope metadata only (``resolve_blobs = False``): the target
+    # of a dead letter is its parent's subject, which never needs the payload
+    # bytes, so an offloaded entry routes exactly like an inline one even while
+    # the payload store is unreachable (PAY-015).
+    plan : list[tuple[str, dict, bytes, str | None, str | None]] = []
+    undecodable = 0
+    for _subject, headers, data in entries:
+        # A dead letter holds the *input* the failing node was given, so it has
+        # to go back onto the subject that node **reads from** — which is its
+        # parent's, not its own. The envelope names that parent in
+        # producer_name; VF-Origin-Node is the node that failed, and publishing
+        # there would put the message somewhere nothing reads.
+        try:
+            decoded = decode_envelope(data, resolve_blobs = False)
+        except Exception:  # noqa: BLE001 — anything undecodable cannot be routed, and is reported
+            undecodable += 1
+            continue
+        plan.append((subject_for(args.flow_id, target_run, decoded['producer_name']), headers, data,
+                     decoded.get('blob_ref'), headers.get('VF-Origin-Node') or None))
+    if args.dry_run:
+        for target, headers, _data, blob_ref, origin in plan:
+            print(f'would replay {headers.get("VF-Code")} from {origin} into run {target_run} '
+                  f'on {target}' + (f' (payload {blob_ref} offloaded)' if blob_ref else ''))
+        print(f'{len(plan)} message(s) would be replayed (--dry-run).')
+        if undecodable:
+            print(f'{undecodable} entry(ies) could not be decoded and cannot be routed.', file = sys.stderr)
+        return
+
+    # The bytes a replayed entry needs are verified separately from routing, and
+    # only when a store was named: a missing payload is a typed error, not a
+    # message that was "replayed" and then dead-lettered again for its payload.
+    unavailable : list[str] = []
+    if args.blob_redis_url:
+        # optional dep: serialization imports protobuf at module scope
+        from ..wire.serialization import make_blob_store
+        store = make_blob_store(args.blob_redis_url)
+        for _target, _headers, _data, blob_ref, _origin in plan:
+            if blob_ref is None:
+                continue
+            try:
+                store.get(blob_ref)
+            except Exception as e:  # noqa: BLE001 — every store failure is reported the same way
+                unavailable.append(f'{blob_ref}: {e}')
+        if unavailable:
+            raise ResourceUnavailable(
+                f'{len(unavailable)} dead letter(s) reference a payload the store could not return: '
+                + '; '.join(unavailable[:5]),
+                remedy = 'Restore the payload store (or its backup) before replaying; the entries were '
+                         'left in place.')
+
+    async def _go() -> int:
         nc = await nats.connect(args.nats)
         try:
             js = nc.jetstream()
-            replayed, skipped = 0, 0
-            for _subject, headers, data in entries:
-                # A dead letter holds the *input* the failing node was given, so it
-                # has to go back onto the subject that node **reads from** — which
-                # is its parent's, not its own. The envelope names that parent in
-                # producer_name; VF-Origin-Node is the node that failed, and
-                # publishing there would put the message somewhere nothing reads.
-                try:
-                    parent = decode_envelope(data)['producer_name']
-                except Exception:
-                    skipped += 1
-                    continue
-                target = subject_for(args.flow_id, target_run, parent)
-                await js.publish(target, data, headers = {
+            replayed = 0
+            for target, headers, data, _blob_ref, origin in plan:
+                replay_headers = {
                     # A fresh id, deliberately: reusing the original would land
                     # inside the stream's de-duplication window and JetStream
                     # would silently discard the very message being replayed.
                     'Nats-Msg-Id': f'replay:{uuid.uuid4().hex}',
                     'VF-Replay': headers.get('VF-Run-Id', ''),
-                })
+                }
+                if origin:
+                    # Only the node that failed reprocesses it (DELIV-16): a parent's
+                    # other children ack and skip a replay addressed elsewhere.
+                    replay_headers['VF-Replay-Target'] = origin
+                await js.publish(target, data, headers = replay_headers)
                 replayed += 1
             await nc.flush()
-            return replayed, skipped
+            return replayed
         finally:
             await nc.close()
 
-    count, skipped = asyncio.run(_go())
+    count = asyncio.run(_go())
     print(f'Replayed {count} message(s) into run {target_run}.')
-    if skipped:
+    if undecodable:
         # Never a silent partial: an entry that cannot be decoded cannot be routed.
-        print(f'{skipped} entry(ies) could not be decoded and were left in place.',
+        print(f'{undecodable} entry(ies) could not be decoded and were left in place.',
             file = sys.stderr)
 
 def _cmd_dlq_purge(args : argparse.Namespace) -> None:
@@ -1125,6 +1303,30 @@ def build_parser() -> argparse.ArgumentParser:
                                'containers), e.g. --mount /data/videos:ro. Absolute paths; the '
                                'single-path form mounts the same path on both sides. Repeatable. '
                                'Solution x-mounts are added automatically.')
+    deploy.add_argument('--mount-pvc', action = 'append', metavar = 'CLAIM:PATH[:ro]',
+                        help = 'Existing PersistentVolumeClaim mounted at PATH in every node '
+                               'workload, e.g. --mount-pvc vf-test-share:/opt/data/share:ro. '
+                               'The claim must live in --namespace. A --mount host path at or '
+                               'under PATH is served by the claim in the pods (and still by the '
+                               'host in the prep/compile containers). Repeatable; solution '
+                               'x-mounts of the form pvc:CLAIM:PATH are added automatically.')
+    deploy.add_argument('--priority-class', default = None, metavar = 'NAME',
+                        help = 'priorityClassName for every pod this deploy creates — workers, '
+                               'the provision Job and any broker it provisions. The PriorityClass '
+                               'must exist in the cluster; on a shared cluster it is how the flow '
+                               'yields to (or preempts) other tenants\' work.')
+    deploy.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = 'dev',
+                        help = 'Shape of the auto-provisioned NATS/Redis when --nats is omitted. '
+                               'dev (default): one emptyDir server each, torn down with a BATCH '
+                               'run. durable: a NATS StatefulSet with cluster routes and a '
+                               'PersistentVolumeClaim per pod, plus an append-only Redis on a '
+                               'claim, so streams and blobs survive a pod or a node.')
+    deploy.add_argument('--broker-replicas', type = int, default = None, metavar = 'N',
+                        help = 'NATS servers for --broker-profile durable (default 3; odd). '
+                               'Streams keep min(N, 3) copies.')
+    deploy.add_argument('--broker-storage-class', default = None, metavar = 'NAME',
+                        help = 'StorageClass of the durable profile\'s claims (default '
+                               f'{BrokerProfile.durable().storage_class}, what k3s and kind ship).')
     deploy.add_argument('--gpu-runtime-class', default = None, metavar = 'NAME',
                         help = 'runtimeClassName for GPU pods, e.g. --gpu-runtime-class nvidia. '
                                'Needed where the NVIDIA container runtime is an opt-in RuntimeClass '
@@ -1153,6 +1355,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help = 'Include GPU nodes in --autoscaling (off by default: every autoscaled '
                                'replica claims its own GPUs, so lag-driven scaling can demand more '
                                'devices than the cluster has and strand pods Pending).')
+    deploy.add_argument('--require-profile', action = 'append', metavar = 'CHANNEL=PROFILE', default = None,
+                        help = 'Require a messaging profile (live_latest, reliable_work, durable_control, '
+                               'replay_archive) on the named channel — the output of that node. Makes the '
+                               'composition check binding: a broker/store that cannot provide it is rejected '
+                               'before anything is applied (a bring-your-own --nats/--blob-redis-url is read '
+                               'back live), the provision Job verifies the streams it creates, and each worker '
+                               'verifies its channels before it opens. Repeatable.')
     deploy.add_argument('--strict-preflight', action = 'store_true',
                         help = 'Exit non-zero (before applying anything) when the GPU preflight '
                                'finds problems, instead of proceeding with warnings.')
@@ -1240,6 +1449,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--build-context', default = None,
                     help = 'docker build context for the auto-build (default: the git root '
                            'enclosing the graph).')
+    run.add_argument('--require-profile', action = 'append', metavar = 'CHANNEL=PROFILE', default = None,
+                    help = 'Require a messaging profile on the named channel; makes the composition check '
+                           'against the dev broker/store binding (see deploy --require-profile).')
     run.add_argument('--no-restart', action = 'store_true',
                     help = 'Do not restart a worker that crashes. By default run-local '
                            'restarts up to 3 times (backoff 1/2/4s), matching the '
@@ -1294,6 +1506,10 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--infra', action = 'store_true',
                           help = 'Also delete auto-provisioned dev NATS/Redis in --namespace '
                                  '(only resources labeled videoflow.io/infra).')
+    teardown.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = 'dev',
+                          help = 'The broker profile the run was deployed with; with --infra, '
+                                 'durable also deletes the NATS StatefulSet (its claims are kept). '
+                                 'deploy prints this flag in the teardown command when it applies.')
     teardown.add_argument('--gpu-mode', default = None,
                           help = 'The GPU mode the run was deployed with. Only needed when that '
                                  'mode reconfigured the cluster in prepare() and must be undone; '
@@ -1336,6 +1552,9 @@ def build_parser() -> argparse.ArgumentParser:
     dlq_replay.add_argument('--to-run', help = 'Run that should process them (defaults to --run-id).')
     dlq_replay.add_argument('--limit', type = int, default = 1000)
     dlq_replay.add_argument('--dry-run', action = 'store_true', help = 'Print what would be replayed.')
+    dlq_replay.add_argument('--blob-redis-url', default = None,
+                            help = 'Payload store URL; when given, every offloaded payload is verified to be '
+                                   'readable before anything is replayed.')
     dlq_replay.set_defaults(func = _cmd_dlq_replay)
 
     dlq_purge = dlq_sub.add_parser('purge', help = "Delete the flow's dead-letter stream.")
@@ -1352,11 +1571,7 @@ def render_error(error : VideoflowError) -> None:
     stack of framework internals the reader did not write and cannot act on. Set
     ``VF_DEBUG=1`` when the traceback *is* the thing you want.
     '''
-    print(f'ERROR [{error.code}]: {error.message}', file = sys.stderr)
-    if error.remedy:
-        print(f'  {error.remedy}', file = sys.stderr)
-    for key, value in sorted(error.context.items()):
-        print(f'  {key}: {value}', file = sys.stderr)
+    print(error.render(), file = sys.stderr)
     if isinstance(error, GraphError) and len(error.diagnostics) > 1:
         # Already listed inside the message; the warnings are the extra value.
         for diagnostic in error.diagnostics:

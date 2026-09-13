@@ -72,10 +72,33 @@ Metrics and health
 Each worker exposes an HTTP server (port 8080) with Prometheus metrics and health
 probes:
 
-- ``/metrics`` — per-node processing-time counters, labelled by node name. Scrape
+- ``/metrics`` — per-node processing metrics, labelled by node name. Scrape
   these with Prometheus and chart them in Grafana to find the slow stage of a flow.
   ``videoflow_errors_total{node,code,disposition}`` is the one to alert on: it
   answers *what* is failing, which an undimensioned failure count cannot.
+
+  Every observed latency (``proctime_seconds``, ``actual_proctime_seconds``) is
+  exported as a Prometheus **histogram**: cumulative
+  ``videoflow_<metric>_bucket{le="..."}`` lines over a fixed bucket set (5 ms to
+  60 s, dense where a video pipeline's budgets live, plus ``+Inf``) next to the
+  ``_count`` / ``_sum`` pair. Count and sum alone give a mean, and two nodes with
+  the same mean can have tails ten times apart — a p95 or p99 objective needs the
+  buckets, and ``histogram_quantile(0.99, rate(videoflow_proctime_seconds_bucket[5m]))``
+  is the query. Because every worker uses the same bounds, histograms add across
+  replicas and a restart is an ordinary counter reset.
+
+  Throughput is three counters with a conservation law behind them:
+  ``videoflow_messages_offered_total`` (input groups of real work handed to the
+  node), ``videoflow_messages_processed_total`` (acked) and
+  ``videoflow_messages_dropped_total{reason}`` (given up on by policy, never to be
+  redelivered — ``reason`` is ``poison`` for a dead-lettered message,
+  ``best_effort`` for one a best-effort node discarded, ``exhausted`` for an
+  at-least-once retry budget that ran out, ``undecodable`` for bytes no node could
+  be given, ``join_evicted`` for a join group that timed out or was pushed out of
+  the pending set, and ``publish_discarded`` for a live (REALTIME) output the
+  broker refused). ``offered − processed − dropped`` is the node's outstanding
+  work, which a lag gauge alone cannot separate from loss. Older families are emitted first and unchanged, so a scrape config
+  written against the count/sum-only output keeps working.
 - ``/readyz`` — reports ready only after the node's ``open()`` returns. If a pod
   never becomes ready, its ``open()`` is failing or hanging (a bad model path, an
   unreachable data source).
@@ -113,7 +136,13 @@ A BATCH run never finishes
     A node has stopped making progress. Workers stop themselves after
     ``VF_PROGRESS_TIMEOUT_SECONDS`` (default 300) of acking nothing while work is
     pending, and log which parent they were waiting on; if a node is legitimately
-    slower than that, raise the timeout rather than disabling it.
+    slower than that, raise the timeout rather than disabling it. The check runs
+    between messages *and* from a watchdog thread every
+    ``VF_WATCHDOG_INTERVAL_SECONDS`` (default 5), so a ``process()`` that never
+    returns is caught too — the pod's termination message then carries the
+    ``ProgressStalled`` reason. A worker whose broker queries keep failing does not
+    read that as "nothing pending": after a grace period it exits with
+    ``BrokerUnavailable`` saying how long the broker state was unobservable.
 
 A replicated join was rejected
     A processor with more than one parent and ``nb_tasks > 1`` must set

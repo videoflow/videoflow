@@ -1,0 +1,440 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-broker
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NATS_URL: nats://nats.videoflow-test.svc:4222
+  VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vf-golden-toy-router-netpol
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  podSelector:
+    matchLabels:
+      videoflow.io/flow-id: golden-toy-router
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          videoflow.io/flow-id: golden-toy-router
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-specs
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  specs.json: '[{"name": "count", "node_class": "toy_router_nodes.KeyedCounter", "params":
+    {"name": "count", "image": null, "nb_tasks": 3, "device_type": "cpu", "partition_by":
+    "_partition_key", "join_policy": null, "gpu_count": 1, "gpu_memory_gib": null,
+    "delivery": null, "on_error": null}, "parents": ["enrich"], "kind": "processor",
+    "has_children": true, "nb_tasks": 3, "device_type": "cpu", "is_finite": true,
+    "image": null, "partition_by": "_partition_key", "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "enrich", "node_class": "toy_router_nodes.AsyncEnricher", "params":
+    {"name": "enrich", "image": null, "nb_tasks": 1, "device_type": "cpu", "partition_by":
+    null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib": null, "delivery":
+    null, "on_error": null, "threshold": 50.0, "lookup_ms": 1.0}, "parents": ["events"],
+    "kind": "processor", "has_children": true, "nb_tasks": 1, "device_type": "cpu",
+    "is_finite": true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 3, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "events", "node_class": "toy_router_nodes.EventProducer", "params":
+    {"name": "events", "image": null, "is_finite": true, "seed": 7, "count": 120,
+    "sensors": 6, "rate_fps": 400.0}, "parents": [], "kind": "producer", "has_children":
+    true, "nb_tasks": 1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by":
+    null, "join_policy": null, "component_ref": null, "descriptor": null, "command":
+    null, "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    1, "gpu_memory_gib": null, "delivery": null}, {"name": "ledger", "node_class":
+    "toy_router_nodes.LedgerWriter", "params": {"name": "ledger", "image": null, "metadata":
+    false, "join_policy": null, "idempotent": true, "delivery": null, "on_error":
+    null, "ledger_path": "<ROOT>/toy_router/out/ledger.jsonl",
+    "counts_path": "<ROOT>/toy_router/out/counts.json",
+    "expected_path": "<ROOT>/toy_router/out/expected_counts.json"},
+    "parents": ["count"], "kind": "consumer", "has_children": false, "nb_tasks": 1,
+    "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}]'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-router-provision
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: provision
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -m
+        - videoflow.provision
+        terminationMessagePolicy: FallbackToLogsOnError
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-router-broker
+        env:
+        - name: VF_FLOW_ID
+          value: golden-toy_router
+        - name: VF_RUN_ID
+          value: run0
+        - name: VF_FLOW_TYPE
+          value: batch
+        - name: VF_FLOW_SPECS_PATH
+          value: /etc/videoflow/specs.json
+        volumeMounts:
+        - name: specs
+          mountPath: /etc/videoflow
+          readOnly: true
+      volumes:
+      - name: specs
+        configMap:
+          name: vf-golden-toy-router-specs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-count-env
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: count
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "count", "image": null, "nb_tasks": 3, "device_type":
+    "cpu", "partition_by": "_partition_key", "join_policy": null, "gpu_count": 1,
+    "gpu_memory_gib": null, "delivery": null, "on_error": null}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: count
+  VF_PARENT_NAMES: enrich
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_router
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '3'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_router_nodes.KeyedCounter
+  VF_PARTITION_BY: _partition_key
+  VF_BLOB_READERS: '1'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vf-golden-toy-router-count-hl
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: count
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  clusterIP: None
+  selector:
+    videoflow.io/node: count
+    videoflow.io/flow-id: golden-toy-router
+  ports:
+  - port: 8080
+    name: health
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-router-count
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: count
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-router-count-env
+        - configMapRef:
+            name: vf-golden-toy-router-broker
+        env:
+        - name: VF_REPLICA_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_router
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_router
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+  completionMode: Indexed
+  completions: 3
+  parallelism: 3
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vf-golden-toy-router-count-pdb
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: count
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: count
+      videoflow.io/flow-id: golden-toy-router
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-enrich-env
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: enrich
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "enrich", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "threshold": 50.0, "lookup_ms": 1.0}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: enrich
+  VF_PARENT_NAMES: events
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_router
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_router_nodes.AsyncEnricher
+  VF_BLOB_READERS: '3'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-router-enrich
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: enrich
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-router-enrich-env
+        - configMapRef:
+            name: vf-golden-toy-router-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_router
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_router
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-events-env
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: events
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "events", "image": null, "is_finite": true, "seed":
+    7, "count": 120, "sensors": 6, "rate_fps": 400.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: events
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_router
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_router_nodes.EventProducer
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-router-events
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: events
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-router-events-env
+        - configMapRef:
+            name: vf-golden-toy-router-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_router
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_router
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-router-ledger-env
+  labels:
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: ledger
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "ledger", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": true, "delivery": null, "on_error": null, "ledger_path": "<ROOT>/toy_router/out/ledger.jsonl",
+    "counts_path": "<ROOT>/toy_router/out/counts.json",
+    "expected_path": "<ROOT>/toy_router/out/expected_counts.json"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: ledger
+  VF_PARENT_NAMES: count
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_router
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_router_nodes.LedgerWriter
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-router-ledger
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-router
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: ledger
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-router-ledger-env
+        - configMapRef:
+            name: vf-golden-toy-router-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_router
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_router
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400

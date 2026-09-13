@@ -1,8 +1,15 @@
-# Host access to the dev NATS running inside a kind cluster, paired with the
-# extraPortMapping in kind-cluster.yaml: the node's 30422 is published on
-# 127.0.0.1:4223, so tests/integration/k8s/ can read the dead-letter queue and run
-# `videoflow teardown` from the host. Workers are unaffected — they reach the
-# broker at nats.<namespace>.svc:4222 like any other in-cluster client.
+# Host access to the dev NATS running inside the test cluster, so
+# tests/integration/k8s/ can read the dead-letter queue and run `videoflow
+# teardown` from the host. Workers are unaffected — they reach the broker at
+# nats.<namespace>.svc:4222 like any other in-cluster client.
+#
+#   - On kind it pairs with the extraPortMapping in kind-cluster.yaml: the node's
+#     30422 is published on 127.0.0.1:4223 (scripts/kind-up.sh).
+#   - On k3s the NodePort is reachable on every node's IP, and a test host that is
+#     itself a node reaches it at 127.0.0.1:30422 (scripts/k3s-test-up.sh, which
+#     rewrites the port when VF_K8S_NATS_NODEPORT is set). From a machine outside
+#     the cluster, `kubectl -n videoflow-test port-forward svc/nats 30422:4222`
+#     gives the same URL.
 #
 # Apply into the same namespace as the broker:
 #   kubectl apply -n videoflow-test -f k8s/nats-nodeport.yaml
@@ -24,7 +31,7 @@ kind: Service
 metadata:
   name: nats-nodeport
   labels:
-    app.kubernetes.io/managed-by: videoflow-tests
+    app.kubernetes.io/managed-by: videoflow
 spec:
   type: NodePort
   selector:

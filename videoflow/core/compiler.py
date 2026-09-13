@@ -218,6 +218,25 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             for child in specs if spec.name in child.parents)
     return specs
 
+def blob_reader_ids(spec : NodeSpec, specs : List[NodeSpec]) -> List[str]:
+    '''
+    The reader obligations every payload ``spec`` publishes is held for (RFC 0006
+    BLOB-13, ``VF_BLOB_READER_IDS``): ``<child>`` for a child whose replicas
+    compete on one durable, ``<child>/p<i>`` per replica of a partitioned child —
+    the identities the children release under after a confirmed settlement. The
+    same arithmetic as ``blob_readers``, by name instead of by count; not a
+    ``NodeSpec`` field, so the specs document is unchanged.
+    '''
+    ids : List[str] = []
+    for child in specs:
+        if spec.name not in child.parents:
+            continue
+        if child.partition_by and child.nb_tasks > 1:
+            ids.extend(f'{child.name}/p{i}' for i in range(child.nb_tasks))
+        else:
+            ids.append(child.name)
+    return ids
+
 def _validate_remote_node(node : RemoteNodeMixin, parent_names : List[str]) -> None:
     '''
     Parent-aware validation of a remote component now that its wired parents are
@@ -277,3 +296,25 @@ def compile_flow(flow : Flow, envelope_version : Optional[int] = None) -> List[N
     specs = specs_from_tasks_data(flow.tasks_data())
     validate_wire_compatibility(specs, envelope_version)
     return specs
+
+def gpu_provenance(flow : Flow) -> Dict[str, Dict[str, str]]:
+    '''
+    Where every processor's GPU requirement came from, keyed by node name —
+    ``{'detector': {'device_type': 'node', 'gpu_count': 'descriptor',
+    'gpu_memory_gib': 'default'}}`` (the sources are those of
+    ``videoflow.core.provenance``). The compiler's companion document to
+    ``compile_flow``: deliberately **not** a ``NodeSpec`` field, because a
+    spec's serialized form is every specs ConfigMap byte and ``to_dict`` is
+    ``asdict``, so it is returned alongside for whoever asks. ``compile_to_dict``
+    may emit it under its own key only when explicitly requested, never in the
+    default document. Producers and consumers carry no GPU knobs and are omitted.
+
+    - Arguments:
+        - flow: a built ``videoflow.core.flow.Flow``.
+
+    - Returns:
+        - node name -> ``{field: source}`` for every ``ProcessorNode`` in the flow.
+    '''
+    return {node.name: node.gpu_provenance
+            for node, _parent_names, _is_last in flow.tasks_data()
+            if isinstance(node, ProcessorNode)}

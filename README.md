@@ -117,7 +117,8 @@ ships a `config.template.yaml`, runs its `prepare.py` hook, starts a dev broker 
 none is listening, spawns one worker subprocess per node, waits for the flow to
 finish, reports any node that exited non-zero, and stops only the containers it
 started. Overrides: `--nats`, `--config`, `--no-prepare`, `--no-infra`,
-`--keep-infra`, `--blob-redis-url`, `--blob-ttl-seconds`, `--run-id`.
+`--keep-infra`, `--blob-redis-url`, `--blob-ttl-seconds`, `--run-id`,
+`--require-profile CHANNEL=PROFILE` (see below).
 
 Running the script directly still works when you have a broker up:
 
@@ -129,7 +130,7 @@ python my_flow.py
 
 ## Example solutions
 
-[`solutions/`](solutions) holds three complete, deployable applications built
+[`solutions/`](solutions) holds four complete, deployable applications built
 from core nodes only — no models, no footage, no extra dependencies. They are
 the fastest way to see the whole path (config, prep hook, image, broker, workers,
 teardown) actually work, and the best code to read after this README.
@@ -173,7 +174,29 @@ a `config.template.yaml` (deploy asks its questions interactively to generate
 compiling); when the graph's ML deps aren't installed on the operator machine,
 deploy compiles the graph inside the image too. Local input files are exposed to
 the pods with repeatable `--mount /abs/path[:ro]` hostPath mounts (solution
-`x-mounts` are added automatically).
+`x-mounts` are added automatically). Data that lives in the cluster rather than
+on your machine — a shared model cache, an RWX work directory on a multi-node
+cluster where no node's own filesystem holds it — is mounted from an existing
+PersistentVolumeClaim with `--mount-pvc claim:/path[:ro]` (or an `x-mounts` entry
+`pvc:claim:/path`); a `--mount` under that path is served by the claim in the
+pods and by the host in the prepare container. On a shared cluster,
+`--priority-class cluster-batch` puts every pod the deploy creates — workers,
+provision Job and the broker it provisions — in that PriorityClass. The
+auto-provisioned broker is dev-grade by default (one emptyDir server each);
+`--broker-profile durable` renders a NATS StatefulSet with cluster routes and a
+PersistentVolumeClaim per pod plus an append-only Redis, sized with
+`--broker-replicas N` (odd) and `--broker-storage-class NAME`. Before anything is
+applied, deploy checks that the broker and store it is about to use can actually
+provide what every channel asks for — `reliable_work` for a BATCH flow,
+`live_latest` for REALTIME — and says so if not (a dev-grade broker under a BATCH
+flow, say). An auto-provisioned broker is judged by its profile; a bring-your-own
+`--nats` / `--blob-redis-url` is read back live, and what cannot be read is
+reported as unknown rather than assumed. That verdict is a warning today;
+`--require-profile CHANNEL=PROFILE` (the channel is the publishing node's name;
+profiles are `live_latest`, `reliable_work`, `durable_control`,
+`replay_archive`) makes it binding — at deploy, again in the provision Job
+before any stream is created, and in every worker before it opens — and the
+same flag on `run-local` checks the dev containers.
 
 Because that image is built locally and loaded straight into the cluster, every
 container is rendered with `imagePullPolicy: IfNotPresent` — there is nothing to
@@ -199,7 +222,9 @@ videoflow deploy my_flow.py:build_flow \
     --nats nats://nats.videoflow.svc:4222 \
     --namespace videoflow \
     --image ghcr.io/acme/app:v1 \
-    --autoscaling                             # optional KEDA scalers
+    --autoscaling                             # optional KEDA scalers (REALTIME flows — a BATCH
+                                              # flow's nodes are Jobs, which no scaler can scale,
+                                              # so deploy refuses the flag for them)
 ```
 
 Use `--dry-run` to print the manifests to stdout (including the dev-infra
@@ -489,9 +514,14 @@ placement for multi-model nodes. A component can declare its need in its
 `component.yaml` (`spec: {resources: {gpu: {count: 2}}}`) so graph authors don't
 have to pass `gpu_count=` by hand. Two things to know: all `gpu_count` devices
 must fit on **one** cluster node (preflight checks the largest node, not just the
-total — prefer NVLink-connected GPUs for tensor parallelism), and sliced GPUs
-don't qualify (MIG and time-sliced units can't be combined into one model —
-preflight hard-errors on the attempt).
+total — and then packs every pod's claim onto the per-node free counts, because
+two nodes with 3 free GPUs each hold only two of three `gpu_count = 2` replicas
+even though both aggregate checks pass; prefer NVLink-connected GPUs for tensor
+parallelism), and sliced GPUs don't qualify (MIG, time-sliced and MPS units
+can't be combined into one model — preflight hard-errors on the attempt). A
+preflight whose occupancy read the API refused says so (`unobservable GPU
+state`) rather than assuming the pool is idle; under `--gpu-mode mix` that is
+fatal, since mix repartitions cards on the strength of it.
 
 **Sharing GPUs with isolation: `--gpu-mode mix`.** On MIG-capable hardware
 (A30/A100/H100), a flow can mix models that share a card with models that span
@@ -537,7 +567,7 @@ device), so a mix-authored flow still deploys anywhere.
 | `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `--gpu-resource-name`) plus a GPU-pool nodeSelector/toleration — exclusive whole physical devices; under `--gpu-mode mix`, nodes with `gpu_memory_gib` request a solver-chosen exclusive MIG slice instead |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
-| observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag |
+| observability | each worker exposes `/metrics` (Prometheus — latency histograms, throughput and drop counters, errors by code) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag to REALTIME processors |
 
 ### Reliability
 
@@ -562,7 +592,11 @@ flow type:
 An exception you do not classify is treated as the middle case, so nothing changes
 until you opt in. Workers also protect themselves: a run of unexplained failures
 trips a circuit breaker, and a node that stops acking while work is pending is
-declared stalled rather than hanging the run forever.
+declared stalled rather than hanging the run forever — checked between messages
+by the run loop and, from a watchdog thread every `VF_WATCHDOG_INTERVAL_SECONDS`
+(default 5; `0` disables the thread), *during* a `process()` that never returns,
+so a wedged callback with healthy broker heartbeats is still caught and the
+reason lands in the pod's termination message.
 
 Dead letters land on the flow's DLQ stream (`vf-<flow>-dlq`) with the error code
 attached. It is scoped to the flow, not the run, so tearing a run down does not
@@ -779,6 +813,17 @@ implement, with stable IDs), the protobuf IDL under `spec/proto/videoflow/v1/`, 
 golden test vectors in `spec/vectors/` replayed against every SDK to enforce
 lockstep. A vendor can hand-write a conforming component against the spec today; the
 Python worker is the executable reference implementation.
+
+The same idea applies one layer down. The transport, payload store, accelerator
+allocator and runtime that sit under a flow have explicit contracts in
+[`videoflow/backends/`](videoflow/backends) with in-memory reference
+implementations, and a 130-case **backend conformance suite** under
+[`tests/conformance/`](tests/conformance) (`VF_RFC0006=1 uv run pytest
+tests/conformance -q -rs`, then `uv run python tests/conformance/report.py`) that
+a new backend is developed against. A case whose fixture is absent reports
+`NOT_RUN`, never a green skip. The wire- and routing-observable parts of that work
+are proposed in [`spec/rfcs/0006`](spec/rfcs/0006-backend-contracts-and-runtime-ledger.md)
+and stay off by default until it is accepted.
 
 ---
 

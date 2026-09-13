@@ -6,6 +6,42 @@
 #
 #   docker compose up -d
 #   python examples/simple_example1.py
+#
+# The two default services are all a normal run (and tests/integration/broker +
+# local) need, and they are unchanged. Everything below them sits behind a
+# profile: opt-in fixtures for the broker-level conformance cases
+# (tests/conformance) that need a broker to misbehave in a specific way.
+#
+#   docker compose --profile cluster up -d        # nats-1/2/3: a 3-node JetStream cluster
+#   docker compose --profile toxiproxy up -d      # toxiproxy in front of nats and redis
+#   docker compose --profile redis-durable up -d  # redis with an append-only file
+#   docker compose --profile redis-small up -d    # redis capped at 64mb (eviction cases)
+#   docker compose --profile restricted up -d     # nats with a user denied consumer creation
+#   docker compose --profile cluster --profile toxiproxy --profile redis-durable \
+#                  --profile redis-small --profile restricted up -d          # all of them
+#   docker compose --profile cluster --profile redis-durable down -v          # ...and reclaim the volumes
+#
+# Ports. Every profile takes host ports of its own, so all of them can run at the
+# same time — next to the defaults, and next to a kind cluster, which publishes
+# its NodePort on 127.0.0.1:4223. The cluster's first node deliberately does NOT
+# reuse 4222: compose cannot make a port conditional on whether the default
+# `nats` is up, and a clash would make one of the two the broker your tests talk
+# to at random.
+#
+#   service          host ports           what the tests read
+#   nats             4222, 8222           VF_TEST_NATS_URL=nats://localhost:4222
+#   redis            6379                 VF_TEST_REDIS_URL=redis://localhost:6379/0
+#   nats-1/2/3       4231/4232/4233       VF_TEST_NATS_CLUSTER_URLS=nats://localhost:4231,nats://localhost:4232,nats://localhost:4233
+#                    8231/8232/8233       (monitoring, one per node; routes stay on the compose network, port 6222)
+#   toxiproxy        8474                 VF_TEST_TOXIPROXY_URL=http://localhost:8474   (the control API)
+#                    4242 -> nats:4222    VF_TEST_NATS_PROXIED_URL=nats://localhost:4242
+#                    6380 -> redis:6379   VF_TEST_REDIS_PROXIED_URL=redis://localhost:6380/0
+#   redis-durable    6381                 VF_TEST_REDIS_DURABLE_URL=redis://localhost:6381/0
+#   redis-small      6382                 VF_TEST_REDIS_SMALL_URL=redis://localhost:6382/0
+#   nats-restricted  4224, 8224           VF_TEST_NATS_RESTRICTED_URL=nats://restricted:restricted@localhost:4224
+#
+# The inline `configs:` (toxiproxy's proxy seed, the restricted NATS config) need
+# Docker Compose >= 2.23.1. The default services do not use them.
 services:
   nats:
     image: nats:2.10
@@ -24,3 +60,149 @@ services:
               "--maxmemory", "4gb", "--maxmemory-policy", "volatile-lru"]
     ports:
       - "6379:6379"
+
+  # -- profile: cluster ---------------------------------------------------------
+  # Three servers forming one JetStream cluster (`--cluster_name vf`), each
+  # soliciting routes to all three over the compose network on 6222 and keeping
+  # its file store on a named volume. Named volumes rather than a bind mount so
+  # the compose file works on any machine; docker's data root holds them (on the
+  # cluster nodes that is /opt/data/docker — the small / partition is never used).
+  # Streams created with `replicas: 3` survive `docker compose stop nats-2`.
+  # Flags rather than a config file: --server_name / --cluster / --routes /
+  # --cluster_name / -js / -sd / -m are the nats-server 2.10 spellings.
+  nats-1: &nats-cluster-node
+    image: nats:2.10
+    profiles: [cluster]
+    command: ["--server_name", "nats-1", "-js", "-sd", "/data/jetstream", "-m", "8222",
+              "--cluster_name", "vf", "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"]
+    ports:
+      - "4231:4222"
+      - "8231:8222"
+    volumes:
+      - nats-1-data:/data/jetstream
+
+  nats-2:
+    <<: *nats-cluster-node
+    command: ["--server_name", "nats-2", "-js", "-sd", "/data/jetstream", "-m", "8222",
+              "--cluster_name", "vf", "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"]
+    ports:
+      - "4232:4222"
+      - "8232:8222"
+    volumes:
+      - nats-2-data:/data/jetstream
+
+  nats-3:
+    <<: *nats-cluster-node
+    command: ["--server_name", "nats-3", "-js", "-sd", "/data/jetstream", "-m", "8222",
+              "--cluster_name", "vf", "--cluster", "nats://0.0.0.0:6222",
+              "--routes", "nats://nats-1:6222,nats://nats-2:6222,nats://nats-3:6222"]
+    ports:
+      - "4233:4222"
+      - "8233:8222"
+    volumes:
+      - nats-3-data:/data/jetstream
+
+  # -- profile: toxiproxy -------------------------------------------------------
+  # A TCP proxy the tests can degrade through its API (latency, bandwidth caps,
+  # cut connections) between a client and the default nats/redis. The two proxies
+  # are seeded from the config below so the profile is usable as soon as it is
+  # up; a test adds toxics to them (POST /proxies/nats/toxics) rather than
+  # creating them, and resets with POST /reset. The image is FROM scratch with
+  # ENTRYPOINT /toxiproxy and CMD -host=0.0.0.0; the command repeats the host so
+  # the API listens on all interfaces after -config is appended.
+  toxiproxy:
+    image: ghcr.io/shopify/toxiproxy:2.9.0
+    profiles: [toxiproxy]
+    command: ["-host=0.0.0.0", "-config=/config/toxiproxy.json"]
+    configs:
+      - source: toxiproxy-seed
+        target: /config/toxiproxy.json
+    ports:
+      - "8474:8474"   # control API
+      - "4242:4242"   # -> nats:4222
+      - "6380:6380"   # -> redis:6379
+    depends_on:
+      - nats
+      - redis
+
+  # -- profile: redis-durable ---------------------------------------------------
+  # Append-only persistence on a named volume and noeviction, the local twin of
+  # `videoflow deploy --broker-profile durable`'s Redis: a full store refuses a
+  # write instead of dropping a blob, and a restart replays the AOF.
+  redis-durable:
+    image: redis:7
+    profiles: [redis-durable]
+    command: ["redis-server", "--save", "", "--appendonly", "yes", "--dir", "/data",
+              "--maxmemory", "4gb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6381:6379"
+    volumes:
+      - redis-durable-data:/data
+
+  # -- profile: redis-small -----------------------------------------------------
+  # The default policy under a cap small enough that a test can fill it in
+  # seconds and watch TTL'd blobs get evicted (and reads of them fail cleanly).
+  redis-small:
+    image: redis:7
+    profiles: [redis-small]
+    command: ["redis-server", "--save", "", "--appendonly", "no",
+              "--maxmemory", "64mb", "--maxmemory-policy", "volatile-lru"]
+    ports:
+      - "6382:6379"
+
+  # -- profile: restricted ------------------------------------------------------
+  # A separate server rather than accounts on the default `nats`: the default
+  # must keep answering anonymous nats://localhost:4222 exactly as it does today,
+  # and a user list changes what "unauthenticated" means on a server. Here the
+  # unauthenticated identity is `vf` (no_auth_user, full permissions), so the
+  # plain URL behaves like the default broker, and `restricted` may do everything
+  # except create JetStream consumers — the MSG-005 fixture: a subscription setup
+  # the broker refuses must surface as an error, not a hang.
+  nats-restricted:
+    image: nats:2.10
+    profiles: [restricted]
+    command: ["-c", "/etc/nats/nats.conf"]
+    configs:
+      - source: nats-restricted-conf
+        target: /etc/nats/nats.conf
+    ports:
+      - "4224:4222"
+      - "8224:8222"
+
+configs:
+  toxiproxy-seed:
+    content: |
+      [
+        {"name": "nats",  "listen": "0.0.0.0:4242", "upstream": "nats:4222",  "enabled": true},
+        {"name": "redis", "listen": "0.0.0.0:6380", "upstream": "redis:6379", "enabled": true}
+      ]
+  # `$$` is compose's escape for a literal `$`: the server must see $JS.API..., and
+  # compose would otherwise interpolate an (unset) JS variable to nothing.
+  nats-restricted-conf:
+    content: |
+      port: 4222
+      http: 8222
+      jetstream {
+        store_dir: "/data/jetstream"
+      }
+      authorization {
+        users: [
+          { user: vf, password: vf }
+          { user: restricted, password: restricted,
+            permissions: {
+              publish: {
+                deny: ["$$JS.API.CONSUMER.CREATE.>", "$$JS.API.CONSUMER.DURABLE.CREATE.>"]
+              }
+            }
+          }
+        ]
+      }
+      no_auth_user: vf
+
+volumes:
+  nats-1-data:
+  nats-2-data:
+  nats-3-data:
+  redis-durable-data:

@@ -52,15 +52,28 @@ says who is at fault:
     │   ├── GraphError              cycles, duplicate names, bad joins
     │   ├── NodeContractError       get_params round trip, kind mismatch
     │   ├── ConfigError             flow type, join policy, mounts, images
-    │   └── CapabilityError         asking a component for what it cannot do
+    │   ├── CapabilityError         asking a component for what it cannot do
+    │   ├── IncompatibleProfile     VF_INCOMPATIBLE_PROFILE: the broker/store cannot
+    │   │                           provide a guarantee a channel requires (at deploy,
+    │   │                           in the provision Job, and in a worker at bind when
+    │   │                           an explicit --require-profile is not carried by
+    │   │                           the streams it reads back)
+    │   └── IdentityCollision       VF_IDENTITY_COLLISION: two names encode to one
+    │                               broker or Kubernetes name
     ├── VideoflowEnvironmentError   the world is not as required      → exit 3
     │   ├── BrokerUnavailable
     │   ├── ClusterError
-    │   └── ResourceUnavailable
+    │   ├── ResourceUnavailable
+    │   ├── UnobservableState       VF_STATE_UNKNOWN: a read the decision needed
+    │   │                           could not be made, and unknown is not zero
+    │   └── OwnershipConflict       VF_OWNERSHIP_CONFLICT: a compare-and-swap on
+    │                               shared cluster state lost to another writer
     └── VideoflowRuntimeError       something failed mid-stream
         ├── PoisonMessage           the DATA is bad
         ├── TransientFailure        the WORLD blipped
-        └── WorkerFatal             THIS WORKER is sick
+        ├── WorkerFatal             THIS WORKER is sick
+        └── StaleAuthority          VF_STALE_AUTHORITY: this worker's ownership
+                                    epoch was superseded (worker_fatal)
 
 Every one carries a stable ``code`` (``VF_POISON_SCHEMA``), a ``message``, and a
 ``remedy`` — the fix, kept as its own field so the CLI, the dead-letter inspector
@@ -88,7 +101,10 @@ thing a component author needs to get right:
     A wedged GPU, a missing model file, an exhausted disk. The message is fine;
     this process is not. It is handed back to the broker for a healthy replica,
     never dead-lettered — and the worker then **stops**, so a replacement can take
-    over.
+    over. ``StaleAuthority`` is the same disposition for a different reason: the
+    worker tried to commit under an ownership epoch a newer owner has superseded
+    (a partition transferred, a replacement replica started). The message is fine;
+    this writer is not the one allowed to decide it.
 
 The failure this prevents is worth stating plainly. Before dispositions existed,
 a pod whose GPU wedged failed every message it touched, and each one was
@@ -160,6 +176,32 @@ have no probes.
 If a node legitimately takes longer than that per message, raise the timeout
 rather than disabling it.
 
+The deadline is consulted in two places. The run loop checks it between
+messages, which catches a node that is alive but no longer acking — and misses
+the one failure the deadline was written for: a ``process()`` that never
+returns. Such a callback never gets back to the loop, so the loop never checks,
+while the broker lease heartbeats stay perfectly healthy. So a **watchdog
+thread** re-checks the *same* deadline every ``VF_WATCHDOG_INTERVAL_SECONDS``
+(default 5; ``0`` disables the thread and leaves the loop's own check). A node
+that is merely slow keeps recording progress on every ack and is never touched; a
+node stuck with work pending trips the deadline within ``timeout + interval``,
+and because a thread cannot unwind the main thread's wedged frame, the watchdog
+writes the reason to the termination log and ends the process with the error's
+exit code — ``5`` (the flow stalled) for a ``ProgressStalled``. The un-acked
+inputs go back to the broker for the replacement, exactly as after any other
+death.
+
+**Unknown is not zero.** The deadline's pending probe is a broker query, and a
+query that failed used to read as "nothing pending" — which is how a node whose
+broker connection had wedged could look idle. The probe now answers *unknown*
+when it could not observe the broker, and the deadline treats that
+differently from both other answers: it neither resets the silence window (that
+would hide a stall) nor trips it (that would blame the node for the broker).
+Sustained unobservability is its own failure: after a grace period (twice the
+progress timeout by default) the node stops with ``BrokerUnavailable`` (exit
+``3``), whose message says how long the broker state was unknown — it neither
+completed nor stalled while the query was failing.
+
 Failure propagation
 -------------------
 
@@ -225,8 +267,70 @@ opposite, and are most wanted right after a run that failed and was torn down.
 
 ``replay`` re-publishes the original bytes onto the subject the failing node reads
 from, with a fresh message id (reusing the original would land inside the stream's
-de-duplication window and be silently discarded) and a ``VF-Replay`` header naming
-the run it came from.
+de-duplication window and be silently discarded), a ``VF-Replay`` header naming
+the run it came from, and a ``VF-Replay-Target`` header naming the node that failed.
+That subject is the parent's, which every child of the parent reads: with
+``VF_RFC0006=1`` the other children acknowledge and skip a replay addressed to a
+sibling before fetching its payload, so a node-scoped replay reprocesses nothing
+elsewhere; without the switch every child sees it, as before.
+
+Routing a dead letter needs only its envelope metadata, so ``--dry-run`` prints the
+target subject of every entry — inline or offloaded — while the payload store is
+unreachable, and an offloaded entry is never skipped for lack of a store. Whether
+the bytes can actually be obtained is a separate check: pass ``--blob-redis-url``
+and every offloaded payload is read before anything is published; a payload the
+store cannot return fails the whole replay with ``VF_RESOURCE_UNAVAILABLE`` and
+leaves every entry in place, rather than replaying messages that would only be
+dead-lettered again.
+
+Undecodable bytes and terminal records
+--------------------------------------
+
+Bytes that cannot be decoded — a foreign publisher, a truncated envelope, an
+offloaded payload the store reports as missing or corrupt — are poison at the
+transport layer: no node ever sees them, so no node can classify them. A payload
+store that was merely *unreachable* is not that case: the fetch is retried with
+the transient ladder, never terminated, because the bytes may well exist.
+
+A delivery is only ever terminated against a durable record of why. With
+``VF_RFC0006=1`` an undecodable message follows the poison ladder exactly as a
+node that raised ``PoisonMessage`` would: its raw bytes are dead-lettered under
+``VF_POISON_DECODE`` (``dlq show`` prints the headers and the byte length), and
+the delivery is terminated only once the broker accepted that dead letter — a
+dead-letter publish that failed keeps the delivery for a later attempt. The same
+holds for any dead letter whose payload lives in the store: the worker pins the
+payload for the DLQ retention first (``dlq/<flow>`` obligation), and a pin that
+could not be taken also keeps the delivery, because a dead letter whose bytes may
+vanish before anyone inspects it is not a record. Without the switch the
+delivery is terminated against the node's terminal log, as it always was. A dead letter that was sampled out (``dlq: sampled``) or switched off
+(``dlq: off``) also leaves a terminal-log entry, so a message never disappears with
+its own disappearance as the only trace.
+
+The delivery count the retry ladder consults is the broker's. A ``worker_fatal``
+failure hands the message back without blaming it, but the broker still counts
+that delivery against ``max_deliver``; a budget that ignores worker-fatal attempts
+needs the durable runtime ledger of RFC 0006 (plan Phase 3) and is not in place yet.
+
+Teardown and incomplete cleanup
+-------------------------------
+
+``videoflow teardown`` (and both engines, from their ``finally``) deletes a run's
+streams by **exact ownership**, never by name prefix: a stream is this run's if the
+owner labels in its JetStream metadata say so (``VF_RFC0006=1``), or — for a stream
+created without labels — if its dot-delimited data subject names this flow and run
+token for token. Tearing down run ``r`` cannot touch run ``r-x``, and the flow's
+dead-letter stream is never a candidate.
+
+The result is reported truthfully. When the stream listing could not be read, or
+an owned stream's delete did not land, ``teardown`` prints
+
+.. code-block:: text
+
+    WARNING: broker cleanup incomplete for flow <flow> run <run>: <reason>; removed: ...; remaining: ...
+
+on stderr and carries on with the workloads and infra it was asked to delete; the
+engines log the same line. A listing that failed deletes nothing and is not
+"nothing to delete" — re-run the teardown once the broker answers.
 
 Exit codes
 ----------
@@ -258,6 +362,13 @@ parsing stderr:
    * - ``130``
      - interrupted
      - —
+
+Which class an error belongs to decides the code, so the newer codes fall where
+their branch of the taxonomy puts them: ``VF_INCOMPATIBLE_PROFILE`` and
+``VF_IDENTITY_COLLISION`` are ``2`` (change the flow or the request),
+``VF_STATE_UNKNOWN`` and ``VF_OWNERSHIP_CONFLICT`` are ``3`` (restore the read, or
+redeploy against the current state), and a stall the watchdog thread found is
+``5`` with the reason in the termination log.
 
 Errors print as a message and a fix, never a traceback. Set ``VF_DEBUG=1`` when
 the traceback is the thing you want.
@@ -309,7 +420,8 @@ Every failure produces three artifacts, all keyed by the same ``code``:
 
 A crash-looping pod reports its own cause: ``rollout_report`` reads the worker's
 termination message and says ``VF_DEVICE: CUDA out of memory — lower the batch
-size`` instead of ``crash-looping, see the logs``.
+size`` instead of ``crash-looping, see the logs``. A stall the watchdog thread
+detected is written the same way, by that thread, before the process exits.
 
 Worked example
 --------------

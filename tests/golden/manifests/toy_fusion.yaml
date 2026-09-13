@@ -1,0 +1,504 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-broker
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NATS_URL: nats://nats.videoflow-test.svc:4222
+  VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vf-golden-toy-fusion-netpol
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  podSelector:
+    matchLabels:
+      videoflow.io/flow-id: golden-toy-fusion
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          videoflow.io/flow-id: golden-toy-fusion
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-specs
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  specs.json: '[{"name": "cam0", "node_class": "toy_fusion_nodes.SimCameraProducer",
+    "params": {"name": "cam0", "image": null, "is_finite": true, "fps": 10.0, "phase_ms":
+    0.0, "duration_s": 3.0}, "parents": [], "kind": "producer", "has_children": true,
+    "nb_tasks": 1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by":
+    null, "join_policy": null, "component_ref": null, "descriptor": null, "command":
+    null, "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    1, "gpu_memory_gib": null, "delivery": null}, {"name": "cam1", "node_class": "toy_fusion_nodes.SimCameraProducer",
+    "params": {"name": "cam1", "image": null, "is_finite": true, "fps": 10.0, "phase_ms":
+    3.0, "duration_s": 3.0}, "parents": [], "kind": "producer", "has_children": true,
+    "nb_tasks": 1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by":
+    null, "join_policy": null, "component_ref": null, "descriptor": null, "command":
+    null, "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    1, "gpu_memory_gib": null, "delivery": null}, {"name": "fuse", "node_class": "toy_fusion_nodes.MomentFusion",
+    "params": {"name": "fuse", "image": null, "nb_tasks": 1, "device_type": "cpu",
+    "partition_by": null, "join_policy": {"timeout_seconds": 0.25, "missing": "drop",
+    "max_pending": 256, "mode": "time", "tolerance_ms": 15.0, "quorum": 1, "collect":
+    {"imu": 40.0}}, "gpu_count": 1, "gpu_memory_gib": null, "delivery": null, "on_error":
+    null, "camera_names": ["cam0", "cam1"], "sensor_name": "imu"}, "parents": ["cam0",
+    "cam1", "imu"], "kind": "processor", "has_children": true, "nb_tasks": 1, "device_type":
+    "cpu", "is_finite": true, "image": null, "partition_by": null, "join_policy":
+    {"timeout_seconds": 0.25, "missing": "drop", "max_pending": 256, "mode": "time",
+    "tolerance_ms": 15.0, "quorum": 1, "collect": {"imu": 40.0}}, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "imu", "node_class": "toy_fusion_nodes.SimSensorProducer", "params":
+    {"name": "imu", "image": null, "is_finite": true, "hz": 100.0, "duration_s": 3.0},
+    "parents": [], "kind": "producer", "has_children": true, "nb_tasks": 1, "device_type":
+    "cpu", "is_finite": true, "image": null, "partition_by": null, "join_policy":
+    null, "component_ref": null, "descriptor": null, "command": null, "protocol_version":
+    null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib":
+    null, "delivery": null}, {"name": "live-report", "node_class": "toy_fusion_nodes.LiveStateWriter",
+    "params": {"name": "live-report", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "latest_path":
+    "<ROOT>/toy_fusion/out/latest.json",
+    "summary_path": "<ROOT>/toy_fusion/out/fusion_summary.json"},
+    "parents": ["fuse"], "kind": "consumer", "has_children": false, "nb_tasks": 1,
+    "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}]'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-fusion-provision
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: provision
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -m
+        - videoflow.provision
+        terminationMessagePolicy: FallbackToLogsOnError
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        env:
+        - name: VF_FLOW_ID
+          value: golden-toy_fusion
+        - name: VF_RUN_ID
+          value: run0
+        - name: VF_FLOW_TYPE
+          value: realtime
+        - name: VF_FLOW_SPECS_PATH
+          value: /etc/videoflow/specs.json
+        volumeMounts:
+        - name: specs
+          mountPath: /etc/videoflow
+          readOnly: true
+      volumes:
+      - name: specs
+        configMap:
+          name: vf-golden-toy-fusion-specs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-cam0-env
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: cam0
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "cam0", "image": null, "is_finite": true, "fps":
+    10.0, "phase_ms": 0.0, "duration_s": 3.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: cam0
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_fusion
+  VF_FLOW_TYPE: realtime
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-fusion-cam0
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: cam0
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-cam0-env
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_fusion
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_fusion
+      restartPolicy: Never
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-cam1-env
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: cam1
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "cam1", "image": null, "is_finite": true, "fps":
+    10.0, "phase_ms": 3.0, "duration_s": 3.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: cam1
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_fusion
+  VF_FLOW_TYPE: realtime
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-fusion-cam1
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: cam1
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-cam1-env
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_fusion
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_fusion
+      restartPolicy: Never
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-fuse-env
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: fuse
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "fuse", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": {"timeout_seconds": 0.25, "missing":
+    "drop", "max_pending": 256, "mode": "time", "tolerance_ms": 15.0, "quorum": 1,
+    "collect": {"imu": 40.0}}, "gpu_count": 1, "gpu_memory_gib": null, "delivery":
+    null, "on_error": null, "camera_names": ["cam0", "cam1"], "sensor_name": "imu"}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: fuse
+  VF_PARENT_NAMES: cam0,cam1,imu
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_fusion
+  VF_FLOW_TYPE: realtime
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_fusion_nodes.MomentFusion
+  VF_JOIN_POLICY_JSON: '{"timeout_seconds": 0.25, "missing": "drop", "max_pending":
+    256, "mode": "time", "tolerance_ms": 15.0, "quorum": 1, "collect": {"imu": 40.0}}'
+  VF_BLOB_READERS: '1'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vf-golden-toy-fusion-fuse
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: fuse
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: fuse
+      videoflow.io/flow-id: golden-toy-fusion
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-fuse-env
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 2
+          failureThreshold: 60
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_fusion
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_fusion
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-imu-env
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: imu
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "imu", "image": null, "is_finite": true, "hz": 100.0,
+    "duration_s": 3.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: imu
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_fusion
+  VF_FLOW_TYPE: realtime
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_fusion_nodes.SimSensorProducer
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-fusion-imu
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: imu
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-imu-env
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_fusion
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_fusion
+      restartPolicy: Never
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-fusion-live-report-env
+  labels:
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: live-report
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "live-report", "image": null, "metadata": false,
+    "join_policy": null, "idempotent": false, "delivery": null, "on_error": null,
+    "latest_path": "<ROOT>/toy_fusion/out/latest.json",
+    "summary_path": "<ROOT>/toy_fusion/out/fusion_summary.json"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: live-report
+  VF_PARENT_NAMES: fuse
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_fusion
+  VF_FLOW_TYPE: realtime
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_fusion_nodes.LiveStateWriter
+  VF_BLOB_READERS: '0'
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vf-golden-toy-fusion-live-report
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-fusion
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: live-report
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: live-report
+      videoflow.io/flow-id: golden-toy-fusion
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-fusion-live-report-env
+        - configMapRef:
+            name: vf-golden-toy-fusion-broker
+        readinessProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 15
+        startupProbe:
+          httpGet:
+            path: /readyz
+            port: 8080
+          periodSeconds: 2
+          failureThreshold: 60
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_fusion
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_fusion

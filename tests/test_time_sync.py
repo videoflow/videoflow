@@ -36,6 +36,9 @@ class FakeHandle:
     def term(self):
         self.state = 'termed'
 
+    def supersede(self):
+        self.superseded = True
+
 
 def entry(trace_id, seq, event_ts = None, message = 'm', metadata = None):
     return EnvelopeEntry(
@@ -126,7 +129,7 @@ def test_trace_redelivery_supersedes_buffered_half():
     stale, fresh = FakeHandle(), FakeHandle()
     asm.add('a', entry('t1', 1), stale)
     asm.add('a', entry('t1', 1), fresh)
-    assert stale.state == 'termed'
+    assert stale.superseded and stale.state is None   # retired locally, never TERMed (MSG-011)
     asm.add('b', entry('t1', 2), FakeHandle())
     ready = asm.pop_ready()
     assert fresh in ready.handles and stale not in ready.handles
@@ -226,7 +229,7 @@ def test_time_redelivery_supersedes_in_group():
     stale, fresh = FakeHandle(), FakeHandle()
     asm.add('cam1', entry('cam1:1', 1, event_ts = 1000.0), stale)
     asm.add('cam1', entry('cam1:1', 1, event_ts = 1000.0), fresh)
-    assert stale.state == 'termed'
+    assert stale.superseded and stale.state is None   # retired locally, never TERMed (MSG-011)
     asm.add('cam2', entry('cam2:1', 1, event_ts = 1000.001), FakeHandle())
     ready = asm.pop_ready()
     assert fresh in ready.handles and stale not in ready.handles

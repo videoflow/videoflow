@@ -23,6 +23,7 @@ import pathlib
 import shutil
 
 import pytest
+import support_k8s
 from support_k8s import FIXTURE_IMAGE, resources_for, videoflow
 
 from videoflow.core.errors import EXIT_FLOW_FAILED
@@ -72,7 +73,7 @@ def test_a_failing_node_exits_four_and_says_why(k8s_work_root, k8s_namespace, fl
                       '--namespace', k8s_namespace,
                       '--flow-id', flow_id, '--run-id', run_id,
                       '--image', FIXTURE_IMAGE, '--no-build',
-                      '--non-interactive'], cwd = work)
+                      '--non-interactive', *support_k8s.deploy_extra_args()], cwd = work)
 
     assert proc.returncode == EXIT_FLOW_FAILED, (
         f'expected exit {EXIT_FLOW_FAILED} (flow failed), got {proc.returncode}\n'

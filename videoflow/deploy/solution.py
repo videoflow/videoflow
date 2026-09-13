@@ -23,7 +23,12 @@ lookup into the resolved config, ``*`` fans out), ``'{work_dir}'``,
 hostPath mount (host and container see the same absolute path — required
 because the paths baked into node params at compile time must resolve
 identically in the pods); a ``host:container`` pair maps them explicitly
-(e.g. the operator's home caches onto the container root's).
+(e.g. the operator's home caches onto the container root's). A
+``pvc:<claim>:<path>[:ro]`` entry mounts an existing PersistentVolumeClaim at
+``<path>`` in the pods instead — the form for data that lives in the cluster
+rather than on the operator's machine (a shared model cache, an RWX work
+directory on a multi-node cluster); ``<path>`` takes the same ``{dotted}``
+lookup and resolves relative to the solution directory like the others.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -36,6 +41,8 @@ import yaml
 
 X_QUESTIONS = 'x-questions'
 X_MOUNTS = 'x-mounts'
+#: Marks an ``x-mounts`` entry (and a resolved mount spec) as a claim mount.
+PVC_MOUNT_PREFIX = 'pvc:'
 TEMPLATE_NAME = 'config.template.yaml'
 CONFIG_NAME = 'config.yaml'
 PREPARE_NAME = 'prepare.py'
@@ -260,24 +267,38 @@ def ensure_config(graph_dir : str, config_arg : Optional[str] = None, interactiv
 
 def resolve_mounts(template : Optional[dict], config : dict, graph_dir : str) -> List[str]:
     '''
-    Expands the template's ``x-mounts`` against the resolved config into
-    single-path mount specs (``/abs/path[:ro]``) for ``manifests.parse_mounts``.
+    Expands the template's ``x-mounts`` against the resolved config into mount
+    specs: ``/abs/path[:ro]`` and ``/host:/container[:ro]`` for
+    ``manifests.parse_mounts``, and ``pvc:<claim>:/abs/path[:ro]`` for
+    ``manifests.parse_pvc_mounts`` (``split_mount_specs`` separates the two).
     Relative config values resolve against ``graph_dir`` (matching a prep/compile
     container whose workdir is the graph dir); ``~`` expands.
+
+    - Raises:
+        - ValueError: a ``pvc:`` entry names no claim or no path.
     '''
     specs = []
     for entry in template.get(X_MOUNTS, []) if template else []:
-        entry = str(entry)
+        raw = entry = str(entry)
         read_only = entry.endswith(':ro')
         if read_only:
             entry = entry[:-3]
+        claim = None
+        if entry.startswith(PVC_MOUNT_PREFIX):
+            claim, _, entry = entry[len(PVC_MOUNT_PREFIX):].partition(':')
+            if not claim or not entry:
+                raise ValueError(f'x-mounts entry {raw!r} must be pvc:<claim>:<path>[:ro] — '
+                                 f'the claim name and the mount path are both required.')
         if entry.startswith('{') and entry.endswith('}'):
             values = _get_dotted(config, entry[1:-1].split('.'))
         else:
             values = [entry]
         for value in values:
             value = str(value)
-            if ':' in value:
+            if claim is not None:
+                path = os.path.abspath(os.path.join(graph_dir, os.path.expanduser(value)))
+                spec = f'{PVC_MOUNT_PREFIX}{claim}:{path}'
+            elif ':' in value:
                 host, container = value.split(':', 1)
                 host = os.path.abspath(os.path.join(graph_dir, os.path.expanduser(host)))
                 spec = f'{host}:{container}'
@@ -292,6 +313,22 @@ def resolve_mounts(template : Optional[dict], config : dict, graph_dir : str) ->
             seen.add(spec)
             unique.append(spec)
     return unique
+
+def split_mount_specs(specs : List[str]) -> tuple[List[str], List[str]]:
+    '''
+    Partitions ``resolve_mounts`` output into ``(host_specs, claim_specs)``: the
+    host-path specs as ``manifests.parse_mounts`` takes them, and the claim specs
+    with their ``pvc:`` prefix stripped, as ``manifests.parse_pvc_mounts`` takes
+    them. Order is preserved within each list.
+    '''
+    host_specs : List[str] = []
+    claim_specs : List[str] = []
+    for spec in specs:
+        if spec.startswith(PVC_MOUNT_PREFIX):
+            claim_specs.append(spec[len(PVC_MOUNT_PREFIX):])
+        else:
+            host_specs.append(spec)
+    return host_specs, claim_specs
 
 def find_prepare(graph_dir : str) -> Optional[str]:
     '''The solution's ``prepare.py`` hook, or None when it ships none.'''

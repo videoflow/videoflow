@@ -1,0 +1,797 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-broker
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NATS_URL: nats://nats.videoflow-test.svc:4222
+  VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vf-golden-toy-calculator-netpol
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  podSelector:
+    matchLabels:
+      videoflow.io/flow-id: golden-toy-calculator
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          videoflow.io/flow-id: golden-toy-calculator
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-specs
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  specs.json: '[{"name": "delay", "node_class": "videoflow.processors.basic.IdentityProcessor",
+    "params": {"name": "delay", "image": null, "nb_tasks": 1, "device_type": "cpu",
+    "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib": null,
+    "delivery": null, "on_error": null, "fps": 150.0}, "parents": ["numbers"], "kind":
+    "processor", "has_children": true, "nb_tasks": 1, "device_type": "cpu", "is_finite":
+    true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "numbers", "node_class": "videoflow.producers.basic.IntProducer",
+    "params": {"name": "numbers", "image": null, "is_finite": true, "start_value":
+    1, "end_value": 40, "wait_time_in_seconds": 0.005, "fps": 200.0}, "parents": [],
+    "kind": "producer", "has_children": true, "nb_tasks": 1, "device_type": "cpu",
+    "is_finite": true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 2, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "pair", "node_class": "toy_calculator_nodes.PairJoiner", "params":
+    {"name": "pair", "image": null, "nb_tasks": 1, "device_type": "cpu", "partition_by":
+    null, "join_policy": {"timeout_seconds": null, "missing": "wait", "max_pending":
+    100000, "mode": "trace", "tolerance_ms": null, "quorum": null, "collect": {}},
+    "gpu_count": 1, "gpu_memory_gib": null, "delivery": null, "on_error": null}, "parents":
+    ["delay", "square"], "kind": "processor", "has_children": true, "nb_tasks": 1,
+    "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": {"timeout_seconds": null, "missing": "wait", "max_pending": 100000,
+    "mode": "trace", "tolerance_ms": null, "quorum": null, "collect": {}}, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 3, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "pairs-log", "node_class": "videoflow.consumers.basic.FileAppenderConsumer",
+    "params": {"name": "pairs-log", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "filepath": "<ROOT>/toy_calculator/out/pairs.jsonl"},
+    "parents": ["pair"], "kind": "consumer", "has_children": false, "nb_tasks": 1,
+    "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}, {"name": "printer", "node_class":
+    "videoflow.consumers.basic.CommandlineConsumer", "params": {"name": "printer",
+    "image": null, "metadata": false, "join_policy": null, "idempotent": false, "delivery":
+    null, "on_error": null, "sep": " ", "end": "\n"}, "parents": ["stats"], "kind":
+    "consumer", "has_children": false, "nb_tasks": 1, "device_type": "cpu", "is_finite":
+    true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 0, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "proctimes", "node_class": "toy_calculator_nodes.ProcTimeMonitor",
+    "params": {"name": "proctimes", "image": null, "metadata": true, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "out_path": "<ROOT>/toy_calculator/out/proctimes.jsonl"},
+    "parents": ["square"], "kind": "consumer", "has_children": false, "nb_tasks":
+    1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}, {"name": "report", "node_class":
+    "toy_calculator_nodes.ReportWriter", "params": {"name": "report", "image": null,
+    "metadata": false, "join_policy": null, "idempotent": false, "delivery": null,
+    "on_error": null, "report_path": "<ROOT>/toy_calculator/out/report.json",
+    "expected_path": "<ROOT>/toy_calculator/out/expected.json"},
+    "parents": ["pair", "stats"], "kind": "consumer", "has_children": false, "nb_tasks":
+    1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}, {"name": "square", "node_class":
+    "toy_calculator_nodes.SquareProcessor", "params": {"name": "square", "image":
+    null, "nb_tasks": 2, "device_type": "cpu", "partition_by": null, "join_policy":
+    null, "gpu_count": 1, "gpu_memory_gib": null, "delivery": null, "on_error": null},
+    "parents": ["numbers"], "kind": "processor", "has_children": true, "nb_tasks":
+    2, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    2, "gpu_memory_gib": null, "delivery": null}, {"name": "stats", "node_class":
+    "toy_calculator_nodes.RunningStats", "params": {"name": "stats", "image": null,
+    "nb_tasks": 1, "device_type": "cpu", "partition_by": null, "join_policy": null,
+    "gpu_count": 1, "gpu_memory_gib": null, "delivery": null, "on_error": null}, "parents":
+    ["pair"], "kind": "processor", "has_children": true, "nb_tasks": 1, "device_type":
+    "cpu", "is_finite": true, "image": null, "partition_by": null, "join_policy":
+    null, "component_ref": null, "descriptor": null, "command": null, "protocol_version":
+    null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers": 2, "gpu_memory_gib":
+    null, "delivery": null}]'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-provision
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: provision
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -m
+        - videoflow.provision
+        terminationMessagePolicy: FallbackToLogsOnError
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        env:
+        - name: VF_FLOW_ID
+          value: golden-toy_calculator
+        - name: VF_RUN_ID
+          value: run0
+        - name: VF_FLOW_TYPE
+          value: batch
+        - name: VF_FLOW_SPECS_PATH
+          value: /etc/videoflow/specs.json
+        volumeMounts:
+        - name: specs
+          mountPath: /etc/videoflow
+          readOnly: true
+      volumes:
+      - name: specs
+        configMap:
+          name: vf-golden-toy-calculator-specs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-delay-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: delay
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "delay", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": 150.0}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: delay
+  VF_PARENT_NAMES: numbers
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-delay
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: delay
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-delay-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-numbers-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: numbers
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "numbers", "image": null, "is_finite": true, "start_value":
+    1, "end_value": 40, "wait_time_in_seconds": 0.005, "fps": 200.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: numbers
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.producers.basic.IntProducer
+  VF_BLOB_READERS: '2'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-numbers
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: numbers
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-numbers-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-pair-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: pair
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "pair", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": {"timeout_seconds": null, "missing":
+    "wait", "max_pending": 100000, "mode": "trace", "tolerance_ms": null, "quorum":
+    null, "collect": {}}, "gpu_count": 1, "gpu_memory_gib": null, "delivery": null,
+    "on_error": null}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: pair
+  VF_PARENT_NAMES: delay,square
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_calculator_nodes.PairJoiner
+  VF_JOIN_POLICY_JSON: '{"timeout_seconds": null, "missing": "wait", "max_pending":
+    100000, "mode": "trace", "tolerance_ms": null, "quorum": null, "collect": {}}'
+  VF_BLOB_READERS: '3'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-pair
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: pair
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-pair-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-pairs-log-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: pairs-log
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "pairs-log", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "filepath": "<ROOT>/toy_calculator/out/pairs.jsonl"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: pairs-log
+  VF_PARENT_NAMES: pair
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.consumers.basic.FileAppenderConsumer
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-pairs-log
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: pairs-log
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-pairs-log-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-printer-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: printer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "printer", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "sep": " ", "end":
+    "\n"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: printer
+  VF_PARENT_NAMES: stats
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.consumers.basic.CommandlineConsumer
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-printer
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: printer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-printer-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-proctimes-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: proctimes
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "proctimes", "image": null, "metadata": true, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "out_path": "<ROOT>/toy_calculator/out/proctimes.jsonl"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: proctimes
+  VF_PARENT_NAMES: square
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_calculator_nodes.ProcTimeMonitor
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-proctimes
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: proctimes
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-proctimes-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-report-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: report
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "report", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "report_path":
+    "<ROOT>/toy_calculator/out/report.json",
+    "expected_path": "<ROOT>/toy_calculator/out/expected.json"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: report
+  VF_PARENT_NAMES: pair,stats
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_calculator_nodes.ReportWriter
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-report
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: report
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-report-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-square-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: square
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "square", "image": null, "nb_tasks": 2, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: square
+  VF_PARENT_NAMES: numbers
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '2'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_calculator_nodes.SquareProcessor
+  VF_BLOB_READERS: '2'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-square
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: square
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-square-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+  completions: 2
+  parallelism: 2
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vf-golden-toy-calculator-square-pdb
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: square
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: square
+      videoflow.io/flow-id: golden-toy-calculator
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-calculator-stats-env
+  labels:
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: stats
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "stats", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: stats
+  VF_PARENT_NAMES: pair
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_calculator
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_calculator_nodes.RunningStats
+  VF_BLOB_READERS: '2'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-calculator-stats
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-calculator
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: stats
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-calculator-stats-env
+        - configMapRef:
+            name: vf-golden-toy-calculator-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_calculator
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_calculator
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400

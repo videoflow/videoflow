@@ -1,0 +1,322 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-recovery-broker
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NATS_URL: nats://nats.videoflow-test.svc:4222
+  VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vf-golden-toy-recovery-netpol
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  podSelector:
+    matchLabels:
+      videoflow.io/flow-id: golden-toy-recovery
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          videoflow.io/flow-id: golden-toy-recovery
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-recovery-specs
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  specs.json: '[{"name": "events", "node_class": "toy_recovery_nodes.EventProducer",
+    "params": {"name": "events", "image": null, "is_finite": true, "count": 24, "rate_fps":
+    400.0}, "parents": [], "kind": "producer", "has_children": true, "nb_tasks": 1,
+    "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    1, "gpu_memory_gib": null, "delivery": null}, {"name": "fragile", "node_class":
+    "toy_recovery_nodes.FragileProcessor", "params": {"name": "fragile", "image":
+    null, "nb_tasks": 1, "device_type": "cpu", "partition_by": null, "join_policy":
+    null, "gpu_count": 1, "gpu_memory_gib": null, "delivery": null, "on_error": null,
+    "poison_values": [7, 19], "crash_at": 12, "marker_path": "<ROOT>/toy_recovery/out/crashed_once.marker"},
+    "parents": ["events"], "kind": "processor", "has_children": true, "nb_tasks":
+    1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    1, "gpu_memory_gib": null, "delivery": null}, {"name": "ledger", "node_class":
+    "toy_recovery_nodes.RecoveryLedger", "params": {"name": "ledger", "image": null,
+    "metadata": false, "join_policy": null, "idempotent": false, "delivery": null,
+    "on_error": null, "ledger_path": "<ROOT>/toy_recovery/out/ledger.jsonl",
+    "report_path": "<ROOT>/toy_recovery/out/recovery_report.json",
+    "expected_path": "<ROOT>/toy_recovery/out/expected_recovery.json"},
+    "parents": ["fragile"], "kind": "consumer", "has_children": false, "nb_tasks":
+    1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}]'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-recovery-provision
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: provision
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -m
+        - videoflow.provision
+        terminationMessagePolicy: FallbackToLogsOnError
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-recovery-broker
+        env:
+        - name: VF_FLOW_ID
+          value: golden-toy_recovery
+        - name: VF_RUN_ID
+          value: run0
+        - name: VF_FLOW_TYPE
+          value: batch
+        - name: VF_FLOW_SPECS_PATH
+          value: /etc/videoflow/specs.json
+        volumeMounts:
+        - name: specs
+          mountPath: /etc/videoflow
+          readOnly: true
+      volumes:
+      - name: specs
+        configMap:
+          name: vf-golden-toy-recovery-specs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-recovery-events-env
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: events
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "events", "image": null, "is_finite": true, "count":
+    24, "rate_fps": 400.0}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: events
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_recovery
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_recovery_nodes.EventProducer
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-recovery-events
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: events
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-recovery-events-env
+        - configMapRef:
+            name: vf-golden-toy-recovery-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_recovery
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_recovery
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-recovery-fragile-env
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: fragile
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "fragile", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "poison_values": [7, 19], "crash_at":
+    12, "marker_path": "<ROOT>/toy_recovery/out/crashed_once.marker"}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: fragile
+  VF_PARENT_NAMES: events
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-toy_recovery
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_recovery_nodes.FragileProcessor
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-recovery-fragile
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: fragile
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-recovery-fragile-env
+        - configMapRef:
+            name: vf-golden-toy-recovery-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_recovery
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_recovery
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-toy-recovery-ledger-env
+  labels:
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: ledger
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "ledger", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "ledger_path":
+    "<ROOT>/toy_recovery/out/ledger.jsonl",
+    "report_path": "<ROOT>/toy_recovery/out/recovery_report.json",
+    "expected_path": "<ROOT>/toy_recovery/out/expected_recovery.json"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: ledger
+  VF_PARENT_NAMES: fragile
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-toy_recovery
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: toy_recovery_nodes.RecoveryLedger
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-toy-recovery-ledger
+  labels: &id001
+    videoflow.io/flow-id: golden-toy-recovery
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: ledger
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-toy-recovery-ledger-env
+        - configMapRef:
+            name: vf-golden-toy-recovery-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+        volumeMounts:
+        - name: vf-mount-0
+          mountPath: <ROOT>/toy_recovery
+          readOnly: false
+      volumes:
+      - name: vf-mount-0
+        hostPath:
+          path: <ROOT>/toy_recovery
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400

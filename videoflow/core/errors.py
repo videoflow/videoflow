@@ -99,6 +99,21 @@ class VideoflowError(Exception):
         # keep showing the fix, not just the symptom.
         return f'{self.message} {self.remedy}' if self.remedy else self.message
 
+    def render(self) -> str:
+        '''
+        The operator-facing rendering every entrypoint prints — the CLI, the
+        provision Job — so a failure reads the same wherever it surfaces: what
+        broke, then what to do about it, then the structured context. Never a
+        traceback, which is a stack of framework internals the reader did not
+        write and cannot act on.
+        '''
+        lines = [f'ERROR [{self.code}]: {self.message}']
+        if self.remedy:
+            lines.append(f'  {self.remedy}')
+        for key, value in sorted(self.context.items()):
+            lines.append(f'  {key}: {value}')
+        return '\n'.join(lines)
+
     def to_dict(self) -> Dict[str, Any]:
         '''
         JSON-safe form, used by the Kubernetes termination log and by tests. \
@@ -178,6 +193,37 @@ class CapabilityError(VideoflowUserError):
     '''The flow asks a component for something it declares it cannot do.'''
     code = 'VF_CAPABILITY'
 
+class IncompatibleProfile(VideoflowUserError):
+    '''
+    The flow requests a guarantee the composed backends cannot provide — a
+    ``reliable_work`` channel on a transport with no retained backlog, a
+    restart-safe join without a durable runtime store, an exclusive device from an
+    allocator that only accounts for shares. Raised by the composition planner
+    *before* anything is provisioned, started or published: the alternative, a
+    silent downgrade to whatever the backend does offer, is precisely the failure
+    the profiles exist to make impossible.
+
+    - Arguments:
+        - diagnostics: every incompatibility found in one planning pass, so the \
+            fix-and-retry loop is one iteration rather than one per channel.
+    '''
+    code = 'VF_INCOMPATIBLE_PROFILE'
+
+    def __init__(self, message : str, remedy : Optional[str] = None,
+                diagnostics : Optional[List["Diagnostic"]] = None,
+                **context : Any) -> None:
+        super(IncompatibleProfile, self).__init__(message, remedy, **context)
+        self.diagnostics : List[Diagnostic] = list(diagnostics or [])
+
+class IdentityCollision(VideoflowUserError):
+    '''
+    Two distinct logical names encode to the same physical broker or cluster
+    name (``a.b`` and ``a_b`` both sanitize to ``a_b``; a 70-character node name
+    truncates onto another). Rejected at compile time: a collision at run time
+    would silently route one node's messages to another.
+    '''
+    code = 'VF_IDENTITY_COLLISION'
+
 # -- deploy time: the world is not as required --------------------------------
 
 class VideoflowEnvironmentError(VideoflowError):
@@ -201,6 +247,23 @@ class FlowFailed(VideoflowEnvironmentError):
     '''The flow ran and one or more nodes failed. Distinct exit code so CI can tell it from a bad deploy.'''
     code = 'VF_FLOW_FAILED'
     exit_code = EXIT_FLOW_FAILED
+
+class UnobservableState(VideoflowEnvironmentError):
+    '''
+    A read the decision depended on could not be made — a broker query timed out,
+    a pod listing was denied, a node object was malformed — and the code refused
+    to treat "unknown" as "zero", "empty" or "complete". The remedy names the
+    dependency to restore; the decision is retried, never guessed.
+    '''
+    code = 'VF_STATE_UNKNOWN'
+
+class OwnershipConflict(VideoflowEnvironmentError):
+    '''
+    A compare-and-swap on shared cluster state lost to a concurrent writer: the
+    node owner label, the shared MIG configuration, the ClusterPolicy pointer.
+    Nothing was mutated on the losing side; re-plan against the current state.
+    '''
+    code = 'VF_OWNERSHIP_CONFLICT'
 
 class FlowStalled(VideoflowEnvironmentError):
     '''The flow can never finish: unschedulable pods, or a node that stopped making progress.'''
@@ -293,6 +356,17 @@ class UpstreamAborted(VideoflowRuntimeError):
     code = 'VF_UPSTREAM_ABORTED'
     disposition = WORKER_FATAL
     exit_code = EXIT_FLOW_FAILED
+
+class StaleAuthority(VideoflowRuntimeError):
+    '''
+    This worker tried to commit under an ownership epoch a newer owner has
+    superseded (a partition transferred, a replacement replica started, a fencing
+    token expired). The commit was refused; the worker stops so the current owner
+    proceeds alone. Worker-fatal on purpose: the message is fine, this writer is
+    not the one allowed to decide it.
+    '''
+    code = 'VF_STALE_AUTHORITY'
+    disposition = WORKER_FATAL
 
 # -- classification -----------------------------------------------------------
 

@@ -1,0 +1,581 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-broker
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NATS_URL: nats://nats.videoflow-test.svc:4222
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: vf-golden-demo-netpol
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  podSelector:
+    matchLabels:
+      videoflow.io/flow-id: golden-demo
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          videoflow.io/flow-id: golden-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-specs
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  specs.json: '[{"name": "gpu-sharer", "node_class": "videoflow.processors.basic.IdentityProcessor",
+    "params": {"name": "gpu-sharer", "image": null, "nb_tasks": 2, "device_type":
+    "gpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}, "parents": ["numbers"],
+    "kind": "processor", "has_children": true, "nb_tasks": 2, "device_type": "gpu",
+    "is_finite": true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "gpu-two", "node_class": "videoflow.processors.basic.IdentityProcessor",
+    "params": {"name": "gpu-two", "image": null, "nb_tasks": 1, "device_type": "gpu",
+    "partition_by": null, "join_policy": null, "gpu_count": 2, "gpu_memory_gib": null,
+    "delivery": null, "on_error": null, "fps": -1}, "parents": ["numbers"], "kind":
+    "processor", "has_children": true, "nb_tasks": 1, "device_type": "gpu", "is_finite":
+    true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    2, "gpu_resource_name": null, "blob_readers": 3, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "joined", "node_class": "videoflow.processors.basic.IdentityProcessor",
+    "params": {"name": "joined", "image": null, "nb_tasks": 1, "device_type": "cpu",
+    "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib": null,
+    "delivery": null, "on_error": null, "fps": -1}, "parents": ["part", "gpu-sharer"],
+    "kind": "processor", "has_children": true, "nb_tasks": 1, "device_type": "cpu",
+    "is_finite": true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "numbers", "node_class": "videoflow.producers.basic.IntProducer",
+    "params": {"name": "numbers", "image": null, "is_finite": true, "start_value":
+    0, "end_value": 40, "wait_time_in_seconds": 0.1, "fps": -1}, "parents": [], "kind":
+    "producer", "has_children": true, "nb_tasks": 1, "device_type": "cpu", "is_finite":
+    true, "image": null, "partition_by": null, "join_policy": null, "component_ref":
+    null, "descriptor": null, "command": null, "protocol_version": null, "gpu_count":
+    1, "gpu_resource_name": null, "blob_readers": 2, "gpu_memory_gib": null, "delivery":
+    null}, {"name": "part", "node_class": "videoflow.processors.basic.IdentityProcessor",
+    "params": {"name": "part", "image": null, "nb_tasks": 3, "device_type": "cpu",
+    "partition_by": "trace_id", "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}, "parents": ["gpu-two"],
+    "kind": "processor", "has_children": true, "nb_tasks": 3, "device_type": "cpu",
+    "is_finite": true, "image": null, "partition_by": "trace_id", "join_policy": null,
+    "component_ref": null, "descriptor": null, "command": null, "protocol_version":
+    null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers": 1, "gpu_memory_gib":
+    null, "delivery": null}, {"name": "printer", "node_class": "videoflow.consumers.basic.CommandlineConsumer",
+    "params": {"name": "printer", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "sep": " ", "end":
+    "\n"}, "parents": ["joined"], "kind": "consumer", "has_children": false, "nb_tasks":
+    1, "device_type": "cpu", "is_finite": true, "image": null, "partition_by": null,
+    "join_policy": null, "component_ref": null, "descriptor": null, "command": null,
+    "protocol_version": null, "gpu_count": 1, "gpu_resource_name": null, "blob_readers":
+    0, "gpu_memory_gib": null, "delivery": null}]'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-provision
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 6
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: provision
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        command:
+        - python
+        - -m
+        - videoflow.provision
+        terminationMessagePolicy: FallbackToLogsOnError
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-broker
+        env:
+        - name: VF_FLOW_ID
+          value: golden-demo
+        - name: VF_RUN_ID
+          value: run0
+        - name: VF_FLOW_TYPE
+          value: batch
+        - name: VF_FLOW_SPECS_PATH
+          value: /etc/videoflow/specs.json
+        volumeMounts:
+        - name: specs
+          mountPath: /etc/videoflow
+          readOnly: true
+      volumes:
+      - name: specs
+        configMap:
+          name: vf-golden-demo-specs
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-gpu-sharer-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: gpu-sharer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "gpu-sharer", "image": null, "nb_tasks": 2, "device_type":
+    "gpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: gpu-sharer
+  VF_PARENT_NAMES: numbers
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '2'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
+  VF_BLOB_READERS: '1'
+  VF_GPU_COUNT: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-gpu-sharer
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: gpu-sharer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-gpu-sharer-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      nodeSelector:
+        videoflow.io/gpu-pool: 'true'
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      runtimeClassName: nvidia
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+  completions: 2
+  parallelism: 2
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vf-golden-demo-gpu-sharer-pdb
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: gpu-sharer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: gpu-sharer
+      videoflow.io/flow-id: golden-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-gpu-two-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: gpu-two
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "gpu-two", "image": null, "nb_tasks": 1, "device_type":
+    "gpu", "partition_by": null, "join_policy": null, "gpu_count": 2, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: gpu-two
+  VF_PARENT_NAMES: numbers
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
+  VF_BLOB_READERS: '3'
+  VF_GPU_COUNT: '2'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-gpu-two
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: gpu-two
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-gpu-two-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        resources:
+          limits:
+            nvidia.com/gpu: 2
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      nodeSelector:
+        videoflow.io/gpu-pool: 'true'
+      tolerations:
+      - key: nvidia.com/gpu
+        operator: Exists
+        effect: NoSchedule
+      runtimeClassName: nvidia
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-joined-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: joined
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "joined", "image": null, "nb_tasks": 1, "device_type":
+    "cpu", "partition_by": null, "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: joined
+  VF_PARENT_NAMES: part,gpu-sharer
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
+  VF_BLOB_READERS: '1'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-joined
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: joined
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-joined-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-numbers-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: numbers
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "numbers", "image": null, "is_finite": true, "start_value":
+    0, "end_value": 40, "wait_time_in_seconds": 0.1, "fps": -1}'
+  VF_NODE_KIND: producer
+  VF_NODE_NAME: numbers
+  VF_PARENT_NAMES: ''
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.producers.basic.IntProducer
+  VF_BLOB_READERS: '2'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-numbers
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: numbers
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-numbers-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-part-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: part
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "part", "image": null, "nb_tasks": 3, "device_type":
+    "cpu", "partition_by": "trace_id", "join_policy": null, "gpu_count": 1, "gpu_memory_gib":
+    null, "delivery": null, "on_error": null, "fps": -1}'
+  VF_NODE_KIND: processor
+  VF_NODE_NAME: part
+  VF_PARENT_NAMES: gpu-two
+  VF_HAS_CHILDREN: '1'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '3'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
+  VF_PARTITION_BY: trace_id
+  VF_BLOB_READERS: '1'
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vf-golden-demo-part-hl
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: part
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  clusterIP: None
+  selector:
+    videoflow.io/node: part
+    videoflow.io/flow-id: golden-demo
+  ports:
+  - port: 8080
+    name: health
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-part
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: part
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-part-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        env:
+        - name: VF_REPLICA_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400
+  completionMode: Indexed
+  completions: 3
+  parallelism: 3
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: vf-golden-demo-part-pdb
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: part
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      videoflow.io/node: part
+      videoflow.io/flow-id: golden-demo
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vf-golden-demo-printer-env
+  labels:
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: printer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+data:
+  VF_NODE_PARAMS_JSON: '{"name": "printer", "image": null, "metadata": false, "join_policy":
+    null, "idempotent": false, "delivery": null, "on_error": null, "sep": " ", "end":
+    "\n"}'
+  VF_NODE_KIND: consumer
+  VF_NODE_NAME: printer
+  VF_PARENT_NAMES: joined
+  VF_HAS_CHILDREN: '0'
+  VF_FLOW_ID: golden-demo
+  VF_FLOW_TYPE: batch
+  VF_RUN_ID: run0
+  VF_NB_TASKS: '1'
+  VF_HEALTH_PORT: '8080'
+  VF_ENVELOPE_VERSION: '4'
+  VF_NODE_CLASS: videoflow.consumers.basic.CommandlineConsumer
+  VF_BLOB_READERS: '0'
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vf-golden-demo-printer
+  labels: &id001
+    videoflow.io/flow-id: golden-demo
+    app.kubernetes.io/managed-by: videoflow
+    videoflow.io/node: printer
+    videoflow.io/run-id: run0
+  namespace: videoflow-test
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels: *id001
+    spec:
+      containers:
+      - name: worker
+        image: videoflow-base:py3.12
+        imagePullPolicy: IfNotPresent
+        envFrom:
+        - configMapRef:
+            name: vf-golden-demo-printer-env
+        - configMapRef:
+            name: vf-golden-demo-broker
+        ports:
+        - containerPort: 8080
+          name: health
+        terminationMessagePolicy: FallbackToLogsOnError
+      restartPolicy: Never
+  ttlSecondsAfterFinished: 600
+  activeDeadlineSeconds: 86400

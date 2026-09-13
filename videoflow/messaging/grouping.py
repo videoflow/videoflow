@@ -14,7 +14,8 @@ so the two grouping strategies are testable without a broker:
 An assembler is fed decoded envelope entries (see
 ``videoflow.wire.serialization.decode_envelope``) paired with their broker ack
 handles. It owns the pending buffers and resolves the handles of anything it
-*discards* (evicted, superseded, expired); handles of everything it *emits*
+*discards* (evicted, expired) and *supersedes* (retired locally, no broker
+settlement); handles of everything it *emits*
 travel out unresolved inside the ``ReadyGroup`` for the task loop to ack/fail
 after processing — preserving ack-after-process semantics end to end.
 
@@ -157,6 +158,8 @@ def make_assembler(node_name : str, parent_names : list[str], policy : JoinPolic
 class GroupAssembler:
     '''Base interface: feed entries with ``add``, expire with ``sweep``, drain with ``pop_ready``.'''
     def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
+        #: Groups discarded (evicted or expired) so far — read by the messenger's drop accounting.
+        self.evictions = 0
         self._node_name = node_name
         self._parent_names = list(parent_names)
         self._policy = policy
@@ -195,9 +198,11 @@ class TraceGroupAssembler(GroupAssembler):
         handles = self._handles.setdefault(trace_id, {})
         if parent_name in handles:
             # Redelivery of a half we already buffered (the group hadn't completed
-            # yet). Supersede: terminate the stale handle and keep the fresh
-            # delivery so its ack deadline restarts.
-            handles[parent_name].term()
+            # yet). Supersede: retire the stale handle *locally* and keep the fresh
+            # delivery so its ack deadline restarts. Never TERM it — the stale
+            # handle and the fresh one name the same logical broker message, and a
+            # TERM would discard exactly the delivery being kept (MSG-011).
+            handles[parent_name].supersede()
         elif trace_id not in self._order:
             self._order.append(trace_id)
             self._first_seen[trace_id] = time.monotonic()
@@ -218,6 +223,7 @@ class TraceGroupAssembler(GroupAssembler):
                             reason = f'join timeout ({timeout}s)')
 
     def _evict(self, trace_id : str, missing : str, reason : str) -> None:
+        self.evictions += 1
         group = self._groups.pop(trace_id, None)
         if group is None:
             return
@@ -338,11 +344,12 @@ class TimeGroupAssembler(GroupAssembler):
 
         # Redelivery of a message already buffered in a pending group: supersede
         # in place so its ack deadline restarts, instead of seeding a duplicate.
+        # Retired locally, never TERMed (see TraceGroupAssembler.add).
         for group in self._groups.values():
             existing = group.entries.get(parent_name)
             if (existing is not None and existing.trace_id == entry.trace_id
                     and existing.seq == entry.seq):
-                group.handles[parent_name].term()
+                group.handles[parent_name].supersede()
                 group.entries[parent_name] = entry
                 group.handles[parent_name] = handle
                 return
@@ -406,6 +413,7 @@ class TimeGroupAssembler(GroupAssembler):
                 self._collect_buffers[parent] = kept
 
     def _evict(self, gid : int, missing : str, reason : str) -> None:
+        self.evictions += 1
         group = self._groups.pop(gid, None)
         if group is None:
             return

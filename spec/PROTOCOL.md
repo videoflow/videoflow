@@ -23,8 +23,9 @@ where this document and the code disagree, that is a bug in one of them — file
 RFC (`spec/rfcs/`).
 
 Requirements are tagged with stable IDs (`ENV-1`, `EOS-3`, …). Conformance
-scenarios (`conformance/scenarios/`, Phase 4) reference these IDs. Each ID is
-**MUST** unless marked SHOULD or `implementation-defined`.
+cases (`tests/conformance/`, catalogued in `tests/conformance/catalog/`; the
+ID ↔ test cross-index is `spec/conformance-map.md`) reference these IDs. Each ID
+is **MUST** unless marked SHOULD or `implementation-defined`.
 
 **Key words** MUST / MUST NOT / SHOULD / MAY follow RFC 2119.
 
@@ -88,6 +89,8 @@ depend on any other configuration channel for routing.
 | `VF_ON_ERROR` | no | `transient` | Disposition for exceptions the SDK cannot classify: `poison`, `transient`, `worker_fatal` (`ERR-2`). |
 | `VF_BREAKER_THRESHOLD` | no | `10` | Consecutive failures before the worker declares itself unhealthy and exits (`ERR-5`); `0` disables. |
 | `VF_PROGRESS_TIMEOUT_SECONDS` | no | `300` | Seconds with no ack while work is pending before the node is declared stalled (`ERR-7`); `0` disables. |
+| `VF_WATCHDOG_INTERVAL_SECONDS` | no | `5` | Seconds between re-checks of the `ERR-7` deadline from a watchdog thread, so a callback that never returns is caught while the loop cannot check; `0` disables the thread (the in-loop check remains). A stall found this way is written to the termination log and exits with the error's exit code. Absent ⇒ unchanged behaviour: the default interval. |
+| `VF_PROFILE_REQUESTS_JSON` | no | unset | The operator's explicit channel profiles (`deploy --require-profile CHANNEL=PROFILE`) as JSON, emitted only when there are any. Absent ⇒ unchanged behaviour: the flow-type presets. Proposed as `ENV-13` by RFC 0006; today the reference worker records the requests, and the broker read-back that verifies them is pending. |
 | `VF_TERMINATION_LOG` | no | `/dev/termination-log` | Path the worker writes its structured death reason to; Kubernetes surfaces it in `containerStatuses` (`ERR-3`). |
 | `VF_EOS_QUIESCENCE_MS` | no | `500` | Drain quiescence window before honoring EOS (§9). |
 | `VF_HEALTH_PORT` | no | `0` (local) / `8080` (k8s) | Health server port; `0` disables it (§12). |
@@ -203,7 +206,7 @@ the messenger's lazy `add_stream` is an idempotent fallback. Reference:
   MAY lazily ensure its own stream exists as a fallback.
 - **STREAM-8** (DLQ stream): `vf-{flow}-dlq`, binding `vf.{flow}._dlq.>`,
   `retention=LIMITS`, `discard=OLD`, `max_age=7 days`. It MUST NOT be deleted by
-  run teardown (`STREAM-9`).
+  run teardown.
 
 ---
 
@@ -796,7 +799,7 @@ first existed on the wire — so a node that died mid-run left every descendant
 blocked on an end-of-stream that was never coming.
 
 - **ABORT-1** (marker): a node terminating abnormally SHOULD publish a
-  `MSG_TYPE_ABORT` envelope on **its own `_eos` subject** (`NAME-5`), carrying the
+  `MSG_TYPE_ABORT` envelope on **its own `_eos` subject** (`NAME-4`), carrying the
   `Error` that killed it in `Envelope.error`. It reuses the EOS consumers and the
   provision-time interest anchor unchanged; no new topology is involved. Its dedup
   id MUST differ from the clean marker's (the reference uses trace id
@@ -845,10 +848,15 @@ blocked on an end-of-stream that was never coming.
 ## 17. Conformance
 
 Protocol v1 remains `stabilizing` until at least two non-Python SDKs pass the full
-conformance suite (`conformance/`, Phase 4). Every MUST above is exercised by a
-scenario that references its ID; the cross-index lives alongside the scenarios.
+conformance suite (`tests/conformance/`, whose catalog is
+`tests/conformance/catalog/test_catalog.json`). Every MUST above is exercised by a
+case that references its ID; the cross-index is `spec/conformance-map.md`.
 The Python worker is the reference oracle and MUST pass the suite first.
 
 Changes to this document follow the RFC process in `spec/rfcs/`. A change that
 alters observable wire or routing behavior requires a protocol major bump and a
 `buf breaking` review of `spec/proto/`.
+
+RFC 0006 (`spec/rfcs/0006-backend-contracts-and-runtime-ledger.md`, *proposed*)
+lists the changes to this contract that are implemented behind the `VF_RFC0006`
+switch (off by default); none of them is normative until that RFC is accepted.

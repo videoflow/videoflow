@@ -83,8 +83,14 @@ def _publish_blob_message(store, flow_id, run_id, parent, trace, seq, blob_reade
 
     asyncio.run(_go())
 
-def _blob_keys(client):
-    return sorted(k.decode() for k in client.keys('vf-blob*'))
+def _blob_keys(client, before = frozenset()):
+    '''The blob-related keys this test created: everything matching the pattern that was not there before it started.'''
+    return sorted(k.decode() for k in client.scan_iter(match = 'vf-blob*', count = 500) if k.decode() not in before)
+
+
+def _snapshot(client):
+    '''The keys other suites hold on the shared Redis right now — never this test's to assert on or delete.'''
+    return frozenset(k.decode() for k in client.scan_iter(match = 'vf-blob*', count = 500))
 
 def _wait_until(pred, timeout = 10.0, interval = 0.1):
     deadline = time.monotonic() + timeout
@@ -122,24 +128,25 @@ def test_fanout_blob_deleted_after_every_child_acks(store):
                        blob_store = store)
     m2 = NATSMessenger(_StubNode('c2'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
                        blob_store = store)
-    ref = None
+    before = _snapshot(store._client)
+    refs = []
     try:
         _publish_blob_message(store, flow_id, run_id, 'parent', 't1', 1, blob_readers = 2)
         for m in (m1, m2):
             inputs = m.receive_message()
             assert inputs['parent']['message'].shape == BIG.shape
-        ref = store._client.keys('vf-blob-*')
+        refs = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blob-')]
         m1.ack_inputs()
         # One of two readers acked: blob must still resolve for the other (BLOB-6).
-        rc_keys = store._client.keys('vf-blobrc-*')
+        rc_keys = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blobrc-')]
         assert rc_keys and int(store._client.get(rc_keys[0])) == 1
         m2.ack_inputs()
-        assert _wait_until(lambda: not store._client.keys('vf-blob*')), \
-            f'blob keys survived both acks: {_blob_keys(store._client)}'
+        assert _wait_until(lambda: not _blob_keys(store._client, before)), \
+            f'blob keys survived both acks: {_blob_keys(store._client, before)}'
     finally:
         m1.close()
         m2.close()
-        _cleanup(flow_id, run_id, store._client, [k.decode() for k in (ref or [])])
+        _cleanup(flow_id, run_id, store._client, refs)
 
 def test_partial_consumption_keeps_the_blob(store):
     '''Only one of two counted readers acks → blob survives (its TTL is the backstop, BLOB-7).'''
@@ -149,12 +156,13 @@ def test_partial_consumption_keeps_the_blob(store):
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH)
     m1 = NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
                        blob_store = store)
+    before = _snapshot(store._client)
     refs = []
     try:
         _publish_blob_message(store, flow_id, run_id, 'parent', 't1', 1, blob_readers = 2)
         m1.receive_message()
         m1.ack_inputs()
-        refs = [k.decode() for k in store._client.keys('vf-blob-*')]
+        refs = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blob-')]
         assert refs, 'blob was deleted with an outstanding reader'
         rc = 'vf-blobrc-' + refs[0].removeprefix('vf-blob-')
         assert int(store._client.get(rc)) == 1
@@ -170,13 +178,14 @@ def test_dead_letter_preserves_the_blob(store):
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH, max_retries = 0)
     m1 = NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
                        blob_store = store, max_retries = 0)
+    before = _snapshot(store._client)
     refs = []
     try:
         _publish_blob_message(store, flow_id, run_id, 'parent', 't1', 1, blob_readers = 1)
         m1.receive_message()
         m1.fail_inputs(ValueError('permanent boom'))
         time.sleep(0.5)
-        refs = [k.decode() for k in store._client.keys('vf-blob-*')]
+        refs = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blob-')]
         assert refs, 'dead-lettering must leave the blob to its TTL, not delete it'
     finally:
         m1.close()
@@ -199,15 +208,18 @@ def test_partitioned_ack_skip_counts_as_a_release(store):
     replicas = [NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
                               blob_store = store, nb_tasks = 2, partition_by = 'trace_id',
                               replica_id = r) for r in (0, 1)]
+    before = _snapshot(store._client)
+    refs = []
     try:
         _publish_blob_message(store, flow_id, run_id, 'parent', 't1', 1, blob_readers = 2)
+        refs = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blob-')]
         # The owner processes and acks; the non-owner's pull loop ack-skips on its own.
         inputs = replicas[owner].receive_message()
         assert inputs['parent']['message'].shape == BIG.shape
         replicas[owner].ack_inputs()
-        assert _wait_until(lambda: not store._client.keys('vf-blob*')), \
-            f'blob keys survived owner ack + non-owner skip: {_blob_keys(store._client)}'
+        assert _wait_until(lambda: not _blob_keys(store._client, before)), \
+            f'blob keys survived owner ack + non-owner skip: {_blob_keys(store._client, before)}'
     finally:
         for m in replicas:
             m.close()
-        _cleanup(flow_id, run_id, store._client, [])
+        _cleanup(flow_id, run_id, store._client, refs)
