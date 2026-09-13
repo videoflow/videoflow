@@ -57,6 +57,7 @@ from videoflow.backends.payload import (
 )
 from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH, REALTIME
+from videoflow.core.node import Node
 from videoflow.messaging import topology
 from videoflow.messaging.jetstream_backend import channel_spec_for, subscription_spec_for
 from videoflow.messaging.nats_messenger import NATSMessenger
@@ -83,14 +84,10 @@ def sha256(data : bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-class StubNode:
-    '''The minimum a messenger needs from a node: a name.'''
+class StubNode(Node):
+    '''The minimum a messenger needs from a node: a real ``Node`` with a name.'''
     def __init__(self, name : str) -> None:
-        self._name = name
-
-    @property
-    def name(self) -> str:
-        return self._name
+        super().__init__(name = name)
 
     def open(self) -> None:
         return None

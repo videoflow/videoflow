@@ -441,7 +441,15 @@ def test_msg_023_loss_of_quorum_or_storage_capacity_does_not_produce_false(k3s_h
         retried = [backend.publish(_envelope(cap_channel, f'{flow}:cap{k}', body), time.monotonic() + 15.0)
                    for k in range(accepted_count, 6)]
         evidence['capacity_retry'] = [repr(o) for o in retried]
-        assert all(isinstance(o, Accepted) for o in retried), retried
+        # A clustered JetStream remembers a refused id in its deduplication map for
+        # the window and answers the retry ``duplicate`` with sequence 0 — seen,
+        # never stored. The adapter reports that as unknown, never as a receipt;
+        # the id lands once the window has passed. Either outcome is truthful.
+        for outcome in retried:
+            assert isinstance(outcome, Accepted) or (
+                isinstance(outcome, PublicationUnknown) and 'sequence 0' in outcome.reason), outcome
+        assert stream_facts(url, stream_name_for(flow, run, 'q'))['messages'] == sum(
+            1 for o in retried if isinstance(o, Accepted))
     finally:
         (evidence_dir / 'msg023.json').write_text(json.dumps(evidence, indent = 2, default = str))
         if scaled_down:

@@ -28,10 +28,11 @@ import random
 import threading
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from ..backends import faults
 from ..backends.capabilities import LIVE_LATEST, RELIABLE_WORK
+from ..backends.memory.runtime_store import MemoryRuntimeStore
 from ..backends.messaging import (
     KIND_ABORT,
     KIND_DATA,
@@ -66,29 +67,49 @@ from ..backends.outcomes import (
 )
 from ..backends.payload import PayloadStore
 from ..backends.payload_bridge import PayloadStoreBlobBridge
+from ..backends.runtime import (
+    COMPLETION_ABORTED,
+    COMPLETION_COMPLETE,
+    COMPLETION_UNKNOWN,
+    OUTCOME_ACCEPTED,
+    OUTCOME_DUPLICATE,
+    FlowRuntime,
+    OwnershipToken,
+    replayable_trace_id,
+    source_epoch_trace_id,
+)
 from ..core import constants
 from ..core.constants import REALTIME
+from ..core.context import CHECKPOINT_METADATA_KEY
 from ..core.engine import Messenger
 from ..core.errors import (
     DEFAULT_DISPOSITION,
     POISON,
     TRANSIENT,
+    WORKER_FATAL,
     BrokerUnavailable,
+    CapabilityError,
     ConfigError,
     DecodeError,
+    IncompatibleProfile,
+    PartitionKeyError,
     TransientFailure,
+    WorkerFatal,
     classify,
     error_to_dict,
 )
-from ..core.node import Node
+from ..core.node import ConsumerNode, Node, ProcessorNode, ProducerNode
 from ..core.policies import (
     ACTION_DLQ_SAMPLED,
     ACTION_NAK,
     ACTION_TERM,
     BEST_EFFORT,
+    INVALID_KEY_FALLBACK,
+    INVALID_KEY_REJECT,
     JOIN_TIME,
     DeliveryPolicy,
     JoinPolicy,
+    PartitionKeyPolicy,
 )
 from ..wire.serialization import (
     DEFAULT_ENVELOPE_VERSION,
@@ -117,6 +138,8 @@ from .topology import (
     LEGACY_BIND_CREDIT,
     consumer_credit,
     durable_name_for,
+    join_item_credit,
+    max_deliver_for,
     partitioned_durable_name_for,
 )
 
@@ -147,6 +170,9 @@ _PUBLISH_TIMEOUT = 120
 _DLQ_PUBLISH_BACKOFF = [0.1, 0.2, 0.3]
 #: Delay of the NAK that keeps a message alive when its dead-letter publish failed.
 _DLQ_RETRY_DELAY = 5
+#: How long a restart's re-publish of a committed-but-unconfirmed output waits for
+#: the broker before the outcome is left as unknown (the input's retry settles it).
+_RECONCILE_TIMEOUT = 10.0
 
 class _DlqSampler:
     '''
@@ -306,6 +332,17 @@ class NATSMessenger(Messenger):
         - blob_reader_ids ([str]): the reader obligations every put acquires \
             (``VF_BLOB_READER_IDS``): ``<child>`` per competing child, \
             ``<child>/p<i>`` per partitioned replica.
+        - runtime: the node's ``FlowRuntime`` ledger (RFC 0006 CTRL-4): terminators \
+            and received sets, the outbox, attempt counts, the terminal log, \
+            pending dead-letter handoffs, open groups. A memory-backed one when \
+            None — every record then lives and dies with this process, and the \
+            messenger knows it (``runtime.durable_shared()``).
+        - replayable (bool): this producer mints ids from its source offset \
+            (``MSGID-6``) and checkpoints the last accepted one; a live source \
+            mints ``{node}:{epoch}:{n}`` (``MSGID-5``). Under the switch only.
+        - prefetch_bytes (int): the most envelope bytes the default backend holds \
+            unsettled before it stops fetching (``VF_PREFETCH_BYTES``, RUN-025); \
+            None leaves it unbounded.
     """
     def __init__(self, node : Node, parent_names : list[str], nats_url : str, flow_id : str,
                 flow_type : str, run_id : str, blob_store : BlobStore | None = None,
@@ -317,7 +354,10 @@ class NATSMessenger(Messenger):
                 delivery_policy : dict | None = None,
                 backend : MessagingBackend | None = None,
                 payload_store : PayloadStore | None = None,
-                blob_reader_ids : list[str] | None = None) -> None:
+                blob_reader_ids : list[str] | None = None,
+                runtime : FlowRuntime | None = None,
+                replayable : bool = False,
+                prefetch_bytes : int | None = None) -> None:
         self._node = node
         # Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).
         self._envelope_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
@@ -378,6 +418,30 @@ class NATSMessenger(Messenger):
         else:
             self._blob_store = blob_store
 
+        # The run ledger. With a memory store it is process-local, which the
+        # EOS-7 barrier and the D11 cap both refuse to rely on (durable_shared()).
+        self._runtime = runtime if runtime is not None else FlowRuntime(
+            MemoryRuntimeStore(), flow_id, run_id, node.name, replica_id, nb_tasks, partition_by)
+        self._replayable = replayable
+        # RUN-020: what a partitioned replica does with an unusable partition key.
+        self._key_policy = PartitionKeyPolicy.from_dict(
+            node.partition_key_policy if isinstance(node, (ProcessorNode, ConsumerNode)) else None)
+        # RUN-004: a node that declares its committed results must be replayed
+        # byte-for-byte keeps their bytes in the ledger (``replay_policy``).
+        self._replay_committed = node.replay_policy == 'committed'
+        # Under the switch: the barrier, the ledger budget and source epochs are
+        # decided once, from the store's read-back, not per message.
+        self._ledger = constants.RFC0006 and self._runtime.durable_shared()
+        self._max_deliver = max_deliver_for(flow_type, max_retries, delivery_policy, ledger_budget = self._ledger)
+        self._authority : OwnershipToken | None = None
+        # Members of groups whose output was committed before a crash (outbox says
+        # accepted): a redelivered member is acked without recomputing (RUN-002).
+        self._committed_members : set[tuple[str, str, int]] = set()
+        self._committed_groups : dict[str, set[tuple[str, str, int]]] = {}
+        # The group the task is processing: settled in the ledger on ack/fail.
+        self._current_group : Optional[str] = None
+        # The group a restored checkpoint already covers: acked, never re-applied.
+        self._covered_group : Optional[str] = None
         self._trace_counter = 0
         self._last_trace_id: Optional[str] = None
         # seq/event_ts are carried forward from the input group so a re-run of the
@@ -398,7 +462,9 @@ class NATSMessenger(Messenger):
         # observed AND its data durable is quiescent (all data drained) — see
         # _is_parent_stopped. _eos_handles holds the EOS ack until drain completes.
         self._eos_seen: set[str] = set()
-        self._eos_handles: dict[str, _AckHandle] = {}
+        # Every terminator held un-acked until the parent is drained (EOS-4, per
+        # replica marker under EOS-7): a crash mid-drain leaves them re-observable.
+        self._eos_handles: dict[str, list[_AckHandle]] = {}
         self._quiescent_since: dict[str, float] = {}
         # Parents whose terminator was an ABORT rather than a clean EOS, with the
         # error each carried. Surfaced through receive_message so the task can
@@ -410,11 +476,6 @@ class NATSMessenger(Messenger):
         # the task via ack_inputs()/fail_inputs() (handles of still-pending groups
         # live inside the assembler).
         self._inflight_handles: list[_AckHandle] = []
-        # Local record of every delivery this node terminated without a
-        # dead-letter entry (sampled out, dlq off, undecodable with the switch
-        # off): the durable record a Terminal settlement must name (DELIV-15).
-        # In-memory until the runtime store (RFC 0006 CTRL-4) carries it.
-        self._terminal_log: list[dict] = []
         #: Publication outcomes by kind: accepted, duplicate, unknown, dropped, rejected.
         self.publication_stats: dict[str, int] = {}
         # Drops decided below the Messenger seam, handed to the health seam by take_drops().
@@ -431,7 +492,7 @@ class NATSMessenger(Messenger):
         self._closing = threading.Event()
 
         self._backend : MessagingBackend = backend if backend is not None else JetStreamMessagingBackend(
-            nats_url, flow_id, run_id, flow_type)
+            nats_url, flow_id, run_id, flow_type, byte_budget = prefetch_bytes)
         self._data_subs: dict[str, SubscriptionId] = {}
         self._eos_subs: dict[str, SubscriptionId] = {}
         self._setup()
@@ -458,12 +519,14 @@ class NATSMessenger(Messenger):
             # durable for a partitioned node (broadcast + client-side ownership).
             # The broker-side credit is the pre-RFC value until RFC 0006 derives it
             # from the replica count (STREAM-15), the same way provisioning does.
-            credit = (consumer_credit(self._nb_tasks, self._partition_by is not None) if constants.RFC0006
-                      else LEGACY_BIND_CREDIT)
+            working_set = join_item_credit(self._parent_names, self._join_policy.to_dict(), self._flow_type)
+            credit = (consumer_credit(self._nb_tasks, self._partition_by is not None, item_credit = working_set)
+                      if constants.RFC0006 else LEGACY_BIND_CREDIT)
             data = SubscriptionId(channel, self._node.name,
                                   self._replica_id if self._partition_by else None, SUBSCRIPTION_DATA)
-            backend.ensure_subscription(subscription_spec_for(data, self._ack_wait, self._max_deliver, credit),
-                                        operation)
+            verified = backend.ensure_subscription(subscription_spec_for(data, self._ack_wait, self._max_deliver,
+                                                                         credit), operation)
+            self._admit_join_credit(parent_name, verified.effective, working_set)
             if self._partition_by or constants.RFC0006:
                 # Decide ownership and replay scope where the delivery arrives, so a
                 # message this replica will never process is acked out of its ack
@@ -475,6 +538,38 @@ class NATSMessenger(Messenger):
             backend.ensure_subscription(subscription_spec_for(eos, 30, 1, 1), operation)
             self._data_subs[parent_name] = data
             self._eos_subs[parent_name] = eos
+        self._restore_from_ledger()
+
+    def _restore_from_ledger(self) -> None:
+        """
+        What a replacement process must know before it receives anything: its
+        ownership epoch (a commit under an older one is refused), the parents an
+        earlier process saw abort, the groups whose output was committed but whose
+        members were never acked, and the dead letters it could not record.
+        """
+        runtime = self._runtime
+        if self._ledger:
+            self._authority = runtime.acquire_partition()
+            # A parent whose terminator an earlier process recorded (EOS-7) has
+            # ended for this process too: the record is the fact, not the marker
+            # this process's own EOS durable will replay as a duplicate (RUN-010).
+            for parent in self._parent_names:
+                if runtime.terminators(parent):
+                    self._eos_seen.add(parent)
+        for parent, error in runtime.aborted_parents().items():
+            self._aborted_parents.setdefault(parent, dict(error))
+        for group in runtime.open_groups():
+            entry = runtime.outbox_entry(group.group_id)
+            if entry is not None and entry.outcome in (OUTCOME_ACCEPTED, OUTCOME_DUPLICATE):
+                members = {(producer, trace, seq) for producer, trace, seq in runtime.group_members(group.group_id).values()}
+                self._committed_members.update(members)
+                self._committed_groups[group.group_id] = members
+        for handoff in runtime.pending_handoffs():
+            self._retry_handoff(handoff.record_id, dict(handoff.headers), handoff.raw)
+        for intent in runtime.unresolved_publications():
+            # An unconfirmed send from an earlier process: resolve it under the
+            # *same* id (dedup makes the re-publish idempotent) — never a second identity.
+            self._reconcile_intent(intent.publication_id, intent.kind)
 
     def _negotiate_inline_threshold(self, max_payload : Observation[int]) -> None:
         """
@@ -502,6 +597,30 @@ class NATSMessenger(Messenger):
                        f'bytes: the broker max_payload is {max_payload.value} bytes')
         self._inline_threshold = safe
 
+    def _admit_join_credit(self, parent_name : str, effective : Mapping[str, Any], working_set : int) -> None:
+        """
+        A join whose durable admits fewer un-acked deliveries than its working set
+        can be filled with halves that never complete (RUN-005): refused before
+        any input is taken, under the switch, naming both numbers. The credit read
+        back is the durable's *effective* one — provisioning may have created it
+        with another value, and a bind never changes an existing durable.
+        """
+        if not constants.RFC0006 or len(self._parent_names) < 2:
+            return
+        # JetStream reports the durable's ``max_ack_pending``; the reference model its ``item_credit``.
+        raw = effective.get('max_ack_pending', effective.get('item_credit'))
+        if raw is None:
+            return
+        credit = int(raw)
+        if credit < working_set:
+            raise CapabilityError(
+                f'{self._node.name}: the durable for parent {parent_name!r} admits {credit} un-acked deliveries, '
+                f'but the join policy needs a working set of {working_set} (max_pending × halves + 1); an '
+                'adversarial parent ordering could fill the credit with halves that never complete.',
+                remedy = f'Provision the durable with max_ack_pending >= {working_set} (re-run provisioning under '
+                         'RFC 0006, which derives it from the join policy), or lower JoinPolicy.max_pending.',
+                node = self._node.name)
+
     def _data_durable_name(self, parent_name : str) -> str:
         if self._partition_by:
             return partitioned_durable_name_for(self._node.name, parent_name, self._replica_id)
@@ -512,15 +631,30 @@ class NATSMessenger(Messenger):
         return self._owns_key(entry.trace_id, entry.metadata)
 
     def _owns_key(self, trace_id : str | None, metadata : dict | None) -> bool:
+        owner, _invalid = self._partition_verdict(trace_id, metadata)
+        return owner == self._replica_id
+
+    def _partition_verdict(self, trace_id : str | None, metadata : dict | None) -> tuple[int, bool]:
+        """
+        ``(owning replica, invalid)`` for a record: the hash of its partition key
+        modulo the replica count. Under RFC 0006 an unusable key (absent, None,
+        empty, a container) is never hashed as its ``str``: the node's
+        ``PartitionKeyPolicy`` routes it to the fallback partition, or to replica 0
+        to be rejected — one replica, one traceable outcome (RUN-020).
+        """
         if not self._partition_by:
-            return True
+            return self._replica_id, False
         key : Any
         if self._partition_by == 'trace_id':
             key = trace_id
         else:
             key = (metadata or {}).get(self._partition_by)
+        if constants.RFC0006 and not PartitionKeyPolicy.is_valid_key(key):
+            if self._key_policy.invalid == INVALID_KEY_FALLBACK:
+                return min(self._key_policy.fallback_partition, self._nb_tasks - 1), True
+            return 0, True
         digest = hashlib.sha256(str(key).encode('utf-8')).hexdigest()
-        return (int(digest[:8], 16) % self._nb_tasks) == self._replica_id
+        return int(digest[:8], 16) % self._nb_tasks, False
 
     def _replay_addressed_elsewhere(self, headers : Any) -> bool:
         """A replayed dead letter names its target (DELIV-16): honoured under RFC 0006, every child processes it otherwise."""
@@ -556,11 +690,20 @@ class NATSMessenger(Messenger):
         """
         if self._replay_addressed_elsewhere(delivery.headers):
             return
+        # Delivered to this durable, even if not this replica's to process: the
+        # EOS-7 barrier counts what the parent published, owned or not.
+        self._note_received(delivery.token)
         try:
             ref = peek_envelope(delivery.envelope_bytes).get('blob_ref')
         except Exception:  # noqa: BLE001 — nothing to release for bytes that do not decode
             return
         self._release_after_settlement(ref, f'skip:{delivery.token.message_id}:{delivery.token.attempt}')
+
+    def _note_received(self, token : DeliveryToken) -> None:
+        """Record a distinct DATA id delivered on this replica's durable (EOS-7 clause b); a no-op without the ledger barrier."""
+        if self._ledger:
+            parent = token.subscription.channel.node
+            self._runtime.record_received(parent, self._data_durable_name(parent), token.message_id)
 
     def _release_after_settlement(self, blob_ref : str | None, settlement_id : str) -> None:
         """
@@ -629,8 +772,17 @@ class NATSMessenger(Messenger):
         return self._termination_event.is_set()
 
     def quiesce(self) -> None:
-        """Stop pulling new input on SIGTERM; what is already held still settles normally."""
+        """
+        Stop admitting input (SIGTERM, a scale-down, a rollout): what is already
+        held by the task still settles normally, and what the adapter prefetched
+        but never handed out goes back to the broker at once, so a survivor picks
+        it up now rather than after ``ack_wait`` lapses on a process that is
+        about to die (RUN-030). Idempotent.
+        """
         self._termination_event.set()
+        backend = self._backend
+        if isinstance(backend, JetStreamMessagingBackend):
+            backend.stop_receiving()
 
     def set_output_partition_key(self, value : Any) -> None:
         self._output_partition_key = value
@@ -658,15 +810,36 @@ class NATSMessenger(Messenger):
                                 self._last_trace_id, self._last_seq, MSG_TYPE_DATA)
 
     def publish_message(self, message : Any, metadata : Optional[dict] = None) -> None:
+        """
+        Publish one data output. ``metadata`` may carry the node's pending
+        checkpoint under the reserved ``CHECKPOINT_METADATA_KEY`` (the task puts
+        it there, ``RuntimeContext.checkpoint``); it is taken off here, committed
+        with the output in one ledger write, and never reaches the wire.
+        """
         trace_id = self._last_trace_id
         seq = self._last_seq
+        source = trace_id is None
+        checkpoint : Optional[bytes] = None
+        if metadata and CHECKPOINT_METADATA_KEY in metadata:
+            metadata = dict(metadata)
+            checkpoint = metadata.pop(CHECKPOINT_METADATA_KEY)
         if trace_id is None:
             # Only a producer (no parents) mints fresh trace ids; everything
             # downstream carries forward the trace id + seq of the input group it
             # was derived from, so a re-run derives the same message_id (dedup).
             self._trace_counter += 1
-            trace_id = f'{self._node.name}:{self._trace_counter}'
             seq = self._trace_counter
+            if not constants.RFC0006:
+                trace_id = f'{self._node.name}:{self._trace_counter}'
+            elif self._replayable:
+                # MSGID-6: the source's own offset, so a re-run re-mints the same
+                # id; a declared analysis version is a namespace of its own.
+                analysis = self._node.analysis_version if isinstance(self._node, ProducerNode) else None
+                trace_id = replayable_trace_id(self._node.name, seq, analysis)
+            else:
+                # MSGID-5: a per-process epoch, so a replacement's frames are never
+                # mistaken for a pre-restart duplicate.
+                trace_id = source_epoch_trace_id(self._node.name, self._runtime.source_epoch(), seq)
         # Event time: an explicit stamp from the node (ctx.set_event_timestamp)
         # wins; otherwise it is inherited from the input group; a producer with
         # neither gets publish wall-clock as a last resort.
@@ -681,7 +854,12 @@ class NATSMessenger(Messenger):
             metadata = dict(metadata or {})
             metadata['_partition_key'] = self._output_partition_key
             self._output_partition_key = None
-        self._publish(message, metadata, trace_id, seq, MSG_TYPE_DATA, event_ts = event_ts)
+        self._publish(message, metadata, trace_id, seq, MSG_TYPE_DATA, event_ts = event_ts,
+                      checkpoint = checkpoint)
+        if source:
+            # A source's capture is on the wire (or definitely refused): the point a
+            # live source dies at in RUN-014, after its identity was minted.
+            faults.barrier('source.publish.after', node = self._node.name, trace_id = trace_id, seq = seq)
 
     def publish_stop_signal(self) -> None:
         # EOS goes on this node's dedicated _eos subject (not the data subject), so
@@ -689,7 +867,7 @@ class NATSMessenger(Messenger):
         # id includes replica_id so EOS markers from different replicas of one node
         # don't collapse into a single one.
         eos_trace = f'eos-r{self._replica_id}'
-        self._publish(None, None, eos_trace, self._last_seq, MSG_TYPE_EOS)
+        self._publish(None, None, eos_trace, self._terminator_seq(), MSG_TYPE_EOS)
 
     def publish_abort(self, error : Any) -> None:
         """
@@ -703,8 +881,65 @@ class NATSMessenger(Messenger):
         finished.
         """
         abort_trace = f'abort-r{self._replica_id}'
-        self._publish(None, None, abort_trace, self._last_seq, MSG_TYPE_ABORT,
+        self._publish(None, None, abort_trace, self._terminator_seq(), MSG_TYPE_ABORT,
                     error = error_to_dict(error))
+
+    def _terminator_seq(self) -> int:
+        """EOS-7 under the switch: the distinct DATA ids this replica published; the last input seq otherwise."""
+        return self._runtime.published_count() if constants.RFC0006 else self._last_seq
+
+    def checkpoint(self, state : bytes) -> None:
+        """
+        One ledger write: the node's state and the group it was updated with
+        (``last_input_key``), so a replacement's restored state and the inputs it
+        must still see describe the same committed prefix (RUN-022). The group is
+        remembered as covered: if it is redelivered to this process's replacement,
+        it is acknowledged without being handed to the node again.
+
+        This is the immediate form, for a node whose input produces no output (a
+        sink, a leaf): its checkpoint *is* the commit. A node with an output hands
+        its checkpoint to ``publish_message`` instead (``RuntimeContext``), and
+        ``_publish`` commits state and output together. A superseded owner is
+        refused (RUN-023); a ledger that dies with the process is refused too,
+        under the switch, rather than faking durability (RUN-022).
+        """
+        if constants.RFC0006 and not self._ledger:
+            self._refuse_ephemeral_ledger('a checkpoint (ctx.checkpoint)')
+        if self._ledger and self._authority is not None:
+            self._runtime.check_authority(self._authority)
+        group = self.last_input_key() or ''
+        faults.barrier('checkpoint.write.before', node = self._node.name, op_id = group)
+        self._runtime.checkpoint(state, {'group': group} if group else {})
+        faults.barrier('checkpoint.write.after', node = self._node.name, op_id = group)
+
+    def restore_checkpoint(self) -> Optional[bytes]:
+        """
+        The last checkpointed state, and the group it covers: a redelivery of that
+        group is acknowledged, not re-applied (``receive_message``) — after its
+        committed output, if the checkpoint carries one, is confirmed on the broker.
+        """
+        state, position = self._runtime.restore_checkpoint()
+        covered = str(position.get('group', ''))
+        if covered:
+            self._covered_group = covered
+        if state is not None:
+            self._source_state = state
+        return state
+
+    def resume_offset(self) -> int:
+        """
+        For a replayable producer under the switch: the last *accepted* source
+        offset in the ledger, so the source resumes from the next one after a
+        restart (``MSGID-6``). 0 when nothing was accepted (or the node is live).
+        """
+        if not (constants.RFC0006 and self._replayable):
+            return 0
+        state, position = self._runtime.restore_checkpoint()
+        if state is not None:
+            self._source_state = state
+        offset = int(position.get('offset', 0))
+        self._trace_counter = max(self._trace_counter, offset)
+        return offset
 
     def pending_count(self) -> int:
         """
@@ -735,6 +970,23 @@ class NATSMessenger(Messenger):
             total += num_pending + num_ack_pending
         return known(total)
 
+    def join_status(self) -> dict[str, Any]:
+        """
+        What the join is doing right now (RUN-006): how many groups wait for a
+        missing member, how long the oldest has waited, and whether the policy
+        would ever give up on them (``missing = 'wait'`` never does — a node in
+        that state is *waiting*, which the health seam must not report as
+        healthy processing progress). Cancellation is the control stop:
+        ``quiesce``/the flow-wide stop ends the wait and hands the halves back.
+        """
+        return {
+            'mode': self._join_policy.mode, 'missing': self._join_policy.missing,
+            'timeout_seconds': self._join_policy.timeout_seconds,
+            'pending_groups': self._assembler.pending_count(),
+            'oldest_wait_seconds': self._assembler.oldest_wait_seconds(),
+            'bounded': self._join_policy.timeout_seconds is not None,
+        }
+
     def subscription_status(self) -> dict[str, Observation[Any]]:
         """
         Per parent, the backend's observation of this node's data subscription —
@@ -750,7 +1002,19 @@ class NATSMessenger(Messenger):
 
     def _publish(self, message : Any, metadata : Optional[dict], trace_id : str, seq : int,
                 msg_type : str, event_ts : float | None = None,
-                error : Optional[dict] = None) -> None:
+                error : Optional[dict] = None, checkpoint : bytes | None = None) -> None:
+        """
+        One publication, committed before it is sent (CTRL-4). For a data output
+        the order is: the ownership check (RUN-023), the outbox intent, the
+        node's pending ``checkpoint`` — written in one ledger record with the
+        output's bytes, so state and output can never survive a crash apart
+        (RUN-003, RUN-022) — the committed body a ``replay_policy = 'committed'``
+        node replays verbatim (RUN-004), then the send and its outcome. A
+        replayable source checkpoints its offset only once the send is
+        *accepted* (MSGID-6, RUN-015). Barriers: ``group.commit.before/after``
+        around the commit, ``checkpoint.write.before/after`` around each
+        checkpoint write.
+        """
         node_name = self._node.name
         # Content-derived dedup id: a re-published retry of the same logical message
         # is dropped by JetStream within the stream's duplicate_window. It is also
@@ -780,13 +1044,134 @@ class NATSMessenger(Messenger):
             headers = headers, body = buf, size = len(buf), event_id = publication_id,
             partition_key = None if partition_key is None else str(partition_key), event_ts = event_ts,
             source_epoch = None, source_offset = None, schema_version = self._envelope_version, kind = kind)
+        # The outbox (CTRL-4): the intent goes in before the send, its outcome
+        # after, so a replacement process reconciles an unconfirmed send under the
+        # same id instead of minting a second one (RUN-003, RUN-013).
+        runtime = self._runtime
+        digest = hashlib.sha256(buf).hexdigest()[:16]
+        committing = kind == KIND_DATA
+        if committing:
+            if constants.RFC0006 and not self._ledger and (self._replay_committed or checkpoint is not None):
+                self._refuse_ephemeral_ledger('replay_policy = "committed"' if self._replay_committed
+                                              else 'a checkpoint (ctx.checkpoint)')
+            faults.barrier('group.commit.before', op_id = publication_id, node = node_name)
+            if self._ledger and self._authority is not None:
+                # RUN-023: every commit carries the fencing token; a superseded
+                # owner is refused here, at the last moment before anything is
+                # written or sent.
+                runtime.check_authority(self._authority)
+        runtime.intend_publication(publication_id, digest, (put_ref.key,) if put_ref is not None else (), kind)
+        if committing:
+            if checkpoint is not None and not self._replayable:
+                # The state and the output it produced, in one record: a replacement
+                # restores the state, covers this group and re-publishes exactly these
+                # bytes if the send never became definite (RUN-003, RUN-022).
+                position : dict[str, Any] = {'output': {'publication_id': publication_id, 'kind': kind,
+                                                        'body': buf.hex()}}
+                group = self.last_input_key()
+                if group is not None:
+                    position['group'] = group
+                faults.barrier('checkpoint.write.before', node = node_name, op_id = publication_id)
+                runtime.checkpoint(checkpoint, position)
+                faults.barrier('checkpoint.write.after', node = node_name, op_id = publication_id)
+            if self._replay_committed:
+                # RUN-004: a committed result is replayed byte-for-byte, never recomputed.
+                self._remember_committed(publication_id, buf)
+            faults.barrier('group.commit.after', op_id = publication_id, node = node_name)
         outcome, failure, orphaned = self._publish_envelope(envelope, is_abort = msg_type == MSG_TYPE_ABORT)
+        runtime.resolve_publication(publication_id, outcome)
+        if committing and self._replayable and constants.RFC0006 and isinstance(outcome, Accepted):
+            # MSGID-6: the last *accepted* offset is the replay position — never a
+            # sent one, so an ambiguous send can not advance it past a lost offset.
+            if checkpoint is not None:
+                self._source_state = checkpoint
+            faults.barrier('checkpoint.write.before', node = node_name, op_id = publication_id, offset = seq)
+            runtime.checkpoint(self._source_state, {'offset': seq})
+            faults.barrier('checkpoint.write.after', node = node_name, op_id = publication_id, offset = seq)
         # Settled on the *final* outcome, error or not: a definite refusal frees the
         # object nobody will ever name, an unconfirmed send keeps its intent for
         # reconciliation to resolve (BLOB-14 step 1).
         self._resolve_intent(publication_id, put_ref, outcome, orphaned)
         if failure is not None:
+            if committing and checkpoint is not None and not self._replayable:
+                # State and output are committed; only the send is not. The task hands
+                # the group back; when it returns it is settled by re-publishing the
+                # committed bytes, never by handing it to the node again.
+                self._covered_group = publication_id
             raise failure
+
+    def _refuse_ephemeral_ledger(self, claim : str) -> None:
+        """
+        A durability claim the composed runtime store cannot keep is refused, not
+        faked (RUN-004, RUN-022): a committed result or a checkpoint that lives
+        only in this process is no recovery at all. Raised before anything is
+        published; the task stops the worker with the diagnostic (exit 2).
+        """
+        caps = self._runtime.capabilities()
+        durable = caps.durable.value if isinstance(caps.durable, Known) else f'unknown ({caps.durable.reason})'
+        raise IncompatibleProfile(
+            f'{self._node.name}: {claim} needs a runtime ledger that outlives this process and is shared '
+            f'with its replacement; the {caps.store!r} runtime store is not (durable = {durable}, '
+            f'shared_across_processes = {caps.shared_across_processes}).',
+            remedy = 'Set VF_RUNTIME_STORE_URL to file://<dir> on one host or to redis:// with persistence '
+                     '(appendonly yes, maxmemory-policy noeviction), or drop the claim '
+                     '(replay_policy = "recompute"; no ctx.checkpoint).',
+            channels = [self._node.name])
+
+    #: A replayable source's own checkpointed state, kept beside its offset (MSGID-6).
+    _source_state : bytes = b''
+
+    def _remember_committed(self, publication_id : str, buf : bytes) -> None:
+        """Keep a committed output's bytes in the ledger so a recovery re-publishes exactly them (RUN-004)."""
+        self._runtime.store.cas(self._runtime.key('committed', publication_id), None, buf)
+
+    def _committed_body(self, publication_id : str) -> bytes | None:
+        """The bytes an earlier process committed for ``publication_id``: its committed-result record, else the checkpoint that embeds it."""
+        raw, _version = self._runtime.store.get(self._runtime.key('committed', publication_id))
+        if raw is not None:
+            return raw
+        _state, position = self._runtime.restore_checkpoint()
+        output = position.get('output') or {}
+        if output.get('publication_id') == publication_id and output.get('body'):
+            return bytes.fromhex(str(output['body']))
+        return None
+
+    def _reconcile_intent(self, publication_id : str, kind : str) -> bool:
+        """
+        An intent an earlier process never resolved. With a committed body in the
+        ledger (a ``replay_policy = 'committed'`` result, or the output a
+        checkpoint embeds) it is re-published verbatim under the **same** id — the
+        dedup window collapses a landed one, so one copy lands either way and no
+        second identity is ever minted (RUN-003, RUN-013). Once accepted, the
+        group's members are committed: a redelivery is acknowledged, never
+        recomputed (RUN-004). Without a body the outcome stays as it was, left for
+        the retry of the input, which re-derives the same id. Returns whether the
+        publication is now definitely accepted.
+        """
+        raw = self._committed_body(publication_id)
+        if raw is None:
+            logger.info(f'{self._node.name}: unresolved publication {publication_id} has no stored body; '
+                        'left for the retry of its input')
+            return False
+        envelope = Envelope(
+            channel = ChannelId(self._flow_id, self._run_id, self._node.name), publication_id = publication_id,
+            headers = {'Nats-Msg-Id': publication_id, 'VF-Env': str(self._envelope_version)}, body = raw,
+            size = len(raw), event_id = publication_id, partition_key = None, event_ts = None,
+            source_epoch = None, source_offset = None, schema_version = self._envelope_version, kind = kind)
+        outcome = self._backend.publish(envelope, time.monotonic() + _RECONCILE_TIMEOUT)
+        if not isinstance(outcome, (Accepted, Rejected)):
+            outcome = self._backend.observe_publication(envelope)
+        self._runtime.resolve_publication(publication_id, outcome)
+        if isinstance(outcome, Accepted):
+            self._count('duplicate' if outcome.duplicate else 'accepted')
+            members = {(producer, trace, seq) for producer, trace, seq in self._runtime.group_members(publication_id).values()}
+            if members:
+                # Committed now: a redelivered member is acknowledged, never recomputed,
+                # and the group's record is settled once every member came back.
+                self._committed_members.update(members)
+                self._committed_groups[publication_id] = members
+        logger.info(f'{self._node.name}: reconciled publication {publication_id}: {type(outcome).__name__}')
+        return isinstance(outcome, Accepted)
 
     def _publish_envelope(self, envelope : Envelope,
                           is_abort : bool) -> tuple[PublicationOutcome, BrokerUnavailable | None, bool]:
@@ -882,6 +1267,33 @@ class NATSMessenger(Messenger):
         for handle in self._inflight_handles:
             handle.ack()
         self._inflight_handles = []
+        self._settle_group()
+
+    def _persist_group(self, ready : Any) -> Optional[str]:
+        """
+        Record the group the task is about to process — its members by logical id
+        and the publication id its output will carry — so a replacement process
+        can tell a committed group from one still to be computed (RUN-002). The
+        ledger key is the output's publication id, which is also the outbox key.
+        """
+        if not self._ledger:
+            return None
+        members = {name: (entry.producer_name, entry.trace_id, entry.seq)
+                   for name, entry in ready.entries.items() if isinstance(entry, EnvelopeEntry)}
+        if not members:
+            return None
+        group_id = derive_message_id(self._flow_id, self._run_id, self._node.name, ready.trace_id, ready.seq,
+                                     MSG_TYPE_DATA)
+        tokens = {name: handle.token.message_id for name, handle in zip(ready.entries, ready.handles)}
+        faults.barrier('group.commit.before', group = group_id, node = self._node.name)
+        self._runtime.persist_group(group_id, members, tokens)
+        faults.barrier('group.commit.after', group = group_id, node = self._node.name)
+        return group_id
+
+    def _settle_group(self) -> None:
+        if self._current_group is not None:
+            self._runtime.settle_group(self._current_group)
+            self._current_group = None
 
     def fail_inputs(self, exc : BaseException) -> None:
         """
@@ -907,10 +1319,22 @@ class NATSMessenger(Messenger):
         for handle in self._inflight_handles:
             self._settle_failure(handle, error, disposition)
         self._inflight_handles = []
+        self._settle_group()
 
     def _settle_failure(self, handle : _AckHandle, error : dict, disposition : str) -> None:
-        '''Execute the ladder's verdict for one delivery of a failed input (``DeliveryPolicy.action_for``).'''
-        action = self._delivery_policy.action_for(disposition, handle.num_delivered)
+        '''
+        Execute the ladder's verdict for one delivery of a failed input
+        (``DeliveryPolicy.action_for``). The attempt that counts is the broker's
+        delivery count — or, with the ledger budget (``max_deliver = -1``), the
+        ledger's own count of *failed* attempts, which a worker-fatal failure
+        never increments (STREAM-15, MSG-008).
+        '''
+        if self._max_deliver == -1:
+            attempts = self._runtime.record_attempt(handle.token.message_id, disposition)
+            counted = max(1, attempts) if disposition != WORKER_FATAL else attempts + 1
+        else:
+            counted = handle.num_delivered
+        action = self._delivery_policy.action_for(disposition, counted)
         if action != ACTION_NAK and disposition == TRANSIENT and self._delivery_policy.delivery != BEST_EFFORT:
             # A retry budget running out is a drop only this seam can see: the
             # health seam counts the verdicts it can tell from the disposition
@@ -932,6 +1356,7 @@ class NATSMessenger(Messenger):
                 if record is None and constants.RFC0006:
                     # The specimen was owed and could not be recorded: keep the
                     # delivery for a later attempt rather than lose the evidence.
+                    self._mark_unresolved(handle.token.subscription, handle.stream_seq)
                     handle.nak(delay = _DLQ_RETRY_DELAY)
                     return
             handle.term(record or self._terminal_record(handle, error,
@@ -943,16 +1368,35 @@ class NATSMessenger(Messenger):
             else:
                 # Never silently drop: if the DLQ publish itself failed, keep the
                 # message alive (nak) so a later attempt can dead-letter it.
+                self._mark_unresolved(handle.token.subscription, handle.stream_seq)
                 handle.nak(delay = _DLQ_RETRY_DELAY)
+
+    def _mark_unresolved(self, subscription : SubscriptionId, stream_seq : int | None) -> None:
+        """
+        A delivery whose budget the ledger found exhausted and whose dead letter
+        could not be recorded: the broker will keep redelivering it (the cap is
+        the ledger's, ``max_deliver = -1``), so the subscription observation must
+        show it as unresolved work rather than as an ordinary pending message
+        (MSG-012). With the broker's own cap the ``MAX_DELIVERIES`` advisory
+        reports it instead.
+        """
+        if self._max_deliver != -1:
+            return
+        backend = self._backend
+        if isinstance(backend, JetStreamMessagingBackend):
+            backend.mark_exhausted(subscription, stream_seq)
 
     def _terminal_record(self, handle : _AckHandle, error : dict, reason : str) -> str:
         """Append a terminal entry for a delivery ending without a dead letter and return its record reference."""
-        self._terminal_log.append({
+        return self._runtime.record_terminal({
             'message_id': handle.token.message_id, 'stream_seq': handle.stream_seq,
             'attempt': handle.num_delivered, 'code': str(error.get('code', 'VF_UNKNOWN')),
-            'reason': reason, 'at': time.time(),
+            'reason': reason,
         })
-        return f'ledger:{self._node.name}/terminal:{len(self._terminal_log)}'
+
+    def terminal_entries(self) -> list[dict]:
+        """The node's terminal log (DELIV-15): every delivery it ended without a dead letter, from the ledger."""
+        return self._runtime.terminal_entries()
 
     def _dlq_publish(self, handle : _AckHandle, error : dict) -> str | None:
         """
@@ -999,20 +1443,57 @@ class NATSMessenger(Messenger):
             headers = headers, body = handle.raw, size = len(handle.raw), event_id = record_id,
             partition_key = None, event_ts = None, source_epoch = None, source_offset = None,
             schema_version = self._envelope_version, kind = KIND_DLQ)
+        if self._publish_dead_letter(envelope):
+            self._runtime.clear_pending_handoff(record_id)
+            return record_id
+        # Recorded so a later attempt — or a replacement process — re-publishes it
+        # under the same id (MSG-009); the delivery itself is kept by the caller.
+        self._runtime.record_pending_handoff(record_id, headers, handle.raw)
+        return None
+
+    def _publish_dead_letter(self, envelope : Envelope) -> bool:
         for backoff in _DLQ_PUBLISH_BACKOFF:
             outcome = self._backend.publish(envelope, time.monotonic() + 5.0)
             if isinstance(outcome, Accepted):
-                return record_id
+                return True
             if isinstance(outcome, (PublicationUnknown, PublicationUnresolvable)):
                 resolved = self._backend.observe_publication(envelope)
                 if isinstance(resolved, Accepted):
-                    return record_id
+                    return True
             elif isinstance(outcome, Rejected) and not outcome.retryable:
-                logger.error(f'dead-letter publish rejected for {record_id}: {outcome.reason}')
-                return None
+                logger.error(f'dead-letter publish rejected for {envelope.publication_id}: {outcome.reason}')
+                return False
             time.sleep(backoff)
-        logger.error(f'dead-letter publish could not be confirmed for {record_id}')
-        return None
+        logger.error(f'dead-letter publish could not be confirmed for {envelope.publication_id}')
+        return False
+
+    def _retry_handoff(self, record_id : str, headers : dict, raw : bytes) -> None:
+        """Re-publish a dead letter an earlier attempt could not record, under its original id."""
+        envelope = Envelope(
+            channel = ChannelId(self._flow_id, self._run_id, self._node.name), publication_id = record_id,
+            headers = headers, body = raw, size = len(raw), event_id = record_id, partition_key = None,
+            event_ts = None, source_epoch = None, source_offset = None, schema_version = self._envelope_version,
+            kind = KIND_DLQ)
+        if self._publish_dead_letter(envelope):
+            self._runtime.clear_pending_handoff(record_id)
+            logger.info(f'{self._node.name}: pending dead letter {record_id} recorded')
+            return
+        # Still unrecordable: the input it stands for is retained under a parent
+        # stream this process never saw a delivery of. The raw bytes name the
+        # parent and the record id its sequence, which is what makes the stranded
+        # work visible to *this* replacement's status, not only to the process
+        # that failed the dead letter (MSG-012).
+        try:
+            parent = str(peek_envelope(raw).get('producer_name') or '')
+            seq = int(record_id.rsplit(':', 1)[-1])
+        except Exception:  # noqa: BLE001 — undecodable bytes or a foreign record id: the ledger still holds it
+            logger.warning(f'{self._node.name}: pending dead letter {record_id} could not be recorded again')
+            return
+        subscription = self._data_subs.get(parent)
+        if subscription is not None:
+            self._mark_unresolved(subscription, seq)
+        logger.warning(f'{self._node.name}: pending dead letter {record_id} could not be recorded again; '
+                       f'the input stays retained under {parent!r} as unresolved work')
 
     # -- receiving ------------------------------------------------------------
 
@@ -1031,6 +1512,34 @@ class NATSMessenger(Messenger):
             self._assembler.sweep()
 
             ready = self._assembler.pop_ready()
+            if ready is not None and self._covered_group is not None and self._covered_group == derive_message_id(
+                    self._flow_id, self._run_id, self._node.name, ready.trace_id, ready.seq, MSG_TYPE_DATA):
+                # The restored checkpoint was taken with this very group applied
+                # (RUN-022): handing it over would apply it twice. Its committed
+                # output must be on the broker before its inputs are let go: an
+                # unconfirmed one is re-published from the checkpoint under the
+                # same id (RUN-003); if that cannot be confirmed either, the group
+                # is handed back and stays covered for the next attempt.
+                committed = self._runtime.outbox_entry(self._covered_group)
+                if committed is not None and committed.outcome not in (OUTCOME_ACCEPTED, OUTCOME_DUPLICATE):
+                    if self._committed_body(self._covered_group) is None:
+                        # A checkpoint that covers the group but carries no output to
+                        # re-publish: state and output were committed apart. Nothing
+                        # here can recover the output, so say so instead of spinning.
+                        raise WorkerFatal(
+                            f'{self._node.name}: the restored checkpoint covers group {self._covered_group} but '
+                            'its output was never committed with it; state and output have diverged.',
+                            remedy = 'A checkpoint is committed with the output it belongs to '
+                                     '(RuntimeContext.checkpoint); restart the run from a consistent ledger.',
+                            node = self._node.name)
+                    if not self._reconcile_intent(self._covered_group, KIND_DATA):
+                        for handle in ready.handles:
+                            handle.nak(delay = _DLQ_RETRY_DELAY)
+                        continue
+                self._covered_group = None
+                for handle in ready.handles:
+                    handle.ack()
+                continue
             if ready is not None:
                 self._last_trace_id = ready.trace_id
                 # Deterministic representative seq/event_ts carried forward so this
@@ -1040,6 +1549,7 @@ class NATSMessenger(Messenger):
                 self._last_event_ts = ready.event_ts
                 # Hold this group's handles for the task to ack/fail after process().
                 self._inflight_handles = list(ready.handles)
+                self._current_group = self._persist_group(ready)
                 out: dict[str, dict[str, Any]] = {}
                 info: dict = {}
                 for name in self._parent_names:
@@ -1136,13 +1646,36 @@ class NATSMessenger(Messenger):
             # replica finishing normally does not undo another one dying.
             self._aborted_parents[parent_name] = decoded.get('error') or {}
         handle = _AckHandle(delivery.token, self, raw = delivery.envelope_bytes)
+        if constants.RFC0006 and decoded:
+            # EOS-7: every terminator is a fact keyed by (parent, replica, kind),
+            # recorded before it is acked; a duplicate of a recorded one is acked.
+            kind = 'abort' if aborted else 'eos'
+            replica = int(decoded.get('replica_id', 0))
+            faults.barrier('eos.record.before', parent = parent_name, replica = replica, kind = kind)
+            new = self._runtime.record_terminator(parent_name, replica, kind, int(decoded.get('seq', 0)),
+                                                  decoded.get('error'))
+            faults.barrier('eos.record.after', parent = parent_name, replica = replica, kind = kind)
+            # The parent has ended either way. With a durable, shared ledger the
+            # record *is* the fact a replacement recovers (CTRL-4; it re-observes
+            # the end from the ledger and its own fresh EOS durable, never from an
+            # un-acked marker), so the marker is acked as soon as it is recorded —
+            # holding every replica's marker would also need an EOS credit the
+            # subscription is not bound with. A duplicate of a recorded fact is
+            # acked as well; without the ledger the first record is held until
+            # the parent is drained (EOS-4), as it always was.
+            self._eos_seen.add(parent_name)
+            if not new or self._ledger:
+                handle.ack()
+                return
+            self._eos_handles.setdefault(parent_name, []).append(handle)
+            return
         if parent_name in self._eos_seen:
             # Already saw a terminator from this parent (another replica's
             # marker): ack the extra and move on.
             handle.ack()
             return
         self._eos_seen.add(parent_name)
-        self._eos_handles[parent_name] = handle
+        self._eos_handles.setdefault(parent_name, []).append(handle)
 
     def _admit_data(self, parent_name : str, delivery : Delivery) -> tuple[str, EnvelopeEntry, _AckHandle] | None:
         try:
@@ -1168,8 +1701,36 @@ class NATSMessenger(Messenger):
         # durable). Ownership is stable across replicas via hashing, and decided
         # before any payload is fetched (PAY-018). The non-owner's confirmed ack
         # releases its own reader share (BLOB-6 / its ``<node>/p<i>`` obligation).
-        if not self._owns(entry):
+        # Delivered on this durable, whoever processes it (EOS-7 clause b).
+        self._note_received(delivery.token)
+        owner, invalid = self._partition_verdict(entry.trace_id, entry.metadata)
+        if owner != self._replica_id:
             handle.ack()
+            return None
+        if invalid and self._key_policy.invalid == INVALID_KEY_REJECT:
+            # Rejected by policy: a poison record with a traceable terminal outcome.
+            self._count_drop('invalid_partition_key')
+            key_value = (entry.metadata or {}).get(self._partition_by) if self._partition_by != 'trace_id' else entry.trace_id
+            error = PartitionKeyError(
+                f'{self._node.name}: partition key {self._partition_by!r} is unusable ({key_value!r})',
+                remedy = 'Stamp a non-empty string key on every record, or declare a fallback partition '
+                         '(partition_key_policy) on the node.')
+            self._settle_failure(handle, dict(error_to_dict(error), disposition = POISON), POISON)
+            return None
+        if invalid:
+            self._count('partition_fallbacks')
+        member = (entry.producer_name, entry.trace_id, entry.seq)
+        if member in self._committed_members:
+            # Its group's output was committed before a crash (RUN-002/RUN-004):
+            # the result exists, so the member is acknowledged, never recomputed.
+            # Once every member of the group came back, its record is settled.
+            self._committed_members.discard(member)
+            handle.ack()
+            for group_id, members in list(self._committed_groups.items()):
+                members.discard(member)
+                if not members:
+                    del self._committed_groups[group_id]
+                    self._runtime.settle_group(group_id)
             return None
         if not decoded.get('hydrated', True):
             try:
@@ -1278,6 +1839,8 @@ class NATSMessenger(Messenger):
         if self._has_pending_from(parent):
             self._quiescent_since.pop(parent, None)
             return False
+        if self._barrier_applies(parent):
+            return self._barrier_stopped(parent)
         observed = self._consumer_pending(parent)
         if isinstance(observed, Unknown):
             # A failed query is not an empty durable: the drain cannot complete on
@@ -1299,6 +1862,30 @@ class NATSMessenger(Messenger):
         self._quiescent_since.pop(parent, None)
         return False
 
+    def _barrier_applies(self, parent : str) -> bool:
+        """EOS-7 governs a BATCH parent with a durable, shared ledger and a known replica count; EOS-3 the rest."""
+        return self._ledger and self._flow_type != REALTIME and parent in self._runtime.parent_replicas
+
+    def _barrier_stopped(self, parent : str) -> bool:
+        """
+        The completion barrier: every expected replica's terminator recorded, every
+        published id received (union over this node's replicas), no half pending,
+        and the durable observed ``Known`` and empty. ``unknown`` never completes;
+        the commit is fenced by this replica's ownership epoch (RUN-008, RUN-009).
+        """
+        state = self._runtime.completion_state(parent, self._data_durable_name(parent), self._consumer_pending(parent),
+                                               pending_halves = self._has_pending_from(parent))
+        if state == COMPLETION_UNKNOWN:
+            self._quiescent_since.pop(parent, None)
+            return False
+        if state not in (COMPLETION_COMPLETE, COMPLETION_ABORTED):
+            return False
+        # Committed once; StaleAuthority (worker-fatal) if a newer owner got there first.
+        self._runtime.commit_completion(parent, self._authority)
+        self._stopped_parents.add(parent)
+        self._ack_eos(parent)
+        return True
+
     def _has_pending_from(self, parent : str) -> bool:
         return self._assembler.has_pending_from(parent)
 
@@ -1318,6 +1905,12 @@ class NATSMessenger(Messenger):
                 broker = f'broker_state=unknown({observed.reason}: {observed.detail})'
             else:
                 broker = f'broker_pending={observed.value[0]}, unacked={observed.value[1]}'
+            if self._barrier_applies(parent):
+                recorded = self._runtime.terminators(parent)
+                broker += (f', barrier={self._runtime.completion_state(parent, self._data_durable_name(parent), observed)}'
+                           f', terminators={len(recorded)}/{self._runtime.parent_replicas.get(parent)}'
+                           f', received={len(self._runtime.received_ids(parent, self._data_durable_name(parent)))}'
+                           f'/{sum(t.seq for t in recorded)}')
             parts.append(
                 f'{parent}(eos_seen={parent in self._eos_seen}, '
                 f'prefetched={self._backend.prefetched(self._data_subs[parent])}, '
@@ -1342,8 +1935,7 @@ class NATSMessenger(Messenger):
         return known((observed.value.available, observed.value.leased), observed.generation)
 
     def _ack_eos(self, parent : str) -> None:
-        handle = self._eos_handles.pop(parent, None)
-        if handle is not None:
+        for handle in self._eos_handles.pop(parent, []):
             handle.ack()
 
 

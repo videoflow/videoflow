@@ -30,8 +30,17 @@ What the contract buys, concretely:
   inside the stream's duplicate window and is ``Unresolvable`` beyond it.
 - **Observations distinguish zero from unknown.** ``observe_subscription`` is
   ``Unknown`` when the consumer could not be read, and its ``unresolved`` count
-  is fed by the server's own ``MAX_DELIVERIES`` advisories, so work the broker
-  retains but will never redeliver is not reported as "nothing pending" (MSG-012).
+  is fed by the server's own ``MAX_DELIVERIES`` advisories — and, through
+  ``mark_exhausted``, by the messenger's ledger when the retry budget lives
+  there (``max_deliver = -1``) and a dead letter could not be recorded — so work
+  the broker retains but will never resolve on its own is not reported as
+  "nothing pending" (MSG-012).
+- **Stop-receive is separate from shutdown.** ``stop_receiving`` (the messenger's
+  ``quiesce``) halts the pull loops and hands every *parked* delivery back at
+  once while the deliveries already handed out stay the receiver's to settle;
+  ``shutdown`` hands back whatever is still held. A SIGTERMed worker runs only
+  the first before it dies, and that is what returns its prefetched inputs to
+  the survivors now instead of after ``ack_wait`` (RUN-030).
 
 Everything a NATS API behaviour relies on is cited against nats-py 2.15.0
 (``.venv/lib/python3.12/site-packages/nats``): ``Msg.ack_sync`` waits for the
@@ -190,9 +199,10 @@ def _key(token : DeliveryToken) -> tuple[SubscriptionId, int]:
 
 @dataclass
 class _Live:
-    '''A delivery this receiver holds: its token and the broker message behind it.'''
+    '''A delivery this receiver holds: its token, the broker message behind it, and its size for the byte budget.'''
     token : DeliveryToken
     msg : Msg
+    size : int = 0
 
 
 @dataclass
@@ -223,12 +233,20 @@ class JetStreamMessagingBackend(MessagingBackend):
         - ack_confirm_seconds: how long ``Completed`` waits for the broker's reply.
         - keepalive: whether to extend the lease of every unsettled delivery \
             periodically (``ack_wait / 3``), as the messenger always has.
+        - byte_budget: the most envelope bytes this receiver holds unsettled — \
+            parked or handed out — before its pull loops pause (RUN-025; \
+            ``VF_PREFETCH_BYTES``). A fetch already in flight when the budget \
+            fills still lands, so the resident total may exceed it by one message: \
+            the documented atomic-admission tolerance. None: unbounded.
     '''
     def __init__(self, nats_url : str, flow_id : str, run_id : str, flow_type : str,
                  prefetch : int = DEFAULT_PREFETCH, fetch_timeout : float = FETCH_TIMEOUT_SECONDS,
                  ack_confirm_seconds : float = ACK_CONFIRM_SECONDS, keepalive : bool = True,
-                 connect_timeout : float = 30.0) -> None:
+                 connect_timeout : float = 30.0, byte_budget : int | None = None) -> None:
         self._nats_url = nats_url
+        self._byte_budget = byte_budget
+        self._resident = 0
+        self._budget_waits = 0
         self._flow_id = flow_id
         self._run_id = run_id
         self._flow_type = flow_type
@@ -244,6 +262,9 @@ class JetStreamMessagingBackend(MessagingBackend):
         self._nc : Any = None
         self._js : Any = None
         self._closing = threading.Event()
+        # Set by stop_receiving: the pull loops fetch nothing more, and a fetch
+        # already in flight is handed straight back instead of parked.
+        self._quiesced = threading.Event()
         self._lock = threading.Lock()
         self._bound : Dict[SubscriptionId, _Bound] = {}
         self._live : Dict[tuple[SubscriptionId, int], _Live] = {}
@@ -331,6 +352,7 @@ class JetStreamMessagingBackend(MessagingBackend):
             with self._lock:
                 held = list(self._live.values()) if hand_back else []
                 self._live.clear()
+                self._resident = 0
             for entry in held:
                 try:
                     await entry.msg.nak()
@@ -483,6 +505,24 @@ class JetStreamMessagingBackend(MessagingBackend):
 
     async def _pull_loop(self, sub : SubscriptionId, bound : _Bound) -> None:
         while not self._closing.is_set():
+            if self._quiesced.is_set():
+                # Stop-receive: nothing more is fetched; the loop only stays alive
+                # so shutdown can join it like any other.
+                await asyncio.sleep(0.05)
+                continue
+            if self._byte_budget is not None and self._resident >= self._byte_budget:
+                # Over budget: nothing more is fetched until settlements free bytes.
+                # A message never disappears — it stays with the broker, and the
+                # pause is what the subscription observation shows as 'available'.
+                self._budget_waits += 1
+                await asyncio.sleep(0.02)
+                continue
+            if bound.queue.full():
+                # Room first, then fetch: a message fetched into a full queue would
+                # sit leased in the loop's hands, a third lease per replica that
+                # STREAM-15's credit (item_credit + prefetch) does not account for.
+                await asyncio.sleep(0.01)
+                continue
             try:
                 msgs = await bound.psub.fetch(batch = 1, timeout = self._fetch_timeout)
             except (nats.errors.TimeoutError, TimeoutError):
@@ -494,10 +534,10 @@ class JetStreamMessagingBackend(MessagingBackend):
                 await asyncio.sleep(0.5)
                 continue
             for msg in msgs:
-                if self._closing.is_set():
-                    # Fetched while shutting down: nobody will receive it here. It
-                    # goes straight back rather than into a queue that is about to
-                    # be abandoned (the message would otherwise sit leased).
+                if self._closing.is_set() or self._quiesced.is_set():
+                    # Fetched while shutting down or quiesced: nobody will receive
+                    # it here. It goes straight back rather than into a queue that
+                    # is about to be abandoned (the message would otherwise sit leased).
                     with contextlib.suppress(Exception):
                         await msg.nak()
                     continue
@@ -536,6 +576,7 @@ class JetStreamMessagingBackend(MessagingBackend):
             live = self._live.get(key)
             if live is not None and live.token == delivery.token:
                 del self._live[key]
+                self._resident -= live.size
             bound.skipped += 1
         if bound.on_skip is not None:
             self._loop.run_in_executor(self._executor, bound.on_skip, delivery)
@@ -556,7 +597,9 @@ class JetStreamMessagingBackend(MessagingBackend):
             if previous is not None:
                 logger.debug(f'{bound.durable}: attempt {attempt} of seq {seq} supersedes attempt '
                              f'{previous.token.attempt}')
-            self._live[(sub, seq)] = _Live(token, msg)
+            previous_size = previous.size if previous is not None else 0
+            self._live[(sub, seq)] = _Live(token, msg, len(msg.data))
+            self._resident += len(msg.data) - previous_size
         return Delivery(token, msg.data, len(msg.data), time.monotonic(), headers)
 
     async def _keepalive_loop(self) -> None:
@@ -609,6 +652,75 @@ class JetStreamMessagingBackend(MessagingBackend):
             bound = self._bound.get(subscription)
         return bound.queue.qsize() if bound is not None else 0
 
+    def stop_receiving(self) -> int:
+        '''
+        Stop admitting input on every bound subscription — the quiesce half of a
+        graceful retirement (RUN-030): the pull loops fetch nothing more, and every
+        delivery parked in a prefetch queue (fetched, never handed to a receiver)
+        is NAKed back to the broker at once, so a survivor picks it up now rather
+        than after ``ack_wait`` lapses on a process that is about to die. The
+        deliveries already handed out stay this receiver's to settle (``shutdown``
+        hands back what is still held then). Idempotent; a second call hands back
+        nothing more.
+
+        - Returns:
+            - how many parked deliveries were handed back.
+        '''
+        self._quiesced.set()
+        if self._thread is None or self._nc is None:
+            return 0
+
+        async def _drain() -> int:
+            handed = 0
+            with self._lock:
+                bounds = list(self._bound.values())
+            for bound in bounds:
+                while True:
+                    try:
+                        delivery = bound.queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                    with self._lock:
+                        live = self._live.pop(_key(delivery.token), None)
+                        if live is not None:
+                            self._resident -= live.size
+                    if live is None:
+                        continue
+                    try:
+                        await live.msg.nak()
+                        handed += 1
+                    except nats.errors.MsgAlreadyAckdError:
+                        pass
+                    except Exception:  # noqa: BLE001 — the lease lapses on its own; this only shortens the wait
+                        logger.debug(f'hand-back of parked seq {delivery.token.stream_sequence} failed', exc_info = True)
+            if handed and self._nc.is_connected:
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(self._nc.flush(), timeout = 2)
+            return handed
+
+        try:
+            handed = self._run(_drain(), timeout = 10)
+        except Exception:  # noqa: BLE001 — a loop that does not answer is closing anyway
+            logger.debug('parked deliveries could not be handed back at quiesce', exc_info = True)
+            return 0
+        if handed:
+            logger.info(f'handed back {handed} parked delivery(ies) at quiesce')
+        return handed
+
+    def mark_exhausted(self, subscription : SubscriptionId, stream_sequence : int | None) -> None:
+        '''
+        Count a retained message as unresolved work in ``observe_subscription``
+        without a broker advisory: the messenger's ledger found its retry budget
+        exhausted and could not record its dead letter (DELIV-15's
+        ``pending_handoff``), so the broker will keep redelivering it and nothing
+        will resolve it until the record exists. Cleared by the settlement that
+        eventually terminates it, or by the message leaving the stream.
+        '''
+        if stream_sequence is None:
+            return
+        with self._lock:
+            self._exhausted.setdefault(subscription, set()).add(int(stream_sequence))
+
     def set_admission(self, subscription : SubscriptionId, admit : Callable[[Delivery], bool],
                       on_skip : Optional[Callable[[Delivery], None]] = None) -> bool:
         with self._lock:
@@ -618,6 +730,15 @@ class JetStreamMessagingBackend(MessagingBackend):
             bound.admit = admit
             bound.on_skip = on_skip
         return True
+
+    def resident_bytes(self) -> int:
+        '''Envelope bytes this receiver holds unsettled right now (parked or handed out).'''
+        with self._lock:
+            return max(0, self._resident)
+
+    def budget_waits(self) -> int:
+        '''How many times a pull loop paused because the byte budget was full.'''
+        return self._budget_waits
 
     def skipped(self, subscription : SubscriptionId) -> int:
         '''Deliveries the admission filter refused and this backend acked on the consumer's behalf.'''
@@ -632,6 +753,7 @@ class JetStreamMessagingBackend(MessagingBackend):
             if live is None or live.token != token:
                 return False
             del self._live[key]
+            self._resident -= live.size
         return True
 
     # -- leases and settlement --------------------------------------------------------
@@ -680,8 +802,13 @@ class JetStreamMessagingBackend(MessagingBackend):
         except Exception as e:  # noqa: BLE001
             return SettleUnknown(token, f'{type(e).__name__}: {e}')
         with self._lock:
-            self._live.pop(key, None)
-            self._exhausted.get(token.subscription, set()).discard(key[1])
+            retired = self._live.pop(key, None)
+            if retired is not None:
+                self._resident -= retired.size
+            if not isinstance(outcome, Retry):
+                # An ack or a terminal record resolves exhausted work; a NAK only
+                # hands it back, still exhausted and still unresolved.
+                self._exhausted.get(token.subscription, set()).discard(key[1])
         hit = faults.barrier('settle.after', op_id = token.message_id, consumer = token.subscription.consumer_node)
         if hit.drop_response:
             return SettleUnknown(token, 'settlement response lost')
@@ -743,6 +870,15 @@ class JetStreamMessagingBackend(MessagingBackend):
         if hit.drop_response:
             return PublicationUnknown(pid, 'publication receipt lost')
         faults.barrier('publish.receipt.after', op_id = pid, channel = envelope.channel)
+        if bool(ack.duplicate) and not int(ack.seq or 0):
+            # A duplicate acknowledgement with sequence 0: the server remembers the
+            # id in its deduplication map but never stored the message — the earlier
+            # send reached it while the stream had no quorum (nats-server answers the
+            # dedup hit with the original sequence, which was never assigned). That is
+            # not a durable receipt (MSG-023): the outcome stays unknown, and a later
+            # attempt outside the window resolves it.
+            return PublicationUnknown(pid, 'the broker acknowledged the id as a duplicate with sequence 0: '
+                                           'seen by the server, never stored')
         return Accepted(pid, int(ack.seq), bool(ack.duplicate), DURABILITY_STREAM)
 
     def observe_publication(self, envelope : Envelope) -> PublicationOutcome:

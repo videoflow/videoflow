@@ -37,6 +37,7 @@ from ..core.compiler import (
     NODE_KIND_PRODUCER,
     NodeSpec,
     blob_reader_ids,
+    parent_replicas,
     validate_wire_compatibility,
 )
 from ..core.constants import BATCH
@@ -250,7 +251,8 @@ def _volume_for(mount : Mount) -> dict:
 
 def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
                envelope_version : int, profile_requests : Optional[dict] = None,
-               blob_reader_ids : Optional[List[str]] = None) -> dict:
+               blob_reader_ids : Optional[List[str]] = None,
+               parent_replicas : Optional[List[int]] = None) -> dict:
     '''
     - Arguments:
         - profile_requests: the ``VF_PROFILE_REQUESTS_JSON`` entry from \
@@ -301,6 +303,9 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
     if blob_reader_ids:
         # The same readers by identity (RFC 0006 BLOB-13); rendered only under the switch.
         env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
+    if parent_replicas:
+        # The EOS-7 barrier's expectation per parent (RFC 0006 ENV-11); rendered only under the switch.
+        env['VF_PARENT_REPLICAS'] = ','.join(str(n) for n in parent_replicas)
     if spec.device_type == 'gpu':
         # The worker's GPU grant (RFC 0003): informational for native components,
         # which never see the Python node's reconstruction params. Visible devices
@@ -327,6 +332,17 @@ def _renders_as_job(spec : NodeSpec, flow_type : str) -> bool:
 
 def _is_partitioned(spec : NodeSpec) -> bool:
     return bool(spec.partition_by) and spec.nb_tasks > 1
+
+def _keeps_declared_scale(spec : NodeSpec) -> bool:
+    '''
+    Under RFC 0006, whether a node is refused a scaler on its *shape* alone: a
+    multi-parent join at one replica, which a scaler would turn into competing
+    multi-worker joins (RUN-018), or a node that declares ``partition_by`` at
+    ``nb_tasks = 1``, whose intent the replica count does not erase (RUN-019).
+    ``scaling.scaling_rejections`` names the reasons; this is the renderer's
+    half of the same rule. With the switch off the scaler renders as it always did.
+    '''
+    return constants.RFC0006 and (len(spec.parents) > 1 or bool(spec.partition_by))
 
 def _labels(flow_id : str, node_name : Optional[str] = None) -> dict:
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
@@ -595,7 +611,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
 
 def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
                    envelope_version : int, profile_requests : Optional[dict] = None,
-                   blob_reader_ids : Optional[List[str]] = None) -> dict:
+                   blob_reader_ids : Optional[List[str]] = None,
+                   parent_replicas : Optional[List[int]] = None) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -604,7 +621,7 @@ def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str
             'labels': _labels(flow_id, spec.name),
         },
         'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, profile_requests,
-                           blob_reader_ids),
+                           blob_reader_ids, parent_replicas),
     }
 
 def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str] = None,
@@ -612,6 +629,10 @@ def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str]
     data = {'VF_NATS_URL': nats_url}
     if blob_redis_url:
         data['VF_BLOB_REDIS_URL'] = blob_redis_url
+        if constants.RFC0006:
+            # The run ledger (RFC 0006 ENV-10): the blob Redis, whose persistence
+            # the workers and the provision Job read back before relying on it.
+            data['VF_RUNTIME_STORE_URL'] = blob_redis_url
     if blob_ttl_seconds is not None:
         # Blob TTL override (PROTOCOL.md BLOB-7). Absent ⇒ workers use the
         # flow-type default (3600s realtime / 86400s batch).
@@ -850,6 +871,8 @@ def scaled_object(spec : NodeSpec, flow_id : str, run_id : str,
         # Rehashing ownership on a replica-count change would double- or zero-process
         # messages, so partitioned nodes run at a fixed scale (no KEDA).
         return None
+    if _keeps_declared_scale(spec):
+        return None
 
     # One trigger per parent under RFC 0006 — KEDA/HPA takes the highest replica
     # count across triggers (KEDA FAQ), so a backed-up second parent scales the
@@ -1007,7 +1030,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                                         profile_requests = profile_requests))
     for spec in specs:
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, profile_requests,
-                                        blob_reader_ids(spec, specs) if constants.RFC0006 else None))
+                                        blob_reader_ids(spec, specs) if constants.RFC0006 else None,
+                                        parent_replicas(spec, specs) if constants.RFC0006 else None))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
@@ -1028,7 +1052,9 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
             # not exist would be accepted by the API server and drive nothing.
             if scaling.admit_autoscaling(spec.name, flow_type, spec.kind, _is_partitioned(spec),
                                          _renders_as_job(spec, flow_type), has_parents = bool(spec.parents),
-                                         device_type = spec.device_type, gpu_autoscaling = gpu_autoscaling):
+                                         device_type = spec.device_type, gpu_autoscaling = gpu_autoscaling,
+                                         is_join = _keeps_declared_scale(spec) and len(spec.parents) > 1,
+                                         declares_partition = _keeps_declared_scale(spec) and bool(spec.partition_by)):
                 continue
             so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)
             if so is not None:

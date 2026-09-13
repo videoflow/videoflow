@@ -293,6 +293,15 @@ class DecodeError(PoisonMessage):
     '''The envelope or payload could not be decoded off the wire.'''
     code = 'VF_POISON_DECODE'
 
+class PartitionKeyError(PoisonMessage):
+    '''
+    A partitioned node received a record whose partition key is unusable —
+    absent, ``None``, empty, or not a scalar — and its policy is to reject such
+    records (RFC 0006, RUN-020). Dead-lettered by the node's first replica, never
+    hashed as the string ``"None"`` into an undeclared hot partition.
+    '''
+    code = 'VF_POISON_PARTITION_KEY'
+
 class SchemaError(PoisonMessage):
     '''The payload decoded but is not what this node requires.'''
     code = 'VF_POISON_SCHEMA'

@@ -36,7 +36,12 @@ caller that knows the join policy decides what a starved join gets.
 Eligibility is separate from demand. ``scaling_rejections`` names every reason
 a node stays at a fixed scale, mirroring the rules ``deploy.manifests`` applies
 when it renders: only processors; not partitioned nodes, whose key ownership
-would rehash; GPU nodes only on explicit opt-in. One rule is an error rather
+would rehash; not a multi-parent join at a single replica, which a scaler would
+turn into competing multi-worker joins (RUN-018); not a node that *declares*
+``partition_by`` at ``nb_tasks = 1``, because the intent is not erased by the
+replica count — scaling it from one binds every new replica to the same
+competing durable and splits one key's history among unfenced states
+(RUN-019); GPU nodes only on explicit opt-in. One rule is an error rather
 than a silent skip. A BATCH flow renders every node as a Kubernetes **Job**, and
 a Job's ``parallelism`` is fixed when it is created — it is not what a scaler
 scales: KEDA's ``ScaledObject`` and the HPA drive the ``/scale`` subresource of
@@ -45,15 +50,34 @@ a Deployment or StatefulSet, and a Job has none. A ``ScaledObject`` whose
 dangling scaler that does nothing while the operator believes it scales
 (RUN-027), so ``job_autoscaling_error`` is raised at render time instead.
 
+Two more observers live here because they are the same kind of pure decision:
+
+- ``observe_rate_demand`` sizes demand from *throughput* rather than lag, for the
+  live-video path whose lossy retention conceals overload (RUN-026): a
+  ``live_latest`` channel keeps one message per subject, so a node at a third of
+  the offered rate shows a lag of one and a scaler keyed on lag never fires,
+  while two frames in three are evicted before delivery. The health counters —
+  offered, processed, dropped over a control window — see the loss the queue
+  depth hides, and the declared objective (``RateObjective``) says how much of
+  it is acceptable. A missing counter is ``DEMAND_UNKNOWN``, never idle.
+- ``reconcile_capacity`` keeps *desired* concurrency (what demand asks for)
+  apart from *granted* (claims the allocator holds) and *ready* (workloads
+  observed processing) (RUN-028): a Pending pod or an allocation request is
+  not processing capacity, a shortfall is a named ``capacity_constrained``
+  decision rather than a silently smaller scale-out, and a claim that could not
+  be observed is listed as unknown instead of counted either way.
+
 Nothing here touches a broker or a cluster: the inputs are
 ``backends.messaging.SubscriptionObservation`` values wrapped in
 ``backends.outcomes.Known``/``Unknown``, and every function is deterministic.
 '''
 from __future__ import absolute_import, division, print_function
 
+import math
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
+from ..backends.allocation import CLAIM_ALLOCATED, CLAIM_PREPARED, CLAIM_READY, ClaimObservation
 from ..backends.messaging import SubscriptionObservation
 from ..backends.outcomes import Known, Observation
 from ..core.compiler import NODE_KIND_PROCESSOR
@@ -65,6 +89,20 @@ DEMAND_IDLE = 'idle'          # no parent has work waiting
 DEMAND_BACKLOG = 'backlog'    # every parent has work waiting: a processing-capacity signal
 DEMAND_STARVED = 'starved'    # some parents have work, others none: a missing-input stall for a join that needs them
 DIAGNOSES = (DEMAND_UNKNOWN, DEMAND_IDLE, DEMAND_BACKLOG, DEMAND_STARVED)
+
+#: Diagnoses of a ``RateDecision`` (``observe_rate_demand``), alongside ``DEMAND_UNKNOWN`` and ``DEMAND_IDLE``.
+DEMAND_WITHIN_OBJECTIVE = 'within_objective'   # the delivered fraction meets the declared objective
+DEMAND_BREACH = 'breach'                       # the objective is breached: work is lost faster than it is processed
+DEMAND_STABILIZING = 'stabilizing'             # a breach, but inside the stabilization window of the last change: held
+DEMAND_STALLED = 'stalled'                     # work offered, nothing processed: not a capacity question
+RATE_DIAGNOSES = (DEMAND_UNKNOWN, DEMAND_IDLE, DEMAND_WITHIN_OBJECTIVE, DEMAND_BREACH, DEMAND_STABILIZING,
+                  DEMAND_STALLED)
+
+#: Diagnoses of a ``CapacityDecision`` (``reconcile_capacity``).
+CAPACITY_ADMITTED = 'admitted'                  # every desired replica holds a grant
+CAPACITY_CONSTRAINED = 'capacity_constrained'   # fewer grants than desired: partial admission, named as such
+CAPACITY_UNKNOWN = 'unknown'                    # a claim could not be observed: neither counted nor discounted
+CAPACITY_DIAGNOSES = (CAPACITY_ADMITTED, CAPACITY_CONSTRAINED, CAPACITY_UNKNOWN)
 
 #: The rule's defaults, mirroring the rendered scaler: ``lagThreshold: '10'`` in
 #: ``deploy.manifests.scaled_object`` and the CLI's ``--max-replicas`` default.
@@ -78,6 +116,16 @@ MISSING_OBSERVATION = 'missing'
 JOB_REJECTION = ('the node renders as a Kubernetes Job, whose parallelism is fixed when it is created and is not '
                  "what a scaler scales: KEDA's ScaledObject and the HPA drive the /scale subresource of a "
                  'Deployment or StatefulSet, and a Job has none.')
+#: A singleton join must not become competing multi-worker joins (RUN-018).
+JOIN_REJECTION = ('the node joins several parents at a single replica: a scaler would turn that singleton join into '
+                  'competing multi-worker joins, delivering the halves of one group to different replicas where '
+                  'neither can assemble it, and no runtime store advertises the elastic join state that would let '
+                  'group ownership follow the replica count.')
+#: Partition intent declared at nb_tasks = 1 is intent, not an accident of the replica count (RUN-019).
+PARTITION_INTENT_REJECTION = ('the node declares partition_by: a replica count of 1 does not erase that intent, and '
+                              'scaling it from 1 would bind every new replica to the same competing durable, '
+                              "splitting one key's history among independent, unfenced states — a partitioned "
+                              'node scales only by redeploying with the nb_tasks it should own its keys at.')
 
 @dataclass(frozen = True)
 class ParentDemand:
@@ -221,7 +269,8 @@ def observe_demand(observations : Mapping[str, Observation[SubscriptionObservati
 
 def scaling_rejections(spec_kind : str, is_partitioned : bool, is_job : bool,
                        has_parents : bool = True, device_type : str = 'cpu',
-                       gpu_autoscaling : bool = False) -> list[str]:
+                       gpu_autoscaling : bool = False, is_join : bool = False,
+                       declares_partition : bool = False) -> list[str]:
     '''
     Every reason this node stays at a fixed scale — empty means a scaler may be
     rendered. Mirrors the rules ``deploy.manifests`` applies, in one place, so
@@ -239,6 +288,13 @@ def scaling_rejections(spec_kind : str, is_partitioned : bool, is_job : bool,
         - device_type, gpu_autoscaling: ``NodeSpec.device_type`` and the \
             deploy's ``--gpu-autoscaling`` opt-in; GPU nodes are excluded \
             without it.
+        - is_join: the node has more than one parent. A join at one replica is \
+            a singleton join; scaled, its groups' halves land on different \
+            replicas (``JOIN_REJECTION``, RUN-018).
+        - declares_partition: ``partition_by`` is set, whatever ``nb_tasks`` \
+            is. Distinct from ``is_partitioned`` on purpose: at ``nb_tasks = 1`` \
+            the node binds a competing durable, and a scaler would add \
+            replicas to *that* durable (``PARTITION_INTENT_REJECTION``, RUN-019).
 
     - Returns:
         - the applicable reasons, each a sentence naming the rule and its \
@@ -254,6 +310,10 @@ def scaling_rejections(spec_kind : str, is_partitioned : bool, is_job : bool,
     if is_partitioned:
         reasons.append('the node is partitioned (partition_by with nb_tasks > 1): rehashing key ownership on a '
                        'replica-count change would double- or zero-process messages, so it runs at a fixed scale.')
+    elif declares_partition:
+        reasons.append(PARTITION_INTENT_REJECTION)
+    if is_join:
+        reasons.append(JOIN_REJECTION)
     if is_job:
         reasons.append(JOB_REJECTION)
     if device_type == 'gpu' and not gpu_autoscaling:
@@ -280,7 +340,8 @@ def job_autoscaling_error(node_name : str, flow_type : str) -> CapabilityError:
 
 def admit_autoscaling(node_name : str, flow_type : str, spec_kind : str, is_partitioned : bool, is_job : bool,
                       has_parents : bool = True, device_type : str = 'cpu',
-                      gpu_autoscaling : bool = False) -> list[str]:
+                      gpu_autoscaling : bool = False, is_join : bool = False,
+                      declares_partition : bool = False) -> list[str]:
     '''
     The render-time admission for one node when ``--autoscaling`` is on: the
     fixed-scale rejections to log (render no scaler, keep the declared scale),
@@ -294,7 +355,243 @@ def admit_autoscaling(node_name : str, flow_type : str, spec_kind : str, is_part
             flag cannot mean anything for it, and a scaler would dangle.
     '''
     reasons = scaling_rejections(spec_kind, is_partitioned, is_job, has_parents = has_parents,
-                                 device_type = device_type, gpu_autoscaling = gpu_autoscaling)
+                                 device_type = device_type, gpu_autoscaling = gpu_autoscaling,
+                                 is_join = is_join, declares_partition = declares_partition)
     if is_job and spec_kind == NODE_KIND_PROCESSOR:
         raise job_autoscaling_error(node_name, flow_type)
     return reasons
+
+# -- throughput-based demand (RUN-026) ---------------------------------------------------
+
+@dataclass(frozen = True)
+class ThroughputSample:
+    '''
+    One control window of a node's throughput, from the health counters and the
+    subscription observation.
+
+    - Arguments:
+        - offered: inputs the source offered into the node's channel during the \
+            window — what the node was handed (``messages_offered_total``) *plus* \
+            what the channel evicted before delivery (``SubscriptionObservation.dropped``). \
+            Under lossy retention the second term is the whole story.
+        - processed: inputs the node acknowledged during the window (``messages_processed_total``).
+        - dropped: inputs lost during the window — evicted before delivery, or \
+            given up on by policy (``messages_dropped_total``).
+        - window_seconds: the window's length.
+    '''
+    offered : int
+    processed : int
+    dropped : int
+    window_seconds : float
+
+    @property
+    def delivered_fraction(self) -> float | None:
+        '''``processed / offered``, or ``None`` when nothing was offered.'''
+        if self.offered <= 0:
+            return None
+        return min(1.0, self.processed / self.offered)
+
+@dataclass(frozen = True)
+class RateObjective:
+    '''
+    The declared delivery objective a live node must meet, per control window.
+
+    - Arguments:
+        - min_delivered_fraction: the least ``processed / offered`` that is \
+            acceptable over one window (``1.0`` means every offered frame).
+        - control_window_seconds: how long a window is; a sample shorter than \
+            this is not yet a decision.
+        - stabilization_seconds: how long after a replica change a further \
+            change is held back, so a decision is not taken against a fleet \
+            that has not finished starting.
+    '''
+    min_delivered_fraction : float
+    control_window_seconds : float
+    stabilization_seconds : float = 0.0
+
+@dataclass(frozen = True)
+class RateDecision:
+    '''
+    The outcome of ``observe_rate_demand``.
+
+    - Arguments:
+        - replicas: the recommendation, or ``None`` when the diagnosis is \
+            ``DEMAND_UNKNOWN`` or ``DEMAND_STALLED``. Never ``0`` for "could not tell".
+        - diagnosis: one of ``RATE_DIAGNOSES``.
+        - delivered_fraction: what the window measured, ``None`` when unknown or idle.
+        - sample: the sample decided on, ``None`` when unknown.
+        - unknown_reason: why the sample could not be used (``Unknown.reason``, \
+            ``MISSING_OBSERVATION``, or ``'window'`` for a sample shorter than \
+            the control window).
+    '''
+    replicas : int | None
+    diagnosis : str
+    delivered_fraction : float | None = None
+    sample : ThroughputSample | None = None
+    unknown_reason : str = ''
+
+def validate_rate_objective(objective : RateObjective) -> None:
+    '''
+    - Raises:
+        - ConfigError: a delivered fraction outside ``(0, 1]``, a control window \
+            that is not positive, or a negative stabilization window.
+    '''
+    if not 0.0 < objective.min_delivered_fraction <= 1.0:
+        raise ConfigError(f'min_delivered_fraction must be in (0, 1], got {objective.min_delivered_fraction}.',
+                          remedy = 'Declare the fraction of offered frames one control window must deliver, e.g. 0.9.')
+    if objective.control_window_seconds <= 0:
+        raise ConfigError(f'control_window_seconds must be positive, got {objective.control_window_seconds}.',
+                          remedy = 'Declare the window the counters are read over (the scaler polling interval).')
+    if objective.stabilization_seconds < 0:
+        raise ConfigError(f'stabilization_seconds must not be negative, got {objective.stabilization_seconds}.',
+                          remedy = 'Use 0 for no stabilization, or the seconds a replica takes to become ready.')
+
+def throughput_sample(offered_before : int, offered_after : int, processed_before : int, processed_after : int,
+                      dropped_before : int, dropped_after : int, evicted_before : int, evicted_after : int,
+                      window_seconds : float) -> ThroughputSample:
+    '''
+    A ``ThroughputSample`` from two readings of the counters: the node's offered
+    / processed / dropped totals (``HealthState.throughput``) and the channel's
+    evicted-before-delivery count (``SubscriptionObservation.dropped``), which is
+    folded into both ``offered`` and ``dropped`` because the node never saw
+    those inputs at all. Counters only grow, so a reading that went *down* is a
+    restarted exporter: the sample is taken from zero for that counter.
+    '''
+    def delta(before : int, after : int) -> int:
+        return after if after < before else after - before
+    evicted = delta(evicted_before, evicted_after)
+    return ThroughputSample(
+        offered = delta(offered_before, offered_after) + evicted,
+        processed = delta(processed_before, processed_after),
+        dropped = delta(dropped_before, dropped_after) + evicted,
+        window_seconds = window_seconds)
+
+def observe_rate_demand(sample : Observation[ThroughputSample] | None, objective : RateObjective,
+                        current_replicas : int, min_replicas : int = 1,
+                        max_replicas : int = DEFAULT_MAX_REPLICAS,
+                        last_change_at : float | None = None, now : float = 0.0) -> RateDecision:
+    '''
+    Size and diagnose a live node's demand from its throughput over one control
+    window, against the declared objective.
+
+    - Arguments:
+        - sample: the window's ``ThroughputSample``, as ``Known``/``Unknown``; \
+            ``None`` when nobody read the counters (``MISSING_OBSERVATION``).
+        - objective: the declared ``RateObjective``.
+        - current_replicas: how many replicas produced ``sample.processed``; the \
+            per-replica capacity is derived from it.
+        - min_replicas, max_replicas: the admissible range; the recommendation \
+            is clamped, never invented beyond it.
+        - last_change_at, now: when the replica count last changed and the \
+            current time on the same clock; a breach within \
+            ``objective.stabilization_seconds`` of the change is \
+            ``DEMAND_STABILIZING`` and holds ``current_replicas``.
+
+    - Returns:
+        - a ``RateDecision``. A breach asks for \
+            ``ceil(offered / (processed / current_replicas))`` replicas — enough \
+            for the measured per-replica capacity to absorb the offered rate — \
+            clamped to the range.
+
+    - Raises:
+        - ConfigError: an invalid objective or range.
+    '''
+    validate_rate_objective(objective)
+    validate_scaling_rule(1, min_replicas, max_replicas)
+    if current_replicas < 1:
+        raise ConfigError(f'current_replicas must be >= 1, got {current_replicas}.',
+                          remedy = 'Pass the replica count that produced the sample.')
+    if sample is None:
+        return RateDecision(None, DEMAND_UNKNOWN, unknown_reason = MISSING_OBSERVATION)
+    if not isinstance(sample, Known):
+        return RateDecision(None, DEMAND_UNKNOWN, unknown_reason = sample.reason)
+    window = sample.value
+    if window.window_seconds < objective.control_window_seconds:
+        return RateDecision(None, DEMAND_UNKNOWN, sample = window, unknown_reason = 'window')
+    fraction = window.delivered_fraction
+    if fraction is None:
+        return RateDecision(max(min_replicas, min(max_replicas, current_replicas)), DEMAND_IDLE, sample = window)
+    if fraction >= objective.min_delivered_fraction:
+        return RateDecision(max(min_replicas, min(max_replicas, current_replicas)), DEMAND_WITHIN_OBJECTIVE,
+                            fraction, window)
+    if window.processed <= 0:
+        return RateDecision(None, DEMAND_STALLED, fraction, window)
+    if last_change_at is not None and now - last_change_at < objective.stabilization_seconds:
+        return RateDecision(max(min_replicas, min(max_replicas, current_replicas)), DEMAND_STABILIZING,
+                            fraction, window)
+    per_replica = window.processed / current_replicas
+    wanted = math.ceil(window.offered * objective.min_delivered_fraction / per_replica)
+    return RateDecision(min(max_replicas, max(min_replicas, wanted)), DEMAND_BREACH, fraction, window)
+
+# -- desired versus granted versus ready (RUN-028) ---------------------------------------------
+
+@dataclass(frozen = True)
+class CapacityDecision:
+    '''
+    The outcome of ``reconcile_capacity``.
+
+    - Arguments:
+        - desired: the replicas demand asked for.
+        - granted: claims observed holding a grant (allocated, prepared or ready).
+        - ready: claims whose workload is observed ready — the only count that \
+            is processing capacity.
+        - admitted: ``min(desired, granted)``: what may be scheduled now.
+        - diagnosis: one of ``CAPACITY_DIAGNOSES``.
+        - reason: the sentence a report prints for a constrained or unknown decision.
+        - unknown_claims: claims whose observation was ``Unknown``, sorted; \
+            neither granted nor ready, and named.
+    '''
+    desired : int
+    granted : int
+    ready : int
+    admitted : int
+    diagnosis : str
+    reason : str = ''
+    unknown_claims : tuple[str, ...] = ()
+
+def reconcile_capacity(desired : int, claims : Mapping[str, Observation[ClaimObservation]]) -> CapacityDecision:
+    '''
+    Reconcile the replicas demand wants with what the allocator actually holds.
+
+    - Arguments:
+        - desired: the demand decision's replica count (``>= 0``).
+        - claims: claim id -> the allocator's ``observe(claim_id)``; one claim per \
+            replica the plan asked for.
+
+    - Returns:
+        - a ``CapacityDecision``. A claim counts as *granted* only when observed \
+            ``allocated``/``prepared``/``ready`` with a grant, as *ready* only when \
+            observed ``ready``; a pending or failed claim is neither, and an \
+            ``Unknown`` observation is listed, never counted. ``desired > granted`` \
+            is ``capacity_constrained`` with the shortfall named; a shortfall \
+            that unknown claims could cover is ``unknown``.
+    '''
+    if desired < 0:
+        raise ConfigError(f'desired replicas must be >= 0, got {desired}.',
+                          remedy = 'Pass the replica count a demand decision produced.')
+    granted = ready = 0
+    unknown : list[str] = []
+    for claim_id in sorted(claims):
+        observed = claims[claim_id]
+        if not isinstance(observed, Known):
+            unknown.append(claim_id)
+            continue
+        claim = observed.value
+        if claim.status in (CLAIM_ALLOCATED, CLAIM_PREPARED, CLAIM_READY) and claim.grant:
+            granted += 1
+            if claim.status == CLAIM_READY:
+                ready += 1
+    admitted = min(desired, granted)
+    if desired <= granted:
+        return CapacityDecision(desired, granted, ready, admitted, CAPACITY_ADMITTED, unknown_claims = tuple(unknown))
+    shortfall = desired - granted
+    if unknown:
+        return CapacityDecision(
+            desired, granted, ready, admitted, CAPACITY_UNKNOWN,
+            reason = (f'{shortfall} of {desired} desired replicas hold no observed grant and {len(unknown)} claim(s) '
+                      f'could not be observed ({", ".join(unknown)}): the shortfall cannot be told from a read failure.'),
+            unknown_claims = tuple(unknown))
+    return CapacityDecision(
+        desired, granted, ready, admitted, CAPACITY_CONSTRAINED,
+        reason = (f'{desired} replicas desired, {granted} granted: {shortfall} cannot be scheduled until the allocator '
+                  f'grants more capacity; {ready} of the granted are ready to process.'))

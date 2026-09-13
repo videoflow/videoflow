@@ -66,7 +66,7 @@ def test_run_038_teamclassifier_siglip_executes_on_its_declared_backend() -> Non
 
 @pytest.mark.case('RUN-039')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 3')
+@pytest.mark.pending('phase 4')
 def test_run_039_runtime_grant_enumeration_accepts_ordinal_and_uuid_device() -> None:
     '''
     RUN-039 (P1, component, gpu): Runtime grant enumeration accepts ordinal and UUID device
@@ -75,6 +75,9 @@ def test_run_039_runtime_grant_enumeration_accepts_ordinal_and_uuid_device() -> 
     Acceptance: For every supported grant form the reported logical device set equals CUDA
     visibility; invalid or empty grants cannot be misreported as a valid requested multi-device
     allocation.
+
+    Pending phase 4: UUID/MIG masks resolved through ``nvidia-smi -L`` (the local
+    allocation backend) and the cuda-python visibility probe land with the allocation phase.
     '''
 
 
@@ -121,7 +124,7 @@ def test_run_042_vlm_automatic_device_mapping_reports_actual_use_and() -> None:
 
 @pytest.mark.case('RUN-043')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 3')
+@pytest.mark.pending('phase 4')
 def test_run_043_multi_device_workload_validates_topology_rather_than_only() -> None:
     '''
     RUN-043 (P1, component, gpu): Multi-device workload validates topology rather than only a
@@ -130,12 +133,15 @@ def test_run_043_multi_device_workload_validates_topology_rather_than_only() -> 
     Acceptance: Compatible fixtures execute the required operation and incompatible fixtures
     fail before processing; no universal NVLink requirement is imposed on components that do not
     need it.
+
+    Pending phase 4: the ``requires_peer_access`` verification at readiness
+    (``cudaDeviceCanAccessPeer`` under a grant) is the allocation phase's cuda probe.
     '''
 
 
 @pytest.mark.case('RUN-044')
 @pytest.mark.level('process')
-@pytest.mark.pending('phase 3')
+@pytest.mark.pending('phase 4')
 def test_run_044_local_undersupply_and_fallback_preserve_the_component() -> None:
     '''
     RUN-044 (P1, integration, process): Local undersupply and fallback preserve the component
@@ -143,4 +149,7 @@ def test_run_044_local_undersupply_and_fallback_preserve_the_component() -> None
 
     Acceptance: No worker is declared ready under an unmet hard resource contract; explicit
     fallback/sharing succeeds only with accurate observed capability reporting.
+
+    Pending phase 4: the local allocation backend (``--gpu-policy strict|shared``, the
+    fake ``nvidia-smi`` fixture, delivered-grant reporting) is the allocation phase's.
     '''

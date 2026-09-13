@@ -255,6 +255,15 @@ Option reference
     an unreadable stream with exit 3. ``VF_ADMISSION_TIMEOUT_SECONDS`` (default
     60) bounds those read-backs.
 
+    With ``VF_RFC0006=1`` the render also carries the run ledger: the
+    ``VF_NATS_URL`` ConfigMap gains ``VF_RUNTIME_STORE_URL`` (the blob Redis) and
+    every node's ConfigMap gains ``VF_PARENT_REPLICAS``. The provision Job reads
+    the ledger's persistence back like the store's: only a Redis with
+    ``appendonly yes`` and ``noeviction`` (``--broker-profile durable``) makes the
+    ledger durable, and only then are at-least-once durables provisioned with an
+    unbounded broker cap and their retry budget kept in the ledger; on the dev
+    profile the broker cap stays and the ledger is process-local.
+
 ``--nats`` / ``--blob-redis-url``
     Bring-your-own broker / blob store; omitting them auto-provisions dev
     equivalents in ``--namespace`` (see step 7).
@@ -282,7 +291,12 @@ Option reference
     ``--gpu-autoscaling``, GPU nodes keep their fixed scale. A scaler watches the
     node's first declared parent; with ``VF_RFC0006=1`` it carries one trigger per
     parent and KEDA scales on the highest, so a join whose second input backs up
-    is scaled too.
+    is scaled too. Under that switch a multi-parent join at one replica and a
+    node that declares ``partition_by`` at ``nb_tasks = 1`` also keep their
+    declared scale: scaled by KEDA, the first would split every group's halves
+    across competing replicas and the second would split one key's history
+    across replicas bound to the same competing durable. Redeploy such a node at
+    the replica count it should own its keys at instead.
 
 ``--dry-run`` / ``--render-only`` / ``--output``
     Manifest generation without touching the cluster (see above).

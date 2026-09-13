@@ -21,7 +21,8 @@ import os
 import sys
 from typing import List, Optional
 
-from ..core.compiler import NodeSpec, compile_flow
+from ..backends.capabilities import FlowRequirements
+from ..core.compiler import NodeSpec, compile_flow, sink_guarantees
 from ..core.flow import Flow
 
 FALLBACK_MODULE_NAME = '_videoflow_user_graph'
@@ -102,11 +103,17 @@ def load_flow(target : str) -> Flow:
 def compile_to_dict(target : str, envelope_version : Optional[int] = None) -> dict:
     flow = load_flow(target)
     specs = compile_flow(flow, envelope_version = envelope_version)
-    return {
+    document : dict = {
         'flow_id': flow.flow_id,
         'flow_type': flow.flow_type,
         'specs': [s.to_dict() for s in specs],
     }
+    # Decision D8: requirements travel beside the specs, and only when a node
+    # declared something — a flow that declares nothing compiles byte-identically.
+    requirements = FlowRequirements(sink_guarantees = sink_guarantees(flow))
+    if not requirements.is_empty():
+        document['requirements'] = requirements.to_dict()
+    return document
 
 def specs_from_document(document : dict | str) -> tuple[str, str, List[NodeSpec]]:
     '''``(flow_id, flow_type, specs)`` from a compile-JSON document (dict or JSON string).'''

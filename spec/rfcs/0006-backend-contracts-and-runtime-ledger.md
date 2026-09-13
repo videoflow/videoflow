@@ -199,8 +199,12 @@ A receiver acks and ignores every terminator after the first from a parent
   **before** acking it, and MUST NOT collapse the parent's terminators onto the
   first one seen. A duplicate of an already-recorded `(parent, replica_id, kind)`
   is acked. An ABORT still outranks a clean EOS from the same parent
-  (`ABORT-3`). Under BATCH the recorded terminators are held un-acked until the
-  parent is drained (`EOS-4` now applies to each replica's marker).
+  (`ABORT-3`). With a durable, shared runtime store the *record* is what a
+  replacement recovers, so a recorded terminator is acked on record (a marker
+  held un-acked by a process that later dies is only redelivered to be recorded
+  again, while an EOS durable's credit of one would let a second replica's
+  marker wait behind it); without such a store the recorded terminators are held
+  un-acked until the parent is drained, as `EOS-4` always required.
 
   **Completion barrier.** When the node's runtime store is durable and shared
   across processes (§9), a BATCH child `C` MUST declare parent `P` complete only
@@ -230,6 +234,13 @@ A receiver acks and ignores every terminator after the first from a parent
 - **`EOS-3`** amended: its drain condition becomes the rule for REALTIME and for
   nodes without a durable shared store; the barrier in `EOS-7` is the rule
   otherwise. Clause (d) additionally requires the observation to be `Known`.
+- **`STREAM-15`** amended (join credit): a node with more than one parent binds
+  and provisions its data durables with `item_credit` equal to its join policy's
+  working set — `max_pending × (parents − 1) + 1` (`JoinPolicy.working_set`) —
+  and a bind whose effective credit is below that working set is refused
+  (`VF_CAPABILITY`) before any input is taken, because an adversarial parent
+  ordering could otherwise fill the credit with halves that never complete
+  (RUN-005).
 
 *Example.* `cam` has `nb_tasks = 2`. Replica 0 published 40 DATA messages, replica 1
 published 37. Their terminators are `{trace_id: "eos-r0", seq: 40, replica_id: 0}`
@@ -769,7 +780,15 @@ counter, the `(0, 0)` fail-open — must fail against the oracle or the case is
 > (§9, Phase 3) exists the terminal log is per-process memory and a failed dead-letter publish keeps
 > the delivery with a delayed NAK instead of a `pending_handoff` record; `max_deliver` stays the
 > `STREAM-5` cap (decision D11); `dlq replay` relies on the `dlq/<flow>` pin rather than acquiring
-> the target's reader obligations afresh (the replay bookkeeping lands with the ledger). The rest (`--gpu-policy`, `--gpu-nodes`, `--rollout-policy`,
+> the target's reader obligations afresh (the replay bookkeeping lands with the ledger). Phase 3
+> added the ledger itself (§9: `MemoryRuntimeStore`, `FileRuntimeStore`, `RedisRuntimeStore`,
+> `FlowRuntime`), `ENV-10`/`ENV-11` emission under the switch, the `EOS-7` barrier and terminator
+> counts, `MSGID-5`/`MSGID-6` source identity with checkpoints of the accepted offset, `JOIN-23`
+> ids, the outbox with reconciliation at start, the ledger-budgeted cap (D11), pending dead-letter
+> handoffs, the durable terminal log, open-group records with committed-result skips, ownership
+> epochs with fencing, the checkpoint API, effect markers with the exactly-once admission rule,
+> the partition-key policy, the ordering policy, the join status and the prefetch byte budget.
+> `dlq replay` still does not acquire the target's reader obligations. The rest (`--gpu-policy`, `--gpu-nodes`, `--rollout-policy`,
 > `--resources`, the DRA render adapter, UUID masks, readiness correlated by resourceVersion) ship
 > with Phases 3–4 and are listed here so their non-RFC status is decided now.
 
@@ -786,11 +805,45 @@ check the classification.
   this RFC (MSG-011, RUN-001).
 - **`ack_sync` and `SettleUnknown`.** Acks use `msg.ack_sync(timeout)`; a lost
   reply is `SettleUnknown`, which releases no obligation (PAY-004).
+- **Partition-key policy** (RUN-020). Under the switch an unusable key is never
+  hashed as its `str`: `PartitionKeyPolicy` rejects it (`VF_POISON_PARTITION_KEY`,
+  dead-lettered by replica 0) or routes it to a declared fallback partition —
+  a class-level declaration, so specs are unchanged.
+- **Ordering policy** (RUN-021). `OrderingPolicy` + `ReorderBuffer`: a keyed
+  stateful node's declared temporal semantics (arrival order, or sequence order
+  within a bounded horizon with late records dropped or marked), interpreted the
+  same way for every delivery permutation.
+- **Checkpoint API and effect markers** (RUN-017, RUN-022). `ctx.checkpoint` /
+  `ctx.restore_checkpoint` write state and the covering input in one ledger write;
+  the covered group is acknowledged without being re-applied. Effect markers move
+  into the ledger when it is durable; `exactly_once_effects` is admitted only for a
+  sink declaring `effect_guarantee = 'idempotent_key'` whose markers outlive the
+  replay horizon.
+- **Join status and prefetch byte budget** (RUN-006, RUN-025). `join_status()`
+  reports how many groups wait and for how long (a `wait` join is waiting, not
+  progressing); `VF_PREFETCH_BYTES` bounds the envelope bytes a receiver holds
+  unsettled, with one message of tolerance.
+- **A sequence-0 duplicate is not a receipt.** nats-server answers a re-publish
+  of an id it remembers with `duplicate: true` and the *original* sequence; when
+  the original reached the server while the stream had no quorum, that sequence
+  is 0 — the id was seen, the message never stored. The adapter reports it
+  `PublicationUnknown`, never `Accepted` (MSG-023), so a quorum loss cannot mint
+  a durable receipt through the deduplication map.
 - **Hand-back at retirement.** A receiver that shuts down gracefully NAKs every
   delivery it still holds — parked in its prefetch queue or received and never
   settled — so a scale-down or rollout returns that work to the survivors at
   once instead of after `ack_wait` on a replica that no longer exists; a crash
-  hands nothing back and its leases lapse as before (MSG-017, RUN-030).
+  hands nothing back and its leases lapse as before (MSG-017, RUN-030). The
+  quiesce half (`stop_receiving`, what SIGTERM runs before the default action)
+  hands back the *parked* deliveries alone and leaves the one being processed
+  to settle or to its lease.
+- **Scaler admission by shape.** Under the switch a multi-parent join at one
+  replica and a node declaring `partition_by` at `nb_tasks = 1` are refused a
+  scaler (`JOIN_REJECTION`, `PARTITION_INTENT_REJECTION`): scaled, the first
+  becomes competing multi-worker joins and the second splits a key's history
+  across replicas bound to one competing durable (RUN-018, RUN-019). A
+  rendering change only, no wire byte; off the switch the scaler renders as it
+  always did.
 - **Off-loop hydration and owner-before-hydrate.** Payload fetches run on the
   receiving thread, off the adapter's event loop, after the ownership and
   replay-scope decisions on decoded metadata (`peek_envelope`,
@@ -901,6 +954,20 @@ check the classification.
   rejects and says why.
 
 ## Open questions
+
+- **Retry identity after a definite refusal on clustered JetStream.** A clustered
+  stream registers a `Nats-Msg-Id` in its deduplication map when the message is
+  proposed, before the limits check, so a publish refused for capacity (or lost to
+  a quorum outage) leaves the id behind for the duplicate window: the retry that
+  should land after space is freed is answered `duplicate` with sequence 0 until
+  the window passes (observed on the three-server fixture; a single server does
+  not do this). The adapter reports such an acknowledgement as
+  `PublicationUnknown` (never a receipt), and the messenger's retry loop keeps
+  the identity and lands the message once the window lapses — correct, but a
+  two-minute stall under sustained backpressure. Whether the SDK may re-publish
+  under a derived header id (`{id}:a{n}`) once a refusal is *definite* — the
+  envelope's own identity unchanged, so downstream dedup still holds — is for
+  Phase 5 to decide with a measurement (MSG-023 capacity half).
 
 1. **`window_id` for time-mode groups.** `group_identity` accepts a window
    namespace; this RFC fixes it to `None` for v1. If a per-node or per-policy

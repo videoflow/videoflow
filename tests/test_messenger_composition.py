@@ -44,6 +44,7 @@ def _bare(partition_by = None, nb_tasks = 1, replica_id = 0, payload_store = Non
     m._inline_threshold = MAX_INLINE_PAYLOAD_BYTES
     m._drops = {}
     m._evictions_seen = 0
+    m._ledger = False                     # a memory ledger: no barrier, nothing recorded per delivery
     m._assembler = TraceGroupAssembler('child', ['p'], JoinPolicy.default_for(BATCH))
     return m
 

@@ -42,8 +42,24 @@ class Node:
             omitted, the image is taken from the deploy-time default (``--image``); \
             a deploy-time ``--image-override`` beats both. Ignored by the local \
             engine, which runs workers in the current Python environment.
+
+    Two class-level declarations (RFC 0006, plan Phase 3) describe how a node's \
+        *results* may be recovered; they are class attributes rather than \
+        constructor parameters so a node's ``get_params()`` — and with it every \
+        compiled spec — is unchanged by declaring them:
+
+        - ``deterministic``: whether the same input always yields the same \
+            output (True by default). A stochastic component sets it False.
+        - ``replay_policy``: ``'recompute'`` (the default: a redelivered input is \
+            processed again, which for a deterministic node yields the same \
+            output and the same message id) or ``'committed'`` (a result the \
+            worker committed before a crash is re-published byte-for-byte from \
+            the runtime ledger, never recomputed — what a nondeterministic \
+            component under a reliable profile needs).
     '''
     _name_counters: Dict[str, int] = {}
+    deterministic : bool = True
+    replay_policy : str = 'recompute'
 
     def __init__(self, name : Optional[str] = None, image : Optional[str] = None) -> None:
         if name is None:
@@ -282,7 +298,24 @@ class ConsumerNode(ErrorHandlingMixin, Leaf):
             durable alert sink.
         - on_error (str): see ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
+
+    Class-level declaration ``effect_guarantee`` (RFC 0006, RUN-017): what this \
+        sink can promise about its external effects — ``'at_least_once'`` (the \
+        default: a redelivery may repeat an effect) or ``'idempotent_key'`` (the sink \
+        applies each effect through its external system's own idempotency key or \
+        transaction, keyed by ``ctx.input_key``, so one logical effect occurs). A \
+        runtime marker alone never certifies exactly-once; only the second \
+        declaration lets the planner admit ``exactly_once_effects`` for the sink.
     '''
+    effect_guarantee : str = 'at_least_once'
+
+    #: How a partitioned replica treats a record whose partition key is unusable
+    #: (RFC 0006, RUN-020): ``None`` is the default ``PartitionKeyPolicy`` (reject:
+    #: dead-lettered as ``VF_POISON_PARTITION_KEY``); a class may declare
+    #: ``{'invalid': 'fallback', 'fallback_partition': 0}`` instead. A class
+    #: attribute, so ``get_params()`` and the compiled spec are unchanged.
+    partition_key_policy : Optional[Dict[str, Any]] = None
+
     def __init__(self, metadata : bool = False, name : Optional[str] = None,
                 join_policy : JoinPolicyArg = None, idempotent : bool = False,
                 delivery : Optional[str] = None, on_error : Optional[str] = None,
@@ -357,6 +390,13 @@ class ProcessorNode(ErrorHandlingMixin, Node):
             ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
     '''
+    #: How a partitioned replica treats a record whose partition key is unusable
+    #: (RFC 0006, RUN-020): ``None`` is the default ``PartitionKeyPolicy`` (reject:
+    #: dead-lettered as ``VF_POISON_PARTITION_KEY``); a class may declare
+    #: ``{'invalid': 'fallback', 'fallback_partition': 0}`` instead. A class
+    #: attribute, so ``get_params()`` and the compiled spec are unchanged.
+    partition_key_policy : Optional[Dict[str, Any]] = None
+
     def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
                 partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
                 gpu_count : int | None = None, gpu_memory_gib : int | float | None = None,
@@ -692,7 +732,24 @@ class ProducerNode(Node):
             uses this to decide whether to deploy the producer as a ``Job`` (finite) or \
             a ``Deployment`` (infinite).
         - name (str): see ``Node``.
+
+    Class-level declaration ``replayable`` (RFC 0006 ``MSGID-6``, off by default): \
+        the source has a stable position of its own (a frame index, a record offset), \
+        so a re-run or a restart re-mints the identical message ids and downstream \
+        deduplication and sink idempotency engage. A replayable producer implements \
+        ``seek(offset)`` so a replacement resumes after the last *accepted* offset the \
+        runtime checkpointed; a live source (the default) mints a fresh capture epoch \
+        per process instead (``MSGID-5``).
+
+    ``analysis_version`` (``MSGID-6``, replayable sources only): a deliberately new \
+        analysis of the same media declares a version and mints \
+        ``{node}:{analysis_version}:{offset}``, a namespace of its own, instead of \
+        re-minting — and colliding with — the identities of the earlier analysis. \
+        ``None`` (the default) is the plain ``{node}:{offset}`` form.
     '''
+    replayable : bool = False
+    analysis_version : Optional[str] = None
+
     def __init__(self, is_finite : bool = True, name : Optional[str] = None, **kwargs : Any) -> None:
         self._is_finite = is_finite
         super(ProducerNode, self).__init__(name = name, **kwargs)
@@ -700,6 +757,15 @@ class ProducerNode(Node):
     @property
     def is_finite(self) -> bool:
         return self._is_finite
+
+    def seek(self, offset : int) -> None:
+        '''
+        Position the source so the next ``next()`` yields item ``offset + 1`` (a
+        replayable producer resuming after a restart; ``offset`` is the last
+        accepted item, 0 for none). The default ignores it: a live source has no
+        position to return to.
+        '''
+        return None
 
     def next(self) -> Any:
         '''

@@ -116,8 +116,12 @@ def _oracle_pay_007(rig : Any, store : KeyRecordingStore, advance : Callable[[fl
     counter = {'trace': 0}
 
     def restarted_publisher() -> Any:
-        '''A fresh publisher process: it re-emits the logical output it was working on (same ids).'''
-        publisher = rig.messenger('parent', [], store = store, blob_reader_ids = ['child'])
+        '''
+        A fresh publisher process that re-emits the logical output it was working on
+        (same ids): a *replayable* source (RFC 0006 MSGID-6), whose ids come from its
+        offset — a live source would mint a fresh epoch and never dedup (MSGID-5).
+        '''
+        publisher = rig.messenger('parent', [], store = store, blob_reader_ids = ['child'], replayable = True)
         publisher._trace_counter = counter['trace']
         return publisher
 

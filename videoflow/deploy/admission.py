@@ -49,6 +49,7 @@ from ..backends.capabilities import (
     MessagingCapabilities,
     PayloadCapabilities,
     ProfileRequest,
+    RuntimeCapabilities,
     default_requirements,
     plan_composition,
     requests_env,
@@ -398,7 +399,8 @@ def requirements_for(flow_type : str, specs : Sequence[NodeSpec],
 
 def admit(requirements : FlowRequirements, messaging : MessagingCapabilities,
           payload : Optional[PayloadCapabilities], *, payload_refs_in_use : bool,
-          enforce : bool, unknown_is_fatal : bool, where : str) -> Optional[CompositionPlan]:
+          enforce : bool, unknown_is_fatal : bool, where : str,
+          runtime : Optional[RuntimeCapabilities] = None) -> Optional[CompositionPlan]:
     '''
     Run the planner. A rejection that is not binding is printed as a warning and
     ``None`` returned — today's behaviour, with the reason on record; a binding
@@ -422,9 +424,12 @@ def admit(requirements : FlowRequirements, messaging : MessagingCapabilities,
         - unknown_is_fatal: unobservable capabilities are binding too (explicit \
             requests only — ``unknown_admission``).
         - where: ``deploy`` / ``run-local``, for the message.
+        - runtime: the runtime store's read-back (``VF_RUNTIME_STORE_URL``), which \
+            ``restart_safe`` and ``durable_control`` are admitted against; None \
+            when no store is configured.
     '''
     try:
-        return plan_composition(requirements, messaging, payload = payload,
+        return plan_composition(requirements, messaging, payload = payload, runtime = runtime,
                                 payload_refs_in_use = payload_refs_in_use)
     except IncompatibleProfile as e:
         if enforce:
@@ -462,3 +467,25 @@ __all__ = [
     'redis_payload_capabilities', 'redis_payload_capabilities_observed', 'requests_env', 'requests_from_env',
     'requirements_for', 'run_stream_names', 'unknown_admission', 'verify_topology_shape',
 ]
+
+
+def runtime_capabilities_observed(url : str | None) -> RuntimeCapabilities:
+    '''
+    What the runtime store behind ``url`` (``VF_RUNTIME_STORE_URL``) can promise,
+    read back: a Redis store probes its persistence, a file store is durable on
+    its host, a memory store never is. An unset URL is the memory store.
+    '''
+    # Deferred: the store registry imports the wire package (optional `msgpack`/`protobuf`).
+    from ..runtime.runtime_stores import make_runtime_store
+    scheme = (url or 'memory://').split(':', 1)[0].lower() or 'memory'
+    try:
+        return make_runtime_store(url).capabilities()
+    except ValueError:
+        raise
+    except Exception as e:  # noqa: BLE001 — an unreachable or refused store is Unknown, never assumed durable
+        name = type(e).__name__
+        reason = 'auth' if 'Permission' in name or 'Authentication' in name else \
+            'timeout' if 'Timeout' in name else 'unreachable'
+        return RuntimeCapabilities(scheme, durable = unknown(reason, f'{name}: {e}'),
+                                   shared_across_processes = True, restart_safe_joins = False,
+                                   elastic_state = False)

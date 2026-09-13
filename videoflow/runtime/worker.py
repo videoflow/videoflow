@@ -30,6 +30,14 @@ the original graph-building script::
     VF_FAULT_SCHEDULE_JSON / VF_FAULT_MARKER_DIR
                         optional; a conformance test's fault schedule (RFC 0006 ENV-16/17),
                         installed before the node is built. Never set by a control plane.
+    VF_PREFETCH_BYTES   optional; the most envelope bytes a worker holds unsettled before it
+                        stops fetching (RUN-025). Unset ⇒ bounded by the prefetch count only.
+    VF_RUNTIME_STORE_URL optional; the run ledger (RFC 0006 ENV-10): memory:// (default),
+                        file://<dir> (one host) or redis:// (read back for persistence).
+                        Under VF_RFC0006 a durable, shared store turns on the EOS-7
+                        completion barrier and the ledger-budgeted delivery cap (D11).
+    VF_PARENT_REPLICAS  optional; per-parent replica counts aligned with VF_PARENT_NAMES
+                        (ENV-11); a count mismatch fails fast. Absent ⇒ the EOS-3 drain.
     VF_BLOB_READER_IDS  optional; the reader obligations each payload this node
                         publishes is held for, comma-separated (RFC 0006 BLOB-13);
                         honoured only under VF_RFC0006 with a redis:// blob store.
@@ -100,11 +108,14 @@ from urllib.parse import urlparse
 from ..backends import faults
 from ..backends.capabilities import (
     ADMISSION_TIMEOUT_ENV,
+    PARENT_REPLICAS_ENV,
     PROFILE_REQUESTS_ENV,
+    RUNTIME_STORE_ENV,
     ProfileRequest,
     admission_timeout_from_env,
     requests_from_env,
 )
+from ..backends.runtime import FlowRuntime
 from ..core import constants
 from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
 from ..core.context import RuntimeContext
@@ -129,8 +140,9 @@ from ..core.supervision import (
 from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
 from ..wire.redis_payload_store import RedisPayloadStore
 from .health import HealthServer, HealthState, InstrumentedMessenger
-from .idempotency import RedisIdempotencyStore
+from .idempotency import EFFECT_RETENTION_SECONDS, IdempotencyStore, LedgerIdempotencyStore, RedisIdempotencyStore
 from .logging_config import configure_logging
+from .runtime_stores import make_runtime_store
 from .watchdog import DEFAULT_WATCHDOG_INTERVAL_SECONDS, ProgressWatchdog
 
 logger = logging.getLogger('videoflow.worker')
@@ -379,6 +391,31 @@ def verify_explicit_profiles(nats_url : str, flow_id : str, run_id : str, flow_t
     logger.info('explicit channel profiles verified at bind: '
                 + ', '.join(f'{r.channel}={r.profile}' for r in mine))
 
+def parent_replicas_from_env(parent_names : Sequence[str], raw : str | None) -> dict[str, int]:
+    '''
+    ``VF_PARENT_REPLICAS`` (RFC 0006 ENV-11): comma-separated replica counts aligned
+    with ``VF_PARENT_NAMES``. Absent ⇒ empty (the EOS-7 barrier is not evaluated).
+
+    - Raises:
+        - ConfigError: an entry count that differs from the parent count, or a \
+            value that is not a non-negative integer.
+    '''
+    if not raw:
+        return {}
+    values = [v.strip() for v in raw.split(',')]
+    if len(values) != len(parent_names):
+        raise ConfigError(
+            f'{PARENT_REPLICAS_ENV} has {len(values)} entries for {len(parent_names)} parents.',
+            remedy = f'Emit one entry per name in VF_PARENT_NAMES, in the same order: {",".join(parent_names)}.')
+    out : dict[str, int] = {}
+    for name, value in zip(parent_names, values):
+        if not value.isdigit():
+            raise ConfigError(f'{PARENT_REPLICAS_ENV} entry {value!r} for parent {name!r} is not a count.',
+                              remedy = 'Use a non-negative integer per parent.')
+        out[name] = int(value)
+    return out
+
+
 def run_from_env() -> None:
     # Deferred: nats_messenger imports the optional `nats` client at module scope.
     from ..messaging.nats_messenger import NATSMessenger
@@ -399,6 +436,7 @@ def run_from_env() -> None:
     partition_by = os.environ.get('VF_PARTITION_BY') or None
     join_policy_json = os.environ.get('VF_JOIN_POLICY_JSON')
     join_policy = json.loads(join_policy_json) if join_policy_json else None
+    parent_replicas = parent_replicas_from_env(parent_names, os.environ.get(PARENT_REPLICAS_ENV))
 
     # Per-node failure handling. Absent ⇒ the flow type's preset, which is what a
     # flow that never touches these gets.
@@ -464,6 +502,12 @@ def run_from_env() -> None:
     # (they should match, but the env is authoritative for routing).
     node._name = node_name
 
+    # The run ledger (RFC 0006 CTRL-4): memory unless VF_RUNTIME_STORE_URL names a
+    # store; what it can promise is read back by the store itself.
+    runtime = FlowRuntime(make_runtime_store(os.environ.get(RUNTIME_STORE_ENV)), flow_id, run_id, node_name,
+                          replica_id, nb_tasks, partition_by, parent_replicas)
+    replayable = isinstance(node, ProducerNode) and node.replayable
+
     messenger: Messenger = NATSMessenger(
         node, parent_names, nats_url, flow_id, flow_type, run_id,
         blob_store = blob_store, replica_id = replica_id,
@@ -473,6 +517,8 @@ def run_from_env() -> None:
         envelope_version = envelope_version, blob_readers = blob_readers,
         blob_ttl_seconds = blob_ttl_seconds, delivery_policy = delivery_policy,
         payload_store = payload_store, blob_reader_ids = blob_reader_ids,
+        runtime = runtime, replayable = replayable,
+        prefetch_bytes = int(os.environ['VF_PREFETCH_BYTES']) if os.environ.get('VF_PREFETCH_BYTES') else None,
     )
 
     # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
@@ -511,7 +557,8 @@ def run_from_env() -> None:
     if kind == NODE_KIND_PRODUCER:
         task = ProducerTask(require_node_kind(node, ProducerNode, kind),
                             messenger, has_children, ctx = ctx,
-                            on_error = on_error or DEFAULT_DISPOSITION)
+                            on_error = on_error or DEFAULT_DISPOSITION,
+                            resume_offset = messenger.resume_offset())
     elif kind == NODE_KIND_PROCESSOR:
         task = ProcessorTask(require_node_kind(node, ProcessorNode, kind),
                             messenger, has_children, parent_names, ctx = ctx,
@@ -520,8 +567,11 @@ def run_from_env() -> None:
                             watchdog = watchdog)
     elif kind == NODE_KIND_CONSUMER:
         consumer = require_node_kind(node, ConsumerNode, kind)
-        idem_store = None
-        if consumer.idempotent and blob_redis_url:
+        idem_store : IdempotencyStore | None = None
+        if consumer.idempotent and constants.RFC0006 and runtime.durable_shared():
+            # The run ledger keeps the markers with the node's other durable facts.
+            idem_store = LedgerIdempotencyStore(runtime, EFFECT_RETENTION_SECONDS)
+        elif consumer.idempotent and blob_redis_url:
             idem_store = RedisIdempotencyStore(blob_redis_url)
         task = ConsumerTask(consumer, messenger, has_children, parent_names, ctx = ctx,
                             idempotency_store = idem_store,

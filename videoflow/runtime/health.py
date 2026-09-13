@@ -30,6 +30,10 @@ precise about it:
   (given up on by policy, never to be redelivered). ``offered - processed -
   dropped`` is the node's outstanding work, which is what a demand observer
   wants and what a lag gauge alone cannot separate from loss.
+  ``HealthState.throughput`` hands the same three numbers to an in-process
+  observer as a ``ThroughputSnapshot``, so ``runtime.scaling.throughput_sample``
+  can difference two readings the way a scraper differences two exports
+  (RUN-026).
 
 The renderer only ever *appends*: every line an older worker emitted is still
 emitted first, unchanged and in the same order, so a scrape config or a pinned
@@ -185,6 +189,19 @@ def parse_histogram(text : str, metric : str) -> tuple[tuple[float, ...], tuple[
     bounds = tuple(b for b, _ in found if not math.isinf(b))
     return bounds, tuple(c for _, c in found)
 
+@dataclass(frozen = True)
+class ThroughputSnapshot:
+    '''
+    One reading of the throughput counters: what ``/metrics`` exports as
+    ``messages_offered_total``, ``messages_processed_total`` and
+    ``messages_dropped_total`` summed over its reasons, with the time it was
+    read. Two snapshots bracket a control window.
+    '''
+    offered : int
+    processed : int
+    dropped : int
+    at : float
+
 class HealthState:
     '''Thread-safe holder for readiness/liveness/metrics, shared between the run loop (via the messenger) and the HTTP handler.'''
     def __init__(self, node_name : str, buckets : Sequence[float] = LATENCY_BUCKETS_SECONDS) -> None:
@@ -272,6 +289,16 @@ class HealthState:
         '''
         with self._lock:
             self._drops[reason] = self._drops.get(reason, 0) + count
+
+    def throughput(self, at : float | None = None) -> ThroughputSnapshot:
+        '''
+        The throughput counters as one consistent reading (taken under the lock,
+        so offered/processed/dropped describe the same instant). ``at`` defaults
+        to ``time.time()``; a test passes its own clock.
+        '''
+        with self._lock:
+            return ThroughputSnapshot(self._offered, self._counters.get('messages_processed', 0),
+                                      sum(self._drops.values()), time.time() if at is None else at)
 
     def histogram(self, metric : str) -> tuple[int, ...] | None:
         '''

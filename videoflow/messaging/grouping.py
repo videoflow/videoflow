@@ -39,6 +39,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ..backends.runtime import group_identity
+from ..core import constants
 from ..core.policies import JOIN_TIME, MISSING_ERROR, JoinPolicy
 
 logger = logging.getLogger(__package__)
@@ -178,6 +180,14 @@ class GroupAssembler:
         '''Whether any buffered state still holds a message from this parent (EOS drain check).'''
         raise NotImplementedError
 
+    def pending_count(self) -> int:
+        '''Incomplete groups held right now.'''
+        raise NotImplementedError
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        '''How long the oldest incomplete group has waited (0 when none).'''
+        raise NotImplementedError
+
 class TraceGroupAssembler(GroupAssembler):
     '''
     Groups by exact ``trace_id``. A group is ready when every parent's half with
@@ -260,6 +270,14 @@ class TraceGroupAssembler(GroupAssembler):
 
     def has_pending_from(self, parent_name : str) -> bool:
         return any(parent_name in group for group in self._groups.values())
+
+    def pending_count(self) -> int:
+        return len(self._groups)
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        if not self._first_seen:
+            return 0.0
+        return max(0.0, (now if now is not None else time.monotonic()) - min(self._first_seen.values()))
 
 class _TimeGroup:
     __slots__ = ('gid', 'ts', 'first_seen', 'entries', 'handles')
@@ -469,6 +487,13 @@ class TimeGroupAssembler(GroupAssembler):
         # Identity of the group is its event time: stable across redelivery (the
         # same members regroup to the same min ts), so downstream dedup holds.
         seq = int(round(group.ts * 1e6))
+        if constants.RFC0006:
+            # JOIN-23: distinct groups whose event times round to the same
+            # microsecond get distinct ids — the digest is over the sync members'
+            # logical ids, so the same members still regroup to the same id.
+            members = {parent: (entry.producer_name, entry.trace_id, entry.seq)
+                       for parent, entry in entries.items() if isinstance(entry, EnvelopeEntry)}
+            return ReadyGroup(group_identity(members, None, seq), seq, group.ts, entries, handles)
         return ReadyGroup(f'tw-{seq}', seq, group.ts, entries, handles)
 
     def has_pending_from(self, parent_name : str) -> bool:
@@ -485,3 +510,12 @@ class TimeGroupAssembler(GroupAssembler):
         if parent_name in self._collect_buffers:
             return bool(self._collect_buffers[parent_name])
         return any(parent_name in g.entries for g in self._groups.values())
+
+    def pending_count(self) -> int:
+        return len(self._groups) + len(self._ready)
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        if not self._groups:
+            return 0.0
+        current = now if now is not None else time.monotonic()
+        return max(0.0, current - min(group.first_seen for group in self._groups.values()))

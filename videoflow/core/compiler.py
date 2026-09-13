@@ -237,6 +237,26 @@ def blob_reader_ids(spec : NodeSpec, specs : List[NodeSpec]) -> List[str]:
             ids.append(child.name)
     return ids
 
+def sink_guarantees(flow : Any) -> Dict[str, str]:
+    '''
+    The non-default effect declarations of a flow's sinks (``ConsumerNode.effect_guarantee``,
+    RUN-017): what the planner admits ``exactly_once_effects`` against. Empty for a
+    flow whose sinks declare nothing, so the compiled document is unchanged.
+    '''
+    out : Dict[str, str] = {}
+    for node, _parents, _is_last in flow.tasks_data():
+        if isinstance(node, ConsumerNode) and node.effect_guarantee != 'at_least_once':
+            out[node.name] = node.effect_guarantee
+    return out
+
+def parent_replicas(spec : NodeSpec, specs : List[NodeSpec]) -> List[int]:
+    '''
+    ``VF_PARENT_REPLICAS`` (RFC 0006 ENV-11): each parent's ``nb_tasks``, in
+    ``spec.parents`` order — how many terminators the EOS-7 barrier expects from it.
+    '''
+    by_name = {s.name: s for s in specs}
+    return [by_name[parent].nb_tasks if parent in by_name else 1 for parent in spec.parents]
+
 def _validate_remote_node(node : RemoteNodeMixin, parent_names : List[str]) -> None:
     '''
     Parent-aware validation of a remote component now that its wired parents are

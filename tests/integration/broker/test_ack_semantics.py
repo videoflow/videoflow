@@ -14,6 +14,7 @@ import pytest
 
 from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH, REALTIME
+from videoflow.core.node import Node
 from videoflow.messaging import topology
 from videoflow.messaging.nats_messenger import NATSMessenger
 from videoflow.messaging.topology import provision_flow_sync
@@ -21,13 +22,9 @@ from videoflow.wire.serialization import MSG_TYPE_DATA, derive_message_id, encod
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
-class _StubNode:
+class _StubNode(Node):
     def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self):
-        return self._name
+        super().__init__(name = name)
 
     def open(self):
         pass

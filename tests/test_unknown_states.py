@@ -234,6 +234,8 @@ def _bare_messenger():
     m._quiescent_since = {'p': 0.0}
     m._eos_quiescence_s = 0.0
     m._assembler = _NoPending()
+    m._ledger = False                       # no durable shared ledger: the EOS-3 drain rule applies
+    m._eos_handles = {}
     return m
 
 

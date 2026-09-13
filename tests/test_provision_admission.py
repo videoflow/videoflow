@@ -115,7 +115,7 @@ def test_without_requests_and_without_the_switch_nothing_is_read_back(stubs):
     provision.provision()
     assert stubs['probes'] == [] and stubs['read_back'] == []
     assert stubs['provisioned'] == [('nats://broker:4222', ['src', 'work', 'sink'], 'prov', 'r1', BATCH,
-                                     {'max_retries': 3, 'replicas': 1})]
+                                     {'max_retries': 3, 'replicas': 1, 'ledger_budget': False})]
 
 
 def test_a_rejection_before_provisioning_creates_nothing(stubs, env, capsys):
@@ -157,7 +157,7 @@ def test_explicit_requests_are_verified_against_what_was_provisioned(stubs, env)
     _explicit(env, ProfileRequest('work', RELIABLE_WORK), ProfileRequest('src', RELIABLE_WORK))
     env.setenv('VF_STREAM_REPLICAS', '3')
     provision.provision()
-    assert stubs['provisioned'][0][5] == {'max_retries': 3, 'replicas': 3}
+    assert stubs['provisioned'][0][5] == {'max_retries': 3, 'replicas': 3, 'ledger_budget': False}
     assert stubs['read_back'] == [('nats://broker:4222', 'prov', 'r1', ['work', 'src'], BATCH,
                                    {'timeout': 60.0, 'replicas': 3, 'fail_fast': False})]
     # The broker kept 'work' at the other flow type's shape (a stream that pre-dates this run).

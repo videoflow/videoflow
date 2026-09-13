@@ -74,7 +74,10 @@ def _oracle_pay_018(rig : Any, evidence : Dict[str, Any], frames : int = FRAMES)
         children.append(rig.messenger('child', ['parent'], store = store, replica_id = r, nb_tasks = REPLICAS,
                                       partition_by = 'trace_id'))
     publisher_store = KeyRecordingStore(rig.store, 'parent', log)
-    parent = rig.messenger('parent', [], store = publisher_store, blob_reader_ids = [f'child/p{r}' for r in range(REPLICAS)])
+    # A replayable source mints ``parent:{offset}`` (MSGID-6), so the owner of each
+    # frame is known to the test up front; a live source's epoch would not be.
+    parent = rig.messenger('parent', [], store = publisher_store, blob_reader_ids = [f'child/p{r}' for r in range(REPLICAS)],
+                           replayable = True)
     expected = collections.Counter(_owner(f'parent:{i}') for i in range(1, frames + 1))
     assert len(expected) == REPLICAS and expected[BLOCKED_REPLICA] > 0
     receivers = [Receiver(children[r], expected = expected[r], name = f'child/p{r}') for r in range(REPLICAS)]

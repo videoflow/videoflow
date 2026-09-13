@@ -48,6 +48,7 @@ COMMANDS = {
     'delete': 'DEL', 'expire': 'EXPIRE', 'ttl': 'TTL', 'persist': 'PERSIST', 'scan': 'SCAN', 'sadd': 'SADD',
     'srem': 'SREM', 'scard': 'SCARD', 'smembers': 'SMEMBERS', 'hset': 'HSET', 'hget': 'HGET',
     'hgetall': 'HGETALL', 'config_get': 'CONFIG GET', 'info': 'INFO', 'cluster': 'CLUSTER', 'ping': 'PING',
+    'rpush': 'RPUSH', 'lrange': 'LRANGE', 'llen': 'LLEN',
 }
 
 WRONGTYPE = 'WRONGTYPE Operation against a key holding the wrong kind of value'
@@ -212,6 +213,24 @@ class FakeRedis:
 
     def hgetall(self, name : str) -> Any:
         return self._execute('hgetall', (name,), {})
+
+    def rpush(self, name : str, *values : Any) -> Any:
+        return self._execute('rpush', (name,) + values, {})
+
+    def lrange(self, name : str, start : int, end : int) -> Any:
+        return self._execute('lrange', (name, start, end), {})
+
+    def llen(self, name : str) -> Any:
+        return self._execute('llen', (name,), {})
+
+    def scan_iter(self, match : Optional[str] = None, count : Optional[int] = None, **kwargs : Any) -> Any:
+        '''``SCAN`` paged the way redis-py's helper does: one ``scan`` per page until the cursor returns to 0.'''
+        cursor = 0
+        while True:
+            cursor, keys = self.scan(cursor = cursor, match = match, count = count)
+            yield from keys
+            if cursor == 0:
+                return
 
     def config_get(self, pattern : str = '*', *args : str, **kwargs : Any) -> Any:
         return self._execute('config_get', (pattern,) + args, {})
@@ -433,6 +452,20 @@ class FakeRedis:
 
     def _cmd_hgetall(self, name : str) -> dict:
         return dict(self._typed(name, dict, False)) if self._alive(name) else {}
+
+    def _cmd_rpush(self, name : str, *values : Any) -> int:
+        entries = self._typed(name, list, True)
+        entries.extend(_encode(v) for v in values)
+        self._touch(name)
+        return len(entries)
+
+    def _cmd_lrange(self, name : str, start : int, end : int) -> list:
+        entries = self._typed(name, list, False) if self._alive(name) else []
+        stop = len(entries) if end == -1 else end + 1
+        return list(entries[start:stop])
+
+    def _cmd_llen(self, name : str) -> int:
+        return len(self._typed(name, list, False)) if self._alive(name) else 0
 
     def _cmd_config_get(self, pattern : str = '*', *patterns : str) -> dict:
         if self.deny_config:

@@ -22,6 +22,7 @@ import pytest
 
 from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH
+from videoflow.core.node import Node
 from videoflow.messaging import topology
 from videoflow.messaging.nats_messenger import NATSMessenger
 from videoflow.messaging.topology import provision_flow_sync
@@ -50,13 +51,9 @@ pytestmark = pytest.mark.skipif(not _redis_available(),
 #: Big enough to exceed the 512KiB inline threshold, so every publish offloads.
 BIG = np.zeros((700, 1024), dtype = np.uint8)
 
-class _StubNode:
+class _StubNode(Node):
     def __init__(self, name):
-        self._name = name
-
-    @property
-    def name(self):
-        return self._name
+        super().__init__(name = name)
 
 def _spec(name, parents, kind, has_children, nb_tasks = 1, partition_by = None,
           blob_readers = None):

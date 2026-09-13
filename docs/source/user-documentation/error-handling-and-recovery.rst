@@ -104,7 +104,13 @@ thing a component author needs to get right:
     over. ``StaleAuthority`` is the same disposition for a different reason: the
     worker tried to commit under an ownership epoch a newer owner has superseded
     (a partition transferred, a replacement replica started). The message is fine;
-    this writer is not the one allowed to decide it.
+    this writer is not the one allowed to decide it. A *configuration* error that
+    only surfaces while a message is in flight — a ``replay_policy = 'committed'``
+    result or a ``ctx.checkpoint`` on a ledger that dies with the process
+    (``IncompatibleProfile``) — is treated the same way at the message: it is
+    handed back unblamed, and the worker stops with the user diagnostic and its
+    own exit code (2), rather than retrying the same refusal until the breaker
+    trips.
 
 The failure this prevents is worth stating plainly. Before dispositions existed,
 a pod whose GPU wedged failed every message it touched, and each one was
@@ -306,10 +312,34 @@ delivery is terminated against the node's terminal log, as it always was. A dead
 (``dlq: off``) also leaves a terminal-log entry, so a message never disappears with
 its own disappearance as the only trace.
 
-The delivery count the retry ladder consults is the broker's. A ``worker_fatal``
-failure hands the message back without blaming it, but the broker still counts
-that delivery against ``max_deliver``; a budget that ignores worker-fatal attempts
-needs the durable runtime ledger of RFC 0006 (plan Phase 3) and is not in place yet.
+The delivery count the retry ladder consults is the broker's — unless the run has
+a **durable, shared ledger** (``VF_RUNTIME_STORE_URL`` pointing at a ``file://``
+directory on one host or a Redis that reads back with persistence on and
+``noeviction``) and ``VF_RFC0006=1``. Then at-least-once durables are provisioned
+with an unbounded broker cap (``max_deliver = -1``: the broker never strands a
+message) and the budget of ``VF_MAX_RETRIES + 1`` attempts is counted in the
+ledger, where a ``worker_fatal`` failure never increments it: a wedged worker's
+redeliveries cost the message nothing. A memory-only ledger never qualifies —
+attempt counts would reset with the process and a crashing worker would redeliver
+a poison message forever — so the broker cap stays.
+
+Two more records live in that ledger. A dead letter the broker did not accept is
+kept as a *pending handoff* and re-published under its original id by the next
+attempt or by a replacement worker, so ``VF_POISON_*`` evidence is never lost to a
+DLQ outage; while it is pending, the input it stands for counts as *unresolved*
+in the node's subscription status — in the process that failed the dead letter
+and in any replacement that could not record it either — never as an empty
+queue. And under BATCH with ``VF_PARENT_REPLICAS`` set, a child declares a
+parent finished only when every replica's terminator is recorded, every id those
+terminators count has been received (the union over the child's replicas), no join
+half is pending, and the broker reads *known and empty*: a duplicate terminator
+cannot finish a parent twice, an unobservable broker cannot finish it at all, and
+an ABORT recorded before a crash still outranks a clean end after the restart.
+
+Records with a partition key the node cannot use (absent, ``None``, empty, a
+container) are dead-lettered as ``VF_POISON_PARTITION_KEY`` by the node's first
+replica — never hashed as the string ``"None"`` into an undeclared hot partition —
+unless the node class declares a fallback partition (``partition_key_policy``).
 
 Teardown and incomplete cleanup
 -------------------------------

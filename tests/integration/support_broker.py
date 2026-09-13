@@ -18,20 +18,17 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from videoflow.core.compiler import NodeSpec
+from videoflow.core.node import Node
 from videoflow.messaging import topology
 from videoflow.wire.serialization import MSG_TYPE_DATA, derive_message_id, encode_envelope
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 
 
-class StubNode:
-    '''The minimum a messenger needs from a node: a name.'''
+class StubNode(Node):
+    '''The minimum a messenger needs from a node: a real ``Node`` with a name (and the contract's class-level declarations).'''
     def __init__(self, name : str) -> None:
-        self._name = name
-
-    @property
-    def name(self) -> str:
-        return self._name
+        super().__init__(name = name)
 
     def open(self) -> None:
         pass

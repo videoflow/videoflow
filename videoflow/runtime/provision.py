@@ -59,10 +59,12 @@ from typing import Sequence
 from ..backends.capabilities import (
     ADMISSION_TIMEOUT_ENV,
     PROFILE_REQUESTS_ENV,
+    RUNTIME_STORE_ENV,
     ProfileRequest,
     admission_timeout_from_env,
     requests_from_env,
 )
+from ..backends.outcomes import Known
 from ..core import constants
 from ..core.compiler import NodeSpec
 from ..core.errors import VideoflowError
@@ -73,6 +75,7 @@ from ..deploy.admission import (
     redis_payload_capabilities_observed,
     requirements_for,
     run_stream_names,
+    runtime_capabilities_observed,
     unknown_admission,
 )
 from ..messaging.topology import provision_flow_sync, read_back_streams, verify_channel_profiles
@@ -104,7 +107,8 @@ def admit_composition(nats_url : str, blob_redis_url : str | None, specs : Seque
     payload = redis_payload_capabilities_observed(blob_redis_url, timeout = timeout) if blob_redis_url else None
     admit(requirements_for(flow_type, specs, explicit), messaging, payload,
           payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit),
-          unknown_is_fatal = unknown_admission(explicit), where = 'provision')
+          unknown_is_fatal = unknown_admission(explicit), where = 'provision',
+          runtime = runtime_capabilities_observed(os.environ.get(RUNTIME_STORE_ENV)))
 
 def verify_provisioned_profiles(nats_url : str, specs : Sequence[NodeSpec], flow_id : str, run_id : str,
                                 flow_type : str, explicit : Sequence[ProfileRequest], replicas : int,
@@ -151,11 +155,21 @@ def provision() -> None:
     timeout = admission_timeout_from_env(os.environ.get(ADMISSION_TIMEOUT_ENV))
     if explicit or constants.RFC0006:
         admit_composition(nats_url, blob_redis_url, specs, flow_id, run_id, flow_type, explicit, timeout)
+    # D11: at-least-once durables get an unbounded broker cap only when the
+    # workers' ledger is durable and shared — read back from the same store URL
+    # the workers get, so the cap provisioned and the cap bound agree.
+    ledger_budget = constants.RFC0006 and ledger_durable_shared(os.environ.get(RUNTIME_STORE_ENV))
     provision_flow_sync(nats_url, specs, flow_id, run_id, flow_type,
-                        max_retries = max_retries, replicas = replicas)
+                        max_retries = max_retries, replicas = replicas, ledger_budget = ledger_budget)
     logger.info(f'Provisioned {len(specs)} node streams for flow {flow_id} run {run_id}')
     if explicit:
         verify_provisioned_profiles(nats_url, specs, flow_id, run_id, flow_type, explicit, replicas, timeout)
+
+def ledger_durable_shared(url : str | None) -> bool:
+    '''Whether the runtime store behind ``url`` reads back durable *and* shared across processes.'''
+    caps = runtime_capabilities_observed(url)
+    return isinstance(caps.durable, Known) and bool(caps.durable.value) and caps.shared_across_processes
+
 
 def main() -> None:
     logging.basicConfig(level = logging.INFO,

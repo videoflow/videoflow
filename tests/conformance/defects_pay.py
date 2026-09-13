@@ -231,14 +231,36 @@ and no ``VF-Replay-Target`` — every child of the parent reprocesses it.'''
 
 def hydrate_before_ownership(monkeypatch : pytest.MonkeyPatch) -> None:
     '''The reviewed pull loop decoded the whole envelope — payload included —
-    before asking ``_owns``: every replica fetched every frame to discard 7/8.'''
-    real = NATSMessenger._owns
+    before asking who owns it: every replica fetched every frame to discard 7/8.
+    Reproduced where the decision is taken today: the adapter's admission filter
+    (``_admit_on_loop``) and the receiving side's verdict (``_partition_verdict``).'''
+    from videoflow.wire.serialization import peek_envelope
+    real_admit = NATSMessenger._admit_on_loop
+    real_verdict = NATSMessenger._partition_verdict
 
-    def owns(self : NATSMessenger, entry : Any) -> bool:
-        if entry.blob_ref is not None and self._blob_store is not None:
-            self._blob_store.get(entry.blob_ref)
-        return real(self, entry)
-    monkeypatch.setattr(NATSMessenger, '_owns', owns)
+    def admit(self : NATSMessenger, delivery : Any) -> bool:
+        try:
+            ref = peek_envelope(delivery.envelope_bytes).get('blob_ref')
+        except Exception:  # noqa: BLE001
+            ref = None
+        if ref is not None and self._blob_store is not None:
+            self._blob_store.get(ref)
+        return real_admit(self, delivery)
+
+    real_admit_data = NATSMessenger._admit_data
+
+    def admit_data(self : NATSMessenger, parent_name : str, delivery : Any) -> Any:
+        # The receiving side of the reviewed loop: the payload fetched before ownership.
+        try:
+            ref = peek_envelope(delivery.envelope_bytes).get('blob_ref')
+        except Exception:  # noqa: BLE001
+            ref = None
+        if ref is not None and self._blob_store is not None:
+            self._blob_store.get(ref)
+        return real_admit_data(self, parent_name, delivery)
+    monkeypatch.setattr(NATSMessenger, '_admit_on_loop', admit)
+    monkeypatch.setattr(NATSMessenger, '_admit_data', admit_data)
+    assert real_verdict is not None
 
 
 # -- PAY-009: a fixed TTL, whatever is outstanding ---------------------------------------------------------

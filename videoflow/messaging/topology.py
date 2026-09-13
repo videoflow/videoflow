@@ -62,7 +62,7 @@ from ..core import constants
 from ..core.compiler import NodeSpec
 from ..core.constants import REALTIME
 from ..core.errors import BrokerUnavailable, IncompatibleProfile, UnobservableState
-from ..core.policies import DEFAULT_MAX_RETRIES, DeliveryPolicy
+from ..core.policies import AT_LEAST_ONCE, DEFAULT_MAX_RETRIES, DeliveryPolicy, JoinPolicy
 
 logger = logging.getLogger(__package__)
 
@@ -194,6 +194,21 @@ DEFAULT_MAX_ACK_PENDING = 8
 #: local queue depth plus two).
 LEGACY_BIND_CREDIT = DEFAULT_PREFETCH + 2
 
+def join_item_credit(parents : Sequence[str], join_policy : dict | None, flow_type : str) -> int:
+    '''
+    The per-replica processing credit a node needs: one input group for a
+    single-parent node; for a join, its policy's working set — every half of every
+    pending group plus the group being assembled (``JoinPolicy.working_set``) —
+    because a credit smaller than that lets an adversarial parent ordering fill
+    the durables with halves that can never complete (RUN-005). Provisioning and
+    the bind derive it identically.
+    '''
+    if len(parents) < 2:
+        return DEFAULT_ITEM_CREDIT
+    policy = JoinPolicy.from_dict(join_policy) if join_policy else None
+    return (policy or JoinPolicy.default_for(flow_type)).working_set(len(parents))
+
+
 def consumer_credit(nb_tasks : int, partitioned : bool, item_credit : int = DEFAULT_ITEM_CREDIT,
                     prefetch : int = DEFAULT_PREFETCH) -> int:
     '''
@@ -206,6 +221,22 @@ def consumer_credit(nb_tasks : int, partitioned : bool, item_credit : int = DEFA
     '''
     per_replica = item_credit + prefetch
     return per_replica if partitioned else nb_tasks * per_replica
+
+def credit_admits(effective_credit : int, partitioned : bool, item_credit : int = DEFAULT_ITEM_CREDIT,
+                  prefetch : int = DEFAULT_PREFETCH) -> int:
+    '''
+    The inverse of ``consumer_credit``: how many replicas an *effective*
+    ``max_ack_pending`` (read back from the broker) lets hold ``item_credit``
+    inputs in processing plus ``prefetch`` parked at the same time. A plan that
+    admits more replicas than this is incompatible with the durable as it stands
+    — the surplus replicas start but never hold an input (RUN-024): the credit
+    must be re-derived and updated, not the replicas added. A per-replica
+    (partitioned) durable serves one replica whatever its credit.
+    '''
+    per_replica = item_credit + prefetch
+    if partitioned:
+        return 1 if effective_credit >= per_replica else 0
+    return max(0, effective_credit // per_replica)
 
 def _labels(flow_id : str, run_id : str, node : str, kind : str,
             generation : str | None) -> dict[str, str] | None:
@@ -271,7 +302,7 @@ def dlq_stream_config(flow_id : str, replicas : int = 1) -> StreamConfig:
     )
 
 def max_deliver_for(flow_type : str, max_retries : int = DEFAULT_MAX_RETRIES,
-                    delivery : dict | None = None) -> int:
+                    delivery : dict | None = None, ledger_budget : bool = False) -> int:
     '''
     Broker-side delivery cap for one node's durables.
 
@@ -286,8 +317,17 @@ def max_deliver_for(flow_type : str, max_retries : int = DEFAULT_MAX_RETRIES,
         - flow_type: supplies the preset.
         - max_retries: deployment-level retry count (``VF_MAX_RETRIES``).
         - delivery: the node's own override, as a dict (``NodeSpec.delivery``).
+        - ledger_budget: the retry budget is enforced by the runtime ledger's \
+            attempt counts (RFC 0006 ``STREAM-15``, decision D11: only with a \
+            durable, shared runtime store), so an at-least-once durable is \
+            provisioned with ``max_deliver = -1`` — the broker never strands a \
+            message; a worker-fatal redelivery never counts. Best-effort durables \
+            keep their cap of 1 either way.
     '''
-    return DeliveryPolicy.resolve(flow_type, delivery, max_retries).max_deliver
+    policy = DeliveryPolicy.resolve(flow_type, delivery, max_retries)
+    if ledger_budget and policy.delivery == AT_LEAST_ONCE:
+        return -1
+    return policy.max_deliver
 
 def consumer_config_for(flow_id : str, run_id : str, consumer_node_name : str,
                         parent_node_name : str, ack_wait : int = 60, max_deliver : int = 1,
@@ -542,7 +582,7 @@ async def _ensure_consumer(js : JetStreamContext, stream_name : str, config : Co
 async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run_id : str, flow_type : str,
                         max_retries : int = DEFAULT_MAX_RETRIES, ack_wait : int = 60,
                         max_ack_pending : int | None = None, generation : str | None = None,
-                        replicas : int = 1) -> None:
+                        replicas : int = 1, ledger_budget : bool = False) -> None:
     '''
     Idempotently create every stream and durable consumer a flow needs, before any
     worker publishes. Required for BATCH: under INTEREST retention a message
@@ -562,6 +602,9 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
             this provisioning created. None leaves that label out.
         - replicas: stream copies to request (a replicated broker profile's \
             ``jetstream_replicas``); read back and reported like every other field.
+        - ledger_budget: provision at-least-once durables with ``max_deliver = -1`` \
+            because the workers' runtime ledger enforces the retry budget \
+            (``max_deliver_for``); the workers derive the same from the same store.
     '''
     js = nc.jetstream()
     by_name = {spec.name: spec for spec in specs}
@@ -590,12 +633,13 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
         nb_tasks = spec.nb_tasks
         # Per node, not per flow: a node may override its delivery mode, and the
         # durable created here must match the one its worker binds.
-        max_deliver = max_deliver_for(flow_type, max_retries, spec.delivery)
+        max_deliver = max_deliver_for(flow_type, max_retries, spec.delivery, ledger_budget = ledger_budget)
         partitioned = bool(partition_by and nb_tasks > 1)
         if max_ack_pending is not None:
             credit = max_ack_pending
         elif constants.RFC0006:
-            credit = consumer_credit(nb_tasks, partitioned)
+            credit = consumer_credit(nb_tasks, partitioned,
+                                     item_credit = join_item_credit(spec.parents, spec.join_policy, flow_type))
         else:
             credit = DEFAULT_MAX_ACK_PENDING
         for parent_name in spec.parents:

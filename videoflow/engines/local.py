@@ -31,6 +31,7 @@ from ..core import constants
 from ..core.compiler import (
     NodeSpec,
     blob_reader_ids,
+    parent_replicas,
     specs_from_tasks_data,
     validate_wire_compatibility,
 )
@@ -245,12 +246,21 @@ class LocalProcessEngine(ExecutionEngine):
                                 gpu_devices = gpu_assignment.get((spec.name, replica_idx)),
                                 profile_requests = self._profile_requests,
                                 blob_reader_ids = (blob_reader_ids(spec, specs)
-                                                   if constants.RFC0006 else None))
+                                                   if constants.RFC0006 else None),
+                                parent_replicas = (parent_replicas(spec, specs)
+                                                   if constants.RFC0006 else None),
+                                runtime_store_url = self._runtime_store_url() if constants.RFC0006 else None)
                 env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
                 # Kept so a restart relaunches the identical worker, and so the
                 # supervisor never has to re-derive an environment.
                 self._launchers[(spec.name, replica_idx)] = (spec, env)
                 self._start_worker(spec, replica_idx, attempt = 0)
+
+    def _runtime_store_url(self) -> str:
+        '''The run ledger of a local run (RFC 0006 ENV-10): a file store beside the termination logs, shared by every worker.'''
+        if self._termination_dir is None:
+            self._termination_dir = tempfile.mkdtemp(prefix = 'videoflow-term-')
+        return 'file://' + os.path.join(self._termination_dir, 'ledger')
 
     def _termination_log_path(self, node : str, replica_idx : int) -> str:
         if self._termination_dir is None:
@@ -618,7 +628,9 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
                 blob_ttl_seconds : int | None = None,
                 gpu_devices : list[int] | None = None,
                 profile_requests : dict[str, str] | None = None,
-                blob_reader_ids : list[str] | None = None) -> dict:
+                blob_reader_ids : list[str] | None = None,
+                parent_replicas : list[int] | None = None,
+                runtime_store_url : str | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -666,6 +678,12 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
     if blob_reader_ids:
         # Reader obligations by identity (RFC 0006 BLOB-13); only rendered under the switch.
         env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
+    if parent_replicas:
+        # The EOS-7 barrier's expectation per parent (RFC 0006 ENV-11); under the switch only.
+        env['VF_PARENT_REPLICAS'] = ','.join(str(n) for n in parent_replicas)
+    if runtime_store_url:
+        # The run ledger (RFC 0006 ENV-10); under the switch only.
+        env['VF_RUNTIME_STORE_URL'] = runtime_store_url
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
     if spec.device_type == 'gpu' and not _runs_via_docker(spec):

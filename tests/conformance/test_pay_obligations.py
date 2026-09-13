@@ -349,11 +349,13 @@ _CHILD_SCRIPT = textwrap.dedent('''
     import os, sys
     from videoflow.backends import faults
     faults.FaultSchedule.from_env().install()                 # what the worker does at start (ENV-16)
+    from videoflow.core.node import Node as _Base
     from videoflow.messaging.nats_messenger import NATSMessenger
     from videoflow.wire.redis_payload_store import RedisPayloadStore
 
-    class Node:
-        name = 'child'
+    class Node(_Base):
+        def __init__(self):
+            super().__init__(name = 'child')
         def open(self): pass
         def close(self): pass
 

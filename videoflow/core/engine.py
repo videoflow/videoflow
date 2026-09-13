@@ -103,6 +103,25 @@ class Messenger:
         '''
         pass
 
+    def checkpoint(self, state : bytes) -> None:
+        '''
+        Record the node's state together with the identity of the input group
+        being processed, in one write (RFC 0006 ``CTRL-4``). Default: no-op.
+        '''
+        pass
+
+    def restore_checkpoint(self) -> Optional[bytes]:
+        '''The last checkpointed state of this node in the run, or ``None``. Default: ``None``.'''
+        return None
+
+    def resume_offset(self) -> int:
+        '''
+        For a replayable producer (RFC 0006 ``MSGID-6``): the last source offset
+        whose publication was *accepted* before a restart, so the source resumes
+        from the next one. Default: 0 (start from the beginning; a live source).
+        '''
+        return 0
+
     def take_drops(self) -> Dict[str, int]:
         '''
         Inputs the messenger gave up on since the last call, by reason — the drops

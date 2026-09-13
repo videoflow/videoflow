@@ -185,11 +185,20 @@ class FlowRequirements:
     #: fault model, MSG-021): ``f`` needs persistent storage and ``2f + 1`` stream
     #: copies, read back — never inferred from durable names or pod counts.
     tolerated_failures : int = 0
+    #: What each sink declares about its external effects (``ConsumerNode.effect_guarantee``,
+    #: only the non-default ``idempotent_key`` declarations): the one thing that can
+    #: admit ``exactly_once_effects`` for it (RUN-017).
+    sink_guarantees : Mapping[str, str] = field(default_factory = dict)
+    #: How long effect markers are kept, and how far back a replay may reach: a
+    #: marker that expires inside the replay horizon cannot certify exactly-once.
+    effect_retention_seconds : float | None = None
+    replay_horizon_seconds : float | None = None
 
     def is_empty(self) -> bool:
         return (not self.profiles and not self.restart_safe and not self.exactly_once_effects
                 and not self.resources and self.priority_class is None and self.rollout_policy is None
-                and not self.tolerated_failures)
+                and not self.tolerated_failures and not self.sink_guarantees
+                and self.effect_retention_seconds is None and self.replay_horizon_seconds is None)
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -203,6 +212,12 @@ class FlowRequirements:
         if self.tolerated_failures:
             # Only when set: a document without it is exactly what it always was.
             d['tolerated_failures'] = self.tolerated_failures
+        if self.sink_guarantees:
+            d['sink_guarantees'] = dict(self.sink_guarantees)
+        if self.effect_retention_seconds is not None:
+            d['effect_retention_seconds'] = self.effect_retention_seconds
+        if self.replay_horizon_seconds is not None:
+            d['replay_horizon_seconds'] = self.replay_horizon_seconds
         return d
 
     @staticmethod
@@ -217,6 +232,9 @@ class FlowRequirements:
             priority_class = d.get('priority_class'),
             rollout_policy = d.get('rollout_policy'),
             tolerated_failures = int(d.get('tolerated_failures') or 0),
+            sink_guarantees = {str(k): str(v) for k, v in (d.get('sink_guarantees') or {}).items()},
+            effect_retention_seconds = d.get('effect_retention_seconds'),
+            replay_horizon_seconds = d.get('replay_horizon_seconds'),
         )
 
 def profile_for_edge(flow_type : str, delivery : Mapping[str, Any] | None) -> str:
@@ -419,9 +437,20 @@ def plan_composition(requirements : FlowRequirements, messaging : MessagingCapab
                        'Use a durable payload store (Redis with appendonly and noeviction on a volume).')
 
     for sink in requirements.exactly_once_effects:
-        reject(sink, 'exactly_once_effects', 'no backend can make an external effect exactly-once; only a '
-               'sink using its external system\'s idempotency key or transaction can',
-               f'Declare {sink!r} idempotent with an external key, or accept at-least-once effects.')
+        guarantee = requirements.sink_guarantees.get(sink, EFFECT_AT_LEAST_ONCE)
+        if guarantee != EFFECT_IDEMPOTENT_KEY:
+            reject(sink, 'exactly_once_effects', 'no backend can make an external effect exactly-once; only a '
+                   'sink using its external system\'s idempotency key or transaction can (a runtime marker '
+                   'alone certifies nothing)',
+                   f'Declare {sink!r} idempotent with an external key (effect_guarantee = '
+                   f'{EFFECT_IDEMPOTENT_KEY!r}), or accept at-least-once effects.')
+            continue
+        kept, horizon = requirements.effect_retention_seconds, requirements.replay_horizon_seconds
+        if kept is not None and horizon is not None and kept < horizon:
+            reject(sink, 'exactly_once_effects',
+                   f'effect markers are kept {kept:.0f}s but a replay may reach {horizon:.0f}s back, so a '
+                   'replayed input past the marker would apply its effect again',
+                   f'Keep effect markers for at least {horizon:.0f}s (the replay horizon), or shorten the horizon.')
 
     if definite:
         raise IncompatibleProfile(
@@ -443,6 +472,15 @@ def realtime_default_capabilities_note(flow_type : str) -> str:
     return (f'{flow_type}: ' + (f'{RELIABLE_WORK} on every channel' if flow_type == BATCH
                                 else f'{LIVE_LATEST} on every channel')) if flow_type in (BATCH, REALTIME) else flow_type
 
+
+#: What a sink can promise about its external effects (``ConsumerNode.effect_guarantee``).
+EFFECT_AT_LEAST_ONCE = 'at_least_once'
+EFFECT_IDEMPOTENT_KEY = 'idempotent_key'
+
+#: The runtime store's URL (RFC 0006 ENV-10): the ledger every worker of the run keeps its records in.
+RUNTIME_STORE_ENV = 'VF_RUNTIME_STORE_URL'
+#: The per-parent replica counts (ENV-11), positionally aligned with VF_PARENT_NAMES.
+PARENT_REPLICAS_ENV = 'VF_PARENT_REPLICAS'
 
 #: The environment variable carrying an operator's explicit channel-profile
 #: requests to a worker (``deploy --require-profile``); absent when none were made,

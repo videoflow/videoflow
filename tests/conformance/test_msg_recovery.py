@@ -11,10 +11,12 @@ control on the model with the reviewed defect monkeypatched in (``defects.py``).
 MSG-008, MSG-009 and MSG-010 drive the real ``NATSMessenger`` — its delivery ladder,
 dead-letter publish and poison classification — over either backend; MSG-011 and
 MSG-012 drive the ``MessagingBackend`` contract directly. The parts of MSG-008,
-MSG-009 and MSG-012 that need the Phase-3 runtime ledger (an attempt budget kept
-outside the broker with ``max_deliver = -1``, a ``pending_handoff`` record that
-survives a restart, a stranded-work record that survives a restart) are separate
-``ledger`` variants, pending until that phase lands.
+MSG-009 and MSG-012 that need the runtime ledger (an attempt budget kept outside
+the broker with ``max_deliver = -1``, a ``pending_handoff`` record that survives a
+restart, a stranded-work record that survives a restart) are the ``ledger``
+variants: broker-level, each worker "process" a messenger over the same
+``FileRuntimeStore`` (``file://``, durable and shared on one host), the durables
+provisioned at the ledger budget (STREAM-15, decision D11).
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -27,10 +29,11 @@ import defects
 import pytest
 from _brokers import unique_ids
 from _msgdrivers import JetStreamDriver, MemoryDriver, digest, spec
+from _runs3 import ledger_runtime, messengers, provision_with_ledger, status_unresolved
 
 from videoflow.backends import faults
 from videoflow.backends.capabilities import RELIABLE_WORK, RETENTION_INTEREST
-from videoflow.backends.messaging import Completed, Retry, Terminal
+from videoflow.backends.messaging import ChannelId, Completed, Retry, Terminal
 from videoflow.backends.outcomes import Known, SettleConfirmed, SettleStale, Unknown
 from videoflow.core import constants
 from videoflow.core.constants import BATCH
@@ -158,14 +161,82 @@ def test_msg_008_memory_worker_fatal_is_naked_and_completed_by_the_replacement(e
 @pytest.mark.case('MSG-008')
 @pytest.mark.level('broker')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_msg_008_ledger_budget_survives_the_final_broker_delivery() -> None:
+@pytest.mark.timeout(NATS_TIMEOUT)
+def test_msg_008_ledger_budget_survives_the_final_broker_delivery(nats_url, evidence_dir, monkeypatch, tmp_path) -> None:
     '''
     STREAM-15's separated budgets: the durable provisioned with ``max_deliver = -1``
-    and the retry budget kept by ``FlowRuntime.attempts_for``, which a worker-fatal
-    failure never increments — so A at its *final processing attempt* is still
-    redelivered to the replacement. Needs the Phase-3 runtime ledger.
+    and the retry budget (``max_retries + 1`` counted attempts) kept by the ledger's
+    attempt counts, which a worker-fatal failure never increments — so A, past what
+    would have been its final broker delivery, is still redelivered to the
+    replacement and completes, while a transient failure that does exhaust the
+    ledger's budget is dead-lettered by the ledger, not stranded by the broker.
     '''
+    monkeypatch.setattr(constants, 'RFC0006', True)
+    flow, run = unique_ids('msg008l')
+    driver = JetStreamDriver(nats_url, flow, run)
+    root = str(tmp_path / 'ledger')
+    record : Dict[str, Any] = {'flow': flow, 'run': run, 'store': f'file://{root}'}
+    try:
+        provision_with_ledger(driver, [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)],
+                              BATCH, max_retries = 1)
+        effective = driver.subscription_effective(ChannelId(flow, run, 'parent'), 'child')
+        assert effective['max_deliver'] == -1, effective                # the broker never strands
+        record['durable'] = effective
+        with messengers() as pool:
+            w1 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            assert w1._max_deliver == -1
+            a = driver.publish_parent('parent', 'A', 1, {'input': 'A'})
+            group = driver.receive_group(w1, timeout = 30)
+            assert group['parent']['message'] == {'input': 'A'}
+            started = time.monotonic()
+            w1.fail_inputs(DeviceError('injected worker-fatal: device lost', remedy = 'replace the worker'))
+            assert ledger_runtime(root, flow, run, 'child').attempts_for(a) == 0, 'a worker-fatal failure counted against the budget'
+            assert driver.dlq('child') == [] and 'exhausted' not in w1.take_drops()
+            pool.close(w1)                                              # the breaker takes the worker out
+            # The replacement (a new process over the same ledger) sees A again — at
+            # its second broker delivery, with a budget of two counted attempts — fails
+            # it transiently once (counted), then worker-fatally (not counted), and
+            # is still delivered A a fourth time: past the STREAM-5 cap of two.
+            w2 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            group = driver.receive_group(w2, timeout = 60)
+            assert group['parent']['message'] == {'input': 'A'}
+            assert w2._inflight_handles[0].num_delivered == 2
+            w2.fail_inputs(TransientFailure('injected transient', remedy = 'retry'))
+            assert ledger_runtime(root, flow, run, 'child').attempts_for(a) == 1
+            group = driver.receive_group(w2, timeout = 60)
+            assert group['parent']['message'] == {'input': 'A'} and w2._inflight_handles[0].num_delivered == 3
+            w2.fail_inputs(DeviceError('injected worker-fatal at what the broker would have called the final delivery'))
+            assert ledger_runtime(root, flow, run, 'child').attempts_for(a) == 1
+            assert driver.dlq('child') == [], 'a worker-fatal failure at the budget was dead-lettered'
+            pool.close(w2)
+            w3 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            group = driver.receive_group(w3, timeout = 60)
+            assert group['parent']['message'] == {'input': 'A'}
+            delivered = w3._inflight_handles[0].num_delivered
+            assert delivered >= 4, delivered
+            w3.ack_inputs()
+            record['A'] = {'message_id': a, 'deliveries': delivered, 'counted_attempts': 1,
+                           'recovery_seconds': time.monotonic() - started}
+            assert _settled(driver, 'child', 'parent', 20), driver.consumer_state('child', 'parent')
+            assert status_unresolved(w3, 'parent') == 0 and driver.dlq('child') == []
+            # The ledger enforces the budget it took over: B's second counted failure
+            # is dead-lettered at the broker's second delivery, and reported as exhausted.
+            b = driver.publish_parent('parent', 'B', 2, {'input': 'B'})
+            for attempt in (1, 2):
+                group = driver.receive_group(w3, timeout = 60)
+                assert group['parent']['message'] == {'input': 'B'} and w3._inflight_handles[0].num_delivered == attempt
+                w3.fail_inputs(TransientFailure(f'injected transient #{attempt}', remedy = 'retry'))
+            assert ledger_runtime(root, flow, run, 'child').attempts_for(b) == 2
+            assert driver.until(lambda: len(driver.dlq('child')) == 1, 20), driver.dlq('child')
+            headers = driver.dlq('child')[0]['headers']
+            assert headers['VF-Num-Delivered'] == '2' and headers['VF-Disposition'] == 'transient', headers
+            assert w3.take_drops().get('exhausted') == 1
+            assert _settled(driver, 'child', 'parent', 20), driver.consumer_state('child', 'parent')
+            assert status_unresolved(w3, 'parent') == 0
+            record['B'] = {'message_id': b, 'dead_letter': headers}
+    finally:
+        driver.close()
+        _write(evidence_dir, 'ledger_budget.json', record)
 
 
 @pytest.mark.negative_control(of = 'MSG-008')
@@ -283,14 +354,76 @@ def test_msg_009_memory_dlq_outage_keeps_the_input_until_the_record_exists(evide
 @pytest.mark.case('MSG-009')
 @pytest.mark.level('broker')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_msg_009_pending_handoff_record_survives_the_worker_restart() -> None:
+@pytest.mark.timeout(NATS_TIMEOUT)
+def test_msg_009_pending_handoff_record_survives_the_worker_restart(nats_url, evidence_dir, monkeypatch, tmp_path) -> None:
     '''
-    DELIV-15's ``pending_handoff`` record: a failed dead-letter publish at the last
-    allowed attempt is written to the runtime store, so a restarted worker retries
-    the dead letter under the same ``Nats-Msg-Id`` without depending on a NAK the
-    broker's cap would refuse. Needs the Phase-3 runtime ledger.
+    DELIV-15's ``pending_handoff`` record: a dead-letter publish that is not accepted
+    is written to the runtime store, so a replacement process retries it at start
+    under the same ``Nats-Msg-Id`` — while the DLQ is still down the record stays;
+    once it is back the very next replacement records the dead letter before it
+    receives anything — and recovery never depends on a NAK past a broker cap
+    (``max_deliver = -1``). Exactly one dead letter identifies A.
     '''
+    monkeypatch.setattr(constants, 'RFC0006', True)
+    flow, run = unique_ids('msg009l')
+    driver = JetStreamDriver(nats_url, flow, run)
+    root = str(tmp_path / 'ledger')
+    record : Dict[str, Any] = {'flow': flow, 'run': run, 'store': f'file://{root}'}
+    try:
+        provision_with_ledger(driver, [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)],
+                              BATCH, max_retries = 1)
+        with messengers() as pool:
+            w1 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            a = driver.publish_parent('parent', 'A', 1, {'input': 'A'})
+            group = driver.receive_group(w1, timeout = 30)
+            assert group['parent']['message'] == {'input': 'A'}
+            driver.dlq_outage('child')
+            outage_started = time.monotonic()
+            w1.fail_inputs(SchemaError('injected poison A', remedy = 'fix the producer'))
+            assert driver.dlq('child') == [], 'a dead letter was claimed while the DLQ was unavailable'
+            # The durable handoff intent, visible to a process that never saw the delivery.
+            handoffs = ledger_runtime(root, flow, run, 'child').pending_handoffs()
+            assert len(handoffs) == 1, handoffs
+            handoff = handoffs[0]
+            assert handoff.record_id.startswith(f'dlq:{flow}:{run}:child:') and handoff.headers['VF-Code'] == 'VF_POISON_SCHEMA'
+            assert handoff.headers['Nats-Msg-Id'] == handoff.record_id
+            kept = driver.consumer_state('child', 'parent')
+            assert isinstance(kept, Known) and sum(kept.value) >= 1, kept
+            assert status_unresolved(w1, 'parent') == 1, w1.subscription_status()
+            record['during_outage'] = {'message_id': a, 'handoff': handoff.record_id, 'attempts': handoff.attempts,
+                                       'consumer_state': kept.value}
+            pool.close(w1)                                              # restart while the DLQ is still down
+            w2 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            still = ledger_runtime(root, flow, run, 'child').pending_handoffs()
+            assert [h.record_id for h in still] == [handoff.record_id], 'the record did not survive the restart'
+            assert driver.dlq('child') == []
+            assert status_unresolved(w2, 'parent') == 1, 'the replacement does not see the stranded input'
+            pool.close(w2)
+            driver.dlq_restore('child')
+            # The next replacement records the dead letter at start, from the ledger,
+            # before it has received anything.
+            w3 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 1)
+            assert ledger_runtime(root, flow, run, 'child').pending_handoffs() == []
+            dlq = driver.dlq('child')
+            assert len(dlq) == 1 and dlq[0]['headers']['Nats-Msg-Id'] == handoff.record_id, [d['headers'] for d in dlq]
+            assert dlq[0]['headers']['VF-Num-Delivered'] == '1'
+            record['recorded_at_start'] = {'seconds_after_outage': time.monotonic() - outage_started,
+                                           'headers': dict(dlq[0]['headers'])}
+            # A is redelivered (the broker cap is the ledger's), fails again, and its
+            # terminal settlement coalesces onto the record already there.
+            group = driver.receive_group(w3, timeout = 60)
+            assert group['parent']['message'] == {'input': 'A'} and w3._inflight_handles[0].num_delivered == 2
+            w3.fail_inputs(SchemaError('injected poison A, second delivery'))
+            dlq = driver.dlq('child')
+            assert len(dlq) == 1 and dlq[0]['headers']['Nats-Msg-Id'] == handoff.record_id, [d['headers'] for d in dlq]
+            assert _settled(driver, 'child', 'parent', 20), driver.consumer_state('child', 'parent')
+            assert status_unresolved(w3, 'parent') == 0
+            assert ledger_runtime(root, flow, run, 'child').pending_handoffs() == []
+            record['terminal_record'] = dict(dlq[0]['headers'])
+            record['recovery_seconds'] = time.monotonic() - outage_started
+    finally:
+        driver.close()
+        _write(evidence_dir, 'handoff_ledger.json', record)
 
 
 @pytest.mark.negative_control(of = 'MSG-009')
@@ -462,9 +595,10 @@ def test_msg_010_memory_without_the_switch_terminates_against_the_terminal_log(e
         assert group['parent']['message'] == {'sentinel': 1}
         w.ack_inputs()
         assert driver.dlq('child') == []
-        assert len(w._terminal_log) == 1 and w._terminal_log[0]['reason'] == 'undecodable', w._terminal_log
-        assert w._terminal_log[0]['code'] == 'VF_POISON_DECODE'
-        _write(evidence_dir, 'terminal_log.json', {'entries': w._terminal_log})
+        entries = w.terminal_entries()
+        assert len(entries) == 1 and entries[0]['reason'] == 'undecodable', entries
+        assert entries[0]['code'] == 'VF_POISON_DECODE'
+        _write(evidence_dir, 'terminal_log.json', {'entries': entries})
         w.close()
     finally:
         driver.close()
@@ -658,13 +792,89 @@ def test_msg_012_memory_status_is_unresolved_then_unknown_then_safe_zero(evidenc
 @pytest.mark.case('MSG-012')
 @pytest.mark.level('broker')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_msg_012_stranded_work_is_durable_across_worker_restarts() -> None:
+@pytest.mark.timeout(NATS_TIMEOUT)
+def test_msg_012_stranded_work_is_durable_across_worker_restarts(nats_url, evidence_dir, monkeypatch, tmp_path) -> None:
     '''
-    A ``pending_handoff`` record in the runtime store makes an exhausted input
-    visible to a *replacement* worker, not only to the process that saw the
-    advisory. Needs the Phase-3 runtime ledger.
+    Under the ledger budget nothing is stranded by a broker cap, so exhausted work
+    is what the *ledger* says is exhausted and unrecorded: an input whose counted
+    attempts are spent and whose dead letter could not be written. That record
+    (``pending_handoff``) survives the process that failed it — a replacement
+    reports ``unresolved >= 1`` on the same subscription and the broker's counters
+    never read as all-done — an API failure is Unknown, never empty, and the
+    node's terminal log (a delivery ended against the ledger, ``dlq: off``) is
+    read back by a new process too.
     '''
+    monkeypatch.setattr(constants, 'RFC0006', True)
+    flow, run = unique_ids('msg012l')
+    driver = JetStreamDriver(nats_url, flow, run)
+    root = str(tmp_path / 'ledger')
+    record : Dict[str, Any] = {'flow': flow, 'run': run, 'store': f'file://{root}'}
+    try:
+        provision_with_ledger(driver, [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False),
+                                       spec('parent_t', [], 'producer', True), spec('sink', ['parent_t'], 'consumer', False)],
+                              BATCH, max_retries = 0)
+        with messengers() as pool:
+            w1 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 0)
+            a = driver.publish_parent('parent', 'A', 1, {'input': 'A'})
+            group = driver.receive_group(w1, timeout = 30)
+            assert group['parent']['message'] == {'input': 'A'}
+            driver.dlq_outage('child')
+            w1.fail_inputs(TransientFailure('injected transient at the budget', remedy = 'retry'))   # budget of one: exhausted
+            assert w1.take_drops().get('exhausted') == 1
+            before = w1.subscription_status()['parent']
+            assert isinstance(before, Known) and before.value.unresolved >= 1, before
+            assert (before.value.available, before.value.leased) != (0, 0) or before.value.unresolved >= 1
+            fresh = ledger_runtime(root, flow, run, 'child')            # a process that never saw the delivery
+            assert len(fresh.pending_handoffs()) == 1, fresh.pending_handoffs()
+            assert fresh.pending_handoffs()[0].record_id.startswith(f'dlq:{flow}:{run}:child:')
+            record['before_restart'] = {'message_id': a, 'observation': str(before.value),
+                                        'handoffs': [h.record_id for h in fresh.pending_handoffs()]}
+            pool.close(w1)
+            # A replacement, during the outage: the stranded input is its unresolved
+            # work too, and an API failure is unknown, never empty.
+            w2 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 0)
+            assert status_unresolved(w2, 'parent') == 1, w2.subscription_status()
+            replacement_view = w2.subscription_status()['parent']
+            assert isinstance(replacement_view, Known) and not (replacement_view.value.available == 0
+                                                                and replacement_view.value.leased == 0
+                                                                and replacement_view.value.unresolved == 0)
+            schedule = faults.FaultSchedule({'observe.subscription.before': faults.RaiseError(
+                lambda: PermissionError('injected: consumer info denied'))})
+            with schedule:
+                denied = w2.subscription_status()['parent']
+            assert isinstance(denied, Unknown) and denied.reason == 'api', denied
+            record['during_fault'] = str(denied)
+            record['replacement_view'] = str(replacement_view.value)
+            pool.close(w2)
+            # Restore and resolve: the next process records the dead letter at start,
+            # and A's next delivery is terminated against it.
+            driver.dlq_restore('child')
+            w3 = pool.ledger_messenger(driver, root, 'child', ['parent'], max_retries = 0)
+            assert ledger_runtime(root, flow, run, 'child').pending_handoffs() == []
+            assert len(driver.dlq('child')) == 1
+            group = driver.receive_group(w3, timeout = 60)
+            assert group['parent']['message'] == {'input': 'A'}
+            w3.fail_inputs(TransientFailure('injected transient after restoration'))
+            assert _settled(driver, 'child', 'parent', 20), driver.consumer_state('child', 'parent')
+            after = w3.subscription_status()['parent']
+            assert isinstance(after, Known) and (after.value.available, after.value.leased, after.value.unresolved) == (0, 0, 0)
+            assert len(driver.dlq('child')) == 1
+            record['after_resolution'] = {'observation': str(after.value), 'dead_letter': dict(driver.dlq('child')[0]['headers'])}
+            # The terminal log: a delivery ended without a dead letter (dlq off) leaves a
+            # ledger record that a new process reads back.
+            sink = pool.ledger_messenger(driver, root, 'sink', ['parent_t'], max_retries = 0, delivery = {'dlq': 'off'})
+            driver.publish_parent('parent_t', 'T', 1, {'input': 'T'})
+            group = driver.receive_group(sink, timeout = 30)
+            assert group['parent_t']['message'] == {'input': 'T'}
+            sink.fail_inputs(SchemaError('injected poison T'))
+            pool.close(sink)
+            entries = ledger_runtime(root, flow, run, 'sink').terminal_entries()
+            assert len(entries) == 1 and entries[0]['code'] == 'VF_POISON_SCHEMA' and entries[0]['reason'] == 'terminated', entries
+            assert _settled(driver, 'sink', 'parent_t', 20)
+            record['terminal_log'] = entries
+    finally:
+        driver.close()
+        _write(evidence_dir, 'stranded_ledger.json', record)
 
 
 @pytest.mark.negative_control(of = 'MSG-012')
