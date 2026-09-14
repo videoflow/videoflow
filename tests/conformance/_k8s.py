@@ -12,6 +12,7 @@ from __future__ import absolute_import, division, print_function
 import asyncio
 import contextlib
 import json
+import os
 import re
 import subprocess
 import time
@@ -153,3 +154,155 @@ def wait_for_leader(nats_url : str, stream : str, timeout : float = 180.0) -> Di
             last = e
         time.sleep(2)
     raise TimeoutError(f'stream {stream} has no leader after {timeout:.0f}s (last error: {last!r})')
+
+
+# -- GPU pool workloads for the capacity/rollout cases (plan Phase 4) ----------------
+
+TEST_LABEL = 'videoflow.io/conformance'
+DEFAULT_REGISTRY = '10.128.81.10:5000'
+
+
+def base_image() -> str:
+    '''The pushed videoflow base image (``scripts/k3s-test-up.sh``), used as an inert GPU holder.'''
+    return f'{os.environ.get("VF_K8S_IMAGE_REGISTRY", DEFAULT_REGISTRY)}/videoflow-base:py3.12'
+
+
+def gpu_holder_deployment(name : str, namespace : str, nodes : List[str], gpus : int, replicas : int = 1,
+                          strategy : Optional[Dict[str, Any]] = None, generation : str = 'a',
+                          resources : Optional[Dict[str, Dict[str, str]]] = None,
+                          expressions : Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
+    '''
+    A Deployment whose pods hold ``gpus`` devices each and do nothing (``sleep``),
+    pinned to ``nodes`` with the same affinity/tolerations/runtime class the
+    renderer puts on a GPU worker, at the ``cluster-batch`` priority so it yields
+    to training work. ``generation`` is an env value whose change forces a rollout.
+    '''
+    terms = [{'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': list(nodes)}] + list(expressions or [])
+    limits : Dict[str, Any] = {'nvidia.com/gpu': gpus}
+    container_resources : Dict[str, Any] = {'limits': dict(limits, **(resources or {}).get('limits', {}))}
+    if (resources or {}).get('requests'):
+        container_resources['requests'] = dict((resources or {})['requests'])
+    spec : Dict[str, Any] = {
+        'replicas': replicas,
+        'selector': {'matchLabels': {'app': name}},
+        'template': {
+            'metadata': {'labels': {'app': name, TEST_LABEL: 'true', 'app.kubernetes.io/managed-by': 'videoflow'}},
+            'spec': {
+                'priorityClassName': 'cluster-batch',
+                'runtimeClassName': 'nvidia',
+                'terminationGracePeriodSeconds': 5,
+                'tolerations': [{'key': 'nvidia.com/gpu', 'operator': 'Exists', 'effect': 'NoSchedule'}],
+                'affinity': {'nodeAffinity': {'requiredDuringSchedulingIgnoredDuringExecution': {
+                    'nodeSelectorTerms': [{'matchExpressions': terms}]}}},
+                'containers': [{
+                    'name': 'holder', 'image': base_image(), 'imagePullPolicy': 'IfNotPresent',
+                    'command': ['sleep', 'infinity'],
+                    'env': [{'name': 'VF_CONFORMANCE_GENERATION', 'value': generation}],
+                    'resources': container_resources,
+                }],
+            },
+        },
+    }
+    if strategy:
+        spec['strategy'] = strategy
+    return {'apiVersion': 'apps/v1', 'kind': 'Deployment',
+            'metadata': {'name': name, 'namespace': namespace, 'labels': {TEST_LABEL: 'true', 'app': name}},
+            'spec': spec}
+
+
+def apply(manifest : Dict[str, Any]) -> None:
+    proc = subprocess.run(['kubectl', 'apply', '-f', '-'], input = json.dumps(manifest), capture_output = True,
+                          text = True, check = False, timeout = 60)
+    if proc.returncode != 0:
+        raise RuntimeError(f'kubectl apply failed: {proc.stderr.strip()}')
+
+
+def delete_workload(namespace : str, name : str, timeout : float = 180.0) -> None:
+    '''Delete a holder Deployment and wait until its pods are gone: a Terminating pod still holds
+    its devices in the API, and the next case reads free capacity from the pods it sees.'''
+    subprocess.run(['kubectl', 'delete', 'deployment', name, '-n', namespace, '--ignore-not-found', '--wait=true',
+                    '--timeout=120s'], capture_output = True, text = True, check = False, timeout = 150)
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and pods(namespace, f'app={name}'):
+        time.sleep(2)
+
+
+def rollout_status(namespace : str, name : str, timeout : float) -> tuple[bool, str]:
+    '''``kubectl rollout status`` bounded by ``timeout``: (completed, last output).'''
+    proc = subprocess.run(['kubectl', 'rollout', 'status', f'deployment/{name}', '-n', namespace,
+                           f'--timeout={int(timeout)}s'], capture_output = True, text = True, check = False,
+                          timeout = timeout + 30)
+    return proc.returncode == 0, (proc.stdout + proc.stderr).strip()[-800:]
+
+
+def pod_conditions(namespace : str, selector : str) -> List[Dict[str, Any]]:
+    '''Phase, node and the scheduling condition message of every pod matching ``selector``.'''
+    out = []
+    for pod in pods(namespace, selector):
+        scheduled = next((c for c in (pod.get('status') or {}).get('conditions', []) if c.get('type') == 'PodScheduled'), {})
+        out.append({'name': pod['metadata']['name'], 'phase': (pod.get('status') or {}).get('phase'),
+                    'node': (pod.get('spec') or {}).get('nodeName'), 'ready': pod_ready(pod),
+                    'scheduled': scheduled.get('status'), 'reason': scheduled.get('reason'),
+                    'message': scheduled.get('message', '')[:300]})
+    return out
+
+
+def node_allocatable(node : str) -> Dict[str, str]:
+    return kubectl_json('get', 'node', node).get('status', {}).get('allocatable', {})
+
+
+def mig_slices_advertised(node_doc : Dict[str, Any]) -> Dict[str, int]:
+    '''
+    The ``nvidia.com/mig-*`` resources a node advertises with a positive count.
+    A kubelet keeps a resource the device plugin stopped advertising as a ``0``
+    entry, so key presence says a slice profile once existed, not that one is
+    offered now.
+    '''
+    return {k: int(v) for k, v in (node_doc.get('status') or {}).get('allocatable', {}).items()
+            if k.startswith('nvidia.com/mig-') and str(v).isdigit() and int(v) > 0}
+
+
+def whole_cards_back(node : str, before : Dict[str, str], timeout : float = 300.0) -> Dict[str, Any]:
+    '''
+    The node document once the device plugin advertises the whole cards it had
+    ``before`` a managed-MIG case and no slice with a positive count — or the
+    last document read when ``timeout`` runs out, for the caller's assertion to
+    fail on. The MIG manager reports ``success`` while the plugin it bounced is
+    still down, when every count reads 0 (see ``gpu._wait_for_restore``).
+    '''
+    deadline = time.monotonic() + timeout
+    while True:
+        doc = kubectl_json('get', 'node', node)
+        if ((doc.get('status') or {}).get('allocatable', {}).get('nvidia.com/gpu') == before.get('nvidia.com/gpu')
+                and not mig_slices_advertised(doc)) or time.monotonic() > deadline:
+            return doc
+        time.sleep(5)
+
+
+def gpu_pods_on(node : str) -> List[Dict[str, Any]]:
+    '''Every non-terminal pod on ``node`` whose containers request a ``nvidia.com/*`` resource.'''
+    out = []
+    for pod in kubectl_json('get', 'pods', '-A', '--field-selector', f'spec.nodeName={node}').get('items', []):
+        if (pod.get('status') or {}).get('phase') in ('Succeeded', 'Failed'):
+            continue
+        if any('nvidia.com/' in k for c in (pod.get('spec') or {}).get('containers', [])
+               for k in ((c.get('resources') or {}).get('limits') or {})):
+            out.append(pod)
+    return out
+
+
+def free_gpus_on(node : str, settle : float = 120.0) -> int:
+    '''
+    Whole GPUs no pod holds on ``node`` — after waiting for pods still winding down
+    (a Terminating pod holds its devices until it is gone, and a case that counts
+    them as free would plan against capacity that is not there yet).
+    '''
+    deadline = time.monotonic() + settle
+    while time.monotonic() < deadline and any(p['metadata'].get('deletionTimestamp') for p in gpu_pods_on(node)):
+        time.sleep(2)
+    allocatable = int(node_allocatable(node).get('nvidia.com/gpu', '0'))
+    held = 0
+    for pod in gpu_pods_on(node):
+        for c in (pod.get('spec') or {}).get('containers', []):
+            held += int(((c.get('resources') or {}).get('limits') or {}).get('nvidia.com/gpu', 0))
+    return allocatable - held

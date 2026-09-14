@@ -70,3 +70,43 @@ class LineWriterConsumer(ConsumerNode):
         if self._file is not None:
             self._file.close()
             self._file = None
+
+
+class SlowLineWriterConsumer(LineWriterConsumer):
+    '''
+    ``LineWriterConsumer`` that takes ``delay_seconds`` per item — long enough for
+    a test to delete its pod mid-consume (conformance RUN-030) and watch the
+    replacement finish the work the first pod was holding.
+    '''
+    def __init__(self, path : str, delay_seconds : float = 1.0, **kwargs : Any) -> None:
+        self._delay_seconds = delay_seconds
+        super(SlowLineWriterConsumer, self).__init__(path, **kwargs)
+
+    def consume(self, item : Any) -> None:     # type: ignore[override]
+        import time
+        time.sleep(self._delay_seconds)
+        super(SlowLineWriterConsumer, self).consume(item)
+
+
+class AssetLineWriterConsumer(LineWriterConsumer):
+    '''
+    ``LineWriterConsumer`` that depends on one asset by content identity
+    (conformance RUN-033): the worker verifies ``asset_path`` has ``asset_sha256``
+    before ``open()``; ``portable`` says whether the file is expected on every
+    host (a claim) or only where it was written (a hostPath).
+    '''
+    def __init__(self, path : str, asset_path : str, asset_sha256 : str, portable : bool = False,
+                 **kwargs : Any) -> None:
+        self._asset_path = asset_path
+        self._asset_sha256 = asset_sha256
+        self._portable = portable
+        super(AssetLineWriterConsumer, self).__init__(path, **kwargs)
+
+    def required_assets(self) -> list:
+        from videoflow.core.node import AssetRequirement
+        return [AssetRequirement(self._asset_path, self._asset_sha256, self._portable)]
+
+    def consume(self, item : Any) -> None:     # type: ignore[override]
+        with open(self._asset_path, 'rb') as f:
+            head = f.read(8)
+        super(AssetLineWriterConsumer, self).consume(f'{item}:{head.hex()}')

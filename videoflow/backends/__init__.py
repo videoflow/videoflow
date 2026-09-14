@@ -12,7 +12,9 @@ specification every real adapter is tested against.
 - ``MessagingBackend`` (``messaging``): how does an envelope reach its required consumers?
 - ``PayloadStore`` (``payload``): where are the image bytes, and how long must they survive?
 - ``AcceleratorAllocationBackend`` (``allocation``): which accelerators may this workload use, \
-  under what guarantees?
+  under what guarantees? (Implemented by ``deploy.allocation_local`` for ``run-local``, \
+  ``deploy.allocation_kubernetes`` over the GPU strategies, and render-only \
+  ``deploy.allocation_dra``.)
 - ``FlowRuntime`` (``runtime``): what constitutes correct processing and recovery?
 - the composition planner (``capabilities``): can this graph meet its requested contract?
 

@@ -384,7 +384,12 @@ def test_gpu_inventory_reads_sharing_and_mig_state(monkeypatch):
                    'nvidia.com/gpu.count': '2', 'videoflow.io/gpu-owner': 'flowa'},
          {'nvidia.com/gpu': '2'}),
         ('pristine', {'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
-                      'nvidia.com/gpu.count': '2'}, {'nvidia.com/gpu': '2'}))
+                      'nvidia.com/gpu.count': '2'}, {'nvidia.com/gpu': '2'}),
+        # Restored to whole cards after a carve: the kubelet keeps the retired
+        # slice resource at 0 until it restarts — that is not geometry.
+        ('restored', {'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB',
+                      'nvidia.com/gpu.count': '2', 'nvidia.com/mig.config': 'all-disabled'},
+         {'nvidia.com/gpu': '2', 'nvidia.com/mig-1g.10gb': '0'}))
     pods = _pods_json(('pristine', 'Running', [{'nvidia.com/gpu': '1'}]))
     run, _ = _fake_run({'gpu-pool=true -o json': nodes, 'pods -A': pods})
     monkeypatch.setattr(subprocess, 'run', run)
@@ -399,6 +404,7 @@ def test_gpu_inventory_reads_sharing_and_mig_state(monkeypatch):
             pristine.owner) == (False, None, False, None)
     assert pristine.used_units == {'nvidia.com/gpu': 1}
     assert pristine.mig_allowed    # a fact for MixGpu to clear, defaulting open
+    assert not by_name['restored'].mig_partitioned
 
 
 def test_gpu_units_in_use_sums_extended_resource_limits(monkeypatch):

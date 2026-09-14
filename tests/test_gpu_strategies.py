@@ -33,7 +33,9 @@ def registry_sandbox(monkeypatch):
 # -- built-ins: behavior must be exactly what the string branches did ------
 
 def test_builtin_modes_are_registered():
-    assert gpu.registered_gpu_modes() == ['exclusive', 'mix']
+    # dra renders claims only (plan Phase 4, decision D9) — registered so
+    # --gpu-mode dra is a choice, refused at preflight without a driver.
+    assert gpu.registered_gpu_modes() == ['dra', 'exclusive', 'mix']
 
 
 def test_exclusive_claims_whole_devices():

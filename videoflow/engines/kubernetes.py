@@ -16,7 +16,7 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from ..core.compiler import specs_from_tasks_data
 from ..core.engine import ExecutionEngine
@@ -187,7 +187,10 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 supervision : SupervisionPolicy | None = None,
                 priority_class : str | None = None,
                 profile_requests : dict[str, str] | None = None,
-                stream_replicas : int = 1) -> None:
+                stream_replicas : int = 1,
+                rollout_policy : str | None = None,
+                gpu_nodes : list[str] | None = None,
+                resources : dict[str, dict[str, str]] | None = None) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -201,6 +204,15 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._autoscaling = autoscaling
         self._max_replicas = max_replicas
         self._priority_class = priority_class
+        # Opt-in placement (plan Phase 4): forwarded to render_manifests only when
+        # set, so a deploy that never asked renders exactly as before.
+        self._render_options : dict[str, Any] = {}
+        if rollout_policy:
+            self._render_options['rollout_policy'] = rollout_policy
+        if gpu_nodes:
+            self._render_options['gpu_nodes'] = list(gpu_nodes)
+        if resources:
+            self._render_options['resources'] = {k: dict(v) for k, v in resources.items()}
         self._profile_requests = dict(profile_requests or {})
         # Stream copies the provision Job asks for (a replicated broker profile).
         self._stream_replicas = stream_replicas
@@ -249,6 +261,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
             priority_class = self._priority_class,
             profile_requests = self._profile_requests,
             stream_replicas = self._stream_replicas,
+            **self._render_options,
         )
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer

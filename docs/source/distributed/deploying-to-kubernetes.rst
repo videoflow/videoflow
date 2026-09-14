@@ -298,6 +298,36 @@ Option reference
     across replicas bound to the same competing durable. Redeploy such a node at
     the replica count it should own its keys at instead.
 
+``--rollout-policy {drain,surge}``
+    How a node's Deployment replaces its pods on an update. ``drain`` renders
+    ``strategy: Recreate`` — every old replica stops before a new one starts,
+    which is what a GPU node needs when its devices cannot be held by two
+    generations at once. ``surge`` renders a rolling update with one extra
+    replica and none unavailable, and is admitted against the GPU pool's free
+    devices: with nothing spare it is refused before anything is applied,
+    because the replacement would wait forever behind the old pod. Omitted, the
+    Kubernetes default rolling update stays — deploy warns when the pool is
+    full, since that default stalls the same way.
+
+``--gpu-nodes HOST[,HOST...]``
+    Pin every GPU pod to these hosts: a required ``kubernetes.io/hostname``
+    node-affinity term on top of the pool label, for a shared cluster where only
+    some GPU nodes are yours to use.
+
+``--resources NODE=key:quantity[,key:quantity...]``
+    Host requests and limits for a node's worker container — ``cpu`` and
+    ``memory`` are requests, ``cpu_limit`` and ``memory_limit`` limits;
+    ``NODE=*`` applies to every node, a node entry overrides it, and both
+    override a component descriptor's ``spec.resources.cpu`` / ``memory``.
+    Repeatable. Host memory is a scheduler request, never a GPU memory
+    declaration: a node whose replicas fit the GPUs but not a node's RAM stays
+    Pending with the scheduler's reason instead of being admitted on GPU
+    capacity alone.
+
+``--gpu-mode dra``
+    Render Dynamic Resource Allocation claims instead of an extended-resource
+    limit (see :doc:`gpu-sharing`); needs a GPU DRA driver in the cluster.
+
 ``--dry-run`` / ``--render-only`` / ``--output``
     Manifest generation without touching the cluster (see above).
 

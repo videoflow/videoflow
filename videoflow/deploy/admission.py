@@ -37,7 +37,7 @@ import dataclasses
 import logging
 import re
 import sys
-from typing import List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence
 
 from ..backends.capabilities import (
     LEDGER_NONE,
@@ -489,3 +489,93 @@ def runtime_capabilities_observed(url : str | None) -> RuntimeCapabilities:
         return RuntimeCapabilities(scheme, durable = unknown(reason, f'{name}: {e}'),
                                    shared_across_processes = True, restart_safe_joins = False,
                                    elastic_state = False)
+
+
+# -- placement admission (plan Phase 4) ---------------------------------------------------------
+
+@dataclasses.dataclass(frozen = True)
+class ReplicaAdmission:
+    '''
+    Three numbers a scale decision keeps apart (ALLOC-030, RUN-028): what was
+    asked for, what the allocator can place on the capacity it observed, and
+    what is actually ready to process — with the reason the rest is not
+    admitted. A desired count is never reported as capacity.
+    '''
+    desired : int
+    admitted : int
+    ready : int
+    reasons : tuple[str, ...] = ()
+
+    @property
+    def unadmitted(self) -> int:
+        return max(0, self.desired - self.admitted)
+
+
+def replica_admission(desired : int, feasible : Callable[[int], list[str]], ready : int) -> ReplicaAdmission:
+    '''
+    Admits the largest replica count ``feasible`` places without objections
+    (``feasible(n)`` returns the reasons ``n`` replicas do not fit, empty when
+    they do), reporting the reasons ``desired`` did not. ``ready`` is observed,
+    never inferred from the admitted count.
+    '''
+    reasons = tuple(feasible(desired)) if desired > 0 else ()
+    if not reasons:
+        return ReplicaAdmission(desired, desired, min(ready, desired), ())
+    admitted = 0
+    for n in range(desired - 1, 0, -1):
+        if not feasible(n):
+            admitted = n
+            break
+    return ReplicaAdmission(desired, admitted, min(ready, admitted), reasons)
+
+
+def rollout_problems(rollout_policy : Optional[str], specs : Sequence[NodeSpec], flow_type : str,
+                     free_devices : Observation[int]) -> list[str]:
+    '''
+    Why a declared rollout policy cannot be honoured on the observed pool
+    (ALLOC-029, RUN-029): ``surge`` replaces a GPU Deployment's pods by starting
+    one extra first, which needs that replica's devices free somewhere in the
+    pool; on a pool with none, the rollout would wait forever behind the old
+    pod. ``drain`` needs nothing (the old pod stops first). No declared policy
+    keeps the API default, which on a full pool stalls the same way — reported
+    as advice, since the flow deployed that way before. An unobservable pool
+    cannot admit ``surge``.
+    '''
+    # Function-level: manifests imports yaml at module scope (optional dep).
+    from .manifests import _renders_as_job
+
+    rolling = [s for s in specs if s.device_type == 'gpu' and not _renders_as_job(s, flow_type)]
+    if not rolling:
+        return []
+    needed = max(s.gpu_count for s in rolling)
+    if rollout_policy == 'surge':
+        if isinstance(free_devices, Unknown):
+            return [f'--rollout-policy surge needs {needed} spare GPU device(s) for the replacement replica, '
+                    f'and the pool could not be observed ({free_devices.reason}: {free_devices.detail})']
+        if free_devices.value < needed:
+            return [f'--rollout-policy surge needs {needed} spare GPU device(s) for the replacement replica; the '
+                    f'pool has {free_devices.value} free. Use --rollout-policy drain (the old replica stops first) '
+                    f'or free capacity']
+        return []
+    if rollout_policy is None and not isinstance(free_devices, Unknown) and free_devices.value < needed:
+        return [f'no --rollout-policy declared and the pool has {free_devices.value} free GPU device(s): the '
+                f'default rolling update starts the replacement before stopping the old replica and would wait '
+                f'behind it. Declare --rollout-policy drain (interrupt) or surge (reserve capacity)']
+    return []
+
+
+def free_gpu_devices_observed(kubectl : str = 'kubectl') -> Observation[int]:
+    '''Whole GPU devices no running pod holds, across the videoflow pool — Unknown when either read failed.'''
+    # Function-level: cluster imports gpu (get_gpu_mode) at module scope — the same cycle gpu.py defers.
+    from .cluster import gpu_inventory_observed
+
+    observed = gpu_inventory_observed(kubectl)
+    if isinstance(observed, Unknown):
+        return observed
+    if any(not n.occupancy_known for n in observed.value):
+        return unknown('failed', 'the pod listing behind the occupancy could not be read')
+    free = 0
+    for node in observed.value:
+        held = sum(units for resource, units in node.used_units.items() if '/' in resource)
+        free += max(0, node.card_count - held)
+    return known(free, observed.generation)

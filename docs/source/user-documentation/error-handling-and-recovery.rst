@@ -63,7 +63,12 @@ says who is at fault:
     ├── VideoflowEnvironmentError   the world is not as required      → exit 3
     │   ├── BrokerUnavailable
     │   ├── ClusterError
-    │   ├── ResourceUnavailable
+    │   ├── ResourceUnavailable     a resource the flow needs is missing — also
+    │   │                           the worker's verdict, before open(), on a GPU
+    │   │                           grant short of a hard requirement
+    │   │                           (gpu_fallback = 'none', requires_peer_access)
+    │   │                           and on a declared asset missing or changed
+    │   │                           on this host (required_assets())
     │   ├── UnobservableState       VF_STATE_UNKNOWN: a read the decision needed
     │   │                           could not be made, and unknown is not zero
     │   └── OwnershipConflict       VF_OWNERSHIP_CONFLICT: a compare-and-swap on

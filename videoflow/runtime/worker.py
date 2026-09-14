@@ -52,6 +52,12 @@ the original graph-building script::
                         authoritative; native components read this.
     VF_GPU_RESOURCE_NAME optional; extended-resource name the GPUs were requested
                         as, e.g. a MIG profile (RFC 0003).
+    VF_GPU_GRANT_JSON   optional; the DeliveredGrant the launcher recorded (RFC 0006
+                        ENV-14): device identities, the requested count, whether the
+                        grant is exclusive and the policy that made it. Checked
+                        against the node's gpu_count/gpu_fallback/requires_peer_access
+                        before the node opens (runtime.gpucheck); absent ⇒ the
+                        CUDA-visible namespace is enumerated instead.
     VF_ENVELOPE_VERSION optional; wire envelope version to emit (only 4, protobuf)
     VF_DELIVERY         optional; 'at-least-once' | 'best-effort', overriding the
                         flow type's preset for this node (PROTOCOL.md §7)
@@ -139,6 +145,8 @@ from ..core.supervision import (
 )
 from ..core.task import ConsumerTask, ProcessorTask, ProducerTask, Task
 from ..wire.redis_payload_store import RedisPayloadStore
+from .assetcheck import verify_node_assets
+from .gpucheck import verify_node_grant
 from .health import HealthServer, HealthState, InstrumentedMessenger
 from .idempotency import EFFECT_RETENTION_SECONDS, IdempotencyStore, LedgerIdempotencyStore, RedisIdempotencyStore
 from .logging_config import configure_logging
@@ -501,6 +509,13 @@ def run_from_env() -> None:
     # The node's own name comes from the env, not from whatever get_params captured
     # (they should match, but the env is authoritative for routing).
     node._name = node_name
+    # A GPU node's grant, checked against what the process can see before the node
+    # opens (RUN-039/043/044): a short grant is reported, and fatal only when the
+    # node declared no fallback or requires a topology the grant lacks.
+    verify_node_grant(node)
+    # The node's declared assets, by content identity (RUN-033): a relocated
+    # worker never opens a model or input that is not the declared bytes.
+    verify_node_assets(node)
 
     # The run ledger (RFC 0006 CTRL-4): memory unless VF_RUNTIME_STORE_URL names a
     # store; what it can promise is read back by the store itself.

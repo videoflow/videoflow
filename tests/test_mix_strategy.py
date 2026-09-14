@@ -22,6 +22,12 @@ from videoflow.deploy import cluster, gpu
 from videoflow.deploy.mig import LayoutError, NodeInventory
 
 
+@pytest.fixture(autouse = True)
+def _no_poll_delay(monkeypatch):
+    '''The waits poll a fake that answers at once; sleeping between polls buys nothing here.'''
+    monkeypatch.setattr(gpu, 'MIG_APPLY_POLL_SECONDS', 0)
+
+
 def _gpu_spec(name, gpu_count = 1, gpu_memory_gib = None, nb_tasks = 1):
     return NodeSpec(name, 'videoflow.processors.basic.IdentityProcessor', {}, [],
                     'processor', True, nb_tasks, 'gpu', True,
@@ -60,9 +66,28 @@ def _mig_manager_daemonset_json(configmap_name = 'videoflow-mig-parted-config'):
     }]})
 
 
+#: What a MIG'd A100 advertises once the manager applied a layout — generous on
+#: purpose: the prepare tests below exercise the config-wiring protocol, and the
+#: readiness rule (state=success AND the slices advertised) is tested on its own.
+_ADVERTISED = json.dumps({'nvidia.com/gpu': '8', 'nvidia.com/mig-1g.10gb': '8',
+                          'nvidia.com/mig-2g.20gb': '8', 'nvidia.com/mig-3g.40gb': '8'})
+
+#: What a node advertises once the manager disabled MIG again and the device
+#: plugin came back: whole cards, no slice resource with a positive count. The
+#: restore wait demands this (not the state label alone) before a disabled
+#: target counts as restored — on a real node the manager reports ``success``
+#: while the plugin it bounced is still down, when every count reads 0.
+_WHOLE_CARDS = json.dumps({'nvidia.com/gpu': '8', 'nvidia.com/mig-1g.10gb': '0'})
+
+
 def _operator_responses(config_name = 'default-mig-parted-config', annotations = None):
-    '''Canned kubectl responses for a healthy stock GPU Operator cluster.'''
+    '''Canned kubectl responses for a healthy stock GPU Operator cluster. Order
+    matters (first needle wins): the occupancy re-read (``get pods -A -o json``)
+    and the allocatable read must precede the broader ``get pods -A`` / ``-o json``
+    needles they are substrings of.'''
     return {
+        'get pods -A -o json': '{"items": []}',
+        'jsonpath={.status.allocatable}': _ADVERTISED,
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(config_name, annotations),
         'get configmap default-mig-parted-config': json.dumps(
@@ -471,7 +496,7 @@ def test_retried_prepare_does_not_rerecord_the_restore_annotation(monkeypatch):
 def test_prepare_never_records_its_own_label_as_previous(monkeypatch):
     '''The label is ours but its record is gone (a prior run lost it): recording
     videoflow-gpu-a as the "previous" value would make cleanup restore it and
-    the geometry permanent — '' ("absent") goes in instead, mirroring the
+    the geometry permanent — MIG_LABEL_ABSENT goes in instead, mirroring the
     ClusterPolicy-side guard.'''
     _a100_inventory(monkeypatch)
     strategy = gpu.MixGpu()
@@ -488,7 +513,7 @@ def test_prepare_never_records_its_own_label_as_previous(monkeypatch):
     strategy.prepare(flow_id = 'flow1')
     recorded = [arg for c, _stdin in fake.calls for arg in c
                 if arg.startswith(f'{gpu.MIG_RESTORE_ANNOTATION}=')]
-    assert recorded == [f'{gpu.MIG_RESTORE_ANNOTATION}=']   # '' recorded, not our label
+    assert recorded == [f'{gpu.MIG_RESTORE_ANNOTATION}={gpu.MIG_LABEL_ABSENT}']   # absent recorded, not our label
 
 
 def test_prepare_rollout_timeout_fails_before_labeling(monkeypatch):
@@ -764,11 +789,12 @@ def test_cleanup_restores_the_recorded_label_state(monkeypatch):
         {'metadata': {'name': 'gpu-a',
                       'annotations': {gpu.MIG_RESTORE_ANNOTATION: 'all-balanced'}}},
         {'metadata': {'name': 'gpu-b',
-                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT}}},
         {'metadata': {'name': 'cpu-1', 'annotations': {}}},
     ]}
     fake = _FakeKubectl({
         'get nodes -o json': json.dumps(nodes),
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -776,7 +802,8 @@ def test_cleanup_restores_the_recorded_label_state(monkeypatch):
         'get configmap videoflow-mig-parted-config': json.dumps(
             {'metadata': {'resourceVersion': '7'},
              'data': {'config.yaml': _BASE_MIG_CONFIG}}),
-        'mig\\.config\\.state': 'success',
+        'jsonpath={.status.allocatable}': _WHOLE_CARDS,
+        'mig\\.config\\.state': ['pending', 'success'],
     })
     monkeypatch.setattr(subprocess, 'run', fake)
     gpu.MixGpu().cleanup()
@@ -814,6 +841,7 @@ def test_cleanup_restores_the_sentinel_to_the_operator_default(monkeypatch):
     # operator default explicitly.
     fake = _FakeKubectl({
         'get nodes -o json': json.dumps({'items': []}),
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -832,6 +860,7 @@ def test_cleanup_keeps_retry_state_when_the_revert_fails(monkeypatch, caplog):
                                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: 'all-balanced'}}}]}
     fake = _FakeKubectl({
         'get nodes -o json': json.dumps(nodes),
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -858,18 +887,20 @@ def test_cleanup_scoped_to_a_flow_restores_only_its_nodes(monkeypatch):
     release their claims, and leave flow2's geometry standing.'''
     nodes = {
         'gpu-a': {'labels': {gpu.GPU_OWNER_LABEL: 'flow1', gpu.GPU_OWNER_EPOCH_LABEL: 'e1'},
-                  'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}},
+                  'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT}},
         'gpu-b': {'labels': {gpu.GPU_OWNER_LABEL: 'flow2', gpu.GPU_OWNER_EPOCH_LABEL: 'e2'},
-                  'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}},
+                  'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT}},
         # Orphan claim: flow1's prepare crashed between stamping and labeling.
         'gpu-c': {'labels': {gpu.GPU_OWNER_LABEL: 'flow1'}, 'annotations': {}},
     }
     fake = _FakeKubectl({
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
             annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
-        'mig\\.config\\.state': 'success',
+        'jsonpath={.status.allocatable}': _WHOLE_CARDS,
+        'mig\\.config\\.state': ['pending', 'success'],
     }, nodes = nodes)
     monkeypatch.setattr(subprocess, 'run', fake)
     gpu.MixGpu().cleanup(flow_id = 'flow1')
@@ -918,6 +949,7 @@ def test_cleanup_is_not_last_out_while_other_flows_hold_geometry(monkeypatch):
             '    - devices: all\n'
             '      mig-enabled: false\n')
     fake = _FakeKubectl({
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -925,7 +957,8 @@ def test_cleanup_is_not_last_out_while_other_flows_hold_geometry(monkeypatch):
         'get configmap videoflow-mig-parted-config': json.dumps(
             {'metadata': {'resourceVersion': '7'},
              'data': {'config.yaml': live}}),
-        'mig\\.config\\.state': 'success',
+        'jsonpath={.status.allocatable}': _WHOLE_CARDS,
+        'mig\\.config\\.state': ['pending', 'success'],
     }, nodes = nodes)
     monkeypatch.setattr(subprocess, 'run', fake)
     gpu.MixGpu().cleanup(flow_id = 'flow1')
@@ -949,10 +982,11 @@ def test_cleanup_bounces_a_node_stuck_failed_on_its_restore_target(monkeypatch):
         {'metadata': {'name': 'gpu-a',
                       'labels': {gpu.MIG_CONFIG_LABEL: gpu.MIG_DISABLED_CONFIG,
                                  gpu.MIG_CONFIG_STATE_LABEL: 'failed'},
-                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT}}},
     ]}
     fake = _FakeKubectl({
         'get nodes -o json': json.dumps(nodes),
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -962,7 +996,8 @@ def test_cleanup_bounces_a_node_stuck_failed_on_its_restore_target(monkeypatch):
              'data': {'config.yaml': _BASE_MIG_CONFIG}}),
         # The listing's stale 'failed' label is what triggers the bounce; the
         # poll below is what both waits (alias, then target) read afterwards.
-        'mig\\.config\\.state': 'success',
+        'jsonpath={.status.allocatable}': _WHOLE_CARDS,
+        'mig\\.config\\.state': ['pending', 'success'],
     })
     monkeypatch.setattr(subprocess, 'run', fake)
     gpu.MixGpu().cleanup()
@@ -1006,6 +1041,7 @@ def test_cleanup_strips_an_orphans_entry_via_the_entry_annotation(monkeypatch):
             '      mig-devices:\n'
             '        2g.20gb: 1\n')
     fake = _FakeKubectl({
+        'get pods -A -o json': '{"items": []}',
         'get pods -A': 'gpu-operator mig-manager-abc',
         'get clusterpolicies': _cluster_policy_json(
             config_name = 'videoflow-mig-parted-config',
@@ -1067,3 +1103,161 @@ def test_cleanup_keeps_shared_state_when_the_manager_listing_is_unreadable(monke
     assert not any('patch clusterpolicies' in c for c in joined)
     assert not any('delete configmap' in c or 'annotate configmap' in c for c in joined)
     assert not any(c[1] in ('create', 'replace') for c, _stdin in fake.calls)
+
+
+# -- explicit plans, the occupancy re-read and correlated readiness (plan Phase 4) --
+
+def test_plan_layout_is_explicit_and_apply_plan_needs_no_cached_state(monkeypatch):
+    '''ALLOC-011: the plan travels as a value. A strategy that never resolved
+    anything can apply a plan another call produced, and planning twice yields
+    independent, equal plans rather than one cached mutable layout.'''
+    _a100_inventory(monkeypatch)
+    planner = gpu.MixGpu()
+    specs = [_gpu_spec('share', gpu_memory_gib = 10)]
+    first = planner.plan_layout(specs, flow_id = 'flow1')
+    second = planner.plan_layout(specs, flow_id = 'flow1')
+    assert first is not second and first.layout == second.layout
+    assert planner._layout is None                       # planning cached nothing
+    assert gpu.MixGpu.apply_plan_to_specs(first, specs)[0].gpu_resource_name == 'nvidia.com/mig-1g.10gb'
+    fake = _FakeKubectl({'mig\\.config\\.state': ['pending', 'success'], **_operator_responses()}, nodes = {'gpu-a': {}})
+    monkeypatch.setattr(subprocess, 'run', fake)
+    applied = gpu.MixGpu().apply_plan(first, flow_id = 'flow1')    # a fresh instance, no resolve_specs
+    assert applied is not None and applied.nodes == ('gpu-a',)
+    assert applied.expected_allocatable == {'gpu-a': {'nvidia.com/mig-1g.10gb': 1, 'nvidia.com/gpu': 1}}
+    assert fake.labels('gpu-a')[gpu.GPU_OWNER_EPOCH_LABEL] == applied.epoch
+    assert fake.labels('gpu-a')[gpu.MIG_CONFIG_LABEL] == applied.entries['gpu-a']
+
+
+def test_prepare_rereads_occupancy_after_claiming_and_aborts_on_a_new_tenant(monkeypatch):
+    '''A pod that landed on a planned card between planning and prepare would be
+    destroyed by repartitioning: the re-read after the claim sees it, the claims
+    come off, and no geometry is touched.'''
+    from support_kubectl import pods_json
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    responses = _operator_responses()
+    responses['get pods -A -o json'] = pods_json(('gpu-a', 'Running', [{'nvidia.com/gpu': '1'}]))
+    fake = _FakeKubectl(responses, nodes = {'gpu-a': {}})
+    monkeypatch.setattr(subprocess, 'run', fake)
+    with pytest.raises(OwnershipConflict) as excinfo:
+        strategy.prepare(flow_id = 'flow1')
+    assert 'gpu-a: 1 GPU unit(s) now in use' in str(excinfo.value)
+    assert gpu.GPU_OWNER_LABEL not in fake.labels('gpu-a')                    # released
+    assert not any(c[1] in ('create', 'replace', 'patch') for c, _stdin in fake.calls)
+    assert not any('mig.config=videoflow-' in c for c in fake.joined_calls())
+
+
+def test_prepare_aborts_when_occupancy_cannot_be_reread_after_claiming(monkeypatch):
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    fake = _FakeKubectl(_operator_responses(), nodes = {'gpu-a': {}}, failing = ('get pods -A -o json',))
+    monkeypatch.setattr(subprocess, 'run', fake)
+    with pytest.raises(UnobservableState):
+        strategy.prepare(flow_id = 'flow1')
+    assert gpu.GPU_OWNER_LABEL not in fake.labels('gpu-a')
+    assert not any(c[1] in ('create', 'replace', 'patch') for c, _stdin in fake.calls)
+
+
+def test_readiness_needs_the_slices_advertised_not_a_stale_success_label(monkeypatch):
+    '''ALLOC-003: ``mig.config.state=success`` is left over from the previous
+    geometry (the manager does not clear it when a new config is labeled), so a
+    success label alone completes nothing — the requested slices must be
+    advertised in ``status.allocatable``.'''
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    strategy.resolve_specs([_gpu_spec('share', gpu_memory_gib = 10)])
+    monkeypatch.setattr(gpu, 'MIG_APPLY_TIMEOUT_SECONDS', 0)
+    responses = {'mig\\.config\\.state': 'success', **_operator_responses()}
+    # Stale success, whole cards still advertised, no slices.
+    fake = _FakeKubectl(responses, nodes = {'gpu-a': {'allocatable': {'nvidia.com/gpu': '2'}}})
+    monkeypatch.setattr(subprocess, 'run', fake)
+    with pytest.raises(RuntimeError) as excinfo:
+        strategy.prepare(flow_id = 'flow1')
+    assert 'did not become ready' in str(excinfo.value)
+    # The manager ran: the slices are advertised — the same success label now counts.
+    fake = _FakeKubectl(responses,
+                        nodes = {'gpu-a': {'allocatable': {'nvidia.com/gpu': '1', 'nvidia.com/mig-1g.10gb': '1'}}})
+    monkeypatch.setattr(subprocess, 'run', fake)
+    strategy.prepare(flow_id = 'flow1')
+
+
+def test_observe_geometry_is_correlated_with_the_operation(monkeypatch):
+    _a100_inventory(monkeypatch)
+    strategy = gpu.MixGpu()
+    plan = strategy.plan_layout([_gpu_spec('share', gpu_memory_gib = 10)], flow_id = 'flow1')
+    fake = _FakeKubectl({'mig\\.config\\.state': ['pending', 'success'], **_operator_responses()},
+                        nodes = {'gpu-a': {'allocatable': {'nvidia.com/gpu': '2'}}})
+    monkeypatch.setattr(subprocess, 'run', fake)
+    monkeypatch.setattr(gpu, 'MIG_APPLY_TIMEOUT_SECONDS', 0)
+    with pytest.raises(RuntimeError):
+        strategy.apply_plan(plan, flow_id = 'flow1')       # labelled, stale success, no slices yet
+    applied = gpu.AppliedGeometry(('gpu-a',), {'gpu-a': fake.labels('gpu-a')[gpu.MIG_CONFIG_LABEL]},
+                                  fake.labels('gpu-a')[gpu.GPU_OWNER_EPOCH_LABEL], 'gpu-operator',
+                                  gpu.expected_allocatable(plan.layout))
+    fake.nodes['gpu-a']['labels'][gpu.MIG_CONFIG_STATE_LABEL] = 'success'
+    assert strategy.observe_geometry('kubectl', applied).value == {'gpu-a': 'pending'}   # stale success
+    fake.allocatable('gpu-a').update({'nvidia.com/mig-1g.10gb': '1'})
+    assert strategy.observe_geometry('kubectl', applied).value == {'gpu-a': 'ready'}
+    fake.nodes['gpu-a']['labels'][gpu.MIG_CONFIG_STATE_LABEL] = 'failed'
+    assert strategy.observe_geometry('kubectl', applied).value == {'gpu-a': 'failed'}
+    # Another operation re-claimed the node: this operation's evidence is gone.
+    fake.nodes['gpu-a']['labels'][gpu.GPU_OWNER_EPOCH_LABEL] = 'someone-else'
+    assert strategy.observe_geometry('kubectl', applied).value == {'gpu-a': 'lost'}
+    fake.nodes.pop('gpu-a')
+    assert isinstance(strategy.observe_geometry('kubectl', applied), gpu.Unknown)
+
+
+def test_cleanup_restores_an_explicitly_empty_label_as_empty(monkeypatch):
+    '''Key-presence semantics (ALLOC-033): a label that was present and empty comes
+    back present and empty; one that was absent is removed. Both go through the
+    disabled entry first so the manager actually un-partitions the cards.'''
+    nodes = {'items': [
+        {'metadata': {'name': 'gpu-a', 'labels': {gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a-abc123'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: ''}}},
+        {'metadata': {'name': 'gpu-b', 'labels': {gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-b-abc123'},
+                      'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT}}},
+    ]}
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A -o json': '{"items": []}',
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(config_name = 'videoflow-mig-parted-config',
+                                                    annotations = {gpu.MIG_CONFIG_NAME_RESTORE_ANNOTATION: 'default-mig-parted-config'}),
+        'get configmap videoflow-mig-parted-config': json.dumps({'metadata': {'resourceVersion': '7'},
+                                                                 'data': {'config.yaml': _BASE_MIG_CONFIG}}),
+        'jsonpath={.status.allocatable}': _WHOLE_CARDS,
+        'mig\\.config\\.state': ['pending', 'success'],
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup()
+    joined = fake.joined_calls()
+    assert any('label node gpu-a --overwrite nvidia.com/mig.config=videoflow-all-disabled' in c for c in joined)
+    assert any(c.endswith('label node gpu-a --overwrite nvidia.com/mig.config=') for c in joined)     # empty, present
+    assert not any('label node gpu-a nvidia.com/mig.config-' in c for c in joined)
+    assert any('label node gpu-b nvidia.com/mig.config-' in c for c in joined)                        # absent, removed
+
+
+def test_cleanup_keeps_a_node_whose_slices_running_pods_still_hold(monkeypatch):
+    '''ALLOC-013: deletion requested is not release confirmed — a node with GPU units
+    held by running pods keeps its geometry, its records and its owner stamp for a
+    retried teardown; the shared map stays wired.'''
+    from support_kubectl import pods_json
+    nodes = {'items': [{'metadata': {'name': 'gpu-a',
+                                     'labels': {gpu.GPU_OWNER_LABEL: 'flow1', gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-a-abc123'},
+                                     'annotations': {gpu.MIG_RESTORE_ANNOTATION: gpu.MIG_LABEL_ABSENT,
+                                                     gpu.MIG_ENTRY_ANNOTATION: 'videoflow-gpu-a-abc123'}}}]}
+    fake = _FakeKubectl({
+        'get nodes -o json': json.dumps(nodes),
+        'get pods -A -o json': pods_json(('gpu-a', 'Running', [{'nvidia.com/mig-1g.10gb': '1'}])),
+        'get pods -A': 'gpu-operator mig-manager-abc',
+        'get clusterpolicies': _cluster_policy_json(config_name = 'videoflow-mig-parted-config'),
+        'mig\\.config\\.state': ['pending', 'success'],
+    })
+    monkeypatch.setattr(subprocess, 'run', fake)
+    gpu.MixGpu().cleanup(flow_id = 'flow1')
+    assert not any('label node gpu-a' in c for c in fake.joined_calls())
+    assert not any('annotate node gpu-a' in c for c in fake.joined_calls())
+    assert not any('patch clusterpolicies' in c for c in fake.joined_calls())
+    assert not any(c[1] in ('create', 'replace', 'delete') for c, _stdin in fake.calls)

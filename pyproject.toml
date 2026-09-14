@@ -100,6 +100,13 @@ dev = [
     "types-PyYAML",
     "types-requests",
 ]
+# The gpu-level conformance cases (`uv sync --group gpu-test`): an independent
+# CUDA-runtime probe of what a mask exposes (ALLOC-015/016, RUN-039/043). The
+# CUDA 13 major matches the driver these run on (R595, CUDA 13.2); the runtime
+# library ships in the wheel, so nothing but the driver is needed on the host.
+gpu-test = [
+    "cuda-python>=13.2,<14",
+]
 
 [tool.hatch.version]
 # Single source of truth: reads __version__ from videoflow/version.py.

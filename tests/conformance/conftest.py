@@ -252,6 +252,82 @@ def k3s() -> Dict[str, str]:
         not_run(reason)
     return facts
 
+def _node_labels(node : str) -> tuple[int, Dict[str, str]]:
+    rc, out = _kubectl('get', 'node', node, '-o', 'jsonpath={.metadata.labels}')
+    try:
+        return rc, (json.loads(out) if rc == 0 and out else {})
+    except ValueError:
+        return 1, {}
+
+#: The cluster node this host is (plan §Environment): never a target for GPU pods.
+PROTECTED_NODE = 'lnmcltappgke02'
+
+@pytest.fixture
+def k3s_gpu_nodes(k3s : Dict[str, str]) -> List[str]:
+    '''
+    The cluster nodes in-cluster GPU pods may land on: ``VF_K8S_GPU_NODES``,
+    each carrying the pool label the operator applied (never by a test, D12),
+    none of them this host, and each with an allocated-GPU read that is Known
+    and shows room. NOT_RUN naming what is missing otherwise.
+    '''
+    raw = os.environ.get('VF_K8S_GPU_NODES', '')
+    nodes = [n.strip() for n in raw.split(',') if n.strip()]
+    if not nodes:
+        not_run('VF_K8S_GPU_NODES empty (name the pool nodes whose GPUs a test may use; never '
+                f'{PROTECTED_NODE})')
+    if any(n == PROTECTED_NODE or n.startswith(PROTECTED_NODE + '.') for n in nodes):
+        not_run(f'{PROTECTED_NODE} hosts a GPU service and is never a test target')
+    for node in nodes:
+        rc, labels = _node_labels(node)
+        if rc != 0:
+            not_run(f'node {node} could not be read')
+        if labels.get('videoflow.io/gpu-pool') != 'true':
+            not_run(f'node {node} lacks videoflow.io/gpu-pool=true (the operator applies it: '
+                    f'kubectl label node {node} videoflow.io/gpu-pool=true)')
+    from videoflow.backends.outcomes import Unknown
+    from videoflow.deploy.cluster import gpu_units_in_use_observed
+    used = gpu_units_in_use_observed()
+    if isinstance(used, Unknown):
+        not_run(f'allocated GPUs could not be read ({used.reason}); refusing to schedule GPU pods on a guess')
+    return nodes
+
+@pytest.fixture
+def k3s_mig_node(k3s_gpu_nodes : List[str]) -> str:
+    '''
+    The one node a managed-MIG case may repartition: ``VF_K8S_MIG_NODE``, in the
+    GPU pool list, with zero allocated GPUs and MIG-capable per GFD.
+    '''
+    node = os.environ.get('VF_K8S_MIG_NODE', '').strip()
+    if not node:
+        not_run('VF_K8S_MIG_NODE unset (managed-MIG hardware runs are opt-in: name one idle pool node)')
+    if node not in k3s_gpu_nodes:
+        not_run(f'VF_K8S_MIG_NODE={node} is not in VF_K8S_GPU_NODES')
+    from videoflow.deploy.cluster import gpu_units_in_use_observed
+    used = gpu_units_in_use_observed()
+    held = sum(v for k, v in (getattr(used, 'value', {}) or {}).get(node, {}).items() if '/' in k)
+    if held:
+        not_run(f'node {node} has {held} allocated GPU unit(s); MIG repartitioning needs an idle node')
+    _rc, labels = _node_labels(node)
+    if str(labels.get('nvidia.com/mig.capable', '')).lower() != 'true':
+        not_run(f'node {node} is not MIG-capable per GFD (nvidia.com/mig.capable)')
+    return node
+
+@pytest.fixture
+def gpu(request : pytest.FixtureRequest) -> Dict[str, Any]:
+    '''
+    This host's idle test GPUs (``VF_TEST_GPU_UUIDS``) with ``cuda-python``
+    installed, or NOT_RUN naming what is missing; re-checked at teardown so a
+    case that left a process on a device fails loudly (see ``_gpu.py``).
+    '''
+    from _gpu import busy_now, gpu_status
+    reason, facts = gpu_status()
+    if reason is not None:
+        not_run(reason)
+    yield facts
+    leaked = busy_now(facts['uuids'])
+    if leaked:
+        raise InvalidTest(f'test left compute processes on the GPUs: {leaked}')
+
 @pytest.fixture
 def k3s_admin(k3s : Dict[str, str]) -> Dict[str, str]:
     '''``k3s`` plus the RBAC powers a test that impersonates a restricted user needs.'''

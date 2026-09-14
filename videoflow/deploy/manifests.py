@@ -27,7 +27,7 @@ import json
 import re
 import subprocess
 from dataclasses import dataclass
-from typing import List, NamedTuple, Optional
+from typing import List, Mapping, NamedTuple, Optional
 
 import yaml
 
@@ -472,7 +472,9 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
               gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
               gpu_resource_name : Optional[str] = None,
               image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
-              priority_class : Optional[str] = None) -> dict:
+              priority_class : Optional[str] = None,
+              gpu_nodes : Optional[List[str]] = None,
+              host_resources : Optional[Mapping[str, str]] = None) -> dict:
     container : dict = {
         'name': 'worker',
         'image': image,
@@ -505,15 +507,20 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
                 'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
             }]
 
-    resources = {}
+    resources : dict = {}
     node_selector = None
-    node_affinity = None
+    node_affinity : Optional[dict] = None
     tolerations = None
     runtime_class = None
+    resource_claims : list = []
     if spec.device_type == 'gpu':
         # Resolved here, not only in render_manifests: a direct workload()/_pod_spec
         # caller with a typo'd mode must get an error, not a silently wrong claim.
-        resources.update(get_gpu_mode(gpu_mode).pod_resources(spec, gpu_resource_name))
+        strategy = get_gpu_mode(gpu_mode)
+        resources.update(strategy.pod_resources(spec, gpu_resource_name))
+        # A DRA strategy claims through spec.resourceClaims (plan Phase 4); the
+        # extended-resource strategies return nothing here.
+        resource_claims = strategy.pod_claims(spec)
         if gpu_mode == 'mix':
             # Mix stamps the nodes it MIG's with the owning flow's GPU_OWNER_LABEL.
             # The planner keeps flows on disjoint nodes, but only the scheduler can
@@ -545,6 +552,26 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # 'nvidia' handler but leaves runc default), a pod without runtimeClassName
         # starts with no device — so --gpu-runtime-class names the handler to use.
         runtime_class = gpu_runtime_class
+        if gpu_nodes:
+            # --gpu-nodes: the GPU pods may land only on these hosts (ALLOC-031,
+            # RUN-032) — a hard hostname term AND'ed into every existing term.
+            hostname_term = {'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': list(gpu_nodes)}
+            if node_affinity is None:
+                node_affinity = {'requiredDuringSchedulingIgnoredDuringExecution': {
+                    'nodeSelectorTerms': [{'matchExpressions': [hostname_term]}]}}
+            else:
+                for term in node_affinity['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms']:
+                    term['matchExpressions'].append(dict(hostname_term))
+    if host_resources:
+        # Host requests/limits (plan Phase 4, RUN-031): ``cpu``/``memory`` are
+        # requests, ``cpu_limit``/``memory_limit`` limits — merged beside any GPU
+        # limit the strategy rendered.
+        requests = {k: v for k, v in host_resources.items() if k in ('cpu', 'memory')}
+        limits = {k[:-6]: v for k, v in host_resources.items() if k in ('cpu_limit', 'memory_limit')}
+        if requests:
+            resources['requests'] = {**resources.get('requests', {}), **requests}
+        if limits:
+            resources['limits'] = {**resources.get('limits', {}), **limits}
     if resources:
         container['resources'] = resources
 
@@ -607,6 +634,8 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         # pod.spec.priorityClassName); on a shared cluster it is how a flow's pods
         # yield to — or preempt — other tenants' work.
         pod_spec['priorityClassName'] = priority_class
+    if resource_claims:
+        pod_spec['resourceClaims'] = resource_claims
     return pod_spec
 
 def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
@@ -653,7 +682,10 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
              gpu_resource_name : Optional[str] = None,
              image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
              supervision : Optional[SupervisionPolicy] = None,
-             priority_class : Optional[str] = None) -> dict:
+             priority_class : Optional[str] = None,
+             rollout_policy : Optional[str] = None,
+             gpu_nodes : Optional[List[str]] = None,
+             host_resources : Optional[Mapping[str, str]] = None) -> dict:
     '''
     - Arguments:
         - supervision: restart policy for this node's workload. Rendered into the \
@@ -662,6 +694,14 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
             identical instead of merely similar.
         - priority_class: ``priorityClassName`` for the pod, or none (the cluster's \
             default priority).
+        - rollout_policy: how a Deployment replaces its pods on an update — \
+            ``drain`` (``Recreate``: the old replicas stop before the new start; a \
+            GPU node whose devices cannot be held twice) or ``surge`` (one extra \
+            replica at a time, none unavailable). None keeps the API default. Jobs \
+            and StatefulSets are not rolled this way.
+        - gpu_nodes: hostnames the node's GPU pods may schedule on (``--gpu-nodes``).
+        - host_resources: ``cpu``/``memory`` requests and ``cpu_limit``/``memory_limit`` \
+            for the worker container (``--resources``, descriptor defaults).
     '''
     supervision = supervision or SupervisionPolicy()
     labels = _labels(flow_id, spec.name)
@@ -671,7 +711,8 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
                           gpu_runtime_class = gpu_runtime_class, gpu_mode = gpu_mode,
                           gpu_resource_name = gpu_resource_name,
                           image_pull_policy = image_pull_policy,
-                          priority_class = priority_class),
+                          priority_class = priority_class,
+                          gpu_nodes = gpu_nodes, host_resources = host_resources),
     }
 
     batch = (flow_type == BATCH)
@@ -737,16 +778,51 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
             },
         }
 
+    deployment_spec : dict = {
+        'replicas': spec.nb_tasks,
+        'selector': selector,
+        'template': pod_template,
+    }
+    if rollout_policy:
+        deployment_spec['strategy'] = rollout_strategy(rollout_policy)
     return {
         'apiVersion': 'apps/v1',
         'kind': 'Deployment',
         'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
-        'spec': {
-            'replicas': spec.nb_tasks,
-            'selector': selector,
-            'template': pod_template,
-        },
+        'spec': deployment_spec,
     }
+
+ROLLOUT_POLICIES = ('drain', 'surge')
+
+def rollout_strategy(rollout_policy : str) -> dict:
+    '''
+    The Deployment ``strategy`` for a rollout policy (RUN-029, ALLOC-029):
+    ``drain`` → ``Recreate`` (every old replica is gone before a new one starts —
+    what a GPU node needs when its devices cannot be held by two generations at
+    once); ``surge`` → ``RollingUpdate`` with one extra replica and none
+    unavailable, which needs spare capacity for that extra replica.
+    '''
+    if rollout_policy == 'drain':
+        return {'type': 'Recreate'}
+    if rollout_policy == 'surge':
+        return {'type': 'RollingUpdate', 'rollingUpdate': {'maxSurge': 1, 'maxUnavailable': 0}}
+    raise ValueError(f'rollout_policy must be one of {ROLLOUT_POLICIES}, got {rollout_policy!r}')
+
+def host_resources_for(spec : NodeSpec, resources : Optional[Mapping[str, Mapping[str, str]]]) -> dict[str, str]:
+    '''
+    The host requests/limits one node's container renders: the descriptor's
+    ``spec.resources.cpu``/``memory`` defaults, under the operator's ``*`` entry,
+    under the entry for this node (``--resources``). Empty when nobody asked.
+    '''
+    out : dict[str, str] = {}
+    descriptor_resources = ((spec.descriptor or {}).get('spec') or {}).get('resources') or {}
+    for key in ('cpu', 'memory'):
+        value = descriptor_resources.get(key)
+        if value is not None:
+            out[key] = str(value)
+    for scope in ('*', spec.name):
+        out.update({str(k): str(v) for k, v in ((resources or {}).get(scope) or {}).items()})
+    return out
 
 def headless_service(spec : NodeSpec, flow_id : str) -> dict:
     '''Headless Service backing a partitioned node's StatefulSet (required for stable pod network identity/ordinals).'''
@@ -935,10 +1011,21 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                     image_pull_policy : str = DEFAULT_IMAGE_PULL_POLICY,
                     supervision : Optional[SupervisionPolicy] = None,
                     priority_class : Optional[str] = None,
-                    profile_requests : Optional[dict] = None, stream_replicas : int = 1) -> list:
+                    profile_requests : Optional[dict] = None, stream_replicas : int = 1,
+                    rollout_policy : Optional[str] = None,
+                    gpu_nodes : Optional[List[str]] = None,
+                    resources : Optional[Mapping[str, Mapping[str, str]]] = None) -> list:
     '''
     Returns a list of manifest dicts for the whole flow. The caller decides whether
     to ``yaml.dump`` them to files (CLI) or apply them via the API (engine).
+
+    - rollout_policy: ``drain`` or ``surge`` for every Deployment (``--rollout-policy``, \
+        see ``rollout_strategy``); None keeps the API default.
+    - gpu_nodes: hostnames every GPU pod is pinned to (``--gpu-nodes``); None leaves \
+        placement to the pool label.
+    - resources: host requests/limits per node name (``*`` for all), merged over the \
+        descriptors' ``spec.resources.cpu``/``memory`` (``--resources``, see \
+        ``host_resources_for``).
 
     - run_id: per-run identifier stamped into each node's env (scopes broker streams).
     - blob_ttl_seconds: TTL override for offloaded payloads (``--blob-ttl-seconds``, \
@@ -997,9 +1084,11 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     from ..wire.serialization import DEFAULT_ENVELOPE_VERSION
 
     # Fail before any manifest is built, rather than at the first GPU node.
-    get_gpu_mode(gpu_mode)
+    strategy = get_gpu_mode(gpu_mode)
     validate_gpu_specs(specs, gpu_resource_name)
     validate_image_pull_policy(image_pull_policy)
+    if rollout_policy:
+        rollout_strategy(rollout_policy)
 
     # The whole-run wire version: the single language-neutral protobuf envelope (v4).
     resolved_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
@@ -1034,12 +1123,20 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                                         parent_replicas(spec, specs) if constants.RFC0006 else None))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id))
+        if spec.device_type == 'gpu':
+            # A DRA strategy's ResourceClaimTemplate; nothing for the others. The
+            # renderer owns the labels, as for every other object of the flow.
+            for claim in strategy.claim_manifests(spec, namespace, flow_id, run_id):
+                claim['metadata']['labels'] = {**_labels(flow_id, spec.name), **claim['metadata'].get('labels', {})}
+                manifests.append(claim)
         manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
                                   supervision = supervision,
                                   mounts = mounts, gpu_runtime_class = gpu_runtime_class,
                                   gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name,
                                   image_pull_policy = image_pull_policy,
-                                  priority_class = priority_class))
+                                  priority_class = priority_class,
+                                  rollout_policy = rollout_policy, gpu_nodes = gpu_nodes,
+                                  host_resources = host_resources_for(spec, resources) or None))
         if spec.nb_tasks > 1:
             manifests.append(pod_disruption_budget(spec, flow_id))
 

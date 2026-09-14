@@ -27,7 +27,7 @@ from __future__ import absolute_import, division, print_function
 import itertools
 import threading
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Sequence
+from typing import AbstractSet, Any, Mapping, Sequence
 
 from ...core.errors import OwnershipConflict
 from ...deploy.cluster import classify_gfd_labels
@@ -148,6 +148,7 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
         self._pointer_version = 1
         self._pointer_restore : str | None = None
         self._pending_geometry : list[tuple[float, str, int]] = []
+        self._failing_geometry : set[str] = set()
         self.audit : list[tuple[str, str, str, str]] = []
         self._lock = threading.RLock()
         self._ids = itertools.count(1)
@@ -279,16 +280,22 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
         claim_id = f'claim-{next(self._ids)}'
         generation = f'gen-{next(self._ids)}'
         stamped : list[str] = []
-        with self._lock:
-            for node_name in nodes:
+        for node_name in nodes:
+            # The read and the write are two API calls: the barriers between them
+            # sit outside the lock, so a second claimant can read the same version
+            # while this one is held there (ALLOC-004). The write re-checks the
+            # version under the lock — the API server's precondition.
+            with self._lock:
                 node = self._nodes[node_name]
                 seen_owner, seen_version = node.owner, node.resource_version
-                faults.barrier('owner.read.after', node = node_name, op_id = operation_id, version = seen_version)
-                if seen_owner is not None and seen_owner != owner:
+            faults.barrier('owner.read.after', node = node_name, op_id = operation_id, version = seen_version)
+            if seen_owner is not None and seen_owner != owner:
+                with self._lock:
                     self._rollback(stamped, generation, operation_id)
-                    raise OwnershipConflict(f'node {node_name} is owned by {seen_owner!r}',
-                                            remedy = 'Re-plan against the remaining pool.', node = node_name)
-                faults.barrier('owner.update.before', node = node_name, op_id = operation_id)
+                raise OwnershipConflict(f'node {node_name} is owned by {seen_owner!r}',
+                                        remedy = 'Re-plan against the remaining pool.', node = node_name)
+            faults.barrier('owner.update.before', node = node_name, op_id = operation_id)
+            with self._lock:
                 if node.resource_version != seen_version:
                     self._rollback(stamped, generation, operation_id)
                     raise OwnershipConflict(
@@ -300,7 +307,8 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
                     node.resource_version += 1
                     stamped.append(node_name)
                     self._record(operation_id, 'stamp-owner', node_name, owner)
-                faults.barrier('owner.update.after', node = node_name, op_id = operation_id)
+            faults.barrier('owner.update.after', node = node_name, op_id = operation_id)
+        with self._lock:
             claim = _Claim(claim_id, owner, plan, generation, nodes)
             self._claims[claim_id] = claim
             faults.barrier('claim.create.after', claim = claim_id, op_id = operation_id)
@@ -344,10 +352,17 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
                 node.resource_version += 1
                 self._record(operation_id, 'release-owner', node_name, 'rollback')
 
+    def fail_geometry(self, node_name : str) -> None:
+        '''Make the manager report ``state=failed`` for every geometry write on ``node_name`` (a permanent preparation failure).'''
+        with self._lock:
+            self._failing_geometry.add(node_name)
+
     def _apply_geometry(self, node_name : str, version : int) -> None:
         node = self._nodes[node_name]
-        node.mig_state = 'success'
+        node.mig_state = 'failed' if node_name in self._failing_geometry else 'success'
         node.mig_state_generation = version
+        if node.mig_state == 'failed':
+            return
         layout : dict[str, int] = {}
         entry = self._shared_config.get(node.mig_config)
         if entry is not None:
@@ -392,7 +407,9 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
                 if not (node.mig_config == claim.entry_name and node.mig_state == 'success'
                         and node.mig_state_generation >= node.resource_version - 0):
                     prepared = False
-        if claim.status == CLAIM_FAILED:
+        failed = any(self._nodes[n].mig_state == 'failed' and self._nodes[n].mig_config == claim.entry_name
+                     for n in claim.nodes) if claim.entry_name else False
+        if claim.status == CLAIM_FAILED or failed:
             status = CLAIM_FAILED
         elif claim.workload_ready:
             status = CLAIM_READY
@@ -463,8 +480,15 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
                     node.resource_version += 1
                     self._record(operation_id, 'release-owner', node_name, claim.owner)
             faults.barrier('restore.after', claim = claim_id, op_id = operation_id)
-            if claim.entry_name:
-                faults.barrier('delete.before', entry = claim.entry_name, op_id = operation_id)
+        if claim.entry_name:
+            # The last-owner read and the write are two API calls on a real cluster:
+            # the barrier sits between them, outside the lock, so another flow can
+            # publish its entry in that gap — and the decision below is made on the
+            # map as it is at the write, never on the earlier read (ALLOC-005).
+            with self._lock:
+                seen = dict(self._shared_config)
+            faults.barrier('delete.before', entry = claim.entry_name, op_id = operation_id, seen = sorted(seen))
+            with self._lock:
                 self._shared_config.pop(claim.entry_name, None)
                 self._shared_config_version += 1
                 self._record(operation_id, 'strip-entry', claim.entry_name, '')
@@ -477,8 +501,9 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
                         self._record(operation_id, 'restore-policy', 'clusterpolicy', self._pointer)
                     self._shared_tombstone = True
                 faults.barrier('delete.after', entry = claim.entry_name, op_id = operation_id)
-            del self._claims[claim_id]
-            return ReleaseObservation(claim_id, RELEASE_RELEASED, ())
+        with self._lock:
+            self._claims.pop(claim_id, None)
+        return ReleaseObservation(claim_id, RELEASE_RELEASED, ())
 
     # -- test hooks ---------------------------------------------------------------------------------------
 
@@ -511,14 +536,16 @@ class MemoryAllocationBackend(AcceleratorAllocationBackend):
         if self._log is not None:
             self._log.emit('mutation', op_id = operation_id, mutation = kind, target = target, detail = detail)
 
-def pack_whole_devices(requests : Sequence[tuple[str, int]], free : Mapping[str, int]) -> dict[str, str] | None:
+def pack_whole_devices(requests : Sequence[tuple[str, int]], free : Mapping[str, int],
+                       eligible : Mapping[str, AbstractSet[str]] | None = None) -> dict[str, str] | None:
     '''
     Exhaustive per-host packing for small inventories: each request needs
     ``count`` whole devices on *one* host. Returns workload -> host, or None when
     no assignment exists — the independent oracle for "aggregate capacity hides
     per-node fragmentation" (three hosts with two free each cannot host three
     requests of two? they can; two hosts with three free each cannot host three
-    requests of two).
+    requests of two). ``eligible`` narrows the hosts a workload may take (its hard
+    constraints); a workload absent from it may take any host.
     '''
     remaining = dict(free)
     order = sorted(requests, key = lambda r: -r[1])
@@ -528,7 +555,10 @@ def pack_whole_devices(requests : Sequence[tuple[str, int]], free : Mapping[str,
         if i == len(order):
             return True
         workload, count = order[i]
+        allowed = eligible.get(workload) if eligible else None
         for host in sorted(remaining):
+            if allowed is not None and host not in allowed:
+                continue
             if remaining[host] >= count:
                 remaining[host] -= count
                 assignment[workload] = host

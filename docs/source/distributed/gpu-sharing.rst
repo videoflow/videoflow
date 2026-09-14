@@ -1,17 +1,32 @@
-GPU allocation: the two modes, sharing, and multi-GPU models
-============================================================
+GPU allocation: the modes, sharing, and multi-GPU models
+========================================================
 
-Videoflow has exactly two GPU allocation modes, matching two kinds of demand a
-node can declare:
+Videoflow has two GPU allocation modes that allocate, matching two kinds of
+demand a node can declare, and a third that only renders:
 
 - ``--gpu-mode exclusive`` (the default): every unit of the GPU resource is one
   **whole physical device**. ``gpu_count = N`` grants N whole devices on one
   host. Sharing a device between components is not a capability of this mode —
-  and the node API has no way to ask for it.
+  and the node API has no way to ask for it. On a pool node an administrator
+  carved statically (it advertises ``nvidia.com/mig-<profile>`` slices), a node
+  declaring ``gpu_memory_gib`` consumes a free advertised slice of at least that
+  size, as it is — never repartitioned, never restored.
 - ``--gpu-mode mix`` (opt-in, MIG-capable hardware): a node that declares its
   memory demand (``gpu_memory_gib``) gets an **exclusive MIG slice** of at least
   that size, chosen by a layout solver; every other GPU node still gets whole
   physical devices. The card is shared, the slice is not.
+- ``--gpu-mode dra`` (render-only): the pods claim devices through Kubernetes
+  Dynamic Resource Allocation — one ``ResourceClaimTemplate`` per GPU node and
+  the pod/container references of ``resource.k8s.io/v1`` — for a cluster with a
+  GPU DRA driver. Deploy stops at preflight when no driver publishes GPU
+  ``ResourceSlices``; the claim lifecycle (allocation, preparation, release) is
+  the driver's, and videoflow's own allocation backend refuses every lifecycle
+  call by name in this release. Which optional features a request may name is a
+  matrix question: dynamic MIG needs the ``DRAPartitionableDevices`` gate
+  (alpha and off by default on Kubernetes 1.34/1.35, beta and on from 1.36),
+  consumable capacity ``DRAConsumableCapacity`` (same schedule), MPS the
+  driver's own support; base DRA being GA promotes none of them, and a request
+  for a feature the cluster row lacks is rejected before anything is rendered.
 
 The demand vocabulary is two numbers, mutually exclusive per node: ``gpu_count``
 (whole devices, spanned by one model) and ``gpu_memory_gib`` (an isolated
@@ -24,10 +39,22 @@ Why local runs work and Kubernetes runs stall
 
 Locally (``LocalProcessEngine``), every node is an OS subprocess on one machine.
 Each GPU worker is handed a ``CUDA_VISIBLE_DEVICES`` block of ``gpu_count``
-devices; when there are more claims than devices the assignment wraps around
-(with a warning, and ``VF_GPU_COUNT`` reporting the devices actually delivered)
-and processes share a card, bounded only by VRAM. A 9-GPU-node graph still runs
-fine on a single card if the models fit.
+devices; under the default ``--gpu-policy shared``, when there are more claims
+than devices the assignment wraps around (with a warning, and ``VF_GPU_COUNT``
+reporting the devices actually delivered) and processes share a card, bounded
+only by VRAM. A 9-GPU-node graph still runs fine on a single card if the models
+fit. ``--gpu-policy strict`` is the truthful policy: a flow whose whole-device
+requests do not fit the host's distinct devices does not start at all, sharers
+(nodes declaring ``gpu_memory_gib``) are admitted only within their device's
+budget of declared peaks — memory minus what is already in use minus
+``VF_GPU_HEADROOM_BYTES`` (1 GiB) — and a host ``nvidia-smi`` cannot read is
+refused rather than treated as a machine without GPUs. Either way every worker
+receives the grant it really got: ``CUDA_VISIBLE_DEVICES`` as device UUIDs and
+``VF_GPU_GRANT_JSON`` (the devices by identity, the requested count, whether
+the grant is exclusive, the policy, and whether the host was observed at all),
+which the worker checks against the node's ``gpu_count`` before it opens —
+fatal only for a node that declares ``gpu_fallback = 'none'``, reported
+otherwise. Strict accounts; nothing on one host enforces a memory budget.
 
 On Kubernetes, each GPU replica requests ``nvidia.com/gpu`` — an **integer extended
 resource that cannot be overcommitted**. The scheduler allocates whole devices
@@ -176,10 +203,27 @@ cards still serve whole-device spanners; only GPU resources (``nvidia.com/gpu``,
 ``nvidia.com/mig-*``, another vendor's ``<domain>/gpu``) count as occupying a
 card. And *unknown is not idle*: if the pod listing that says which cards are
 held cannot be read, mix refuses to plan (``UnobservableState``, ``unobservable
-GPU state``) rather than repartition a card another tenant may hold. One race
-stays open by design: a foreign GPU pod that lands on a planned node between
-inventory read and geometry apply will be disrupted; closing it needs admission
-control, which videoflow does not install.
+GPU state``) rather than repartition a card another tenant may hold. The
+ownership label is not a scheduler lock — a foreign GPU pod can still land on a
+claimed node — so prepare re-reads the occupancy after claiming the nodes and
+immediately before any geometry write, and aborts (releasing its claims,
+``OwnershipConflict``) when a card was taken since the plan was made: the
+foreign pod is never disrupted, the deploy is told to plan again.
+
+Readiness is observed, never read off a label. The MIG manager does not clear
+``nvidia.com/mig.config.state`` when a new config is labeled, so the first
+thing every wait sees is the *previous* geometry's ``success``. A node counts
+as prepared only when the state says ``success`` **and** ``status.allocatable``
+advertises the slices the layout asked for; teardown counts a node as reverted
+only once the manager was seen acting on the restore (a state other than
+``success`` after the write, or — for a disabled target — no ``nvidia.com/mig-*``
+resource advertised any more). A wait that runs out is an explicit incomplete
+operation: the claims, the restore records and the map stay for a retried
+teardown. Teardown also never reverts a node whose slices a running pod still
+holds — deletion requested is not release confirmed — and keeps the node's
+records until this flow's entries are out of the shared map, so a strip that
+failed can be retried; the pre-videoflow label is recorded with key-presence
+semantics (absent and explicitly empty are restored as such).
 
 A node that declares nothing gets a whole physical device — a plain
 ``device_type=GPU`` node means the same thing in both modes, so flows do not

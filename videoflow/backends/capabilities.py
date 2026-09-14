@@ -136,7 +136,10 @@ class AllocationCapabilities:
     topology_verification : bool
     elastic : bool
     admission_boundary : bool
-    version_matrix : Mapping[str, str] = field(default_factory = dict)
+    #: What the adapter's version can do, keyed by name: ``version`` (a string),
+    #: ``features`` (the ``allocation.FEATURE_*`` names available) and whatever
+    #: else the adapter records (feature-gate states, the API group served).
+    version_matrix : Mapping[str, Any] = field(default_factory = dict)
 
 @dataclass(frozen = True)
 class ExecutionCapabilities:

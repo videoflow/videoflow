@@ -16,12 +16,18 @@ from __future__ import absolute_import, division, print_function
 import json
 import os
 import subprocess
+import sys
+import threading
+import time
 from typing import Any, Dict, List
 
 import defects
+import defects_alloc
 import pytest
+from _migcluster import MigCluster
 from support_kubectl import FakeKubectl, fake_run, nodes_json
 
+from videoflow.backends import faults
 from videoflow.backends.allocation import (
     RELEASE_PENDING_RECOVERY,
     RELEASE_RELEASED,
@@ -33,10 +39,11 @@ from videoflow.backends.allocation import (
 )
 from videoflow.backends.memory.allocation import AUTHORITY_MANAGED_MIG, MemoryAllocationBackend, NodeFixture
 from videoflow.backends.memory.clock import FakeClock
-from videoflow.backends.outcomes import Known, Unknown
+from videoflow.backends.outcomes import Known, Unknown, known
 from videoflow.core.compiler import NodeSpec
-from videoflow.core.errors import UnobservableState
+from videoflow.core.errors import OwnershipConflict, UnobservableState
 from videoflow.deploy import cluster, gpu
+from videoflow.deploy.mig import NodeInventory
 
 A100 = 'NVIDIA-A100-SXM4-80GB'
 _PHYSICAL = {'nvidia.com/gpu.product': A100, 'nvidia.com/gpu.count': '2', 'nvidia.com/gpu.memory': '81920',
@@ -53,17 +60,187 @@ def _gpu_spec(name : str, gpu_count : int = 1, gpu_memory_gib : float | None = N
 
 # -- ALLOC-004 ---------------------------------------------------------------------
 
+def _race_two_claimants(stamp : Any, node : str, owners : tuple, pause : str = 'after-read') -> Dict[str, Any]:
+    '''Two claimants read the node at the same resourceVersion (both paused after their read),
+    then write concurrently; returns each one's outcome (its epoch, or the conflict it saw).'''
+    schedule = faults.FaultSchedule({'owner.read.after': faults.Pause(pause, timeout_seconds = 60)})
+    schedule.install()
+    outcomes : Dict[str, Any] = {}
+
+    def claim(owner : str) -> None:
+        try:
+            outcomes[owner] = {'epoch': stamp(owner)}
+        except OwnershipConflict as e:
+            outcomes[owner] = {'conflict': str(e)}
+        except Exception as e:      # noqa: BLE001
+            outcomes[owner] = {'error': f'{type(e).__name__}: {e}'}
+    threads = [threading.Thread(target = claim, args = (o,)) for o in owners]
+    try:
+        for t in threads:
+            t.start()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and schedule.fired().get('owner.read.after', 0) < len(owners):
+            time.sleep(0.01)
+        assert schedule.fired().get('owner.read.after', 0) >= len(owners), 'a claimant never read the node'
+        schedule.release(pause)                                  # both writes go now
+        for t in threads:
+            t.join(60)
+    finally:
+        schedule.uninstall()
+    return outcomes
+
+
+def _oracle_alloc_004_model(evidence : Dict[str, Any]) -> None:
+    '''Two claimants at the same resourceVersion: exactly one epoch wins, the other sees the API's
+    conflict and mutates nothing; a stale rollback cannot remove the winner's claim; ownership is
+    what the API holds, not what a process remembers.'''
+    fake = MigCluster({'gpu-a': {'cards': 2}}, manager_latency = 1)
+    real = subprocess.run
+    subprocess.run = fake       # type: ignore[assignment]
+    try:
+        for order in ((('flowA', 'flowB'), ('flowB', 'flowA'))):
+            fake.nodes['gpu-a']['labels'].pop(gpu.GPU_OWNER_LABEL, None)
+            fake.nodes['gpu-a']['labels'].pop(gpu.GPU_OWNER_EPOCH_LABEL, None)
+            outcomes = _race_two_claimants(
+                lambda owner: gpu.MixGpu()._stamp_node_owners('kubectl', ['gpu-a'], gpu.flow_owner_value(owner)),
+                'gpu-a', order)
+            winners = [o for o, r in outcomes.items() if 'epoch' in r]
+            losers = [o for o, r in outcomes.items() if 'conflict' in r]
+            assert len(winners) == 1 and len(losers) == 1, outcomes
+            (winner,), (loser,) = winners, losers
+            assert 'Conflict' in outcomes[loser]['conflict'] or 'owned by' in outcomes[loser]['conflict'], outcomes
+            labels = fake.labels('gpu-a')
+            assert labels[gpu.GPU_OWNER_LABEL] == gpu.flow_owner_value(winner)
+            assert labels[gpu.GPU_OWNER_EPOCH_LABEL] == outcomes[winner]['epoch']
+            # The loser's rollback (a stale release) cannot remove the winner's claim.
+            assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(loser), 'stale') is False
+            assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(winner), 'stale-epoch') is False
+            assert fake.labels('gpu-a')[gpu.GPU_OWNER_LABEL] == gpu.flow_owner_value(winner)
+            # A successor epoch after a real release: the old epoch's release is refused.
+            assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(winner), outcomes[winner]['epoch']) is True
+            successor = gpu.MixGpu()._stamp_node_owners('kubectl', ['gpu-a'], gpu.flow_owner_value('flowC'))
+            assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(winner), outcomes[winner]['epoch']) is False
+            assert fake.labels('gpu-a')[gpu.GPU_OWNER_EPOCH_LABEL] == successor
+            # Ownership survives a process restart: a fresh strategy reads it off the API.
+            assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value('flowC'), successor) is True
+            evidence.setdefault('interleavings', []).append({'order': list(order), 'outcomes': outcomes})
+    finally:
+        subprocess.run = real   # type: ignore[assignment]
+    # No write ever went out without the server-side precondition.
+    writes = [c for c, _ in fake.calls if c[1:3] == ['label', 'node'] and any(a.startswith(f'{gpu.GPU_OWNER_LABEL}=') for a in c)]
+    assert writes and all(any(a.startswith('--resource-version=') for a in c) for c in writes), writes
+
+
+def _oracle_alloc_004_memory(evidence : Dict[str, Any]) -> None:
+    '''The reference allocator under the same race: one winner, one typed conflict, no double stamp.'''
+    node = NodeFixture('n1', A100, 2, 80.0, dict(_PHYSICAL))
+    backend = MemoryAllocationBackend([node], FakeClock(), authority = AUTHORITY_MANAGED_MIG)
+    snapshot = backend.inventory({}).value
+    plan = backend.plan([WorkloadRequest('flowA', 'r', 'w', 1, SHARING_EXCLUSIVE)], snapshot)
+    assert isinstance(plan, FeasiblePlan)
+
+    def reserve(owner : str) -> str:
+        return backend.reserve(plan, f'{owner}:op', None).desired_generation
+    outcomes = _race_two_claimants(reserve, 'n1', ('flowA', 'flowB'))
+    assert sorted(('epoch' in r, 'conflict' in r) for r in outcomes.values()) == [(False, True), (True, False)], outcomes
+    stamps = [m for m in backend.mutations(['stamp-owner'])]
+    assert len(stamps) == 1, stamps
+    evidence['reference'] = outcomes
+
+
 @pytest.mark.case('ALLOC-004')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 4 (Kubernetes allocation backend; needs VF_K8S_GPU_NODES)')
-def test_alloc_004_enforce_exclusive_gpu_ownership_under_simultaneous_claim() -> None:
+@pytest.mark.timeout(600)
+def test_alloc_004_enforce_exclusive_gpu_ownership_under_simultaneous_claim(k3s, k3s_gpu_nodes, evidence_dir) -> None:
     '''
     ALLOC-004 (P0, allocation, kubernetes): Enforce exclusive GPU ownership under simultaneous
     claim attempts.
 
     Acceptance: Exactly one winner per contested node; the loser never mutates geometry and
     exits with a typed conflict; a stale rollback cannot remove a newer owner.
+
+    On a pool node: two processes claim it, both held after reading the same
+    ``resourceVersion`` (a marker-file pause), released together; the API server decides.
+    Only the owner labels are written, and they are released at the end.
     '''
+    import tempfile
+
+    from _k8s import kubectl_json
+    node = k3s_gpu_nodes[0]
+    labels = kubectl_json('get', 'node', node)['metadata'].get('labels', {})
+    if gpu.GPU_OWNER_LABEL in labels:
+        pytest.skip(f'not_run: node {node} is owned by {labels[gpu.GPU_OWNER_LABEL]!r}; the race needs an unowned node')
+    marker_dir = tempfile.mkdtemp(prefix = 'vf-a004-')
+    schedule = faults.FaultSchedule({'owner.read.after': faults.Pause('after-read', timeout_seconds = 120)}, marker_dir = marker_dir)
+    script = ('import json, sys\nfrom videoflow.backends import faults\nfrom videoflow.deploy import gpu\n'
+              'from videoflow.core.errors import OwnershipConflict\n'
+              'schedule = faults.FaultSchedule.from_env(); schedule.install()\n'
+              'try:\n    epoch = gpu.MixGpu()._stamp_node_owners("kubectl", [sys.argv[1]], sys.argv[2])\n'
+              '    print(json.dumps({"epoch": epoch}))\n'
+              'except OwnershipConflict as e:\n    print(json.dumps({"conflict": str(e)}))\n')
+    owners = ('conf-a004-a', 'conf-a004-b')
+    evidence : Dict[str, Any] = {'node': node, 'runs': []}
+    try:
+        for order in (owners, tuple(reversed(owners))):
+            env = dict(os.environ, **schedule.to_env())
+            procs = [subprocess.Popen([sys.executable, '-c', script, node, o],
+                                                                       stdout = subprocess.PIPE, stderr = subprocess.PIPE,
+                                                                       text = True, env = env) for o in order]
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline and schedule.fired().get('owner.read.after', 0) < 2:
+                time.sleep(0.2)
+            assert schedule.fired().get('owner.read.after', 0) >= 2, 'a claimant never read the node'
+            schedule.release('after-read')
+            outs = {o: json.loads((p.communicate(timeout = 120)[0] or '{}').strip().splitlines()[-1] or '{}') for o, p in zip(order, procs)}
+            winners = [o for o, r in outs.items() if 'epoch' in r]
+            losers = [o for o, r in outs.items() if 'conflict' in r]
+            labels = kubectl_json('get', 'node', node)['metadata']['labels']
+            evidence['runs'].append({'order': list(order), 'outcomes': outs,
+                                     'owner': labels.get(gpu.GPU_OWNER_LABEL), 'epoch': labels.get(gpu.GPU_OWNER_EPOCH_LABEL)})
+            assert len(winners) == 1 and len(losers) == 1, outs
+            assert labels.get(gpu.GPU_OWNER_LABEL) == gpu.flow_owner_value(winners[0])
+            # A stale rollback cannot remove the winner; a fresh process releases it by its epoch.
+            assert gpu.MixGpu()._release_owner('kubectl', node, gpu.flow_owner_value(losers[0]), 'stale') is False
+            assert gpu.MixGpu()._release_owner('kubectl', node, gpu.flow_owner_value(winners[0]), outs[winners[0]]['epoch']) is True
+            for name in [f'{marker}.release' for marker in ('after-read',)]:
+                try:
+                    os.remove(os.path.join(marker_dir, name))
+                except FileNotFoundError:
+                    pass
+            for entry in os.listdir(marker_dir):
+                if entry.endswith('.fired'):
+                    os.remove(os.path.join(marker_dir, entry))
+    finally:
+        for owner in owners:
+            try:
+                gpu.MixGpu()._release_owner('kubectl', node, gpu.flow_owner_value(owner), None)
+            except RuntimeError:
+                pass
+        (evidence_dir / 'claim_race.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.case('ALLOC-004')
+@pytest.mark.level('model')
+@pytest.mark.variant('operator-objects')
+def test_alloc_004_one_winner_per_node_under_the_api_servers_cas(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_alloc_004_model(evidence)
+    (evidence_dir / 'claim_race_model.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.case('ALLOC-004')
+@pytest.mark.level('model')
+@pytest.mark.variant('reference-allocator')
+def test_alloc_004_reference_allocator_races(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_alloc_004_memory(evidence)
+    (evidence_dir / 'claim_race_reference.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'ALLOC-004')
+def test_alloc_004_detects_a_client_side_claim(monkeypatch) -> None:
+    defects_alloc.client_side_claim(monkeypatch)
+    assert defects.detects(_oracle_alloc_004_model, {})
 
 
 # -- ALLOC-007 ---------------------------------------------------------------------
@@ -299,29 +476,284 @@ def test_alloc_008_detects_an_unscoped_classifier(monkeypatch) -> None:
 
 # -- ALLOC-012 ---------------------------------------------------------------------
 
+def _oracle_alloc_012_model(monkeypatch : pytest.MonkeyPatch, evidence : Dict[str, Any]) -> None:
+    '''A foreign pod bound between the claim and the geometry write aborts the operation without
+    disrupting it; a pod bound before planning keeps its card out of the plan; the label alone is
+    never treated as a scheduler lock.'''
+    fake = MigCluster({'gpu-a': {'cards': 2}}, manager_latency = 1)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    monkeypatch.setattr(gpu, 'MIG_APPLY_POLL_SECONDS', 0)
+    monkeypatch.setattr(cluster, 'gpu_inventory_observed', lambda kubectl = 'kubectl': known([NodeInventory('gpu-a', A100, 2, 80.0)]))
+    strategy = gpu.MixGpu()
+    plan = strategy.plan_layout([_gpu_spec('share', gpu_memory_gib = 10)], flow_id = 'flowA')
+    schedule = faults.FaultSchedule({'owner.update.after': faults.Nth(1, faults.Pause('claimed', timeout_seconds = 30))})
+    schedule.install()
+    outcome : Dict[str, Any] = {}
+    try:
+        def apply() -> None:
+            try:
+                outcome['applied'] = strategy.apply_plan(plan, flow_id = 'flowA')
+            except OwnershipConflict as e:
+                outcome['conflict'] = str(e)
+        import threading
+        t = threading.Thread(target = apply)
+        t.start()
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and schedule.fired().get('owner.update.after', 0) < 1:
+            time.sleep(0.01)
+        # The claim is on the node, and the scheduler ignores it: a foreign pod binds a card now.
+        fake.pods.append(('gpu-a', 'nvidia.com/gpu', 1))
+        schedule.release('claimed')
+        t.join(30)
+    finally:
+        schedule.uninstall()
+    assert 'conflict' in outcome and 'occupancy changed' in outcome['conflict'], outcome
+    assert gpu.GPU_OWNER_LABEL not in fake.labels('gpu-a')                      # claim released
+    assert fake.configmap is None and fake.pointer() == 'default-mig-parted-config'   # no geometry mutation
+    assert fake.pods == [('gpu-a', 'nvidia.com/gpu', 1)]                        # the foreign pod is untouched
+    evidence['foreign_after_claim'] = outcome['conflict'][:200]
+    # Reverse order: the foreign pod is there before planning — the plan never carves its card.
+    fake.pods[:] = [('gpu-a', 'nvidia.com/gpu', 1)]
+    monkeypatch.setattr(cluster, 'gpu_inventory_observed', lambda kubectl = 'kubectl': known(
+        [NodeInventory('gpu-a', A100, 2, 80.0, used_units = {'nvidia.com/gpu': 1})]))
+    from videoflow.deploy.mig import LayoutError
+    with pytest.raises(LayoutError):                                             # a busy node is spanner-only: no MIG
+        strategy.plan_layout([_gpu_spec('share', gpu_memory_gib = 10)], flow_id = 'flowA')
+    whole = strategy.plan_layout([_gpu_spec('span')], flow_id = 'flowA')
+    assert whole.layout.mig_nodes() == [] and not fake.configmap
+    evidence['foreign_before_plan'] = 'busy card excluded from MIG; whole-card claims only'
+
+
 @pytest.mark.case('ALLOC-012')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 4 (managed-MIG hardware; needs VF_K8S_MIG_NODE)')
-def test_alloc_012_prevent_foreign_allocations_arriving_between_planning_and() -> None:
+@pytest.mark.timeout(1800)
+def test_alloc_012_prevent_foreign_allocations_arriving_between_planning_and(k3s, k3s_mig_node, evidence_dir) -> None:
     '''
     ALLOC-012 (P0, allocation, gpu): Prevent foreign allocations arriving between planning
     and repartitioning.
 
     Acceptance: No repartition ever destroys a workload admitted after planning; the
     reservation either blocks the intruder or aborts the geometry change.
+
+    On the opt-in MIG node (mixed strategy): the operation is held after its claim; a
+    foreign holder pod takes a whole card; the resumed operation aborts and releases its
+    claim, and the holder is still Running on its device afterwards. Then the reverse: with
+    the holder bound first, the plan never carves that card.
     '''
+    from _brokers import unique_ids
+    from _k8s import (
+        apply,
+        delete_workload,
+        gpu_holder_deployment,
+        kubectl_json,
+        mig_slices_advertised,
+        pod_conditions,
+        wait_ready,
+    )
+
+    from videoflow.deploy.cluster import gpu_inventory_observed
+    from videoflow.deploy.mig import solve_layout
+    labels = kubectl_json('get', 'node', k3s_mig_node)['metadata'].get('labels', {})
+    if labels.get('nvidia.com/mig.strategy') != 'mixed':
+        pytest.skip(f'not_run: node {k3s_mig_node} runs mig.strategy={labels.get("nvidia.com/mig.strategy")!r}; managed MIG needs mixed')
+    inventory = gpu_inventory_observed()
+    assert isinstance(inventory, Known)
+    record = next(n for n in inventory.value if n.name == k3s_mig_node)
+    plan = gpu.AllocationPlan(solve_layout([record], [_gpu_spec('share', gpu_memory_gib = 20)]), {}, 'conf-a012', inventory.generation)
+    namespace = k3s['VF_K8S_NAMESPACE']
+    holder = 'vf-conf-' + unique_ids('a012')[1][:8]
+    marker_dir = str(evidence_dir / 'markers')
+    schedule = faults.FaultSchedule({'owner.update.after': faults.Nth(1, faults.Pause('claimed', timeout_seconds = 600))}, marker_dir = marker_dir)
+    evidence : Dict[str, Any] = {'node': k3s_mig_node}
+    strategy = gpu.MixGpu()
+    outcome : Dict[str, Any] = {}
+    try:
+        schedule.install()
+        import threading
+
+        def run() -> None:
+            try:
+                outcome['applied'] = strategy.apply_plan(plan, flow_id = 'conf-a012')
+            except OwnershipConflict as e:
+                outcome['conflict'] = str(e)
+            except Exception as e:      # noqa: BLE001
+                outcome['error'] = f'{type(e).__name__}: {e}'
+        t = threading.Thread(target = run)
+        t.start()
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline and schedule.fired().get('owner.update.after', 0) < 1:
+            time.sleep(1)
+        assert schedule.fired().get('owner.update.after', 0) >= 1, 'the operation never claimed the node'
+        apply(gpu_holder_deployment(holder, namespace, [k3s_mig_node], 1))
+        wait_ready(namespace, f'app={holder}', 1, timeout = 300)          # the label was no lock for the scheduler
+        schedule.release('claimed')
+        t.join(900)
+        evidence['outcome'] = outcome
+        assert 'conflict' in outcome and 'occupancy changed' in outcome['conflict'], outcome
+        after = kubectl_json('get', 'node', k3s_mig_node)['metadata']['labels']
+        assert gpu.GPU_OWNER_LABEL not in after
+        assert not mig_slices_advertised(kubectl_json('get', 'node', k3s_mig_node))   # no geometry mutation
+        evidence['holder'] = pod_conditions(namespace, f'app={holder}')
+        assert evidence['holder'][0]['ready'] is True                       # never disrupted
+        # Reverse: the holder is bound first; planning excludes its card from MIG.
+        inventory2 = gpu_inventory_observed()
+        assert isinstance(inventory2, Known)
+        record2 = next(n for n in inventory2.value if n.name == k3s_mig_node)
+        usable, excluded = gpu._partition_inventory([record2], 'conf-a012')
+        evidence['reverse'] = {'usable': [(n.name, n.card_count, n.mig_allowed) for n in usable], 'excluded': excluded}
+        assert all(not n.mig_allowed for n in usable) or not usable
+    finally:
+        schedule.uninstall()
+        delete_workload(namespace, holder)
+        strategy.cleanup(flow_id = 'conf-a012')
+        (evidence_dir / 'foreign_between.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.case('ALLOC-012')
+@pytest.mark.level('model')
+@pytest.mark.variant('operator-objects')
+def test_alloc_012_a_foreign_pod_aborts_the_repartition(monkeypatch, evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_alloc_012_model(monkeypatch, evidence)
+    (evidence_dir / 'foreign_between_model.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'ALLOC-012')
+def test_alloc_012_detects_a_prepare_that_trusts_the_plan(monkeypatch) -> None:
+    defects_alloc.no_occupancy_reread(monkeypatch)
+    assert defects.detects(_oracle_alloc_012_model, monkeypatch, {})
 
 
 # -- ALLOC-013 ---------------------------------------------------------------------
 
+def _oracle_alloc_013_model(monkeypatch : pytest.MonkeyPatch, evidence : Dict[str, Any]) -> None:
+    '''A retained workload retains its geometry (``keep_workloads``); cleanup with a pod still holding
+    the slice keeps everything and says so; once the last holder is gone one cleanup completes and
+    an unrelated node's allocation is untouched.'''
+    from videoflow.backends.allocation import RELEASE_PENDING_RECOVERY, SHARING_ISOLATED_MIG, WorkloadRequest
+    from videoflow.deploy.allocation_kubernetes import KubernetesAllocationBackend
+    fake = MigCluster({'gpu-a': {'cards': 2, 'labels': {'nvidia.com/gpu.product': A100, 'nvidia.com/gpu.count': '2', 'nvidia.com/gpu.memory': '81920'}},
+                       'gpu-b': {'cards': 2, 'labels': {'nvidia.com/gpu.product': A100, 'nvidia.com/gpu.count': '2', 'nvidia.com/gpu.memory': '81920'}}},
+                      manager_latency = 1)
+    monkeypatch.setattr(subprocess, 'run', fake)
+    monkeypatch.setattr(gpu, 'MIG_APPLY_POLL_SECONDS', 0)
+    # The pool read reflects the fake's live labels, as the real one reads them off the API.
+    monkeypatch.setattr(cluster, 'gpu_inventory_observed', lambda kubectl = 'kubectl': known(
+        [NodeInventory(n, A100, 2, 80.0, owner = fake.labels(n).get(gpu.GPU_OWNER_LABEL),
+                       mig_config = fake.labels(n).get(gpu.MIG_CONFIG_LABEL),
+                       used_units = {r: u for node, r, u in fake.pods if node == n}) for n in ('gpu-a', 'gpu-b')]))
+    fake.nodes['gpu-b']['labels'].update({gpu.GPU_OWNER_LABEL: 'flowz', gpu.GPU_OWNER_EPOCH_LABEL: 'zz', gpu.MIG_CONFIG_LABEL: 'videoflow-gpu-b-zzzzzz'})
+    fake.nodes['gpu-b']['annotations'][gpu.MIG_RESTORE_ANNOTATION] = gpu.MIG_LABEL_ABSENT
+    backend = KubernetesAllocationBackend('mix')
+    snapshot = backend.inventory({})
+    assert isinstance(snapshot, Known)
+    plan = backend.plan([WorkloadRequest('flowA', 'r', 'w', 1, SHARING_ISOLATED_MIG, minimum_usable_memory_bytes = 10 << 30)], snapshot.value)
+    assert isinstance(plan, FeasiblePlan) and set(plan.geometry) == {'gpu-a'}, plan
+    claim = backend.reserve(plan, 'flowA:r', plan.snapshot_generation)
+    assert claim.status == 'ready', claim
+    geometry_live = dict(fake.allocatable('gpu-a'))
+    # The workload holds its slice; the controller leaves with keep_workloads: everything stays.
+    fake.pods.append(('gpu-a', 'nvidia.com/mig-1g.10gb', 1))
+    kept = backend.release(claim.claim_id, 'flowA:r', claim.desired_generation, keep_workloads = True)
+    assert kept.status == RELEASE_PENDING_RECOVERY and fake.allocatable('gpu-a') == geometry_live
+    assert fake.labels('gpu-a').get(gpu.GPU_OWNER_LABEL) == 'flowa'
+    # Deletion requested (the pod still running): cleanup keeps geometry, records and ownership.
+    released = backend.release(claim.claim_id, 'flowA:r', claim.desired_generation)
+    assert released.status == RELEASE_PENDING_RECOVERY, released
+    assert fake.allocatable('gpu-a') == geometry_live and fake.labels('gpu-a').get(gpu.GPU_OWNER_LABEL) == 'flowa'
+    assert fake.nodes['gpu-a']['annotations'].get(gpu.MIG_RESTORE_ANNOTATION) is not None
+    evidence['while_held'] = {'release': released.status, 'allocatable': fake.allocatable('gpu-a')}
+    # The final user exits: one cleanup completes; the unrelated allocation on gpu-b is untouched.
+    fake.pods.clear()
+    done = backend.release(claim.claim_id, 'flowA:r', claim.desired_generation)
+    assert done.status == 'released', done
+    assert gpu.GPU_OWNER_LABEL not in fake.labels('gpu-a') and 'nvidia.com/mig-1g.10gb' not in fake.allocatable('gpu-a')
+    assert fake.labels('gpu-b').get(gpu.GPU_OWNER_LABEL) == 'flowz' and fake.labels('gpu-b').get(gpu.MIG_CONFIG_LABEL) == 'videoflow-gpu-b-zzzzzz'
+    assert fake.configmap is not None and 'DELETE configmap' not in fake.mutation_log
+    evidence['after_release'] = {'gpu_a': fake.labels('gpu-a'), 'gpu_b': fake.labels('gpu-b')}
+
+
 @pytest.mark.case('ALLOC-013')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 4 (managed-MIG hardware; needs VF_K8S_MIG_NODE)')
-def test_alloc_013_delay_allocation_release_while_retained_or_terminating() -> None:
+@pytest.mark.timeout(1800)
+def test_alloc_013_delay_allocation_release_while_retained_or_terminating(k3s, k3s_mig_node, evidence_dir) -> None:
     '''
     ALLOC-013 (P0, allocation, gpu): Delay allocation release while retained or terminating
     workloads still use GPUs.
 
     Acceptance: Ownership and geometry outlive every workload that still holds a device;
     release completes only after the last holder is gone.
+
+    On the opt-in MIG node (mixed strategy): geometry applied, a holder pod bound to one of
+    its slices; cleanup while it runs reverts nothing; once the holder is deleted and gone,
+    cleanup completes.
     '''
+    from _brokers import unique_ids
+    from _k8s import delete_workload, kubectl_json, mig_slices_advertised, wait_ready, whole_cards_back
+
+    from videoflow.deploy.cluster import gpu_inventory_observed
+    from videoflow.deploy.mig import solve_layout
+    labels = kubectl_json('get', 'node', k3s_mig_node)['metadata'].get('labels', {})
+    if labels.get('nvidia.com/mig.strategy') != 'mixed':
+        pytest.skip(f'not_run: node {k3s_mig_node} runs mig.strategy={labels.get("nvidia.com/mig.strategy")!r}; managed MIG needs mixed')
+    inventory = gpu_inventory_observed()
+    assert isinstance(inventory, Known)
+    record = next(n for n in inventory.value if n.name == k3s_mig_node)
+    layout = solve_layout([record], [_gpu_spec('share', gpu_memory_gib = 20)])
+    plan = gpu.AllocationPlan(layout, {}, 'conf-a013', inventory.generation)
+    resource = next(iter(layout.slice_demand))
+    namespace = k3s['VF_K8S_NAMESPACE']
+    holder = 'vf-conf-' + unique_ids('a013')[1][:8]
+    evidence : Dict[str, Any] = {'node': k3s_mig_node, 'resource': resource,
+                                 'allocatable_before': kubectl_json('get', 'node', k3s_mig_node)['status']['allocatable']}
+    strategy = gpu.MixGpu()
+    try:
+        applied = strategy.apply_plan(plan, flow_id = 'conf-a013')
+        assert applied is not None
+        from _k8s import apply
+        manifest = {'apiVersion': 'apps/v1', 'kind': 'Deployment',
+                    'metadata': {'name': holder, 'namespace': namespace, 'labels': {'videoflow.io/conformance': 'true', 'app': holder}},
+                    'spec': {'replicas': 1, 'selector': {'matchLabels': {'app': holder}},
+                             'template': {'metadata': {'labels': {'app': holder, 'videoflow.io/conformance': 'true'}},
+                                          'spec': {'priorityClassName': 'cluster-batch', 'runtimeClassName': 'nvidia',
+                                                   'terminationGracePeriodSeconds': 20,
+                                                   'nodeSelector': {'kubernetes.io/hostname': k3s_mig_node},
+                                                   'tolerations': [{'key': 'nvidia.com/gpu', 'operator': 'Exists', 'effect': 'NoSchedule'}],
+                                                   'containers': [{'name': 'holder', 'image': __import__('_k8s').base_image(),
+                                                                   'command': ['sleep', 'infinity'],
+                                                                   'resources': {'limits': {resource: 1}}}]}}}}
+        apply(manifest)
+        wait_ready(namespace, f'app={holder}', 1, timeout = 300)
+        strategy.cleanup(flow_id = 'conf-a013')                              # deletion not even requested: kept
+        after = kubectl_json('get', 'node', k3s_mig_node)
+        evidence['while_held'] = {'labels': {k: v for k, v in after['metadata']['labels'].items() if 'videoflow' in k or 'mig' in k},
+                                  'allocatable': after['status']['allocatable']}
+        assert after['metadata']['labels'].get(gpu.GPU_OWNER_LABEL) == gpu.flow_owner_value('conf-a013')
+        assert int(after['status']['allocatable'].get(resource, 0)) >= 1
+        delete_workload(namespace, holder)                                    # requested, and waited for
+        strategy.cleanup(flow_id = 'conf-a013')
+        final = whole_cards_back(k3s_mig_node, evidence['allocatable_before'])
+        evidence['after_release'] = {'labels': {k: v for k, v in final['metadata']['labels'].items() if 'videoflow' in k or 'mig' in k},
+                                     'allocatable': final['status']['allocatable']}
+        assert gpu.GPU_OWNER_LABEL not in final['metadata']['labels']
+        assert resource not in mig_slices_advertised(final)
+        assert final['status']['allocatable'].get('nvidia.com/gpu') == evidence['allocatable_before'].get('nvidia.com/gpu')
+    finally:
+        delete_workload(namespace, holder)
+        strategy.cleanup(flow_id = 'conf-a013')
+        (evidence_dir / 'retained_release.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.case('ALLOC-013')
+@pytest.mark.level('model')
+@pytest.mark.variant('operator-objects')
+def test_alloc_013_geometry_outlives_every_holder(monkeypatch, evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_alloc_013_model(monkeypatch, evidence)
+    (evidence_dir / 'retained_release_model.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'ALLOC-013')
+def test_alloc_013_detects_a_cleanup_blind_to_holders(monkeypatch) -> None:
+    defects_alloc.no_occupancy_reread(monkeypatch)
+    assert defects.detects(_oracle_alloc_013_model, monkeypatch, {})

@@ -585,6 +585,7 @@ def gpu_inventory_observed(kubectl : str = 'kubectl') -> Observation[List[NodeIn
         return unknown('malformed', 'node listing was not JSON')
     used_obs = gpu_units_in_use_observed(kubectl)
     used = value_or(used_obs, {})
+    dra_nodes = value_or(dra_owned_nodes_observed(kubectl), set())
     inventory = []
     for node in nodes:
         labels = (node.get('metadata') or {}).get('labels') or {}
@@ -603,7 +604,11 @@ def gpu_inventory_observed(kubectl : str = 'kubectl') -> Observation[List[NodeIn
         allocatable = (node.get('status') or {}).get('allocatable') or {}
         # Carved geometry shows as mixed-strategy nvidia.com/mig-* resources, or —
         # under single strategy — as a -MIG-<profile> suffix in the GFD product.
-        mig_partitioned = (any(key.startswith('nvidia.com/mig-') for key in allocatable)
+        # Only a positive count is geometry: the kubelet keeps a resource the
+        # device plugin stopped advertising as a 0 entry until it restarts, so a
+        # node restored to whole cards still lists the profile it once carved.
+        mig_partitioned = (any(key.startswith('nvidia.com/mig-') and str(value).strip().isdigit() and int(value) > 0
+                               for key, value in allocatable.items())
                            or '-MIG-' in str(product))
         inventory.append(NodeInventory(name = name, product = product,
                                        card_count = int(count),
@@ -613,8 +618,33 @@ def gpu_inventory_observed(kubectl : str = 'kubectl') -> Observation[List[NodeIn
                                        mig_partitioned = mig_partitioned,
                                        owner = labels.get(GPU_OWNER_LABEL),
                                        used_units = used.get(name, {}),
-                                       occupancy_known = is_known(used_obs)))
+                                       occupancy_known = is_known(used_obs),
+                                       allocatable = {k: int(v) for k, v in allocatable.items()
+                                                      if '/' in k and str(v).isdigit()},
+                                       dra_owned = name in dra_nodes))
     return known(sorted(inventory, key = lambda n: n.name), out.generation)
+
+def dra_owned_nodes_observed(kubectl : str = 'kubectl') -> Observation[set]:
+    '''
+    The nodes a DRA driver publishes GPU ``ResourceSlices`` for — the other
+    allocator's territory (ALLOC-018). ``Known(set())`` when the API serves no
+    slices (or the ``resource.k8s.io`` group at all: a cluster without DRA has
+    no DRA-owned nodes), ``Unknown`` only when a listing that exists could not
+    be read.
+    '''
+    proc = subprocess.run([kubectl, 'get', 'resourceslices.resource.k8s.io', '-o', 'json'],
+                          capture_output = True, text = True, check = False)
+    if proc.returncode != 0:
+        err = (proc.stderr or proc.stdout).strip()
+        if 'the server doesn\'t have a resource type' in err or 'NotFound' in err or 'not find the requested resource' in err:
+            return known(set())
+        return unknown('failed', err.splitlines()[-1][:300] if err else f'{kubectl} exited {proc.returncode}')
+    try:
+        items = json.loads(proc.stdout).get('items', []) if proc.stdout.strip() else []
+    except ValueError:
+        return unknown('malformed', 'ResourceSlice listing was not JSON')
+    return known({str((item.get('spec') or {}).get('nodeName')) for item in items
+                  if (item.get('spec') or {}).get('nodeName')})
 
 def gpu_inventory(kubectl : str = 'kubectl') -> List[NodeInventory]:
     '''``gpu_inventory_observed`` for display-only callers: ``[]`` when unknown.'''

@@ -66,14 +66,18 @@ def pods_json(*pods : Tuple[Optional[str], str, List[Mapping[str, str]]]) -> str
 
 class FakeKubectl:
     '''subprocess.run stand-in with a call log and optional live node state; see the module docstring.'''
-    def __init__(self, responses : Mapping[str, str], nodes : Optional[Mapping[str, Mapping[str, Any]]] = None,
+    def __init__(self, responses : Mapping[str, Any], nodes : Optional[Mapping[str, Mapping[str, Any]]] = None,
                  failing : Iterable[str] = ()) -> None:
         self.responses = dict(responses)
         self.failing = tuple(failing)
         self.calls : List[Tuple[List[str], Optional[str]]] = []
         self.nodes : Optional[Dict[str, Dict[str, Any]]] = None if nodes is None else {
             name: {'labels': dict(state.get('labels') or {}),
-                   'annotations': dict(state.get('annotations') or {}), 'rv': 1}
+                   'annotations': dict(state.get('annotations') or {}), 'rv': 1,
+                   # ``status.allocatable``, served with the node doc and through the
+                   # ``jsonpath={.status.allocatable}`` read the geometry wait makes;
+                   # mutable, so a test can advertise slices "after the manager ran".
+                   'allocatable': dict(state.get('allocatable') or {})}
             for name, state in nodes.items()}
 
     def __call__(self, cmd : List[str], **kwargs : Any) -> subprocess.CompletedProcess:
@@ -88,6 +92,11 @@ class FakeKubectl:
                 return served
         for needle, out in self.responses.items():
             if needle in joined:
+                if isinstance(out, list):
+                    # A sequence: one answer per matching call, the last one repeating —
+                    # how a test models state that changes between polls (a MIG manager
+                    # going pending, then success).
+                    out = out[0] if len(out) == 1 else self.responses.__setitem__(needle, out[1:]) or out[0]
                 return subprocess.CompletedProcess(cmd, 0, out, '')
         return subprocess.CompletedProcess(cmd, 0, '', '')
 
@@ -103,12 +112,17 @@ class FakeKubectl:
         return [' '.join(c) for c, _stdin in self.calls
                 if len(c) > 1 and c[1] not in ('get', 'version', 'config', 'auth', 'explain')]
 
+    def allocatable(self, node : str) -> Dict[str, str]:
+        assert self.nodes is not None, 'FakeKubectl was built without node state'
+        return self.nodes[node]['allocatable']
+
     def _node_doc(self, name : str) -> Dict[str, Any]:
         assert self.nodes is not None
         state = self.nodes[name]
         return {'metadata': {'name': name, 'resourceVersion': str(state['rv']),
                              'labels': dict(state['labels']),
-                             'annotations': dict(state['annotations'])}}
+                             'annotations': dict(state['annotations'])},
+                'status': {'allocatable': dict(state['allocatable'])}}
 
     def _serve_node_state(self, cmd : List[str]) -> Optional[subprocess.CompletedProcess]:
         assert self.nodes is not None
@@ -121,6 +135,9 @@ class FakeKubectl:
             if name not in self.nodes:
                 return subprocess.CompletedProcess(cmd, 1, '', f'nodes "{name}" not found')
             return subprocess.CompletedProcess(cmd, 0, json.dumps(self._node_doc(name)), '')
+        if (args[:2] == ['get', 'node'] and len(args) >= 5 and args[3:5] == ['-o', 'jsonpath={.status.allocatable}']
+                and self.nodes.get(args[2], {}).get('allocatable')):
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(self.nodes[args[2]]['allocatable']), '')
         if args[:2] in (['label', 'node'], ['annotate', 'node']):
             field = 'labels' if args[0] == 'label' else 'annotations'
             name = args[2]

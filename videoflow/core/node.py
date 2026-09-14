@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Set, TypeAlias, Union, cast
 
 logger = logging.getLogger(__package__)
@@ -21,6 +22,22 @@ JoinPolicyArg : TypeAlias = Union[JoinPolicy, dict, None]
 
 def _slugify(value : str) -> str:
     return _SLUG_RE.sub('-', value.lower()).strip('-')
+
+@dataclass(frozen = True)
+class AssetRequirement:
+    '''
+    One file a node depends on: ``path`` on the worker's filesystem, the
+    ``sha256`` hex digest its bytes must have, and whether the asset is
+    ``portable`` — available on every host through a claim, an image layer or a
+    download — or local-only (a hostPath that exists on one machine). A
+    hostPath is never evidence that the same bytes exist everywhere; a
+    local-only asset constrains where the node may run, and a relocated worker
+    finds out at open time, explicitly.
+    '''
+    path : str
+    sha256 : str
+    portable : bool = True
+
 
 class Node:
     '''
@@ -56,10 +73,37 @@ class Node:
             worker committed before a crash is re-published byte-for-byte from \
             the runtime ledger, never recomputed — what a nondeterministic \
             component under a reliable profile needs).
+
+    Two more (plan Phase 4) describe what a GPU node needs from its *grant*, \
+        checked by the worker before the node is opened (``runtime.gpucheck``):
+
+        - ``gpu_fallback``: ``'cpu'`` (the default: a node granted fewer devices \
+            than its ``gpu_count`` — none at all on a GPU-less host — still opens, \
+            and the worker reports the shortfall and the CPU execution explicitly) \
+            or ``'none'`` (a hard requirement: the worker refuses to open the node \
+            under a short, empty or unverifiable grant, RUN-044).
+        - ``requires_peer_access``: a multi-device node whose execution path needs \
+            peer access between its devices (NVLink/PCIe P2P). Verified against the \
+            delivered devices before readiness; a two-device grant without the \
+            property fails the node instead of silently satisfying a count (RUN-043).
     '''
     _name_counters: Dict[str, int] = {}
     deterministic : bool = True
     replay_policy : str = 'recompute'
+    gpu_fallback : str = 'cpu'
+    requires_peer_access : bool = False
+
+    def required_assets(self) -> 'List[AssetRequirement]':
+        '''
+        The files this node needs on the machine it runs on, with their content
+        identity (plan Phase 4, RUN-033). The worker verifies every one before the
+        node is opened: a missing file or different bytes end the worker with
+        ``ResourceUnavailable`` naming the host, rather than processing with a
+        model or input that is not the declared one. Default: none. Override in a
+        node whose constructor takes the paths (they are known in the worker,
+        after ``get_params()`` rebuilt the node).
+        '''
+        return []
 
     def __init__(self, name : Optional[str] = None, image : Optional[str] = None) -> None:
         if name is None:

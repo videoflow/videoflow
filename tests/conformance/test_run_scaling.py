@@ -6,9 +6,10 @@ the docstring quotes the case's title and acceptance rule so the oracle stays ne
 the code that decides it. A ``pending`` marker means the case is a skeleton reporting
 NOT_RUN until its implementation phase lands.
 
-The kubernetes-level primaries of this module need a cluster with KEDA (RUN-018,
-RUN-019, RUN-026, RUN-027) or the allocation backend and rollout orchestration of
-plan Phase 4 (RUN-028, RUN-029); they stay pending and say which phase owes them.
+The kubernetes-level primaries of RUN-018, RUN-019, RUN-026 and RUN-027 need a
+cluster with KEDA and stay pending; RUN-028 and RUN-029 run on the shared k3s
+cluster's GPU pool (``VF_K8S_GPU_NODES``) with inert holders of the base image, as
+``test_alloc_capacity.py`` does.
 What can be decided without a cluster is decided here as ``model`` variants:
 the admission rules a scaler must obey (``runtime.scaling.scaling_rejections`` and
 the renderer's half in ``deploy.manifests``), throughput-based demand
@@ -193,10 +194,23 @@ def test_run_027_detects_a_job_blind_admission(monkeypatch) -> None:
     assert defects.detects(_oracle_run_027, {})
 
 
+def _pod_claims(namespace : str, selector : str) -> Dict[str, Any]:
+    '''One ``ClaimObservation`` per pod, from what the API reports — a Pending pod is a pending
+    claim, a scheduled one is allocated, a ready one is ready. Never inferred from the spec.'''
+    from _k8s import pod_conditions
+
+    from videoflow.backends.allocation import CLAIM_PENDING, ClaimObservation, DeviceIdentity
+    claims : Dict[str, Any] = {}
+    for c in pod_conditions(namespace, selector):
+        grant = (DeviceIdentity(c['node'], None, None, None, 'gpu', None),) if c['node'] else None
+        status = CLAIM_READY if c['ready'] else CLAIM_ALLOCATED if c['node'] else CLAIM_PENDING
+        claims[c['name']] = known(ClaimObservation(c['name'], 'test', 'g', 'g', status, grant, {'reason': c['message']}))
+    return claims
+
+
 @pytest.mark.case('RUN-028')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 4')
-def test_run_028_autoscaling_admission_reconciles_granted_accelerator() -> None:
+def test_run_028_autoscaling_admission_reconciles_granted_accelerator(k3s, k3s_gpu_nodes, evidence_dir) -> None:
     '''
     RUN-028 (P1, integration, kubernetes): Autoscaling admission reconciles granted accelerator
     capacity.
@@ -204,10 +218,63 @@ def test_run_028_autoscaling_admission_reconciles_granted_accelerator() -> None:
     Acceptance: Active concurrency never exceeds valid grants and the no-spare case reports a
     capacity constraint rather than silently claiming successful scale-out.
 
-    Pending phase 4: the in-cluster half needs the Kubernetes allocation backend
-    (real grants withdrawn and restored under a pending scale request); the
-    reconciliation is the ``grants`` variant below on the memory allocation backend.
+    On the pool: a Deployment wants more one-GPU replicas than the node has free; the
+    reconciliation over the pods' observed claims counts only scheduled pods as granted
+    and only ready ones as capacity, names the shortfall, and follows a withdrawn and
+    restored allocation (a competing holder taking, then freeing, one device).
     '''
+    import time as _time
+
+    from _brokers import unique_ids
+    from _k8s import apply, delete_workload, free_gpus_on, gpu_holder_deployment, pod_conditions
+    namespace = k3s['VF_K8S_NAMESPACE']
+    node, free = max(((n, free_gpus_on(n)) for n in k3s_gpu_nodes), key = lambda pair: pair[1])
+    if free < 2:
+        not_run(f'RUN-028 needs a pool node with two free GPUs; the best has {free}')
+    run = unique_ids('r028')[1][:8]
+    name, rival = f'vf-conf-{run}', f'vf-conf-{run}-rival'
+    desired = free + 2
+    evidence : Dict[str, Any] = {'node': node, 'free': free, 'desired': desired, 'steps': []}
+
+    def settle(expect_ready : int, timeout : float = 180.0) -> Any:
+        deadline = _time.monotonic() + timeout
+        while True:
+            decision = scaling.reconcile_capacity(desired, _pod_claims(namespace, f'app={name}'))
+            if decision.ready == expect_ready and decision.granted == expect_ready and decision.diagnosis != scaling.CAPACITY_UNKNOWN:
+                return decision
+            if _time.monotonic() > deadline:
+                return decision
+            _time.sleep(3)
+    try:
+        apply(gpu_holder_deployment(name, namespace, [node], 1, replicas = desired))
+        decision = settle(free)
+        evidence['steps'].append({'step': 'scaled-out', 'decision': decision, 'pods': pod_conditions(namespace, f'app={name}')})
+        assert (decision.desired, decision.granted, decision.ready) == (desired, free, free), decision
+        assert decision.diagnosis == scaling.CAPACITY_CONSTRAINED and '2 cannot be scheduled' in decision.reason
+        # Withdraw one allocation: a rival takes the device one of ours gives up (our
+        # holder is scaled down by one so the freed device is the rival's, not a
+        # replacement's — the demand still wants ``desired``).
+        apply(gpu_holder_deployment(rival, namespace, [node], 1, replicas = 1))
+        # Below the running count: the controller removes the Pending replicas first, then one
+        # that holds a device — which the rival, already waiting, takes.
+        apply(gpu_holder_deployment(name, namespace, [node], 1, replicas = free - 1))
+        from _k8s import wait_ready
+        wait_ready(namespace, f'app={rival}', 1, timeout = 180)
+        decision = settle(free - 1)
+        evidence['steps'].append({'step': 'withdrawn', 'decision': decision, 'pods': pod_conditions(namespace, f'app={name}'),
+                                  'rival': pod_conditions(namespace, f'app={rival}')})
+        assert decision.ready == free - 1 and decision.diagnosis == scaling.CAPACITY_CONSTRAINED, decision
+        assert decision.granted <= free - 1                      # never more than the valid grants
+        # Restore it: the rival leaves, the scale request is admitted and the replica becomes ready.
+        delete_workload(namespace, rival)
+        apply(gpu_holder_deployment(name, namespace, [node], 1, replicas = desired))
+        decision = settle(free)
+        evidence['steps'].append({'step': 'restored', 'decision': decision, 'pods': pod_conditions(namespace, f'app={name}')})
+        assert (decision.granted, decision.ready) == (free, free), decision
+    finally:
+        delete_workload(namespace, rival)
+        delete_workload(namespace, name)
+        (evidence_dir / 'capacity_reconciliation.json').write_text(json.dumps(evidence, indent = 2, default = str))
 
 
 @pytest.mark.case('RUN-028')
@@ -226,10 +293,37 @@ def test_run_028_detects_requests_counted_as_capacity(monkeypatch) -> None:
     assert defects.detects(_oracle_run_028, {})
 
 
+def _oracle_run_029_model(evidence : Dict[str, Any]) -> None:
+    '''The declared policy renders a feasible Deployment strategy; surge is refused without reserved
+    capacity; nothing inherits the zero-unavailable-plus-surge default silently on a full pool.'''
+    from videoflow.core.constants import GPU
+    from videoflow.deploy.admission import rollout_problems
+    from videoflow.deploy.manifests import rollout_strategy
+    p = IntProducer(0, 5, name = 'producer')
+    a = IdentityProcessor(name = 'infer', device_type = GPU)(p)
+    specs = compile_flow(Flow([CommandlineConsumer(name = 'sink')(a)], flow_type = REALTIME, flow_id = 'r029'))
+    rows = {}
+    for replicas in (1, 2, 3):
+        specs_n = [spec_ if spec_.name != 'infer' else __import__('dataclasses').replace(spec_, nb_tasks = replicas)
+                   for spec_ in specs]
+        drain = next(m for m in render_manifests(specs_n, 'r029', 'realtime', 'nats://x:4222', 'r', default_image = 'img:1',
+                                                 rollout_policy = 'drain') if m['kind'] == 'Deployment'
+                     and m['metadata']['name'] == 'vf-r029-infer')
+        assert drain['spec']['strategy'] == {'type': 'Recreate'} and drain['spec']['replicas'] == replicas
+        surge_refused = rollout_problems('surge', specs_n, REALTIME, known(0))
+        assert surge_refused and 'spare' in surge_refused[0]
+        assert rollout_problems('drain', specs_n, REALTIME, known(0)) == []
+        default_flagged = rollout_problems(None, specs_n, REALTIME, known(0))
+        assert default_flagged and 'default rolling update' in default_flagged[0]
+        rows[replicas] = {'drain': drain['spec']['strategy'], 'surge_refused': surge_refused[0]}
+    assert rollout_strategy('surge')['rollingUpdate'] == {'maxSurge': 1, 'maxUnavailable': 0}
+    assert rollout_problems('surge', specs, REALTIME, known(1)) == []       # reserved capacity: admitted
+    evidence['rows'] = rows
+
+
 @pytest.mark.case('RUN-029')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 4')
-def test_run_029_exact_capacity_gpu_rollout_uses_an_explicit_feasible() -> None:
+def test_run_029_exact_capacity_gpu_rollout_uses_an_explicit_feasible(k3s, k3s_gpu_nodes, evidence_dir) -> None:
     '''
     RUN-029 (P1, deployment, kubernetes): Exact-capacity GPU rollout uses an explicit feasible
     upgrade policy.
@@ -237,10 +331,92 @@ def test_run_029_exact_capacity_gpu_rollout_uses_an_explicit_feasible() -> None:
     Acceptance: The image update completes under its admitted availability policy or is rejected
     for insufficient spare capacity; indefinite Pending replacement is failure.
 
-    Pending phase 4: ``--rollout-policy drain|surge`` (the Deployment strategy render
-    and its spare-capacity admission) ships with the allocation/rollout phase; until
-    it exists there is no policy to decide on, at any level.
+    On the pool: holders take every free GPU of a node (one, then two replicas where the
+    node has them); a spec change under ``drain`` completes with the old pods gone before
+    the replacements were scheduled; ``surge`` is refused by admission; the API default is
+    shown to leave the replacement Pending within a bounded wait.
     '''
+    from _brokers import unique_ids
+    from _k8s import (
+        apply,
+        delete_workload,
+        free_gpus_on,
+        gpu_holder_deployment,
+        kubectl_json,
+        pod_conditions,
+        rollout_status,
+        wait_ready,
+    )
+
+    from videoflow.core.constants import GPU
+    from videoflow.deploy.admission import free_gpu_devices_observed, rollout_problems
+    from videoflow.deploy.manifests import rollout_strategy
+    namespace = k3s['VF_K8S_NAMESPACE']
+    node, free = max(((n, free_gpus_on(n)) for n in k3s_gpu_nodes), key = lambda pair: pair[1])
+    if free < 1:
+        not_run('RUN-029 needs a pool node with a free GPU; none has one')
+    evidence : Dict[str, Any] = {'node': node, 'free': free, 'rounds': []}
+    p = IntProducer(0, 5, name = 'producer')
+    a = IdentityProcessor(name = 'infer', device_type = GPU, gpu_count = 1)(p)
+    specs = compile_flow(Flow([CommandlineConsumer(name = 'sink')(a)], flow_type = REALTIME, flow_id = 'r029'))
+    # Replica counts that take every free device (``replicas × per_pod == free``): the
+    # case is about a fully allocated pool, and a leftover spare would admit surge.
+    for replicas in [r for r in (1, 2, 3) if free % r == 0]:
+        name = 'vf-conf-' + unique_ids('r029')[1][:8]
+        per_pod = free // replicas
+        round_evidence : Dict[str, Any] = {'replicas': replicas, 'gpus_per_pod': per_pod}
+        try:
+            apply(gpu_holder_deployment(name, namespace, [node], per_pod, replicas = replicas, generation = 'a'))
+            wait_ready(namespace, f'app={name}', replicas, timeout = 240)
+            old = {c['name'] for c in pod_conditions(namespace, f'app={name}')}
+            old_uids = {p['metadata']['uid'] for p in kubectl_json('get', 'pods', '-n', namespace, '-l', f'app={name}').get('items', [])}
+            # Admission over the pool as it is: no reserved capacity, surge is refused.
+            observed = free_gpu_devices_observed()
+            refused = rollout_problems('surge', specs, REALTIME, observed)
+            round_evidence['surge_refused'] = refused
+            round_evidence['free_observed'] = str(observed)
+            assert refused and 'spare' in refused[0], (refused, str(observed), [(s.name, s.device_type) for s in specs])
+            # Drain: the replacement is scheduled only after the old grant is gone.
+            apply(gpu_holder_deployment(name, namespace, [node], per_pod, replicas = replicas,
+                                        strategy = rollout_strategy('drain'), generation = 'b'))
+            completed, output = rollout_status(namespace, name, timeout = 240)
+            round_evidence['drain'] = {'completed': completed, 'output': output}
+            assert completed, output
+            # The old grants were released (their pods deleted) before any replacement was
+            # scheduled: Recreate stops the old generation first. A pod still winding down
+            # carries a deletionTimestamp; it is not a replacement.
+            listing = kubectl_json('get', 'pods', '-n', namespace, '-l', f'app={name}').get('items', [])
+            new_pods = [p for p in listing if p['metadata']['uid'] not in old_uids and not p['metadata'].get('deletionTimestamp')]
+            leaving = [p for p in listing if p['metadata']['uid'] in old_uids]
+            assert len(new_pods) == replicas, [p['metadata']['name'] for p in listing]
+            assert all(p['metadata'].get('deletionTimestamp') for p in leaving), [p['metadata']['name'] for p in leaving]
+            released_at = max((p['metadata']['deletionTimestamp'] for p in leaving), default = '')
+            for pod in new_pods:
+                scheduled = next((c for c in pod['status'].get('conditions', []) if c['type'] == 'PodScheduled'), {})
+                round_evidence.setdefault('replacements', []).append(
+                    {'pod': pod['metadata']['name'], 'scheduled_at': scheduled.get('lastTransitionTime'),
+                     'old_released_at': released_at})
+                assert not released_at or scheduled.get('lastTransitionTime', '') >= released_at, round_evidence
+        finally:
+            delete_workload(namespace, name)
+            evidence['rounds'].append(round_evidence)
+    (evidence_dir / 'rollout_policy.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.case('RUN-029')
+@pytest.mark.level('model')
+@pytest.mark.variant('policy-render')
+def test_run_029_policies_render_feasible_strategies_and_refuse_blind_surge(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_run_029_model(evidence)
+    (evidence_dir / 'rollout_policy_model.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'RUN-029')
+def test_run_029_detects_the_inherited_default_strategy(monkeypatch) -> None:
+    import defects_alloc
+    defects_alloc.default_rolling_update(monkeypatch)
+    assert defects.detects(_oracle_run_029_model, {})
 
 
 @pytest.mark.case('RUN-046')

@@ -196,7 +196,16 @@ reported as unknown rather than assumed. That verdict is a warning today;
 profiles are `live_latest`, `reliable_work`, `durable_control`,
 `replay_archive`) makes it binding — at deploy, again in the provision Job
 before any stream is created, and in every worker before it opens — and the
-same flag on `run-local` checks the dev containers.
+same flag on `run-local` checks the dev containers. Three placement flags are
+opt-in and change nothing when absent: `--rollout-policy drain|surge` decides
+how a node's Deployment replaces its pods (`drain` stops the old replica before
+the new one starts — what a GPU node needs when its devices cannot be held
+twice; `surge` starts one extra replica first, and is refused up front when the
+GPU pool has no spare device for it), `--gpu-nodes HOST,...` pins every GPU pod
+to those hosts on top of the pool label, and `--resources NODE=cpu:500m,memory:1Gi`
+(repeatable; `*` for every node; `cpu_limit`/`memory_limit` for limits) sets
+the worker containers' host requests, over whatever a component's descriptor
+declares in `spec.resources`.
 
 Because that image is built locally and loaded straight into the cluster, every
 container is rendered with `imagePullPolicy: IfNotPresent` — there is nothing to
@@ -507,7 +516,16 @@ The pod then requests `nvidia.com/gpu: 2` and Kubernetes grants both whole
 devices to that one worker, on one host. Inside the worker the contract is
 simple: **the visible GPUs are exactly the granted GPUs, `cuda:0..N-1`, with
 `N == gpu_count`** — true on Kubernetes (device plugin) and under `run-local`
-(the engine partitions `CUDA_VISIBLE_DEVICES`). How the model spreads across
+(the engine partitions `CUDA_VISIBLE_DEVICES`; by UUID, so the identity of each
+device survives renumbering). When a host has fewer devices than the flow asks
+for, `run-local --gpu-policy strict` refuses to start rather than hand out
+short grants; the default `shared` policy lets workers share devices (fine for
+development) and tells each worker the grant it really got
+(`VF_GPU_GRANT_JSON`, the delivered device list, marked non-exclusive). A node
+that cannot run short says so with `gpu_fallback = 'none'`, and one whose
+execution path needs peer access between its devices with
+`requires_peer_access = True`; the worker checks both against the real grant
+before the node opens. How the model spreads across
 them is the node's own `open()`: `device_map='auto'` for Hugging Face models,
 a `tensor_parallel_size` for engines that take one, or explicit `.to('cuda:1')`
 placement for multi-model nodes. A component can declare its need in its
@@ -554,7 +572,18 @@ the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
 `gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
 slices, so a node declares either a fraction of one device or whole devices.
 Under every other mode `gpu_memory_gib` is simply unused (the node gets a whole
-device), so a mix-authored flow still deploys anywhere.
+device), so a mix-authored flow still deploys anywhere — except on a pool node an
+administrator carved statically (`nvidia.com/mig-*` advertised), where the default
+mode consumes a free slice as advertised and never repartitions. Readiness is
+observed, not read off a label: a node counts as prepared only once the MIG
+manager reports success **and** advertises the requested slices, and teardown
+reverts a node only once it advertises whole cards again with no slice left on
+offer (the manager reports success before the device plugin it restarted is
+back) and no pod still holds one of its slices. `--gpu-mode dra` renders Dynamic Resource
+Allocation claims (`ResourceClaimTemplate`s and the pod references of
+`resource.k8s.io/v1`) for a cluster with a GPU DRA driver; without one deploy
+stops at preflight, and the claim lifecycle itself is not managed by videoflow
+in this release.
 
 ### How graph concepts map onto the broker and Kubernetes
 

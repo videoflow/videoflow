@@ -172,6 +172,10 @@ class DeliveredGrant:
     exclusive : bool
     requested : int
     policy : str
+    #: ``observed`` when the grant reflects a successful host read; ``unobserved``
+    #: when discovery failed and the launcher went ahead without one — an empty
+    #: device list then means "could not tell", never "a zero-GPU machine".
+    host : str = 'observed'
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -182,6 +186,7 @@ class DeliveredGrant:
             'exclusive': self.exclusive,
             'requested': self.requested,
             'policy': self.policy,
+            'host': self.host,
         }
 
     @staticmethod
@@ -194,6 +199,7 @@ class DeliveredGrant:
             exclusive = bool(d.get('exclusive', False)),
             requested = int(d.get('requested', 0)),
             policy = str(d.get('policy', '')),
+            host = str(d.get('host', 'observed')),
         )
 
 class AcceleratorAllocationBackend(abc.ABC):

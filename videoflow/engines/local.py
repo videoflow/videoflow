@@ -23,10 +23,15 @@ import sysconfig
 import tempfile
 import threading
 import time
-from typing import List, Optional
+from typing import List, Mapping, Optional
 
 import nats  # also an import guard: fail fast if the broker client is missing
 
+# The module, not the symbols: tests monkeypatch ``topology.provision_flow_sync``,
+# which only works while the name resolves at call time (CLAUDE.md's plugin-registry
+# rule — the same trap, for the same reason).
+from ..backends.allocation import SHARING_COOPERATIVE, SHARING_EXCLUSIVE, DeliveredGrant, Infeasible, WorkloadRequest
+from ..backends.outcomes import Unknown
 from ..core import constants
 from ..core.compiler import (
     NodeSpec,
@@ -36,7 +41,7 @@ from ..core.compiler import (
     validate_wire_compatibility,
 )
 from ..core.engine import ExecutionEngine
-from ..core.errors import BrokerUnavailable, ConfigError
+from ..core.errors import BrokerUnavailable, ConfigError, ResourceUnavailable
 from ..core.supervision import (
     EventLog,
     NodeExited,
@@ -46,10 +51,7 @@ from ..core.supervision import (
     SupervisionPolicy,
     render_event,
 )
-
-# The module, not the symbols: tests monkeypatch ``topology.provision_flow_sync``,
-# which only works while the name resolves at call time (CLAUDE.md's plugin-registry
-# rule — the same trap, for the same reason).
+from ..deploy.allocation_local import GRANT_ENV, POLICY_SHARED, LocalAllocationBackend
 from ..messaging import topology
 from ..utils.system import visible_physical_gpus
 
@@ -154,8 +156,13 @@ class LocalProcessEngine(ExecutionEngine):
                 default_image : str | None = None,
                 blob_ttl_seconds : int | None = None,
                 supervision : SupervisionPolicy | None = None,
-                profile_requests : dict[str, str] | None = None) -> None:
+                profile_requests : dict[str, str] | None = None,
+                gpu_policy : str = POLICY_SHARED) -> None:
         self._supervision = supervision or SupervisionPolicy.local()
+        # How the host's GPUs are partitioned across workers (``--gpu-policy``):
+        # ``shared`` is today's wrap-around walk, ``strict`` refuses short grants
+        # before launch. See deploy.allocation_local.
+        self._gpu_policy = gpu_policy
         # Explicit channel-profile requests for the workers' env (deploy.admission); empty by default.
         self._profile_requests = dict(profile_requests or {})
         self._events = EventLog()
@@ -235,15 +242,24 @@ class LocalProcessEngine(ExecutionEngine):
                 nats_url = self._nats_url) from e
 
         # Only probe the host's GPUs (nvidia-smi) when the flow actually has GPU
-        # nodes — a CPU-only flow must not depend on the probe in any way.
-        gpu_assignment = (assign_local_gpus(specs, visible_physical_gpus())
-                        if any(s.device_type == 'gpu' for s in specs) else {})
+        # nodes — a CPU-only flow must not depend on the probe in any way. The
+        # default policy keeps today's ordinal walk byte-for-byte; ``strict``, or
+        # the RFC 0006 switch, goes through the allocation backend, which grants
+        # UUIDs and tells every worker what it really received (VF_GPU_GRANT_JSON).
+        gpu_assignment : dict[tuple[str, int], list[int]] = {}
+        gpu_env : dict[tuple[str, int], Mapping[str, str]] = {}
+        if any(s.device_type == 'gpu' for s in specs):
+            if self._gpu_policy == POLICY_SHARED and not constants.RFC0006:
+                gpu_assignment = assign_local_gpus(specs, visible_physical_gpus())
+            else:
+                gpu_env = allocate_local_gpus(specs, flow_id, run_id, LocalAllocationBackend(self._gpu_policy))
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
                                 self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
                                 gpu_devices = gpu_assignment.get((spec.name, replica_idx)),
+                                gpu_env = gpu_env.get((spec.name, replica_idx)),
                                 profile_requests = self._profile_requests,
                                 blob_reader_ids = (blob_reader_ids(spec, specs)
                                                    if constants.RFC0006 else None),
@@ -622,11 +638,83 @@ def assign_local_gpus(specs : List[NodeSpec],
             f'schedule this way on Kubernetes.')
     return assignment
 
+def local_workload_requests(specs : List[NodeSpec], flow_id : str, run_id : str) -> list[WorkloadRequest]:
+    '''
+    One ``WorkloadRequest`` per replica of every GPU node the local engine can
+    grant devices to (docker-run natives excluded, see ``_runs_via_docker``),
+    in launch order: whole-device requests are exclusive, a node declaring
+    ``gpu_memory_gib`` is a cooperative sharer whose declared peak is that demand.
+    '''
+    requests : list[WorkloadRequest] = []
+    for spec in specs:
+        if spec.device_type != 'gpu' or _runs_via_docker(spec):
+            continue
+        peak = int(spec.gpu_memory_gib * (1 << 30)) if spec.gpu_memory_gib is not None else None
+        for replica_idx in range(spec.nb_tasks):
+            requests.append(WorkloadRequest(
+                flow_id = flow_id, run_id = run_id, workload_id = f'{spec.name}/{replica_idx}',
+                device_count = spec.gpu_count,
+                sharing = SHARING_COOPERATIVE if peak is not None else SHARING_EXCLUSIVE,
+                declared_peak_memory_bytes = peak, provenance = {'device_count': 'spec.gpu_count'}))
+    return requests
+
+def allocate_local_gpus(specs : List[NodeSpec], flow_id : str, run_id : str,
+                        backend : LocalAllocationBackend) -> dict[tuple[str, int], Mapping[str, str]]:
+    '''
+    The GPU environment of every worker, decided before any worker is launched:
+    ``CUDA_VISIBLE_DEVICES`` (UUIDs), ``VF_GPU_COUNT`` (the delivered count) and
+    ``VF_GPU_GRANT_JSON``. Strict policy raises ``ResourceUnavailable`` naming
+    every reason the flow does not fit, and refuses an unobservable host; the
+    shared policy launches on an unobservable host without a mask but marks
+    every grant ``host='unobserved'`` so nobody reads it as a zero-GPU machine.
+    '''
+    requests = local_workload_requests(specs, flow_id, run_id)
+    if not requests:
+        return {}
+    keyed = {r.workload_id: (r.workload_id.rsplit('/', 1)[0], int(r.workload_id.rsplit('/', 1)[1])) for r in requests}
+    observed = backend.inventory({})
+    if isinstance(observed, Unknown):
+        if backend.policy != POLICY_SHARED:
+            raise ResourceUnavailable(
+                f'Cannot observe this host\'s GPUs ({observed.reason}: {observed.detail}); strict GPU policy '
+                f'refuses to launch against an unobserved host.',
+                remedy = 'Fix nvidia-smi (driver, PATH) and rerun, or run with --gpu-policy shared to launch '
+                         'without a grant.')
+        logger.warning(f'GPU discovery failed ({observed.reason}: {observed.detail}); launching GPU workers '
+                       f'without a device grant. This is an unobserved host, not a zero-GPU one.')
+        return {key: {GRANT_ENV: json.dumps(DeliveredGrant(w, (), False, r.device_count, backend.policy,
+                                                               host = 'unobserved').to_dict(),
+                                            separators = (',', ':'))}
+                for w, key in keyed.items() for r in requests if r.workload_id == w}
+    outcome = backend.plan(requests, observed.value)
+    if isinstance(outcome, Infeasible):
+        if backend.policy != POLICY_SHARED:
+            raise ResourceUnavailable(
+                'This flow does not fit the GPUs visible to run-local under --gpu-policy strict:\n  - '
+                + '\n  - '.join(outcome.reasons),
+                remedy = 'Reduce replicas or gpu_count, declare gpu_memory_gib on sharers, free the devices, '
+                         'or opt into device sharing with --gpu-policy shared.')
+        # Shared policy on an empty pool: today's behaviour — no mask, CPU fallback —
+        # but the grant says so.
+        logger.warning('no GPU visible to run-local: ' + '; '.join(outcome.reasons))
+        return {key: {'VF_GPU_COUNT': '0',
+                      GRANT_ENV: json.dumps(DeliveredGrant(w, (), False, r.device_count, backend.policy).to_dict(),
+                                            separators = (',', ':'))}
+                for w, key in keyed.items() for r in requests if r.workload_id == w}
+    for note in outcome.notes:
+        logger.warning(f'local GPU plan: {note}')
+    claim = backend.reserve(outcome, f'{flow_id}:{run_id}', outcome.snapshot_generation)
+    if claim.grant is None:
+        raise ResourceUnavailable(f'Could not reserve the planned GPUs: {claim.evidence.get("reason", claim.status)}.',
+                                  remedy = 'Rerun; the host changed between planning and launch.')
+    return {keyed[w]: backend.bindings(claim.claim_id, w).env for w in outcome.assignments}
+
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
                 python_path : list | None = None,
                 blob_ttl_seconds : int | None = None,
                 gpu_devices : list[int] | None = None,
+                gpu_env : Mapping[str, str] | None = None,
                 profile_requests : dict[str, str] | None = None,
                 blob_reader_ids : list[str] | None = None,
                 parent_replicas : list[int] | None = None,
@@ -701,6 +789,10 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         # Cooperative masking: the worker sees exactly its granted devices, so the
         # visibility contract holds locally too (see assign_local_gpus).
         env['CUDA_VISIBLE_DEVICES'] = ','.join(str(d) for d in gpu_devices)
+    if gpu_env:
+        # The allocation backend's bindings (strict policy or RFC 0006): a UUID
+        # mask, the delivered count and the grant record itself (ENV-14).
+        env.update(gpu_env)
     if profile_requests:
         env.update(profile_requests)
     return env

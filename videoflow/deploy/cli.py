@@ -55,6 +55,7 @@ from ..utils.plugins import load_plugin_group
 from .admission import (
     admit,
     enforce_admission,
+    free_gpu_devices_observed,
     jetstream_capabilities,
     jetstream_capabilities_observed,
     local_dev_capabilities,
@@ -63,6 +64,7 @@ from .admission import (
     redis_payload_capabilities_observed,
     requests_env,
     requirements_for,
+    rollout_problems,
     run_stream_names,
     unknown_admission,
     verify_topology_shape,
@@ -143,6 +145,46 @@ def _gpu_prepare(gpu_strategy : GpuStrategy, demand : dict, kubectl : str,
             raise ClusterError(f'GPU mode {gpu_strategy.name!r} could not prepare '
                              f'the cluster: {e}') from e
         raise
+
+def parse_resources(entries : list[str] | None) -> dict[str, dict[str, str]]:
+    '''
+    ``--resources`` values as ``{node or '*': {cpu, memory, cpu_limit, memory_limit}}``:
+    each entry is ``NODE=key:quantity[,key:quantity...]`` (``*`` for every node).
+
+    - Raises:
+        - ConfigError: an entry is malformed or names an unknown key.
+    '''
+    keys = ('cpu', 'memory', 'cpu_limit', 'memory_limit')
+    out : dict[str, dict[str, str]] = {}
+    for entry in entries or []:
+        node, sep, rest = entry.partition('=')
+        if not sep or not node.strip() or not rest.strip():
+            raise ConfigError(f'--resources entry {entry!r} is not NODE=key:quantity[,key:quantity].',
+                              remedy = "Example: --resources '*=cpu:500m,memory:1Gi' --resources detector=memory_limit:4Gi")
+        for pair in rest.split(','):
+            key, colon, quantity = pair.partition(':')
+            key, quantity = key.strip(), quantity.strip()
+            if not colon or key not in keys or not quantity:
+                raise ConfigError(f'--resources entry {entry!r}: {pair.strip()!r} is not one of {keys} with a quantity.',
+                                  remedy = "Example: --resources '*=cpu:500m,memory:1Gi'")
+            out.setdefault(node.strip(), {})[key] = quantity
+    return out
+
+def _placement_options(args : argparse.Namespace) -> dict[str, Any]:
+    '''
+    The opt-in placement keywords for ``render_manifests`` (plan Phase 4):
+    ``rollout_policy``, ``gpu_nodes`` and ``resources`` — each passed only when
+    the operator asked, so a deploy that never did renders byte-for-byte as before.
+    '''
+    options : dict[str, Any] = {}
+    if args.rollout_policy:
+        options['rollout_policy'] = args.rollout_policy
+    if args.gpu_nodes:
+        options['gpu_nodes'] = [n.strip() for n in args.gpu_nodes.split(',') if n.strip()]
+    resources = parse_resources(args.resources)
+    if resources:
+        options['resources'] = resources
+    return options
 
 def _cmd_deploy(args : argparse.Namespace) -> None:
     # optional dep: manifests imports yaml at module scope
@@ -311,6 +353,14 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         if problems and args.strict_preflight:
             raise ResourceUnavailable('ERROR: --strict-preflight set and the GPU preflight found '
                              'problems (above); nothing was applied.')
+        # A declared rollout policy is admitted against the pool's spare capacity
+        # (ALLOC-029/RUN-029): surge with nothing free would wait forever behind
+        # the old replica, so it is refused here rather than applied.
+        rollout = rollout_problems(args.rollout_policy, specs, flow_type, free_gpu_devices_observed(args.kubectl))
+        if rollout and args.rollout_policy == 'surge':
+            raise ResourceUnavailable('ERROR: ' + rollout[0] + '; nothing was applied.')
+        for problem in rollout:
+            print(f'WARNING: {problem}', file = sys.stderr)
         # gpu_memory_gib drives the mix strategy's MIG slice choice; every other
         # mode grants whole devices, so a declared demand deserves a heads-up
         # rather than silence (a mix-authored flow must still deploy anywhere).
@@ -388,6 +438,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # `priority_class`, and a deploy that never asked for a priority must not
         # depend on the keyword at all.
         engine_options['priority_class'] = args.priority_class
+    engine_options.update(_placement_options(args))
     engine = KubernetesExecutionEngine(
         nats_url = nats_url, namespace = args.namespace, default_image = image,
         image_overrides = overrides, blob_redis_url = blob_redis_url,
@@ -571,6 +622,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
             image_pull_policy = args.image_pull_policy,
             priority_class = args.priority_class,
             stream_replicas = stream_replicas,
+            **_placement_options(args),
         )
     except ValueError as e:
         raise ConfigError(str(e)) from e
@@ -758,7 +810,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                                 default_image = image,
                                 blob_ttl_seconds = args.blob_ttl_seconds,
                                 supervision = supervision,
-                                profile_requests = requests_env(explicit_profiles))
+                                profile_requests = requests_env(explicit_profiles),
+                                gpu_policy = args.gpu_policy)
     try:
         try:
             flow.run(engine, run_id = args.run_id)
@@ -1315,6 +1368,21 @@ def build_parser() -> argparse.ArgumentParser:
                                'the provision Job and any broker it provisions. The PriorityClass '
                                'must exist in the cluster; on a shared cluster it is how the flow '
                                'yields to (or preempts) other tenants\' work.')
+    deploy.add_argument('--rollout-policy', choices = ['drain', 'surge'], default = None,
+                        help = 'How a node\'s Deployment replaces its pods on an update: drain '
+                               '(Recreate — old replicas stop before new ones start; what a GPU '
+                               'node needs when its devices cannot be held twice) or surge (one '
+                               'extra replica at a time, none unavailable; needs the spare '
+                               'capacity). Default: the Kubernetes default rolling update.')
+    deploy.add_argument('--gpu-nodes', default = None, metavar = 'HOST[,HOST...]',
+                        help = 'Pin every GPU pod to these hostnames (a required nodeAffinity on '
+                               'kubernetes.io/hostname), on top of the pool label. For a shared '
+                               'cluster where only some GPU nodes are yours to use.')
+    deploy.add_argument('--resources', action = 'append', metavar = 'NODE=key:quantity[,...]', default = None,
+                        help = 'Host requests/limits for a node\'s worker container: keys cpu, '
+                               'memory (requests), cpu_limit, memory_limit (limits); NODE=* for '
+                               'every node. Repeatable; a node entry overrides the * entry, '
+                               'both override a component descriptor\'s spec.resources.')
     deploy.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = 'dev',
                         help = 'Shape of the auto-provisioned NATS/Redis when --nats is omitted. '
                                'dev (default): one emptyDir server each, torn down with a BATCH '
@@ -1457,6 +1525,13 @@ def build_parser() -> argparse.ArgumentParser:
                            'restarts up to 3 times (backoff 1/2/4s), matching the '
                            'Kubernetes Job semantics so the recovery path is exercised '
                            'locally; pass this for a tight debug loop.')
+    run.add_argument('--gpu-policy', choices = ['shared', 'strict'], default = 'shared',
+                    help = 'How this host\'s GPUs are shared out to GPU workers. shared (default): '
+                           'when demand exceeds the visible devices, workers share them — each '
+                           'worker is told the grant it really got. strict: refuse to start when '
+                           'the exclusive grants do not fit, or a sharer\'s declared gpu_memory_gib '
+                           'does not fit its device (VF_GPU_HEADROOM_BYTES of headroom each); '
+                           'a host nvidia-smi cannot read is refused too.')
     run.set_defaults(func = _cmd_run_local)
 
     comp = sub.add_parser('component', help = 'Work with component descriptors.')

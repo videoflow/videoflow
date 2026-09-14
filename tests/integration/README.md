@@ -222,6 +222,28 @@ The GPU paths are covered by unit tests, by the conformance suite's own fixtures
 and by the walkthrough in the top-level [README.md](../../README.md); this bucket
 never requests a GPU on either flavor.
 
+### The conformance suite's GPU levels (`tests/conformance/`)
+
+The conformance suite has two more gates for accelerators, both opt-in by an
+explicit export and both refusing devices that are not idle:
+
+| Variable | What it opens | The gate checks |
+|---|---|---|
+| `VF_TEST_GPU_UUIDS` | the `gpu` level on **this host** (ALLOC-014/015/016, RUN-039/043): `run-local`-style grants on real devices with a CUDA-runtime probe as the independent witness | `cuda-python` installed (`uv sync --group gpu-test`), every UUID present per `nvidia-smi -L`, **no compute process on any of them** (`nvidia-smi --query-compute-apps`, re-checked at teardown), and never GPUs 0/1 of `lnmcltappgke02` (a service runs there) |
+| `VF_K8S_GPU_NODES` | in-cluster GPU pods (ALLOC-004/008/017/029/030/031, RUN-028/029/032): inert `sleep` holders of the base image on the pool nodes named | each node carries `videoflow.io/gpu-pool=true` — applied by the operator (`kubectl label node <n> videoflow.io/gpu-pool=true`), never by a test or script — none is `lnmcltappgke02`, and the allocated-GPU read is Known |
+| `VF_K8S_MIG_NODE` | managed-MIG lifecycle on hardware (ALLOC-003/005/006/012/013/033) — geometry applied and restored through the GPU Operator | one node from `VF_K8S_GPU_NODES` with zero allocated GPUs and `nvidia.com/mig.capable=true`; the cases additionally need the operator's *mixed* MIG strategy on it (managed MIG names `nvidia.com/mig-<profile>` resources) and report NOT_RUN under `single` |
+
+The DRA cases (ALLOC-018..028, kubernetes/gpu levels) gate on a DRA driver
+publishing GPU `ResourceSlices` and report NOT_RUN without one; their model-level
+variants (the version/feature-gate matrix, the rendered claims, the readiness
+state machine on the reference allocator) run everywhere. The process-level
+local-GPU cases use a fake `nvidia-smi` on `PATH`
+([tests/conformance/tools/fake_nvidia_smi.py](../conformance/tools/fake_nvidia_smi.py)),
+so a host with one, zero or unobservable GPUs is a fixture, not a machine. The
+cluster cases that run a real worker pod (RUN-030's cluster variant, RUN-033) need
+the fixtures image rebuilt from the current tree — `scripts/k3s-test-up.sh` does it
+— because the fixture nodes they use and the worker-side checks live in the image.
+
 ### kind, for CI
 
 `scripts/kind-up.sh` and `scripts/kind-down.sh` are unchanged and remain what CI

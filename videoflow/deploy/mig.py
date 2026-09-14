@@ -168,6 +168,12 @@ class NodeInventory:
     #: occupancy is not zero occupancy: the mix strategy refuses to plan on such a
     #: node rather than repartition cards another tenant may hold.
     occupancy_known : bool = True
+    #: The node's advertised extended resources (``status.allocatable``, integer
+    #: quantities only): what a static MIG slice request is matched against.
+    allocatable : Dict[str, int] = field(default_factory = dict)
+    #: The node is owned by a DRA driver (it publishes ResourceSlices): no
+    #: device-plugin planning and never videoflow's managed-MIG hooks (ALLOC-018).
+    dra_owned : bool = False
 
 
 @dataclass

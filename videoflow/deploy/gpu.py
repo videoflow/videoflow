@@ -3,7 +3,7 @@ GPU allocation strategies: how a GPU node's pods claim devices, what to prefligh
 before deploying them, and any cluster state a strategy needs to set up for a run
 and restore afterwards.
 
-Two strategies ship, matching the two-mode GPU design (RFC 0004):
+Three strategies ship, two of them matching the two-mode GPU design (RFC 0004):
 
 - ``exclusive`` (default) claims whole physical devices through an integer
   extended resource, so the scheduler accounts for them and a flow that
@@ -15,7 +15,15 @@ Two strategies ship, matching the two-mode GPU design (RFC 0004):
 - ``mix`` (opt-in) serves declared demands: nodes with ``gpu_memory_gib`` get
   exclusive MIG slices chosen by the layout solver (``deploy/mig.py``), nodes
   with ``gpu_count`` — declared or defaulted — get whole physical cards. Its
-  ``prepare``/``cleanup`` hooks apply and restore MIG geometry for the run.
+  ``prepare``/``cleanup`` hooks apply and restore MIG geometry for the run —
+  over an explicit ``AllocationPlan`` (``plan_layout`` → ``apply_plan`` →
+  ``observe_geometry`` / ``cleanup``), with ownership claimed by compare-and-swap,
+  the occupancy re-read before any geometry write, and readiness judged by
+  evidence of *this* operation rather than by the ``mig.config.state`` label a
+  previous geometry left behind (plan Phase 4; ``deploy/allocation_kubernetes.py``
+  is the same machinery behind the ``AcceleratorAllocationBackend`` contract).
+- ``dra`` renders Dynamic Resource Allocation claims (``deploy/allocation_dra.py``)
+  and refuses at preflight unless a DRA driver publishes GPU ResourceSlices.
 
 The mode used to be a bare string branched on in four places (pod resources,
 manifest validation, preflight, the CLI's choices), which is why adding a third
@@ -33,6 +41,8 @@ import time
 import uuid
 from typing import AbstractSet, Any, Callable, Dict, List, Mapping, Optional, Sequence
 
+from ..backends import faults
+from ..backends.allocation import SHARING_EXCLUSIVE, WorkloadRequest
 from ..backends.outcomes import Observation, Unknown, known, unknown, value_or
 from ..core.compiler import NodeSpec
 from ..core.errors import OwnershipConflict, UnobservableState
@@ -45,6 +55,13 @@ from ..core.provenance import (
     resolve_gpu_requirements,
 )
 from ..utils import plugins
+from .allocation_dra import (
+    DRA_API_VERSION,
+    DRIVER_INSTALL_REMEDY,
+    claim_name_for,
+    observe_environment,
+    render_bindings,
+)
 from .mig import GpuLayout, LayoutError, NodeInventory, layout_to_mig_parted_config, solve_layout
 
 logger = logging.getLogger(__package__)
@@ -409,6 +426,22 @@ class GpuStrategy:
         '''
         return None
 
+    def pod_claims(self, spec : NodeSpec) -> list[dict]:
+        '''
+        The pod-level ``spec.resourceClaims`` entries a GPU pod of ``spec`` needs —
+        ``[]`` for the extended-resource strategies, which claim through
+        ``pod_resources`` alone. A DRA strategy names its claim here (plan Phase 4).
+        '''
+        return []
+
+    def claim_manifests(self, spec : NodeSpec, namespace : str, flow_id : str, run_id : str) -> list[dict]:
+        '''
+        Extra manifests a GPU node needs applied beside its workload (a
+        ``ResourceClaimTemplate`` under DRA); ``[]`` by default. Plain dicts —
+        Kubernetes API objects, rendered where the workload is.
+        '''
+        return []
+
     def cleanup(self, kubectl : str = 'kubectl', flow_id : Optional[str] = None) -> None:
         '''
         Undoes ``prepare``. Must be idempotent and tolerant: it is called after a
@@ -529,10 +562,17 @@ class ExclusiveGpu(GpuStrategy):
         return problems
 
 #: Node annotation where mix's prepare() records the node's previous
-#: nvidia.com/mig.config label value ('' = the label was absent), so a later
-#: cleanup() — possibly a teardown in a fresh shell — can restore it without
-#: sharing any state with the deploy that ran prepare().
+#: nvidia.com/mig.config label value, so a later cleanup() — possibly a teardown
+#: in a fresh shell — can restore it without sharing any state with the deploy
+#: that ran prepare(). Key-presence semantics (ALLOC-033): an absent label is
+#: recorded as ``MIG_LABEL_ABSENT`` and removed again on restore; an explicitly
+#: empty label is recorded as '' and restored as ''. (Records written before the
+#: sentinel existed hold '' for both; they restore as an empty label, which the
+#: MIG manager treats exactly like an absent one.)
 MIG_RESTORE_ANNOTATION = 'videoflow.io/mig-config-restore'
+#: The restore record's value for "the label did not exist" (annotation values
+#: cannot be null, and '' is a legitimate label value of its own).
+MIG_LABEL_ABSENT = '__absent__'
 
 #: Node annotation recording the node's current mig-parted entry name. Entry
 #: names carry a per-run nonce (see ``_mig_config_name``), so unlike the old
@@ -1002,6 +1042,183 @@ def _wait_for_mig_state(kubectl : str, nodes : List[str],
     return states
 
 
+@dataclasses.dataclass(frozen = True)
+class AllocationPlan:
+    '''
+    One deploy's MIG decision, explicit and immutable (plan Phase 4, ALLOC-011):
+    the solver's layout, the pool nodes it was not allowed to touch (with the
+    reason each), the flow it was planned for and the inventory generation it
+    was planned on. Passed between ``resolve_specs``/``preflight``/``prepare``
+    instead of living in the registered strategy singleton, so two deploys in
+    one process — or a retried prepare in a fresh one — cannot act on each
+    other's cached geometry.
+    '''
+    layout : GpuLayout
+    excluded : Mapping[str, str]
+    flow_id : Optional[str]
+    generation : Optional[str] = None
+
+    def mig_nodes(self) -> List[str]:
+        return self.layout.mig_nodes()
+
+
+@dataclasses.dataclass(frozen = True)
+class AppliedGeometry:
+    '''
+    What ``MixGpu.apply_plan`` wrote, so readiness can be judged against *this*
+    operation: the per-node entry names (nonce'd per run), the owner epoch the
+    claim was stamped under, the namespace the manager runs in, and the
+    allocatable resources each node must advertise once the geometry is live.
+    '''
+    nodes : tuple[str, ...]
+    entries : Mapping[str, str]
+    epoch : str
+    namespace : str
+    expected_allocatable : Mapping[str, Mapping[str, int]]
+
+
+def expected_allocatable(layout : GpuLayout) -> dict[str, dict[str, int]]:
+    '''
+    Per MIG'd node, the extended resources the device plugin must advertise once
+    the layout is applied (mixed strategy naming, ``nvidia.com/mig-<profile>`` per
+    slice, ``nvidia.com/gpu`` per untouched card). The readiness evidence
+    ``_wait_for_geometry`` demands beyond a ``success`` label: a label left by an
+    earlier geometry says nothing about this one, the advertised resources do.
+    '''
+    out : dict[str, dict[str, int]] = {}
+    for node in layout.mig_nodes():
+        expected : dict[str, int] = {}
+        for card in layout.cards:
+            if card.node != node:
+                continue
+            if card.profiles:
+                for profile, count in card.profiles.items():
+                    resource = f'nvidia.com/mig-{profile}'
+                    expected[resource] = expected.get(resource, 0) + count
+            else:
+                expected['nvidia.com/gpu'] = expected.get('nvidia.com/gpu', 0) + 1
+        out[node] = expected
+    return out
+
+
+def _allocatable_observed(kubectl : str, node : str) -> Observation[dict[str, int]]:
+    '''``status.allocatable`` of one node as integer counts (non-integer quantities dropped), or Unknown.'''
+    try:
+        raw = _kubectl_run(kubectl, 'get', 'node', node, '-o', 'jsonpath={.status.allocatable}')
+    except RuntimeError as e:
+        return unknown('failed', str(e)[:200])
+    try:
+        parsed = json.loads(raw) if raw.strip() else {}
+    except ValueError:
+        return unknown('malformed', f'allocatable of {node} was not JSON')
+    if not isinstance(parsed, dict):
+        return unknown('malformed', f'allocatable of {node} was not an object')
+    return known({k: int(v) for k, v in parsed.items() if str(v).isdigit()})
+
+
+def geometry_advertised(allocatable : Mapping[str, int], expected : Mapping[str, int]) -> bool:
+    '''Whether a node advertises at least the resources a layout needs on it.'''
+    return all(allocatable.get(resource, 0) >= count for resource, count in expected.items())
+
+
+def _wait_for_geometry(kubectl : str, expected : Mapping[str, Mapping[str, int]],
+                       timeout_seconds : Optional[int] = None) -> dict[str, str]:
+    '''
+    ``_wait_for_mig_state`` correlated with the operation that was just written
+    (ALLOC-003): a node is ``success`` only when its ``mig.config.state`` label
+    says so **and** its ``status.allocatable`` advertises the geometry this
+    operation asked for — a ``success`` left by the previous geometry (the label
+    is not cleared when a new config is labeled) cannot complete a new one.
+    ``failed`` is the manager's verdict on the new config, ``timeout`` everything
+    else. Never raises; a transient read error counts as still pending.
+    '''
+    if timeout_seconds is None:
+        timeout_seconds = MIG_APPLY_TIMEOUT_SECONDS
+    nodes = sorted(expected)
+    states = dict.fromkeys(nodes, 'timeout')
+    deadline = time.monotonic() + timeout_seconds
+    pending = list(nodes)
+    while pending:
+        still = []
+        for node in pending:
+            try:
+                state = _kubectl_run(kubectl, 'get', 'node', node, '-o',
+                                     'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config\\.state}')
+            except RuntimeError:
+                still.append(node)
+                continue
+            if state == 'failed':
+                states[node] = 'failed'
+                continue
+            if state == 'success':
+                advertised = _allocatable_observed(kubectl, node)
+                if not isinstance(advertised, Unknown) and geometry_advertised(advertised.value, expected[node]):
+                    states[node] = 'success'
+                    continue
+            still.append(node)
+        pending = still
+        if not pending or time.monotonic() > deadline:
+            break
+        time.sleep(MIG_APPLY_POLL_SECONDS)
+    return states
+
+
+def _wait_for_restore(kubectl : str, targets : Mapping[str, str],
+                      timeout_seconds : Optional[int] = None) -> dict[str, str]:
+    '''
+    The restore direction of ``_wait_for_geometry`` (ALLOC-003): a node reverted
+    to ``targets[node]`` counts as ``success`` only with evidence the manager
+    acted on *this* label change — never on the ``success`` the previous
+    geometry left behind. For a disabled/absent target the evidence is the
+    device plugin's: no ``nvidia.com/mig-*`` resource with a positive count and
+    whole cards advertised again (the manager reports ``success`` while the
+    plugin it paused is still restarting, when every count reads 0 — a node in
+    that state has released nothing yet). For an administrator's own geometry
+    the evidence is the state seen as something other than ``success`` after
+    the write. ``failed`` is the manager's verdict, ``timeout`` everything else.
+    '''
+    if timeout_seconds is None:
+        timeout_seconds = MIG_APPLY_TIMEOUT_SECONDS
+    nodes = sorted(targets)
+    states = dict.fromkeys(nodes, 'timeout')
+    transitioned : set[str] = set()
+    deadline = time.monotonic() + timeout_seconds
+    pending = list(nodes)
+    while pending:
+        still = []
+        for node in pending:
+            try:
+                state = _kubectl_run(kubectl, 'get', 'node', node, '-o',
+                                     'jsonpath={.metadata.labels.nvidia\\.com/mig\\.config\\.state}')
+            except RuntimeError:
+                still.append(node)
+                continue
+            if state == 'failed':
+                states[node] = 'failed'
+                continue
+            if state != 'success':
+                transitioned.add(node)
+                still.append(node)
+                continue
+            disabled_target = targets[node] in ('', 'all-disabled', MIG_DISABLED_CONFIG) or targets[node].startswith(MIG_DISABLED_CONFIG)
+            if disabled_target:
+                advertised = _allocatable_observed(kubectl, node)
+                if (not isinstance(advertised, Unknown)
+                        and not any(r.startswith('nvidia.com/mig-') and n > 0 for r, n in advertised.value.items())
+                        and advertised.value.get('nvidia.com/gpu', 0) > 0):
+                    states[node] = 'success'
+                    continue
+            elif node in transitioned:
+                states[node] = 'success'
+                continue
+            still.append(node)
+        pending = still
+        if not pending or time.monotonic() > deadline:
+            break
+        time.sleep(MIG_APPLY_POLL_SECONDS)
+    return states
+
+
 def flow_owner_value(flow_id : str) -> str:
     '''The ``GPU_OWNER_LABEL`` value for a flow: ``manifests.k8s_name(flow_id)``,
     so an arbitrary ``--flow-id`` charset becomes a legal <= 63-char label value —
@@ -1038,6 +1255,15 @@ def _partition_inventory(inventory : List[NodeInventory],
     excluded : dict[str, str] = {}
     stale : List[NodeInventory] = []
     for node in inventory:
+        if node.dra_owned:
+            # Another allocator's territory (ALLOC-018): a DRA driver publishes
+            # this node's devices, so neither the device plugin's units nor
+            # videoflow's geometry hooks may touch them.
+            excluded[node.name] = ('owned by a DRA driver (it publishes ResourceSlices for the node) — '
+                                   'claim its devices through --gpu-mode dra, never through the device '
+                                   'plugin or managed MIG')
+            logger.info('mix: skipping node %s — %s', node.name, excluded[node.name])
+            continue
         if node.owner is not None and owner is not None and node.owner == owner:
             stale.append(node)
             continue
@@ -1112,23 +1338,47 @@ class MixGpu(ExclusiveGpu):
     name = 'mix'
 
     def __init__(self) -> None:
-        # The layout and the exclusion set are computed once per deploy in
-        # resolve_specs and reused by preflight/prepare in the same process.
-        # Solving is deterministic, so a recompute would agree — the cache only
-        # saves kubectl round-trips. flow_id is deliberately NOT cached: it is a
-        # per-call parameter, so a stale value cannot leak between deploys
-        # sharing this registered singleton.
-        self._layout : Optional[GpuLayout] = None
-        self._excluded_nodes : dict[str, str] = {}
+        # The registry API (resolve_specs -> preflight -> prepare, one deploy per
+        # process) remembers the last plan so the CLI's three calls agree; the
+        # explicit forms (plan_layout / preflight_for / apply_plan) take the plan
+        # as an argument and are what the allocation backend uses, so nothing
+        # decided for one deploy can leak into another through this singleton.
+        # flow_id is deliberately NOT cached: it is a per-call parameter.
+        self._plan : Optional[AllocationPlan] = None
+
+    @property
+    def _layout(self) -> Optional[GpuLayout]:
+        '''The last resolved layout (registry API); None before ``resolve_specs``.'''
+        return self._plan.layout if self._plan is not None else None
+
+    @property
+    def _excluded_nodes(self) -> dict[str, str]:
+        return dict(self._plan.excluded) if self._plan is not None else {}
 
     def resolve_specs(self, specs : List[NodeSpec], kubectl : str = 'kubectl',
                     default_resource : Optional[str] = None,
                     flow_id : Optional[str] = None) -> List[NodeSpec]:
+        # Whatever the last deploy cached is dropped first: a CPU-only flow or a
+        # flow whose planning fails must leave nothing a later prepare() could
+        # apply under its name (ALLOC-011).
+        self._plan = None
+        if not any(s.device_type == 'gpu' for s in specs):
+            return specs
+        plan = self.plan_layout(specs, kubectl = kubectl, flow_id = flow_id)
+        self._plan = plan
+        return self.apply_plan_to_specs(plan, specs)
+
+    def plan_layout(self, specs : List[NodeSpec], kubectl : str = 'kubectl',
+                    flow_id : Optional[str] = None) -> AllocationPlan:
+        '''
+        Reads the pool and solves the layout for ``specs`` — an explicit,
+        immutable ``AllocationPlan`` (ALLOC-011). Raises ``UnobservableState``
+        on an unreadable pool and ``LayoutError`` when the demands cannot be
+        laid out; never caches.
+        '''
         # Function-level: same gpu <-> cluster cycle as in ExclusiveGpu.preflight_problems.
         from .cluster import gpu_inventory_observed
 
-        if not any(s.device_type == 'gpu' for s in specs):
-            return specs
         observed = gpu_inventory_observed(kubectl)
         if isinstance(observed, Unknown):
             # An unreadable pool is not an empty pool: planning against [] would
@@ -1141,7 +1391,6 @@ class MixGpu(ExclusiveGpu):
                 remedy = f'Check kubectl access to nodes (kubectl get nodes -l {GPU_POOL_LABEL}=true) '
                          f'and redeploy.')
         usable, excluded = _partition_inventory(observed.value, flow_id)
-        self._excluded_nodes = excluded
         try:
             layout = solve_layout(usable, specs)   # raises LayoutError (a ValueError)
         except LayoutError as e:
@@ -1152,10 +1401,14 @@ class MixGpu(ExclusiveGpu):
                                    for node, reason in sorted(excluded.items()))
                 raise LayoutError(f'{e}\nNodes excluded from mix planning:\n{detail}') from e
             raise
-        self._layout = layout
+        return AllocationPlan(layout, excluded, flow_id, observed.generation)
+
+    @staticmethod
+    def apply_plan_to_specs(plan : AllocationPlan, specs : List[NodeSpec]) -> List[NodeSpec]:
+        '''The specs with each sharer's solver-chosen MIG profile as its ``gpu_resource_name``.'''
         resolved = []
         for spec in specs:
-            profile_resource = layout.spec_resources.get(spec.name)
+            profile_resource = plan.layout.spec_resources.get(spec.name)
             if profile_resource is not None:
                 # replace() rather than mutation: the caller may hold the originals.
                 spec = dataclasses.replace(spec, gpu_resource_name = profile_resource)
@@ -1170,15 +1423,21 @@ class MixGpu(ExclusiveGpu):
         # places every spanner replica on a concrete host in resolve_specs
         # (solve_layout raises LayoutError when no host has the cards), so the
         # per-host packing check is already made before preflight runs.
+        if self._plan is None:
+            return ['mix preflight ran without a resolved layout — deploy through the '
+                    'videoflow CLI, which calls resolve_specs first.']
+        return self.preflight_for(self._plan, kubectl = kubectl, demand = demand,
+                                  gpu_runtime_class = gpu_runtime_class)
+
+    def preflight_for(self, plan : AllocationPlan, kubectl : str = 'kubectl',
+                      demand : Optional[dict[str, int]] = None,
+                      gpu_runtime_class : Optional[str] = None) -> List[str]:
+        '''``preflight_problems`` for an explicit plan.'''
         # Function-level: same cycle as above.
         from .cluster import allocatable_gpus, nvidia_runtimeclass
 
         problems = []
-        layout = self._layout
-        if layout is None:
-            problems.append('mix preflight ran without a resolved layout — deploy through the '
-                            'videoflow CLI, which calls resolve_specs first.')
-            return problems
+        layout = plan.layout
         # The numeric exclusive checks compare against *current* allocatable,
         # which prepare() is about to change (MIG'ing a card retires its
         # nvidia.com/gpu units and advertises slices instead) — so mix does its
@@ -1218,7 +1477,7 @@ class MixGpu(ExclusiveGpu):
                  if resource not in layout.slice_demand}
         if whole:
             problems.extend(_capacity_problems(kubectl, whole,
-                                               exclude_nodes = frozenset(self._excluded_nodes)))
+                                               exclude_nodes = frozenset(plan.excluded)))
         if not gpu_runtime_class:
             nvidia_rc = nvidia_runtimeclass(kubectl)
             if nvidia_rc:
@@ -1277,13 +1536,27 @@ class MixGpu(ExclusiveGpu):
         cannot carry the config. Without a MIG manager or a ClusterPolicy it
         fails actionably, with the config to apply by hand.
         '''
-        layout = self._layout
-        if layout is None:
+        if self._plan is None:
             raise RuntimeError('mix prepare() called before resolve_specs() — deploy through the '
                                'videoflow CLI, which resolves the layout first.')
+        self.apply_plan(self._plan, kubectl = kubectl, flow_id = flow_id)
+
+    def apply_plan(self, plan : AllocationPlan, kubectl : str = 'kubectl',
+                   flow_id : Optional[str] = None) -> Optional[AppliedGeometry]:
+        '''
+        ``prepare`` for an explicit plan; returns what was written (None when the
+        plan MIGs nothing). Between claiming the nodes and touching any geometry
+        the occupancy is read again: a pod that landed on a planned card since
+        the plan was made would be destroyed by repartitioning, so a changed or
+        unreadable occupancy releases the claims and aborts (ALLOC-011).
+        '''
+        # Function-level: same gpu <-> cluster cycle as in ExclusiveGpu.preflight_problems.
+        from .cluster import gpu_units_in_use_observed
+
+        layout = plan.layout
         nodes = layout.mig_nodes()
         if not nodes:
-            return
+            return None
         if flow_id is None:
             raise RuntimeError('mix prepare() needs a flow_id to stamp node ownership — the '
                                'cluster may host other flows. Deploy through the videoflow '
@@ -1307,10 +1580,38 @@ class MixGpu(ExclusiveGpu):
         # Claim the nodes before any geometry work: a competing deploy planning
         # against the same pool must see them as taken from here on, and losing
         # the claim race must abort before anything was mutated.
-        self._stamp_node_owners(kubectl, nodes, flow_owner_value(flow_id))
+        owner = flow_owner_value(flow_id)
+        faults.barrier('owner.update.before', nodes = nodes, flow = flow_id)
+        epoch = self._stamp_node_owners(kubectl, nodes, owner)
+        faults.barrier('owner.update.after', nodes = nodes, flow = flow_id, epoch = epoch)
+        # Claimed, not yet mutated: the last look at who holds the cards. The
+        # plan was made on an earlier listing; a workload that landed since is
+        # not ours to destroy, and a listing that cannot be read proves nothing.
+        occupancy = gpu_units_in_use_observed(kubectl)
+        changed : List[str] = []
+        if isinstance(occupancy, Unknown):
+            self._release_claims(kubectl, nodes, owner, epoch)
+            raise UnobservableState(
+                f'{UNOBSERVABLE_GPU_STATE}: the pod listing could not be re-read before applying MIG '
+                f'geometry ({occupancy.reason}: {occupancy.detail}) — a card another tenant took '
+                f'since planning would be repartitioned under them; the claims were released.',
+                remedy = 'Restore `kubectl get pods -A` and redeploy.')
+        for node in nodes:
+            busy = sum(units for resource, units in (occupancy.value.get(node) or {}).items()
+                       if _is_gpu_resource(resource))
+            if busy:
+                changed.append(f'{node}: {busy} GPU unit(s) now in use')
+        if changed:
+            self._release_claims(kubectl, nodes, owner, epoch)
+            raise OwnershipConflict(
+                'GPU occupancy changed between planning and prepare on '
+                + '; '.join(changed) + ' — repartitioning would destroy those workloads; the claims '
+                'were released and nothing was changed.',
+                remedy = 'Re-run the deploy to plan against the pool as it is now.')
         nonce = uuid.uuid4().hex[:6]
         names = {node: _mig_config_name(node, nonce) for node in nodes}
         stale_names = self._record_entry_names(kubectl, names)
+        faults.barrier('claim.create.after', entries = names, flow = flow_id)
         applied_config = _rename_mig_config_entries(config, names)
         original = (((policy.get('spec') or {}).get('migManager') or {}).get('config') or {}).get('name')
         annotations = (policy.get('metadata') or {}).get('annotations') or {}
@@ -1360,7 +1661,10 @@ class MixGpu(ExclusiveGpu):
         _wait_for_mig_manager_rollout(kubectl, namespace, MIG_CONFIGMAP_NAME)
         for node in nodes:
             self._label_node_for_mig(kubectl, node, names[node])
-        states = _wait_for_mig_state(kubectl, nodes)
+            faults.barrier('claim.schedule.after', node = node, entry = names[node], flow = flow_id)
+        expected = expected_allocatable(layout)
+        states = _wait_for_geometry(kubectl, expected)
+        faults.barrier('claim.prepare.after', nodes = nodes, states = states, flow = flow_id)
         failed = sorted(node for node, state in states.items() if state == 'failed')
         if failed:
             raise RuntimeError(
@@ -1369,9 +1673,49 @@ class MixGpu(ExclusiveGpu):
         timed_out = sorted(node for node, state in states.items() if state == 'timeout')
         if timed_out:
             raise RuntimeError(
-                f'MIG geometry did not reach state=success on {", ".join(timed_out)} within '
-                f'{MIG_APPLY_TIMEOUT_SECONDS}s — check the MIG manager logs '
+                f'MIG geometry did not become ready on {", ".join(timed_out)} within '
+                f'{MIG_APPLY_TIMEOUT_SECONDS}s (mig.config.state=success with the requested slices '
+                f'advertised in status.allocatable) — check the MIG manager logs '
                 f'(kubectl logs -n {namespace} -l app=nvidia-mig-manager).')
+        return AppliedGeometry(tuple(nodes), names, epoch, namespace, expected)
+
+    def observe_geometry(self, kubectl : str, applied : AppliedGeometry) -> Observation[dict[str, str]]:
+        '''
+        One correlated readiness read per node of an ``apply_plan`` result:
+        ``ready`` when the node still carries this operation's entry name and
+        owner epoch, reports ``success`` and advertises the expected slices;
+        ``failed`` on the manager's verdict; ``pending`` otherwise; ``lost`` when
+        the entry or the claim is no longer this operation's. ``Unknown`` when a
+        node could not be read.
+        '''
+        out : dict[str, str] = {}
+        for node in applied.nodes:
+            try:
+                info = json.loads(_kubectl_run(kubectl, 'get', 'node', node, '-o', 'json'))
+            except (RuntimeError, ValueError) as e:
+                return unknown('failed', f'node {node}: {str(e)[:200]}')
+            labels = ((info.get('metadata') or {}).get('labels') or {})
+            allocatable = {k: int(v) for k, v in ((info.get('status') or {}).get('allocatable') or {}).items()
+                           if str(v).isdigit()}
+            if (labels.get(MIG_CONFIG_LABEL) != applied.entries.get(node)
+                    or labels.get(GPU_OWNER_EPOCH_LABEL) != applied.epoch):
+                out[node] = 'lost'
+            elif labels.get(MIG_CONFIG_STATE_LABEL) == 'failed':
+                out[node] = 'failed'
+            elif (labels.get(MIG_CONFIG_STATE_LABEL) == 'success'
+                  and geometry_advertised(allocatable, applied.expected_allocatable.get(node, {}))):
+                out[node] = 'ready'
+            else:
+                out[node] = 'pending'
+        return known(out)
+
+    def _release_claims(self, kubectl : str, nodes : List[str], owner : str, epoch : str) -> None:
+        '''Best-effort release of the owner stamps of an aborted prepare (each fenced on owner + epoch).'''
+        for node in nodes:
+            try:
+                self._release_owner(kubectl, node, owner, epoch)
+            except RuntimeError as e:
+                logger.warning(f'could not release the owner stamp on {node}: {e}')
 
     def _stamp_node_owners(self, kubectl : str, nodes : List[str], owner : str) -> str:
         '''
@@ -1393,6 +1737,9 @@ class MixGpu(ExclusiveGpu):
         for node in nodes:
             meta = _read_node_metadata(kubectl, node)
             current = (meta.get('labels') or {}).get(GPU_OWNER_LABEL)
+            # Between this read and the write below is the race window the CAS
+            # closes; the barrier lets a test hold two claimants exactly there.
+            faults.barrier('owner.read.after', node = node, version = meta.get('resourceVersion'), owner = owner)
             if current == owner:
                 continue                              # retried prepare: already ours
             error : Optional[str] = None
@@ -1489,13 +1836,15 @@ class MixGpu(ExclusiveGpu):
         # (which _kubectl_json's silence-tolerance would not).
         info = json.loads(_kubectl_run(kubectl, 'get', 'node', node, '-o', 'json'))
         meta = info.get('metadata') or {}
-        previous = (meta.get('labels') or {}).get(MIG_CONFIG_LABEL, '')
+        labels = meta.get('labels') or {}
+        previous = labels.get(MIG_CONFIG_LABEL, MIG_LABEL_ABSENT) if MIG_CONFIG_LABEL in labels else MIG_LABEL_ABSENT
         annotations = meta.get('annotations') or {}
         if MIG_RESTORE_ANNOTATION not in annotations:
             # Idempotent across a retried prepare: only the first attempt records
-            # the pre-videoflow value ('' = the label was absent). Key presence,
-            # not value truthiness — the recorded value is legitimately '', and a
-            # jsonpath read cannot tell that apart from "no annotation".
+            # the pre-videoflow value (MIG_LABEL_ABSENT when the label did not
+            # exist, '' when it was explicitly empty). Key presence, not value
+            # truthiness — the recorded value is legitimately '', and a jsonpath
+            # read cannot tell that apart from "no annotation".
             if previous.startswith('videoflow-'):
                 # A videoflow label with no record (a prior run lost it, under
                 # this or the pre-nonce naming): recording it as "previous"
@@ -1507,7 +1856,7 @@ class MixGpu(ExclusiveGpu):
                 logger.warning(f'node {node} already carries {MIG_CONFIG_LABEL}='
                                f'{previous} with no restore record — cleanup '
                                f'will remove the label and un-partition the cards')
-                previous = ''
+                previous = MIG_LABEL_ABSENT
             _kubectl_run(kubectl, 'annotate', 'node', node,
                          f'{MIG_RESTORE_ANNOTATION}={previous}')
         _kubectl_run(kubectl, 'label', 'node', node, '--overwrite',
@@ -1544,6 +1893,9 @@ class MixGpu(ExclusiveGpu):
         prepare crashed between claiming and labeling — has no geometry to
         revert, so its claim is simply released.
         '''
+        # Function-level: same gpu <-> cluster cycle as in ExclusiveGpu.preflight_problems.
+        from .cluster import gpu_units_in_use_observed
+
         try:
             listing = json.loads(_kubectl_run(kubectl, 'get', 'nodes', '-o', 'json'))
         except (RuntimeError, ValueError) as e:
@@ -1604,7 +1956,10 @@ class MixGpu(ExclusiveGpu):
                 continue
             previous = annotations[MIG_RESTORE_ANNOTATION]
             previous_of[name] = previous
-            targets[name] = previous or disabled
+            # Absent and explicitly empty both mean "no geometry": the manager
+            # un-partitions through the disabled entry; what differs is the final
+            # label (removed vs. left empty), decided once the node reverted.
+            targets[name] = disabled if previous in ('', MIG_LABEL_ABSENT) else previous
             stamped[name] = node_owner is not None
             claim_of[name] = (node_owner or '', node_epoch)
             annotated[name] = MIG_ENTRY_ANNOTATION in annotations
@@ -1612,9 +1967,29 @@ class MixGpu(ExclusiveGpu):
                     and labels.get(MIG_CONFIG_STATE_LABEL) == 'failed'):
                 stuck.append(name)
         skip : set[str] = set()
+        if targets:
+            # Deletion requested is not release confirmed: a pod still running on
+            # the node holds its slices, and reverting the geometry under it would
+            # destroy it (ALLOC-013). Such nodes keep their records for a retry;
+            # an unreadable listing keeps every node.
+            occupancy = gpu_units_in_use_observed(kubectl)
+            if isinstance(occupancy, Unknown):
+                logger.warning(f'mix cleanup could not read which pods hold GPUs ({occupancy.reason}: '
+                               f'{occupancy.detail}) — nothing was reverted; re-run videoflow teardown '
+                               f'--gpu-mode mix once kubectl can list pods.')
+                return
+            for name in sorted(targets):
+                held = sum(units for resource, units in occupancy.value.get(name, {}).items()
+                           if _is_gpu_resource(resource))
+                if held:
+                    logger.warning(f'mix cleanup: {held} GPU unit(s) on {name} are still held by running pods — '
+                                   f'its geometry is kept until they exit; re-run videoflow teardown --gpu-mode mix.')
+                    skip.add(name)
+                    unrestored = True
         if stuck:
-            skip = self._bounce_stuck_nodes(kubectl, stuck, current_name, entry_names)
+            skip |= self._bounce_stuck_nodes(kubectl, [n for n in stuck if n not in skip], current_name, entry_names)
             unrestored = unrestored or bool(skip)
+        faults.barrier('restore.before', nodes = sorted(targets), flow = flow_id)
         restored : dict[str, str] = {}     # node -> recorded previous label value
         for name in sorted(targets):
             if name in skip:
@@ -1627,7 +2002,8 @@ class MixGpu(ExclusiveGpu):
                 # Best-effort per node: one stuck node must not abort the rest.
                 unrestored = True
                 logger.warning(f'mix cleanup could not restore node {name}: {e}')
-        states = _wait_for_mig_state(kubectl, sorted(restored)) if restored else {}
+        states = _wait_for_restore(kubectl, {name: targets[name] for name in restored}) if restored else {}
+        reverted : List[str] = []
         for name in sorted(restored):
             if states.get(name) != 'success':
                 unrestored = True
@@ -1637,27 +2013,42 @@ class MixGpu(ExclusiveGpu):
                     f'MIG manager logs and re-run videoflow teardown --gpu-mode mix to retry.')
                 continue
             try:
-                if not restored[name]:
+                if restored[name] == MIG_LABEL_ABSENT:
                     # The label was absent before videoflow; the disabled config
                     # has done its job, so the label itself can go now.
                     _kubectl_run(kubectl, 'label', 'node', name, f'{MIG_CONFIG_LABEL}-')
-                _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_RESTORE_ANNOTATION}-')
-                if annotated[name]:
-                    _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_ENTRY_ANNOTATION}-')
-                if stamped[name]:
-                    # Reverted and unrecorded: the node returns to the pool —
-                    # unless the claim changed hands meanwhile (a redeploy
-                    # re-claimed it), which the CAS release detects and leaves.
-                    self._release_owner(kubectl, name, *claim_of[name])
+                elif restored[name] == '':
+                    # Explicitly empty before videoflow: put the empty value back.
+                    _kubectl_run(kubectl, 'label', 'node', name, '--overwrite', f'{MIG_CONFIG_LABEL}=')
+                reverted.append(name)
             except RuntimeError as e:
                 unrestored = True
                 logger.warning(f'mix cleanup could not finish restoring node {name}: {e}')
+        faults.barrier('restore.after', nodes = sorted(restored), unrestored = unrestored, flow = flow_id)
         if unrestored:
             logger.warning(
                 f'mix cleanup left the ClusterPolicy patch and the {MIG_CONFIGMAP_NAME} '
                 f'ConfigMap in place — a retried teardown needs them to finish reverting '
                 f'the nodes above.')
             return
+
+        def finish_nodes() -> None:
+            # Reverted, and this flow's entries are out of the shared map: the
+            # records come off and the nodes return to the pool — unless a claim
+            # changed hands meanwhile (a redeploy re-claimed it), which the CAS
+            # release detects and leaves. Kept until now on purpose: the entry
+            # annotation is the only record of the nonce'd entry a retried
+            # teardown must strip, so a strip that failed keeps it (ALLOC-006).
+            for name in reverted:
+                try:
+                    _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_RESTORE_ANNOTATION}-')
+                    if annotated[name]:
+                        _kubectl_run(kubectl, 'annotate', 'node', name, f'{MIG_ENTRY_ANNOTATION}-')
+                    if stamped[name]:
+                        self._release_owner(kubectl, name, *claim_of[name])
+                except RuntimeError as e:
+                    logger.warning(f'mix cleanup could not release node {name}: {e}')
+        faults.barrier('delete.before', entries = sorted(entry_names), flow = flow_id)
         # Strip this flow's entries from the shared map; only the last flow out
         # may restore the ClusterPolicy pointer and delete it — earlier flows'
         # nodes still resolve their per-run entry names in the mounted file.
@@ -1692,12 +2083,30 @@ class MixGpu(ExclusiveGpu):
                         kubectl, strip_namespace,
                         lambda live_now: _remove_mig_config_entries(live_now, mine)[0])
                 except RuntimeError as e:
+                    # The records stay on the nodes: a retried teardown strips again.
                     logger.warning(f'mix cleanup could not strip this flow\'s entries from '
-                                   f'the mig-parted ConfigMap: {e}')
+                                   f'the mig-parted ConfigMap: {e} — re-run videoflow teardown '
+                                   f'--gpu-mode mix.')
+                    return
                 logger.info(f'other videoflow flows still hold MIG geometry '
                             f'({", ".join(remaining)}) — leaving the ClusterPolicy pointer '
                             f'and the {MIG_CONFIGMAP_NAME} ConfigMap for the last flow out')
+                finish_nodes()
+                faults.barrier('delete.after', entries = mine, flow = flow_id, remaining = remaining)
                 return
+            if mine:
+                # Last one out, with entries to strip: the strip is the write the
+                # node records guard, so it comes before they are dropped.
+                try:
+                    _publish_mig_configmap(
+                        kubectl, strip_namespace,
+                        lambda live_now: _remove_mig_config_entries(live_now, mine)[0])
+                except RuntimeError as e:
+                    logger.warning(f'mix cleanup could not strip this flow\'s entries from '
+                                   f'the mig-parted ConfigMap: {e} — re-run videoflow teardown '
+                                   f'--gpu-mode mix.')
+                    return
+        finish_nodes()
         if policy is not None:
             recorded = ((policy.get('metadata') or {}).get('annotations') or {}) \
                 .get(MIG_CONFIG_NAME_RESTORE_ANNOTATION)
@@ -1722,6 +2131,7 @@ class MixGpu(ExclusiveGpu):
                 _tombstone_mig_configmap(kubectl, strip_namespace, mine)
             except RuntimeError as e:
                 logger.warning(f'mix cleanup could not retire the mig-parted ConfigMap: {e}')
+        faults.barrier('delete.after', entries = mine, flow = flow_id)
 
     def _bounce_stuck_nodes(self, kubectl : str, stuck : List[str],
                             current_name : Optional[str],
@@ -1785,6 +2195,49 @@ class MixGpu(ExclusiveGpu):
         return failed
 
 
+class DraGpu(GpuStrategy):
+    '''
+    ``--gpu-mode dra``: GPU pods claim devices through a ``ResourceClaimTemplate``
+    instead of an extended resource. Renders only — ``prepare``/``cleanup`` are
+    no-ops and ``preflight_problems`` reports the missing driver, so a deploy
+    stops before applying claims nothing would allocate.
+    '''
+    name = 'dra'
+
+    def __init__(self, device_class : str = 'gpu.nvidia.com') -> None:
+        self._device_class = device_class
+
+    def pod_resources(self, spec : NodeSpec, gpu_resource_name : Optional[str] = None) -> dict:
+        # The container side of a claim reference: resources.claims, never limits.
+        return {'claims': [{'name': claim_name_for(spec.name)}]}
+
+    def pod_claims(self, spec : NodeSpec) -> list[dict]:
+        '''The pod's ``spec.resourceClaims`` entries for this node.'''
+        return [{'name': claim_name_for(spec.name), 'resourceClaimTemplateName': f'{claim_name_for(spec.name)}-template'}]
+
+    def claim_manifests(self, spec : NodeSpec, namespace : str, flow_id : str, run_id : str) -> list[dict]:
+        '''The ``ResourceClaimTemplate`` this node's pods instantiate, one per pod.'''
+        request = WorkloadRequest(flow_id, run_id, spec.name, spec.gpu_count, SHARING_EXCLUSIVE)
+        return render_bindings(request, self._device_class, namespace).claim_manifests
+
+    def preflight_problems(self, kubectl : str = 'kubectl', demand : Optional[dict[str, int]] = None,
+                        gpu_runtime_class : Optional[str] = None,
+                        max_per_pod : Optional[dict[str, int]] = None,
+                        pod_claims : Optional[dict[str, list[int]]] = None) -> List[str]:
+        env = observe_environment(kubectl)
+        problems : List[str] = []
+        if not env.api_served:
+            problems.append(f'IMPOSSIBLE_GPU_REQUEST: --gpu-mode dra needs {DRA_API_VERSION} (Kubernetes >= 1.34); '
+                            f'the cluster reports {env.kubernetes_version or "an unknown version"}.')
+        if env.driver is None:
+            problems.append(f'IMPOSSIBLE_GPU_REQUEST: no DRA driver publishes GPU ResourceSlices, so the rendered '
+                            f'ResourceClaimTemplates would never be allocated. {DRIVER_INSTALL_REMEDY}')
+        elif self._device_class not in env.device_classes:
+            problems.append(f'IMPOSSIBLE_GPU_REQUEST: DeviceClass {self._device_class!r} does not exist '
+                            f'(served: {", ".join(env.device_classes) or "none"}).')
+        return problems
+
+
 # -- registry --------------------------------------------------------------
 
 _GPU_STRATEGIES : dict[str, GpuStrategy] = {}
@@ -1831,3 +2284,4 @@ def get_gpu_mode(name : str) -> GpuStrategy:
 
 register_gpu_mode(ExclusiveGpu())
 register_gpu_mode(MixGpu())
+register_gpu_mode(DraGpu())
