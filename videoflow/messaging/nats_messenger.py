@@ -565,7 +565,7 @@ class NATSMessenger(Messenger):
         for group in runtime.open_groups():
             entry = runtime.outbox_entry(group.group_id)
             if entry is not None and entry.outcome in (OUTCOME_ACCEPTED, OUTCOME_DUPLICATE):
-                members = {(producer, trace, seq) for producer, trace, seq in runtime.group_members(group.group_id).values()}
+                members = set(runtime.group_members(group.group_id).values())
                 self._committed_members.update(members)
                 self._committed_groups[group.group_id] = members
         for handoff in runtime.pending_handoffs():
@@ -1254,7 +1254,7 @@ class NATSMessenger(Messenger):
         self._runtime.resolve_publication(publication_id, outcome)
         if isinstance(outcome, Accepted):
             self._count('duplicate' if outcome.duplicate else 'accepted')
-            members = {(producer, trace, seq) for producer, trace, seq in self._runtime.group_members(publication_id).values()}
+            members = set(self._runtime.group_members(publication_id).values())
             if members:
                 # Committed now: a redelivered member is acknowledged, never recomputed,
                 # and the group's record is settled once every member came back.

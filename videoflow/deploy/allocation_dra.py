@@ -347,4 +347,3 @@ class DraAllocationBackend(AcceleratorAllocationBackend):
     def release(self, claim_id : str, operation_id : str, expected_generation : str,
                 keep_workloads : bool = False) -> ReleaseObservation:
         raise _render_only('release a claim')
-
