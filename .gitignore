@@ -147,7 +147,5 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-
-# Claude
-.claude/worktrees/
-.mcp.json
+# Conformance suite outputs (run_results.json, evidence)
+tests/conformance/_out/

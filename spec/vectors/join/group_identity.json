@@ -1,0 +1,73 @@
+[
+  {
+    "members": {
+      "cam": {
+        "producer_name": "cam",
+        "trace_id": "cam:3f9c1a2b7d4e:5",
+        "seq": 5
+      },
+      "imu": {
+        "producer_name": "imu",
+        "trace_id": "imu:77e1b2c3d4f5:11",
+        "seq": 11
+      }
+    },
+    "group_ts": 1700000000.5,
+    "window_id": null,
+    "rounded_micros": 1700000000500000,
+    "hash_input": "|cam=cam:cam:3f9c1a2b7d4e:5:5|imu=imu:imu:77e1b2c3d4f5:11:11",
+    "expected_trace_id": "tw-1700000000500000-2604c79085f2"
+  },
+  {
+    "members": {
+      "cam": {
+        "producer_name": "cam",
+        "trace_id": "cam:3f9c1a2b7d4e:6",
+        "seq": 6
+      },
+      "imu": {
+        "producer_name": "imu",
+        "trace_id": "imu:77e1b2c3d4f5:11",
+        "seq": 11
+      }
+    },
+    "group_ts": 1700000000.5,
+    "window_id": null,
+    "rounded_micros": 1700000000500000,
+    "hash_input": "|cam=cam:cam:3f9c1a2b7d4e:6:6|imu=imu:imu:77e1b2c3d4f5:11:11",
+    "expected_trace_id": "tw-1700000000500000-c5024ad18fdc"
+  },
+  {
+    "members": {
+      "cam": {
+        "producer_name": "cam",
+        "trace_id": "cam:3f9c1a2b7d4e:1",
+        "seq": 1
+      }
+    },
+    "group_ts": 5e-07,
+    "window_id": null,
+    "rounded_micros": 0,
+    "hash_input": "|cam=cam:cam:3f9c1a2b7d4e:1:1",
+    "expected_trace_id": "tw-0-6df525d51bf0"
+  },
+  {
+    "members": {
+      "caméra-Ω": {
+        "producer_name": "caméra-Ω",
+        "trace_id": "caméra-Ω:v2:42",
+        "seq": 42
+      },
+      "lidar": {
+        "producer_name": "lidar",
+        "trace_id": "lidar:a01b7c2d9e3f:7",
+        "seq": 7
+      }
+    },
+    "group_ts": 1700000001.25,
+    "window_id": null,
+    "rounded_micros": 1700000001250000,
+    "hash_input": "|caméra-Ω=caméra-Ω:caméra-Ω:v2:42:42|lidar=lidar:lidar:a01b7c2d9e3f:7:7",
+    "expected_trace_id": "tw-1700000001250000-2acc448e7d4b"
+  }
+]

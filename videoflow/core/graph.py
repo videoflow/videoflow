@@ -51,6 +51,27 @@ def _check_unique_names(nodes : List[Node]) -> List[Diagnostic]:
         for name in duplicates
     ]
 
+def _check_name_collisions(nodes : List[Node]) -> List[Diagnostic]:
+    '''
+    Distinct names that become one physical name once encoded for the broker
+    (``a.b`` and ``a_b`` both sanitize to ``a_b``) or for Kubernetes (``Node`` and
+    ``node``; two long names truncated to 63 characters). The same failure as a
+    duplicate name, one encoding later, so it is rejected here rather than
+    discovered as cross-routed messages on a cluster.
+    '''
+    # Function-level: keeps core free of a module-scope dependency on the backends
+    # package, which itself imports the compiler (layering, not a real cycle).
+    from ..backends.identity import node_name_collisions
+    names = [node.name for node in nodes]
+    return [
+        Diagnostic(SEVERITY_ERROR, 'VF_GRAPH_NAME_COLLISION', c.identities[0].parts[0],
+                f'Node names {[i.parts[0] for i in c.identities]} all encode to the '
+                f'{c.identities[0].kind} name {c.physical!r}.',
+                'Rename one of them so the encoded names differ (avoid names that differ '
+                'only by punctuation, case, or beyond 63 characters).')
+        for c in node_name_collisions(names)
+    ]
+
 def _check_consumers_reachable(consumers : List[ConsumerNode],
                             tsort : List[Node]) -> List[Diagnostic]:
     reachable = set(tsort)
@@ -132,6 +153,7 @@ def validate(producers : List[ProducerNode], consumers : List[ConsumerNode],
         tsort = topological_sort(producers)
 
     diagnostics += _check_unique_names(tsort)
+    diagnostics += _check_name_collisions(tsort)
     diagnostics += _check_consumers_reachable(consumers, tsort)
     diagnostics += _check_replicated_joins(tsort)
     diagnostics += _check_outputs_are_read(tsort)

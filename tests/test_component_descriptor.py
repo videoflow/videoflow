@@ -121,6 +121,28 @@ def test_descriptor_rejects_bad_memory_gib():
         ComponentDescriptor.from_dict(_desc(device = ['cpu'], resources = {'gpu': {'memoryGiB': 20}}))
 
 
+def test_descriptor_records_whether_gpu_count_was_declared():
+    # gpu_count folds silence into 1 for consumers of the value; the provenance
+    # resolver needs to know whether the file actually said so.
+    assert ComponentDescriptor.from_dict(_desc()).gpu_count_declared is None
+    assert ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 1}})).gpu_count_declared == 1
+    assert ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2}})).gpu_count_declared == 2
+
+
+def test_descriptor_accepts_host_resource_requests():
+    d = ComponentDescriptor.from_dict(_desc(resources = {'cpu': '500m', 'memory': '2Gi'}))
+    assert (d.cpu_request, d.memory_request) == ('500m', '2Gi')
+    assert ComponentDescriptor.from_dict(_desc(resources = {'cpu': 2})).cpu_request == '2'
+    absent = ComponentDescriptor.from_dict(_desc())
+    assert absent.cpu_request is None and absent.memory_request is None
+    # Alongside the gpu block, and with nothing else changed.
+    d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2}, 'cpu': '1', 'memory': '4Gi'}))
+    assert (d.gpu_count, d.cpu_request, d.memory_request) == (2, '1', '4Gi')
+    for bad in [{'cpu': ''}, {'memory': True}, {'cpu': -1}, {'memory': ['2Gi']}, {'cpu': 0}]:
+        with pytest.raises(ValueError, match = 'spec.resources'):
+            ComponentDescriptor.from_dict(_desc(resources = bad))
+
+
 def test_descriptor_rejects_gpu_resources_on_non_processor_roles():
     # Bug 5 regression: a producer/consumer descriptor declaring a GPU need used
     # to validate cleanly and mean nothing — an underprovisioned pod waiting to

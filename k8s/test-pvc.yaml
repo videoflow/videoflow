@@ -1,0 +1,34 @@
+# The work directory tests/integration/k8s/ shares with its pods on the k3s
+# cluster: one ReadWriteMany claim on the nfs-shared StorageClass, applied into
+# the test namespace by scripts/k3s-test-up.sh.
+#
+#   kubectl apply -n videoflow-test -f k8s/test-pvc.yaml
+#
+# Why a claim, where the kind bucket uses a hostPath: a k3s node is a real
+# machine with its own filesystem, and the tests read their artifacts on the host
+# they run on. A hostPath work root would be the same directory on exactly one
+# node (the NFS server) and an empty, root-owned directory on every other — the
+# pods would run, exit 0, and the test would fail with "report.json was not
+# written". An RWX claim over NFS is the same directory on every node, and its
+# backing path is readable on the NFS server: <share>/<subdir> from the bound
+# PersistentVolume's spec.csi.volumeAttributes, which is how the tests find their
+# work root. A `--mount` under that path is served by the claim in the pods
+# (deploy drops the shadowed hostPath — see manifests.pod_mounts).
+#
+# nfs-shared (kubectl get sc): nfs.csi.k8s.io, reclaim Retain, Immediate binding,
+# expansion allowed. The size is a request the provisioner records; an NFS export
+# enforces no quota, so keep runs tidy. Removed with the namespace, or:
+#   kubectl delete -n videoflow-test pvc vf-test-share
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: vf-test-share
+  labels:
+    app.kubernetes.io/managed-by: videoflow
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-shared
+  resources:
+    requests:
+      storage: 50Gi

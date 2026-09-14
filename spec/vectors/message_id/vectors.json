@@ -43,5 +43,41 @@
     "seq": 9000000000,
     "msg_type": "data",
     "expected_id": "34f9c145b6760b51bf894450dcfd64eb"
+  },
+  {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "cam",
+    "trace_id": "cam:3f9c1a2b7d4e:1",
+    "seq": 1,
+    "msg_type": "data",
+    "expected_id": "3dc300d65ce8f1dede66f72fe7aa90cf"
+  },
+  {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "file",
+    "trace_id": "file:42",
+    "seq": 42,
+    "msg_type": "data",
+    "expected_id": "223fbd6dbbcf148b657ffbf65142001f"
+  },
+  {
+    "flow_id": "flow-A",
+    "run_id": "run-1",
+    "producer_name": "file",
+    "trace_id": "file:v2:42",
+    "seq": 42,
+    "msg_type": "data",
+    "expected_id": "8a40ac41cefa4661541ded8dfdcb2351"
+  },
+  {
+    "flow_id": "f",
+    "run_id": "r",
+    "producer_name": "proc",
+    "trace_id": "tw-1700000000500000-2604c79085f2",
+    "seq": 1700000000500000,
+    "msg_type": "data",
+    "expected_id": "6285a81a887d9acafd6b0f5c0e8b2a47"
   }
 ]

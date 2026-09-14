@@ -1,17 +1,32 @@
-GPU allocation: the two modes, sharing, and multi-GPU models
-============================================================
+GPU allocation: the modes, sharing, and multi-GPU models
+========================================================
 
-Videoflow has exactly two GPU allocation modes, matching two kinds of demand a
-node can declare:
+Videoflow has two GPU allocation modes that allocate, matching two kinds of
+demand a node can declare, and a third that only renders:
 
 - ``--gpu-mode exclusive`` (the default): every unit of the GPU resource is one
   **whole physical device**. ``gpu_count = N`` grants N whole devices on one
   host. Sharing a device between components is not a capability of this mode —
-  and the node API has no way to ask for it.
+  and the node API has no way to ask for it. On a pool node an administrator
+  carved statically (it advertises ``nvidia.com/mig-<profile>`` slices), a node
+  declaring ``gpu_memory_gib`` consumes a free advertised slice of at least that
+  size, as it is — never repartitioned, never restored.
 - ``--gpu-mode mix`` (opt-in, MIG-capable hardware): a node that declares its
   memory demand (``gpu_memory_gib``) gets an **exclusive MIG slice** of at least
   that size, chosen by a layout solver; every other GPU node still gets whole
   physical devices. The card is shared, the slice is not.
+- ``--gpu-mode dra`` (render-only): the pods claim devices through Kubernetes
+  Dynamic Resource Allocation — one ``ResourceClaimTemplate`` per GPU node and
+  the pod/container references of ``resource.k8s.io/v1`` — for a cluster with a
+  GPU DRA driver. Deploy stops at preflight when no driver publishes GPU
+  ``ResourceSlices``; the claim lifecycle (allocation, preparation, release) is
+  the driver's, and videoflow's own allocation backend refuses every lifecycle
+  call by name in this release. Which optional features a request may name is a
+  matrix question: dynamic MIG needs the ``DRAPartitionableDevices`` gate
+  (alpha and off by default on Kubernetes 1.34/1.35, beta and on from 1.36),
+  consumable capacity ``DRAConsumableCapacity`` (same schedule), MPS the
+  driver's own support; base DRA being GA promotes none of them, and a request
+  for a feature the cluster row lacks is rejected before anything is rendered.
 
 The demand vocabulary is two numbers, mutually exclusive per node: ``gpu_count``
 (whole devices, spanned by one model) and ``gpu_memory_gib`` (an isolated
@@ -24,10 +39,22 @@ Why local runs work and Kubernetes runs stall
 
 Locally (``LocalProcessEngine``), every node is an OS subprocess on one machine.
 Each GPU worker is handed a ``CUDA_VISIBLE_DEVICES`` block of ``gpu_count``
-devices; when there are more claims than devices the assignment wraps around
-(with a warning, and ``VF_GPU_COUNT`` reporting the devices actually delivered)
-and processes share a card, bounded only by VRAM. A 9-GPU-node graph still runs
-fine on a single card if the models fit.
+devices; under the default ``--gpu-policy shared``, when there are more claims
+than devices the assignment wraps around (with a warning, and ``VF_GPU_COUNT``
+reporting the devices actually delivered) and processes share a card, bounded
+only by VRAM. A 9-GPU-node graph still runs fine on a single card if the models
+fit. ``--gpu-policy strict`` is the truthful policy: a flow whose whole-device
+requests do not fit the host's distinct devices does not start at all, sharers
+(nodes declaring ``gpu_memory_gib``) are admitted only within their device's
+budget of declared peaks — memory minus what is already in use minus
+``VF_GPU_HEADROOM_BYTES`` (1 GiB) — and a host ``nvidia-smi`` cannot read is
+refused rather than treated as a machine without GPUs. Either way every worker
+receives the grant it really got: ``CUDA_VISIBLE_DEVICES`` as device UUIDs and
+``VF_GPU_GRANT_JSON`` (the devices by identity, the requested count, whether
+the grant is exclusive, the policy, and whether the host was observed at all),
+which the worker checks against the node's ``gpu_count`` before it opens —
+fatal only for a node that declares ``gpu_fallback = 'none'``, reported
+otherwise. Strict accounts; nothing on one host enforces a memory budget.
 
 On Kubernetes, each GPU replica requests ``nvidia.com/gpu`` — an **integer extended
 resource that cannot be overcommitted**. The scheduler allocates whole devices
@@ -48,8 +75,13 @@ modes, in different ways:
 
 ``videoflow explain my_flow.py`` prints a flow's total GPU demand (and, for
 multi-GPU pods, the largest single-pod claim that must fit on one node), and
-deploy's preflight compares both against the cluster's allocatable capacity
-before applying anything (``--strict-preflight`` makes a shortfall a hard error).
+deploy's preflight compares both against the cluster's *free* capacity before
+applying anything (``--strict-preflight`` makes a shortfall a hard error) — and
+then packs every pod's claim onto the per-node free counts, because the two
+aggregate numbers are necessary, not sufficient: two nodes with 3 free GPUs each
+pass both and still hold only two of three ``gpu_count = 2`` replicas. A
+preflight whose occupancy read the API refused reports ``unobservable GPU state``
+rather than assuming the pool is idle.
 
 Closing the gap on a small cluster
 ----------------------------------
@@ -91,7 +123,11 @@ against them is impossible, and deploy's preflight hard-errors on it (it reads
 the GPU Feature Discovery labels to know the pool is time-sliced).
 
 **3. MIG-capable hardware: ``--gpu-mode mix``.** Sharing with *hard* memory and
-fault isolation, driven by declared demand::
+fault isolation, driven by declared demand (the solver knows the A30, A100, H100
+and RTX PRO 6000 Blackwell profile tables — ``1g.24gb`` ×4 / ``2g.48gb`` ×2 /
+``4g.96gb`` on the Blackwell part — and packs a card by compute slices *and*
+memory as separate budgets, so a layout that fits by slice count but not by
+memory is never proposed)::
 
     detector  = Detector(device_type = GPU, nb_tasks = 4, gpu_memory_gib = 10)(frames)
     captioner = VlmCaptioner(device_type = GPU, gpu_count = 2)(frames)
@@ -140,20 +176,54 @@ units (allocatable minus what running pods hold), not raw allocatable:
 
 Several flows can run mix against one pool at the same time, split at **node
 granularity**: prepare() stamps every node it partitions with a
-``videoflow.io/gpu-owner=<flow-id>`` label (compare-and-swap, so two racing
-deploys cannot claim the same node), later deploys plan around owned nodes, and
-mix pods carry a node affinity that keeps them off other flows' nodes — so one
-flow's teardown can never revert geometry under another flow's pods. The shared
+``videoflow.io/gpu-owner=<flow-id>`` label, later deploys plan around owned
+nodes, and mix pods carry a node affinity that keeps them off other flows'
+nodes — so one flow's teardown can never revert geometry under another flow's
+pods. The stamp is a **server-enforced compare-and-swap**: the label write
+carries the node's ``resourceVersion`` from the read that found it unowned, so
+the API server rejects whichever of two racing deploys writes second (a plain
+``kubectl label`` without ``--overwrite`` only checks client-side, and both could
+pass). A companion ``videoflow.io/gpu-owner-epoch`` label, fresh per claim, rides
+in the same write so a release can tell the claim it is undoing from a later
+re-claim by the same flow and leave the newer one standing. Losing the race
+releases what the deploy had stamped and stops it with ``OwnershipConflict``
+(exit 3); the remedy is to redeploy against the remaining pool. The shared
 ``videoflow-mig-parted-config`` ConfigMap is merged, not overwritten, and only
-the **last flow out** restores ``migManager.config.name`` and deletes it.
-Teardown therefore needs ``--flow-id`` to know which nodes are its own (a
-teardown without one sweeps everything videoflow owns). Busy nodes are never
-repartitioned — MIG reconfiguration destroys whatever runs on the card, and
-Kubernetes does not expose which physical card a pod holds — but their free
-cards still serve whole-device spanners. One race stays open by design: a
-foreign GPU pod that lands on a planned node between inventory read and
-geometry apply will be disrupted; closing it needs admission control, which
-videoflow does not install.
+the **last flow out** restores ``migManager.config.name`` — but it never deletes
+the map: ``kubectl`` cannot delete with a precondition, and a stale map is
+harmless where a wrong delete pulls the file out from under a MIG manager still
+mounting it. It strips its own entries and annotates the map
+``videoflow.io/mig-config-tombstone=<UTC time>``; removing it is the operator's
+call, ``kubectl delete configmap videoflow-mig-parted-config -n <gpu-operator
+namespace>``. Teardown therefore needs ``--flow-id`` to know which nodes are its
+own (a teardown without one sweeps everything videoflow owns). Busy nodes are
+never repartitioned — MIG reconfiguration destroys whatever runs on the card,
+and Kubernetes does not expose which physical card a pod holds — but their free
+cards still serve whole-device spanners; only GPU resources (``nvidia.com/gpu``,
+``nvidia.com/mig-*``, another vendor's ``<domain>/gpu``) count as occupying a
+card. And *unknown is not idle*: if the pod listing that says which cards are
+held cannot be read, mix refuses to plan (``UnobservableState``, ``unobservable
+GPU state``) rather than repartition a card another tenant may hold. The
+ownership label is not a scheduler lock — a foreign GPU pod can still land on a
+claimed node — so prepare re-reads the occupancy after claiming the nodes and
+immediately before any geometry write, and aborts (releasing its claims,
+``OwnershipConflict``) when a card was taken since the plan was made: the
+foreign pod is never disrupted, the deploy is told to plan again.
+
+Readiness is observed, never read off a label. The MIG manager does not clear
+``nvidia.com/mig.config.state`` when a new config is labeled, so the first
+thing every wait sees is the *previous* geometry's ``success``. A node counts
+as prepared only when the state says ``success`` **and** ``status.allocatable``
+advertises the slices the layout asked for; teardown counts a node as reverted
+only once the manager was seen acting on the restore (a state other than
+``success`` after the write, or — for a disabled target — no ``nvidia.com/mig-*``
+resource advertised any more). A wait that runs out is an explicit incomplete
+operation: the claims, the restore records and the map stay for a retried
+teardown. Teardown also never reverts a node whose slices a running pod still
+holds — deletion requested is not release confirmed — and keeps the node's
+records until this flow's entries are out of the shared map, so a strip that
+failed can be retried; the pre-videoflow label is recorded with key-presence
+semantics (absent and explicitly empty are restored as such).
 
 A node that declares nothing gets a whole physical device — a plain
 ``device_type=GPU`` node means the same thing in both modes, so flows do not
@@ -174,7 +244,14 @@ Other production notes
 - **MPS** (any Volta+ GPU, via the device plugin's Helm chart): concurrent kernels
   with hard per-client memory caps of ``total/replicas``. Stronger isolation than
   time-slicing; the heaviest model bounds the replica count. Pod specs are
-  unchanged.
+  unchanged. Deploy recognises an MPS pool from its
+  ``nvidia.com/gpu.sharing-strategy=mps`` label and treats its units as shares,
+  like time-slicing: a ``gpu_count > 1`` claim against it is rejected at
+  preflight. Classification reads the pool's nodes only (a sharing label on a
+  node outside ``videoflow.io/gpu-pool`` cannot taint it), a MIG-capable node
+  whose geometry is ``all-disabled`` counts as whole physical cards, and an
+  unlabeled advertiser next to a labeled one makes the pool ``unknown`` rather
+  than ``physical`` — nothing proves its units are whole devices.
 - KEDA autoscaling excludes GPU nodes by default (each extra replica claims whole
   devices); opt in deliberately with ``--gpu-autoscaling`` once capacity math says
   it is safe.
@@ -204,9 +281,11 @@ default need in their descriptor (``spec: {resources: {gpu: {count: 2}}}``).
 Constraints worth knowing before sizing:
 
 - All ``gpu_count`` devices must fit on **one** cluster node. Preflight checks
-  the largest node's allocatable count, not just the cluster total — a 3-GPU pod
-  on a cluster of 2-GPU nodes never schedules no matter how many nodes exist.
-  Prefer NVLink-connected devices for tensor parallelism.
+  the largest node's free count, not just the cluster total — a 3-GPU pod on a
+  cluster of 2-GPU nodes never schedules no matter how many nodes exist — and
+  then places every replica's claim on the per-node free counts, since even that
+  bound admits fragmented pools that hold only some of the pods. Prefer
+  NVLink-connected devices for tensor parallelism.
 - Sliced GPUs never qualify: MIG partitions are hardware-isolated and cannot be
   combined into one model, and time-sliced units are shares of one card. Deploy
   makes both impossible to request — ``gpu_memory_gib`` and ``gpu_count > 1``

@@ -84,6 +84,70 @@ class Messenger:
         '''
         return 0
 
+    def pending_observation(self) -> Any:
+        '''
+        ``pending_count`` as an observation: ``Known(count)`` when the broker
+        answered, ``Unknown(reason)`` when it did not. The progress deadline reads
+        this one, because "the query failed" and "nothing is pending" must lead
+        to different decisions. Default: wraps ``pending_count`` as known.
+        '''
+        # Function-level: keeps this interface module free of a dependency on the
+        # backends package at import time (layering; the graph imports core).
+        from ..backends.outcomes import known
+        return known(self.pending_count())
+
+    def quiesce(self) -> None:
+        '''
+        Stop receiving new input; keep settling what is already held. Called on
+        SIGTERM and by rollout/scale-down drains. Default: no-op.
+        '''
+        pass
+
+    #: Why ``check_for_termination`` is true: the flow-wide control stop (the
+    #: flow is ending — a producer still closes its stream with EOS, CTRL-2), a
+    #: quiesce (this process is being stopped; a replacement continues the
+    #: stream, so no EOS), or the loss of this process's authority over its
+    #: partition to a replacement that already continues it (no EOS either).
+    STOP_CONTROL = 'control'
+    STOP_QUIESCE = 'quiesce'
+    STOP_AUTHORITY_LOST = 'authority-lost'
+
+    def stop_reason(self) -> Optional[str]:
+        '''
+        Which stop ``check_for_termination`` reports, one of the ``STOP_*``
+        constants, or None while the flow runs. Default: the control stop
+        whenever a termination was signalled — the only kind a bare messenger has.
+        '''
+        return self.STOP_CONTROL if self.check_for_termination() else None
+
+    def checkpoint(self, state : bytes) -> None:
+        '''
+        Record the node's state together with the identity of the input group
+        being processed, in one write (RFC 0006 ``CTRL-4``). Default: no-op.
+        '''
+        pass
+
+    def restore_checkpoint(self) -> Optional[bytes]:
+        '''The last checkpointed state of this node in the run, or ``None``. Default: ``None``.'''
+        return None
+
+    def resume_offset(self) -> int:
+        '''
+        For a replayable producer (RFC 0006 ``MSGID-6``): the last source offset
+        whose publication was *accepted* before a restart, so the source resumes
+        from the next one. Default: 0 (start from the beginning; a live source).
+        '''
+        return 0
+
+    def take_drops(self) -> Dict[str, int]:
+        '''
+        Inputs the messenger gave up on since the last call, by reason — the drops
+        decided below this seam (a retry budget exhausted, undecodable bytes, a
+        join group evicted, a live publication the broker refused) that the health
+        counters could not otherwise see. Default: none.
+        '''
+        return {}
+
     def set_output_partition_key(self, value : Any) -> None:
         '''
         Set the partition key attached to this node's next published output (via \

@@ -17,8 +17,10 @@ from videoflow.deploy.mig import (
     MigProfile,
     MigTable,
     NodeInventory,
+    _Card,
     layout_to_mig_parted_config,
     mig_table_for_product,
+    place,
     register_mig_table,
     solve_layout,
 )
@@ -206,3 +208,61 @@ def test_mig_parted_config_is_empty_without_mig_cards():
 
 if __name__ == '__main__':
     pytest.main([__file__])
+
+
+# -- placement grid (ALLOC-002) ----------------------------------------------------
+
+def _profiles(product, *names):
+    table = mig_table_for_product(product)
+    by_name = {p.name: p for p in table.profiles}
+    return table, [by_name[n] for n in names]
+
+
+def test_place_finds_a_legal_assignment_whatever_the_request_order():
+    # 1g / 3g / 2g / 1g on an A100 is placeable, but not by a left-to-right walk:
+    # the 3g must sit at 4 (or 0) and the 2g at an even start, so the order the
+    # request arrives in must never decide the answer.
+    table, profiles = _profiles('NVIDIA-A100-SXM4-40GB', '1g.5gb', '3g.20gb', '2g.10gb', '1g.5gb')
+    starts = place(profiles, table.grid)
+    assert starts is not None
+    spans = sorted((s, s + p.width) for s, p in zip(starts, profiles))
+    assert all(a[1] <= b[0] for a, b in zip(spans, spans[1:]))            # no overlap
+    assert all(s in p.placements for s, p in zip(starts, profiles))       # every start legal
+
+
+def test_place_refuses_a_multiset_the_grid_cannot_hold():
+    # Two 3g.20gb are 4 wide each at starts {0, 4}: they fill the 8-position grid,
+    # so a 1g.5gb has nowhere to go although 3 + 3 + 1 compute slices fit.
+    table, profiles = _profiles('NVIDIA-A100-SXM4-40GB', '3g.20gb', '3g.20gb', '1g.5gb')
+    assert place(profiles, table.grid) is None
+    table, profiles = _profiles('NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition', '2g.48gb', '2g.48gb', '1g.24gb')
+    assert place(profiles, table.grid) is None
+
+
+def test_card_placement_is_a_budget_of_its_own():
+    # A card whose memory is unknown (0) skips the memory budget; the placement
+    # grid still refuses the third instance the compute slices would admit.
+    table, profiles = _profiles('NVIDIA-A100-SXM4-40GB', '3g.20gb', '3g.20gb', '1g.5gb')
+    card = _Card('gpu-a', 0, table, memory_gib = 0.0)
+    assert card.fits(profiles[0]); card.add(profiles[0])
+    assert card.fits(profiles[1]); card.add(profiles[1])
+    assert card.slices_used == 6 and not card.fits(profiles[2])
+    # Without placement data the same card model is checked by totals only, so a
+    # third-party table that carries none keeps working as before.
+    bare = MigTable('BARE', ['BARE'], 7, [MigProfile('3g.20gb', 20, 3, 2), MigProfile('1g.5gb', 5, 1, 7)])
+    card = _Card('gpu-b', 0, bare, memory_gib = 0.0)
+    for profile in (bare.profiles[0], bare.profiles[0]):
+        assert card.fits(profile); card.add(profile)
+    assert card.fits(bare.profiles[1])
+
+
+def test_every_builtin_table_carries_placement_data():
+    for product in ('NVIDIA-A30', 'NVIDIA-A100-SXM4-40GB', 'NVIDIA-A100-SXM4-80GB', 'NVIDIA-H100-80GB-HBM3',
+                    'NVIDIA-H100-NVL-94GB', 'NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition'):
+        table = mig_table_for_product(product)
+        assert table is not None and table.placement_checked(), product
+        for profile in table.profiles:
+            assert all(start + profile.width <= table.grid for start in profile.placements), (product, profile.name)
+            # The per-card maximum agrees with how many instances the grid can hold.
+            assert place([profile] * profile.max_per_gpu, table.grid) is not None, (product, profile.name)
+            assert place([profile] * (profile.max_per_gpu + 1), table.grid) is None, (product, profile.name)

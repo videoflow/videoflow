@@ -28,6 +28,7 @@ images are needed.
 from __future__ import absolute_import, division, print_function
 
 import pytest
+import support_k8s
 from fixture_nodes import BoomProcessor, LineWriterConsumer
 from support_k8s import FIXTURE_IMAGE, resources_for
 
@@ -37,7 +38,6 @@ from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.supervision import SupervisionPolicy
 from videoflow.deploy.infra import infra_urls
-from videoflow.deploy.manifests import parse_mounts
 from videoflow.engines.kubernetes import KubernetesExecutionEngine
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
@@ -77,7 +77,7 @@ def test_a_clean_batch_flow_completes_and_its_output_reaches_the_host(
 
     # Mounted at the same absolute path on both sides, because that is the path
     # baked into the sink's params when the graph was compiled here on the host.
-    engine = make_engine(k8s_namespace, specs, mounts = parse_mounts([str(out.parent)]))
+    engine = make_engine(k8s_namespace, specs, mounts = support_k8s.work_mounts(str(out.parent)))
     try:
         engine.allocate_and_run_tasks(None, flow_id, BATCH, run_id)
         assert engine.wait_for_completion() == []

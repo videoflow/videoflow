@@ -146,6 +146,193 @@ class JoinPolicy:
             return cls(timeout_seconds = None, missing = MISSING_WAIT)
         return cls(timeout_seconds = 10.0, missing = MISSING_DROP)
 
+    def working_set(self, nb_parents : int) -> int:
+        '''
+        The most deliveries a join may hold un-acked while it waits for groups to
+        complete: ``max_pending`` incomplete groups, each holding up to
+        ``nb_parents - 1`` halves, plus the group being assembled. The credit a
+        join's durables are provisioned with must cover it, or an adversarial
+        parent ordering (every A before any B) fills the credit with halves that
+        can never complete and the join deadlocks (RUN-005).
+        '''
+        return max(1, self.max_pending) * max(1, nb_parents - 1) + 1
+
+
+#: What a partitioned node does with a record whose partition key is unusable —
+#: absent, ``None``, empty, or not a string (RUN-020). Never hashed as the string
+#: ``"None"`` under RFC 0006: that silent fallback made every invalid record an
+#: undeclared hot partition.
+INVALID_KEY_REJECT = 'reject'        # poison: dead-lettered with VF_POISON_PARTITION_KEY, a traceable terminal outcome
+INVALID_KEY_FALLBACK = 'fallback'    # routed to one declared partition, observable in the record's metadata
+INVALID_KEY_POLICIES = (INVALID_KEY_REJECT, INVALID_KEY_FALLBACK)
+
+
+class PartitionKeyPolicy:
+    '''
+    - Arguments:
+        - invalid: ``reject`` (the default) or ``fallback``.
+        - fallback_partition: the replica index an invalid key routes to under \
+            ``fallback``; must be below the node's ``nb_tasks``, checked when bound.
+    '''
+    def __init__(self, invalid : str = INVALID_KEY_REJECT, fallback_partition : int = 0) -> None:
+        if invalid not in INVALID_KEY_POLICIES:
+            raise ValueError(f'invalid must be one of {INVALID_KEY_POLICIES}, got {invalid!r}')
+        if fallback_partition < 0:
+            raise ValueError(f'fallback_partition must be >= 0, got {fallback_partition}')
+        self.invalid = invalid
+        self.fallback_partition = fallback_partition
+
+    @staticmethod
+    def is_valid_key(value : Any) -> bool:
+        '''A usable partition key: a non-empty string, or an int/bool — never None, '' or a container.'''
+        if isinstance(value, bool):
+            return True
+        if isinstance(value, (int, float)):
+            return True
+        return isinstance(value, str) and value != ''
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'invalid': self.invalid, 'fallback_partition': self.fallback_partition}
+
+    @classmethod
+    def from_dict(cls, d : Optional[Dict[str, Any]]) -> "PartitionKeyPolicy":
+        if not d:
+            return cls()
+        return cls(invalid = d.get('invalid', INVALID_KEY_REJECT),
+                   fallback_partition = int(d.get('fallback_partition', 0)))
+
+
+#: How a stateful node orders the records of one partition (RUN-021): in the order
+#: they arrive, or by their sequence number within a bounded horizon.
+ORDER_ARRIVAL = 'arrival'
+ORDER_SEQUENCE = 'sequence'
+ORDERING_MODES = (ORDER_ARRIVAL, ORDER_SEQUENCE)
+LATE_DROP = 'drop'      # a record older than the horizon is dropped, and counted as such
+LATE_MARK = 'mark'      # ... or delivered out of order, marked late, for the node to account for
+LATE_POLICIES = (LATE_DROP, LATE_MARK)
+
+
+class OrderingPolicy:
+    '''
+    The declared temporal semantics of a keyed stateful node, applied through a
+    ``ReorderBuffer`` per partition key so no arrival-order race changes them.
+
+    - Arguments:
+        - mode: ``arrival`` (records are applied as they come; the default and \
+            today's behaviour) or ``sequence`` (records are released in sequence \
+            order; a gap is waited for up to ``horizon`` later records).
+        - horizon: (``sequence``) how many later records may be held back waiting \
+            for a gap before it is given up on.
+        - late: what happens to a record that arrives after its slot was given up: \
+            ``drop`` or ``mark`` (delivered with ``late = True``).
+    '''
+    def __init__(self, mode : str = ORDER_ARRIVAL, horizon : int = 8, late : str = LATE_DROP) -> None:
+        if mode not in ORDERING_MODES:
+            raise ValueError(f'mode must be one of {ORDERING_MODES}, got {mode!r}')
+        if late not in LATE_POLICIES:
+            raise ValueError(f'late must be one of {LATE_POLICIES}, got {late!r}')
+        if horizon < 0:
+            raise ValueError(f'horizon must be >= 0, got {horizon}')
+        self.mode = mode
+        self.horizon = horizon
+        self.late = late
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {'mode': self.mode, 'horizon': self.horizon, 'late': self.late}
+
+    @classmethod
+    def from_dict(cls, d : Optional[Dict[str, Any]]) -> "OrderingPolicy":
+        if not d:
+            return cls()
+        return cls(mode = d.get('mode', ORDER_ARRIVAL), horizon = int(d.get('horizon', 8)),
+                   late = d.get('late', LATE_DROP))
+
+
+class ReorderBuffer:
+    '''
+    The reference interpreter of an ``OrderingPolicy`` for one partition key.
+    ``offer(seq, record)`` returns the records that may be applied now, oldest
+    first, each as ``(seq, record, late)``: under ``arrival`` every record at
+    once; under ``sequence`` the next expected record and whatever follows it
+    contiguously, a duplicate never twice, and a gap only once ``horizon`` later
+    records have piled up behind it — at which point the missing slots are given
+    up on and a record for one of them is ``late`` (dropped, or marked).
+    '''
+    def __init__(self, policy : OrderingPolicy, start : int = 1) -> None:
+        self._policy = policy
+        self._next = start
+        self._held : Dict[int, Any] = {}
+        self._applied : set = set()
+        self.dropped = 0
+
+    @property
+    def expected(self) -> int:
+        return self._next
+
+    def offer(self, seq : int, record : Any) -> list:
+        if self._policy.mode == ORDER_ARRIVAL:
+            if seq in self._applied:
+                return []
+            self._applied.add(seq)
+            return [(seq, record, False)]
+        if seq in self._applied or seq in self._held:
+            return []                                       # a duplicate is never applied twice
+        if seq < self._next:
+            self._applied.add(seq)
+            if self._policy.late == LATE_DROP:
+                self.dropped += 1
+                return []
+            return [(seq, record, True)]
+        self._held[seq] = record
+        out : list = []
+        while True:
+            out.extend(self._release_contiguous())
+            if not self._held:
+                break
+            # A gap: give it up only once `horizon` later records wait behind it.
+            if len(self._held) > self._policy.horizon:
+                self._next = min(self._held)
+                continue
+            break
+        return out
+
+    def _release_contiguous(self) -> list:
+        out : list = []
+        while self._next in self._held:
+            out.append((self._next, self._held.pop(self._next), False))
+            self._applied.add(self._next)
+            self._next += 1
+        return out
+
+    def flush(self) -> list:
+        '''End of input: release everything held, in order, marked as it is (nothing more is coming).'''
+        out : list = []
+        for seq in sorted(self._held):
+            out.append((seq, self._held.pop(seq), seq != self._next))
+            self._applied.add(seq)
+            self._next = seq + 1
+        return out
+
+    def snapshot(self) -> Dict[str, Any]:
+        '''
+        The buffer's whole position — next expected, held records, applied
+        sequences, drop count — as a JSON-serializable dict, so a stateful node
+        can checkpoint it with its own state (RUN-021/RUN-022) and a replacement
+        resumes the declared ordering exactly where the crashed process left it.
+        Held records are the node's own values and must be JSON-serializable too.
+        '''
+        return {'next': self._next, 'held': {str(seq): rec for seq, rec in self._held.items()},
+                'applied': sorted(self._applied), 'dropped': self.dropped}
+
+    @classmethod
+    def restore(cls, policy : OrderingPolicy, snapshot : Dict[str, Any]) -> "ReorderBuffer":
+        '''A buffer positioned as ``snapshot`` recorded it (the inverse of ``snapshot``).'''
+        buffer = cls(policy, start = int(snapshot.get('next', 1)))
+        buffer._held = {int(seq): rec for seq, rec in dict(snapshot.get('held', {})).items()}
+        buffer._applied = {int(seq) for seq in snapshot.get('applied', ())}
+        buffer.dropped = int(snapshot.get('dropped', 0))
+        return buffer
+
 
 #: How much a node is willing to lose. ``at-least-once`` retries and dead-letters;
 #: ``best-effort`` drops a failed message so the freshest one wins.

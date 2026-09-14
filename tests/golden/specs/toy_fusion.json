@@ -1,0 +1,189 @@
+[
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "producer",
+    "name": "cam0",
+    "nb_tasks": 1,
+    "node_class": "toy_fusion_nodes.SimCameraProducer",
+    "params": {
+      "duration_s": 3.0,
+      "fps": 10.0,
+      "image": null,
+      "is_finite": true,
+      "name": "cam0",
+      "phase_ms": 0.0
+    },
+    "parents": [],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "producer",
+    "name": "cam1",
+    "nb_tasks": 1,
+    "node_class": "toy_fusion_nodes.SimCameraProducer",
+    "params": {
+      "duration_s": 3.0,
+      "fps": 10.0,
+      "image": null,
+      "is_finite": true,
+      "name": "cam1",
+      "phase_ms": 3.0
+    },
+    "parents": [],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": {
+      "collect": {
+        "imu": 40.0
+      },
+      "max_pending": 256,
+      "missing": "drop",
+      "mode": "time",
+      "quorum": 1,
+      "timeout_seconds": 0.25,
+      "tolerance_ms": 15.0
+    },
+    "kind": "processor",
+    "name": "fuse",
+    "nb_tasks": 1,
+    "node_class": "toy_fusion_nodes.MomentFusion",
+    "params": {
+      "camera_names": [
+        "cam0",
+        "cam1"
+      ],
+      "delivery": null,
+      "device_type": "cpu",
+      "gpu_count": 1,
+      "gpu_memory_gib": null,
+      "image": null,
+      "join_policy": {
+        "collect": {
+          "imu": 40.0
+        },
+        "max_pending": 256,
+        "missing": "drop",
+        "mode": "time",
+        "quorum": 1,
+        "timeout_seconds": 0.25,
+        "tolerance_ms": 15.0
+      },
+      "name": "fuse",
+      "nb_tasks": 1,
+      "on_error": null,
+      "partition_by": null,
+      "sensor_name": "imu"
+    },
+    "parents": [
+      "cam0",
+      "cam1",
+      "imu"
+    ],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "producer",
+    "name": "imu",
+    "nb_tasks": 1,
+    "node_class": "toy_fusion_nodes.SimSensorProducer",
+    "params": {
+      "duration_s": 3.0,
+      "hz": 100.0,
+      "image": null,
+      "is_finite": true,
+      "name": "imu"
+    },
+    "parents": [],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 0,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": false,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "consumer",
+    "name": "live-report",
+    "nb_tasks": 1,
+    "node_class": "toy_fusion_nodes.LiveStateWriter",
+    "params": {
+      "delivery": null,
+      "idempotent": false,
+      "image": null,
+      "join_policy": null,
+      "latest_path": "<ROOT>/toy_fusion/out/latest.json",
+      "metadata": false,
+      "name": "live-report",
+      "on_error": null,
+      "summary_path": "<ROOT>/toy_fusion/out/fusion_summary.json"
+    },
+    "parents": [
+      "fuse"
+    ],
+    "partition_by": null,
+    "protocol_version": null
+  }
+]

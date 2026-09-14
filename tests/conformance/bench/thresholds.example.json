@@ -1,0 +1,84 @@
+{
+  "_comment": "Example thresholds for the benchmark-level cases. Copy, edit to the SLOs of *your* deployment, and export VF_BENCH_THRESHOLDS_JSON=<path> (or the JSON inline). Numbers here are what one developer box (this repo's compose broker on a 32-core host) sustains; they are not a claim about any other environment.",
+  "MSG-026": {
+    "graph_series": [
+      {
+        "nodes": 4,
+        "fanout": 1,
+        "replicas": 1,
+        "runs": 1
+      },
+      {
+        "nodes": 8,
+        "fanout": 2,
+        "replicas": 1,
+        "runs": 1
+      },
+      {
+        "nodes": 8,
+        "fanout": 2,
+        "replicas": 2,
+        "runs": 2
+      },
+      {
+        "nodes": 16,
+        "fanout": 2,
+        "replicas": 1,
+        "runs": 1
+      }
+    ],
+    "provision_seconds_max": 20.0,
+    "reconnect_seconds_max": 5.0,
+    "publish_roundtrip_seconds_max": 1.0,
+    "teardown_cycles": 3,
+    "teardown_baseline_tolerance": 0,
+    "declared_max_streams": 64,
+    "restart_broker_container": "videoflow-nats-1",
+    "_restart_note": "restart_broker_container names the compose broker container the recovery half restarts (docker restart); drop the key to skip that half."
+  },
+  "PAY-017": {
+    "frames": 100,
+    "frame_bytes": 1000000,
+    "stages": 5,
+    "reclaim_seconds_max": 5.0
+  },
+  "PAY-022": {
+    "cameras": [
+      1,
+      2,
+      4
+    ],
+    "fps": 10,
+    "frame_bytes": 1000000,
+    "stages": [
+      1,
+      2
+    ],
+    "consumers": [
+      1,
+      2
+    ],
+    "hold_seconds": 3.0,
+    "duration_seconds": 6.0,
+    "max_frame_age_seconds": 1.0,
+    "max_drop_ratio": 0.02,
+    "declared_capacity_cameras": 1,
+    "headroom": 0.25,
+    "_note": "declared_capacity_cameras is the admission claim under test: it must sit at or below the measured sustainable camera count minus headroom. On the reference box two cameras at 10 fps x 1 MB sustain the SLO, so a claim of 1 with 25% headroom holds. max_drop_ratio is 2%, not 0: a live_latest frame path drops a frame whenever a reader lags for one retention slot, and one frame in 120 is what a shared developer box does while something else runs \u2014 a real SLO names the loss the deployment tolerates, and 0 is a legitimate value on a quiet machine."
+  },
+  "ALLOC-032": {
+    "workload": {
+      "input_bytes": 4000000,
+      "rate_hz": 30,
+      "duration_seconds": 5,
+      "resident_bytes": 2000000000
+    },
+    "candidate_profiles": [
+      "1g.24gb",
+      "2g.48gb"
+    ],
+    "min_delivered_rate_hz": 25,
+    "max_p95_latency_ms": 20,
+    "max_peak_memory_bytes": 4000000000
+  }
+}

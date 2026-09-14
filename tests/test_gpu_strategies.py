@@ -33,7 +33,9 @@ def registry_sandbox(monkeypatch):
 # -- built-ins: behavior must be exactly what the string branches did ------
 
 def test_builtin_modes_are_registered():
-    assert gpu.registered_gpu_modes() == ['exclusive', 'mix']
+    # dra renders claims only (plan Phase 4, decision D9) — registered so
+    # --gpu-mode dra is a choice, refused at preflight without a driver.
+    assert gpu.registered_gpu_modes() == ['dra', 'exclusive', 'mix']
 
 
 def test_exclusive_claims_whole_devices():
@@ -116,7 +118,7 @@ def test_strategy_drives_the_rendered_pod_spec(registry_sandbox):
     from videoflow.core.compiler import NodeSpec
     spec = NodeSpec('g', 'videoflow.processors.basic.IdentityProcessor', {}, [], 'processor',
                     False, 1, 'gpu', True, image = 'img:1', gpu_count = 2)
-    pod = manifests.workload(spec, 'f', 'realtime', 'img:1', 'cm', gpu_mode = 'half')
+    pod = manifests.workload(spec, 'f', 'r', 'realtime', 'img:1', 'cm', gpu_mode = 'half')
     container = pod['spec']['template']['spec']['containers'][0]
     assert container['resources'] == {'limits': {'example.com/half-gpu': 2}}
     # Selector and toleration are mode-independent: every GPU pod needs the pool.

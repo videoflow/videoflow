@@ -21,6 +21,14 @@ from typing import Any, Dict, List, Optional, Union
 from ..components.descriptor import ComponentDescriptor, load_descriptor
 from .node import ConsumerNode, Node, ProcessorNode, ProducerNode, _slugify
 from .policies import JoinPolicy
+from .provenance import (
+    FIELD_GPU_COUNT,
+    FIELD_GPU_MEMORY_GIB,
+    builtin_defaults,
+    descriptor_declarations,
+    node_declarations,
+    resolve_gpu_requirements,
+)
 
 # Per-base counter so an unnamed remote node gets a readable, component-derived
 # default name (e.g. 'sort-tracker-1') instead of the Python class name; final
@@ -91,13 +99,19 @@ class RemoteProcessor(RemoteNodeMixin, ProcessorNode):
                 partition_by : Optional[str] = None,
                 join_policy : Union[JoinPolicy, dict, None] = None,
                 name : Optional[str] = None, image : Optional[str] = None,
-                gpu_count : int = 1, gpu_memory_gib : Union[int, float, None] = None) -> None:
+                gpu_count : Optional[int] = None, gpu_memory_gib : Union[int, float, None] = None,
+                gpu_provenance : Optional[Dict[str, str]] = None) -> None:
         self._component_ref = component_ref
         self._descriptor = descriptor
         self._component_params = params
         super().__init__(nb_tasks = nb_tasks, device_type = device_type, name = name,
                         partition_by = partition_by, join_policy = join_policy, image = image,
                         gpu_count = gpu_count, gpu_memory_gib = gpu_memory_gib)
+        if gpu_provenance is not None:
+            # ``component()`` resolved the GPU requirement against the descriptor
+            # and passes the outcome down; the base constructor only saw resolved
+            # values and would have recorded every one of them as the node's own.
+            self._gpu_provenance = dict(gpu_provenance)
 
     def _python_node_params(self) -> Dict[str, Any]:
         # A Python processor is reconstructed as pythonClass(**params); it needs its
@@ -174,10 +188,25 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
             memory demand in GiB, RFC 0004). Resolution order: explicit argument, \
             then the descriptor's ``spec.resources.gpu.memoryGiB``, then None. \
             Same non-processor rejection as gpu_count.
+
+    The GPU resolution runs through ``videoflow.core.provenance`` so the node \
+        records where each value came from (``node.gpu_provenance``), and so a \
+        genuine contradiction between two sources — a GPU-only component asked \
+        to run on CPU, an explicit ``gpu_count=2`` against a descriptor memory \
+        default — is rejected with a ``GpuRequirementConflict`` (a \
+        ``CapabilityError`` and a ``ValueError``) whose remedy names both sources.
     '''
     descriptor = ref if isinstance(ref, ComponentDescriptor) else load_descriptor(ref)
     component_ref = descriptor.source or (ref if isinstance(ref, str) else descriptor.name)
 
+    # Every source of the GPU requirement at once: the explicit arguments, the
+    # descriptor's device list and spec.resources.gpu defaults, and the built-in
+    # defaults. Contradictions between sources are rejected here, naming both.
+    resolution = resolve_gpu_requirements(
+        node_declarations(device_type, gpu_count, gpu_memory_gib)
+        + descriptor_declarations(descriptor.device, descriptor.gpu_count_declared, descriptor.gpu_memory_gib)
+        + builtin_defaults(),
+        subject = f"component '{descriptor.name}'")
     if device_type not in descriptor.device:
         raise ValueError(f"component '{descriptor.name}': device_type={device_type!r} not supported; "
                         f'declared devices: {descriptor.device}')
@@ -220,25 +249,26 @@ def component(ref : Union[str, ComponentDescriptor], params : Optional[Dict[str,
         return RemoteProducer(component_ref, descriptor, validated_params,
                             is_finite = finite, name = name, image = resolved_image)
     if role == 'processor':
-        # RFC 0003/0004 resolution: explicit argument → descriptor
-        # spec.resources.gpu → 1/None. Descriptor values are defaults, not floors.
-        resolved_gpu_count = descriptor.gpu_count if gpu_count is None else gpu_count
-        resolved_memory = descriptor.gpu_memory_gib if gpu_memory_gib is None else gpu_memory_gib
+        # RFC 0003/0004 resolution, done above with provenance: explicit argument
+        # → descriptor spec.resources.gpu → 1/None, descriptor values being
+        # defaults, not floors. A cpu run of a dual-device component has already
+        # had the *descriptor's* GPU memory default set aside rather than
+        # erroring (the demand describes the gpu flavor); an explicit
+        # gpu_memory_gib= with device_type='cpu' still errors, in the
+        # ProcessorNode constructor. What is left to reject here is the call
+        # contradicting itself, with the message this API documents.
+        resolved_gpu_count : int = resolution.values[FIELD_GPU_COUNT]
+        resolved_memory = resolution.values[FIELD_GPU_MEMORY_GIB]
         if resolved_gpu_count > 1 and device_type != 'gpu':
             raise ValueError(f"component '{descriptor.name}': gpu_count={resolved_gpu_count} requires "
                             f"device_type='gpu', got {device_type!r}. Pass device_type='gpu', or gpu_count=1 "
                             "to override the descriptor's default.")
-        if gpu_memory_gib is None and resolved_memory is not None and device_type != 'gpu':
-            # A cpu run of a dual-device component drops the *descriptor's* GPU
-            # memory default rather than erroring: the demand describes the gpu
-            # flavor. An explicit gpu_memory_gib= with device_type='cpu' still
-            # errors, in the ProcessorNode constructor.
-            resolved_memory = None
         return RemoteProcessor(component_ref, descriptor, validated_params,
                             nb_tasks = nb_tasks, device_type = device_type,
                             partition_by = partition_by, join_policy = policy,
                             name = name, image = resolved_image,
-                            gpu_count = resolved_gpu_count, gpu_memory_gib = resolved_memory)
+                            gpu_count = resolved_gpu_count, gpu_memory_gib = resolved_memory,
+                            gpu_provenance = resolution.provenance)
     if role == 'consumer':
         return RemoteConsumer(component_ref, descriptor, validated_params,
                             metadata = metadata, idempotent = idempotent,

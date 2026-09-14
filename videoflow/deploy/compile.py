@@ -19,9 +19,10 @@ import json
 import keyword
 import os
 import sys
-from typing import List, Optional
+from typing import Any, List, Optional
 
-from ..core.compiler import NodeSpec, compile_flow
+from ..backends.capabilities import FlowRequirements
+from ..core.compiler import NodeSpec, batching_policies, compile_flow, execution_groups, sink_guarantees
 from ..core.flow import Flow
 
 FALLBACK_MODULE_NAME = '_videoflow_user_graph'
@@ -99,20 +100,41 @@ def load_flow(target : str) -> Flow:
     factory = getattr(module, factory_name)
     return factory()
 
+def declared_requirements(flow : Any) -> FlowRequirements:
+    '''
+    What a flow's nodes declare beyond the graph (sink effect guarantees, fused
+    execution groups, batching contracts): the document half of the composition
+    admission. Empty for a flow that declares nothing.
+    '''
+    return FlowRequirements(sink_guarantees = sink_guarantees(flow),
+                            execution_groups = execution_groups(flow),
+                            batching = batching_policies(flow))
+
 def compile_to_dict(target : str, envelope_version : Optional[int] = None) -> dict:
     flow = load_flow(target)
     specs = compile_flow(flow, envelope_version = envelope_version)
-    return {
+    document : dict = {
         'flow_id': flow.flow_id,
         'flow_type': flow.flow_type,
         'specs': [s.to_dict() for s in specs],
     }
+    # Decision D8: requirements travel beside the specs, and only when a node
+    # declared something — a flow that declares nothing compiles byte-identically.
+    requirements = declared_requirements(flow)
+    if not requirements.is_empty():
+        document['requirements'] = requirements.to_dict()
+    return document
 
 def specs_from_document(document : dict | str) -> tuple[str, str, List[NodeSpec]]:
     '''``(flow_id, flow_type, specs)`` from a compile-JSON document (dict or JSON string).'''
     parsed = json.loads(document) if isinstance(document, str) else document
     specs = [NodeSpec.from_dict(d) for d in parsed['specs']]
     return parsed['flow_id'], parsed['flow_type'], specs
+
+def requirements_from_document(document : dict | str) -> FlowRequirements:
+    '''The declared requirements of a compile-JSON document (empty when it carries none).'''
+    parsed = json.loads(document) if isinstance(document, str) else document
+    return FlowRequirements.from_dict(parsed.get('requirements'))
 
 def main(argv : Optional[List[str]] = None) -> None:
     ap = argparse.ArgumentParser(prog = 'python -m videoflow.compile',

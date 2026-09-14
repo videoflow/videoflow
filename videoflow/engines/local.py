@@ -14,6 +14,7 @@ import asyncio
 import json
 import logging
 import os
+import queue
 import signal
 import site
 import subprocess
@@ -22,17 +23,24 @@ import sysconfig
 import tempfile
 import threading
 import time
-from typing import List, Optional
+from typing import List, Mapping, Optional
 
 import nats  # also an import guard: fail fast if the broker client is missing
 
+# The module, not the symbols: tests monkeypatch ``topology.provision_flow_sync``,
+# which only works while the name resolves at call time (CLAUDE.md's plugin-registry
+# rule — the same trap, for the same reason).
+from ..backends.allocation import SHARING_COOPERATIVE, SHARING_EXCLUSIVE, DeliveredGrant, Infeasible, WorkloadRequest
+from ..backends.outcomes import Unknown
 from ..core.compiler import (
     NodeSpec,
+    blob_reader_ids,
+    parent_replicas,
     specs_from_tasks_data,
     validate_wire_compatibility,
 )
 from ..core.engine import ExecutionEngine
-from ..core.errors import BrokerUnavailable, ConfigError
+from ..core.errors import BrokerUnavailable, ConfigError, ResourceUnavailable
 from ..core.supervision import (
     EventLog,
     NodeExited,
@@ -42,12 +50,8 @@ from ..core.supervision import (
     SupervisionPolicy,
     render_event,
 )
-
-# The module, not the symbols: tests monkeypatch ``topology.provision_flow_sync``,
-# which only works while the name resolves at call time (CLAUDE.md's plugin-registry
-# rule — the same trap, for the same reason).
+from ..deploy.allocation_local import GRANT_ENV, POLICY_SHARED, LocalAllocationBackend
 from ..messaging import topology
-from ..utils.system import visible_physical_gpus
 
 logger = logging.getLogger(__package__)
 
@@ -149,8 +153,16 @@ class LocalProcessEngine(ExecutionEngine):
                 python_path : list | None = None, inherit_python_path : bool = True,
                 default_image : str | None = None,
                 blob_ttl_seconds : int | None = None,
-                supervision : SupervisionPolicy | None = None) -> None:
+                supervision : SupervisionPolicy | None = None,
+                profile_requests : dict[str, str] | None = None,
+                gpu_policy : str = POLICY_SHARED) -> None:
         self._supervision = supervision or SupervisionPolicy.local()
+        # How the host's GPUs are partitioned across workers (``--gpu-policy``):
+        # ``shared`` is today's wrap-around walk, ``strict`` refuses short grants
+        # before launch. See deploy.allocation_local.
+        self._gpu_policy = gpu_policy
+        # Explicit channel-profile requests for the workers' env (deploy.admission); empty by default.
+        self._profile_requests = dict(profile_requests or {})
         self._events = EventLog()
         self._nats_url = nats_url
         self._blob_redis_url = blob_redis_url
@@ -228,20 +240,34 @@ class LocalProcessEngine(ExecutionEngine):
                 nats_url = self._nats_url) from e
 
         # Only probe the host's GPUs (nvidia-smi) when the flow actually has GPU
-        # nodes — a CPU-only flow must not depend on the probe in any way.
-        gpu_assignment = (assign_local_gpus(specs, visible_physical_gpus())
-                        if any(s.device_type == 'gpu' for s in specs) else {})
+        # nodes — a CPU-only flow must not depend on the probe in any way. Every
+        # policy goes through the allocation backend, which grants UUIDs (the
+        # ``shared`` policy reproduces the ordinal walk of ``assign_local_gpus``)
+        # and tells every worker what it really received (VF_GPU_GRANT_JSON).
+        gpu_env : dict[tuple[str, int], Mapping[str, str]] = {}
+        if any(s.device_type == 'gpu' for s in specs):
+            gpu_env = allocate_local_gpus(specs, flow_id, run_id, LocalAllocationBackend(self._gpu_policy))
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
                                 self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
-                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)))
+                                gpu_env = gpu_env.get((spec.name, replica_idx)),
+                                profile_requests = self._profile_requests,
+                                blob_reader_ids = blob_reader_ids(spec, specs),
+                                parent_replicas = parent_replicas(spec, specs),
+                                runtime_store_url = self._runtime_store_url())
                 env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
                 # Kept so a restart relaunches the identical worker, and so the
                 # supervisor never has to re-derive an environment.
                 self._launchers[(spec.name, replica_idx)] = (spec, env)
                 self._start_worker(spec, replica_idx, attempt = 0)
+
+    def _runtime_store_url(self) -> str:
+        '''The run ledger of a local run (RFC 0006 ENV-10): a file store beside the termination logs, shared by every worker.'''
+        if self._termination_dir is None:
+            self._termination_dir = tempfile.mkdtemp(prefix = 'videoflow-term-')
+        return 'file://' + os.path.join(self._termination_dir, 'ledger')
 
     def _termination_log_path(self, node : str, replica_idx : int) -> str:
         if self._termination_dir is None:
@@ -318,22 +344,33 @@ class LocalProcessEngine(ExecutionEngine):
 
         A worker killed by SIGINT/SIGTERM is not counted and not restarted: that
         is Ctrl-C or ``flow.stop()`` propagating, not a failure.
+
+        Every worker is watched **concurrently**: one waiter thread per child
+        reports its exit on a queue, and this loop drains the queue. Waiting on
+        the children one after another — the previous shape — meant a processor
+        that died while the source ahead of it in the list was still running was
+        not restarted (or the flow not failed) until that source exited, which
+        for an unbounded source is never: a healthy producer hid a dead
+        downstream worker indefinitely.
         '''
         stopped = {-signal.SIGINT, -signal.SIGTERM}
         self._failures = []
         pending = list(self._procs)
         self._procs = []
+        exits : queue.Queue[tuple] = queue.Queue()
+        outstanding = 0
+        for entry in pending:
+            _watch_exit(entry, exits)
+            outstanding += 1
         try:
-            while pending:
-                name, replica_idx, proc = pending.pop(0)
-                while True:
-                    try:
-                        proc.wait()
-                        break
-                    except KeyboardInterrupt:
-                        # The children got the same SIGINT; keep reaping rather than
-                        # abandoning them (a second Ctrl-C used to escape here).
-                        continue
+            while outstanding:
+                try:
+                    name, replica_idx, proc = exits.get()
+                except KeyboardInterrupt:
+                    # The children got the same SIGINT; keep reaping rather than
+                    # abandoning them (a second Ctrl-C used to escape here).
+                    continue
+                outstanding -= 1
                 code = proc.returncode or 0
                 if code == 0 or code in stopped:
                     continue
@@ -341,7 +378,8 @@ class LocalProcessEngine(ExecutionEngine):
                 self._events.emit(NodeExited(name, replica_idx, code, reason))
                 restarted = self._maybe_restart(name, replica_idx, reason)
                 if restarted is not None:
-                    pending.append(restarted)
+                    _watch_exit(restarted, exits)
+                    outstanding += 1
                     continue
                 self._failures.append((name, replica_idx, code))
         finally:
@@ -487,7 +525,13 @@ class LocalProcessEngine(ExecutionEngine):
         async def _go() -> None:
             nc = await nats.connect(self._nats_url)
             try:
-                await topology.delete_run_streams(nc, flow_id, run_id)
+                observation = await topology.delete_run_streams(nc, flow_id, run_id)
+                if not observation.complete:
+                    # Incomplete is not failed-silently: name what is left so a
+                    # retried teardown knows there is something to retry.
+                    logger.warning(f'run {run_id} of flow {flow_id}: broker cleanup incomplete — '
+                                   f'{observation.reason or "some streams remain"}; remaining: '
+                                   f'{", ".join(observation.remaining) or "unknown"}')
             finally:
                 await nc.drain()
 
@@ -495,6 +539,36 @@ class LocalProcessEngine(ExecutionEngine):
             asyncio.run(_go())
         except Exception:
             logger.debug('stream teardown failed', exc_info = True)
+
+def _watch_exit(entry : tuple, exits : 'queue.Queue[tuple]') -> threading.Thread:
+    '''
+    Waits for one worker on its own daemon thread and reports ``entry`` — the
+    supervisor's ``(name, replica, proc)`` — on ``exits`` once it has ended.
+
+    The thread reports unconditionally: a waiter that failed to report would
+    leave the supervisor loop counting a worker that nothing will ever deliver.
+    The exit status is read off ``proc.returncode`` by the loop, as before, so a
+    ``wait()`` that raised (it should not; ``Popen.wait`` retries EINTR) is
+    logged and the process is judged by whatever status it recorded.
+
+    Daemon, so a supervisor interrupted out of its loop does not hang the
+    interpreter on a worker it has already given up waiting for.
+    '''
+    name, replica_idx, proc = entry
+
+    def _wait() -> None:
+        try:
+            proc.wait()
+        except Exception:
+            logger.warning(f'waiting on worker node={name} replica={replica_idx} raised',
+                        exc_info = True)
+        finally:
+            exits.put(entry)
+
+    thread = threading.Thread(target = _wait, daemon = True,
+                              name = f'vf-wait-{name}-{replica_idx}')
+    thread.start()
+    return thread
 
 def _runs_via_docker(spec : NodeSpec) -> bool:
     '''
@@ -555,11 +629,87 @@ def assign_local_gpus(specs : List[NodeSpec],
             f'schedule this way on Kubernetes.')
     return assignment
 
+def local_workload_requests(specs : List[NodeSpec], flow_id : str, run_id : str) -> list[WorkloadRequest]:
+    '''
+    One ``WorkloadRequest`` per replica of every GPU node the local engine can
+    grant devices to (docker-run natives excluded, see ``_runs_via_docker``),
+    in launch order: whole-device requests are exclusive, a node declaring
+    ``gpu_memory_gib`` is a cooperative sharer whose declared peak is that demand.
+    '''
+    requests : list[WorkloadRequest] = []
+    for spec in specs:
+        if spec.device_type != 'gpu' or _runs_via_docker(spec):
+            continue
+        peak = int(spec.gpu_memory_gib * (1 << 30)) if spec.gpu_memory_gib is not None else None
+        for replica_idx in range(spec.nb_tasks):
+            requests.append(WorkloadRequest(
+                flow_id = flow_id, run_id = run_id, workload_id = f'{spec.name}/{replica_idx}',
+                device_count = spec.gpu_count,
+                sharing = SHARING_COOPERATIVE if peak is not None else SHARING_EXCLUSIVE,
+                declared_peak_memory_bytes = peak, provenance = {'device_count': 'spec.gpu_count'}))
+    return requests
+
+def allocate_local_gpus(specs : List[NodeSpec], flow_id : str, run_id : str,
+                        backend : LocalAllocationBackend) -> dict[tuple[str, int], Mapping[str, str]]:
+    '''
+    The GPU environment of every worker, decided before any worker is launched:
+    ``CUDA_VISIBLE_DEVICES`` (UUIDs), ``VF_GPU_COUNT`` (the delivered count) and
+    ``VF_GPU_GRANT_JSON``. Strict policy raises ``ResourceUnavailable`` naming
+    every reason the flow does not fit, and refuses an unobservable host; the
+    shared policy launches on an unobservable host without a mask but marks
+    every grant ``host='unobserved'`` so nobody reads it as a zero-GPU machine.
+    '''
+    requests = local_workload_requests(specs, flow_id, run_id)
+    if not requests:
+        return {}
+    keyed = {r.workload_id: (r.workload_id.rsplit('/', 1)[0], int(r.workload_id.rsplit('/', 1)[1])) for r in requests}
+    observed = backend.inventory({})
+    if isinstance(observed, Unknown):
+        if backend.policy != POLICY_SHARED:
+            raise ResourceUnavailable(
+                f'Cannot observe this host\'s GPUs ({observed.reason}: {observed.detail}); strict GPU policy '
+                f'refuses to launch against an unobserved host.',
+                remedy = 'Fix nvidia-smi (driver, PATH) and rerun, or run with --gpu-policy shared to launch '
+                         'without a grant.')
+        logger.warning(f'GPU discovery failed ({observed.reason}: {observed.detail}); launching GPU workers '
+                       f'without a device grant. This is an unobserved host, not a zero-GPU one.')
+        return {key: {GRANT_ENV: json.dumps(DeliveredGrant(w, (), False, r.device_count, backend.policy,
+                                                               host = 'unobserved').to_dict(),
+                                            separators = (',', ':'))}
+                for w, key in keyed.items() for r in requests if r.workload_id == w}
+    outcome = backend.plan(requests, observed.value)
+    if isinstance(outcome, Infeasible):
+        if backend.policy != POLICY_SHARED:
+            raise ResourceUnavailable(
+                'This flow does not fit the GPUs visible to run-local under --gpu-policy strict:\n  - '
+                + '\n  - '.join(outcome.reasons),
+                remedy = 'Reduce replicas or gpu_count, declare gpu_memory_gib on sharers, free the devices, '
+                         'or opt into device sharing with --gpu-policy shared.')
+        # Shared policy on an empty pool: today's behaviour — no mask, CPU fallback —
+        # but the grant says so.
+        logger.warning('no GPU visible to run-local: ' + '; '.join(outcome.reasons))
+        return {key: {'VF_GPU_COUNT': '0',
+                      GRANT_ENV: json.dumps(DeliveredGrant(w, (), False, r.device_count, backend.policy).to_dict(),
+                                            separators = (',', ':'))}
+                for w, key in keyed.items() for r in requests if r.workload_id == w}
+    for note in outcome.notes:
+        logger.warning(f'local GPU plan: {note}')
+    claim = backend.reserve(outcome, f'{flow_id}:{run_id}', outcome.snapshot_generation)
+    if claim.grant is None:
+        raise ResourceUnavailable(f'Could not reserve the planned GPUs: {claim.evidence.get("reason", claim.status)}.',
+                                  remedy = 'Rerun; the host changed between planning and launch.')
+    return {keyed[w]: backend.bindings(claim.claim_id, w).env for w in outcome.assignments}
+
 def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str, run_id : str,
                 blob_redis_url : str | None, replica_id : int, envelope_version : int,
                 python_path : list | None = None,
                 blob_ttl_seconds : int | None = None,
-                gpu_devices : list[int] | None = None) -> dict:
+                gpu_devices : list[int] | None = None,
+                gpu_env : Mapping[str, str] | None = None,
+                profile_requests : dict[str, str] | None = None,
+                blob_reader_ids : list[str] | None = None,
+                parent_replicas : list[int] | None = None,
+                runtime_store_url : str | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -604,6 +754,15 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
     if spec.blob_readers is not None:
         # Enables refcounted blob reclamation (PROTOCOL.md BLOB-5); absent ⇒ TTL-only.
         env['VF_BLOB_READERS'] = str(spec.blob_readers)
+    if blob_reader_ids:
+        # Reader obligations by identity (RFC 0006 BLOB-13); only rendered under the switch.
+        env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
+    if parent_replicas:
+        # The EOS-7 barrier's expectation per parent (RFC 0006 ENV-11); under the switch only.
+        env['VF_PARENT_REPLICAS'] = ','.join(str(n) for n in parent_replicas)
+    if runtime_store_url:
+        # The run ledger (RFC 0006 ENV-10); under the switch only.
+        env['VF_RUNTIME_STORE_URL'] = runtime_store_url
     if blob_ttl_seconds is not None:
         env['VF_BLOB_TTL_SECONDS'] = str(blob_ttl_seconds)
     if spec.device_type == 'gpu' and not _runs_via_docker(spec):
@@ -621,6 +780,12 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
         # Cooperative masking: the worker sees exactly its granted devices, so the
         # visibility contract holds locally too (see assign_local_gpus).
         env['CUDA_VISIBLE_DEVICES'] = ','.join(str(d) for d in gpu_devices)
+    if gpu_env:
+        # The allocation backend's bindings (strict policy or RFC 0006): a UUID
+        # mask, the delivered count and the grant record itself (ENV-14).
+        env.update(gpu_env)
+    if profile_requests:
+        env.update(profile_requests)
     return env
 
 def _publish_stop(nats_url : str, flow_id : str, run_id : str) -> None:

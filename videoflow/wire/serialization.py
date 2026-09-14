@@ -532,7 +532,7 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
                         event_ts : float | None, blob_store : BlobStore | None,
                         blob_readers : int | None = None,
                         blob_ttl_seconds : int | None = None,
-                        error : dict | None = None) -> bytes:
+                        error : dict | None = None, inline_threshold : int | None = None) -> bytes:
     env = envelope_pb2.Envelope(
         v = 4,
         type = _PROTO_MSG_TYPE[msg_type],
@@ -562,11 +562,12 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
         payload_type, payload_buf = _encode_payload_v4(payload)
         # Blob offload: over the inline threshold, stash the encoded bytes and carry
         # a small BlobRef in their place (PROTOCOL.md §13).
-        if len(payload_buf) > MAX_INLINE_PAYLOAD_BYTES:
+        threshold = MAX_INLINE_PAYLOAD_BYTES if inline_threshold is None else inline_threshold
+        if len(payload_buf) > threshold:
             if blob_store is None:
                 raise ValueError(
                     f'Payload of {len(payload_buf)} bytes exceeds MAX_INLINE_PAYLOAD_BYTES '
-                    f'({MAX_INLINE_PAYLOAD_BYTES}) and no blob_store was configured to offload '
+                    f'({threshold}) and no blob_store was configured to offload '
                     'it to. Configure VIDEOFLOW_BLOB_REDIS_URL or pass a BlobStore.')
             ttl = blob_ttl_seconds if blob_ttl_seconds is not None else DEFAULT_BLOB_TTL_SECONDS
             # Reader-counted put (BLOB-5) enables delete-after-last-ack; without a
@@ -581,7 +582,8 @@ def _encode_envelope_v4(producer_name : str, flow_id : str, run_id : str, trace_
         env.payload = payload_buf
     return env.SerializeToString()
 
-def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> dict:
+def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None,
+                        resolve_blobs : bool = True, decode_payload : bool = True) -> dict:
     env = envelope_pb2.Envelope()
     env.ParseFromString(buf)
     if env.v != 4:
@@ -598,11 +600,21 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
     # message is acked (BLOB-6). Re-parsing the tiny BlobRef here is cheaper than a
     # second full-envelope parse at the messenger layer.
     blob_ref : str | None = None
+    blob_inner_type : str | None = None
     if not is_stop_signal and env.payload_type == PAYLOAD_BLOBREF:
         _br = payloads_pb2.BlobRef()
         _br.ParseFromString(env.payload)
         blob_ref = _br.ref
-    message = None if is_stop_signal else _decode_payload_v4(env.payload_type, env.payload, blob_store = blob_store)
+        blob_inner_type = _br.inner_payload_type
+    if is_stop_signal:
+        message = None
+    elif not decode_payload or (blob_ref is not None and not resolve_blobs):
+        # Metadata only: the receiver decides ownership and replay scope from
+        # the envelope before fetching bytes (PART-3, DELIV-16, PAY-018) and
+        # hydrates with ``hydrate_message`` off the broker's event loop.
+        message = None
+    else:
+        message = _decode_payload_v4(env.payload_type, env.payload, blob_store = blob_store)
     return {
         'producer_name': env.producer_name,
         'flow_id': env.flow_id,
@@ -620,6 +632,8 @@ def _decode_envelope_v4(buf : bytes, blob_store : BlobStore | None = None) -> di
         'metadata': {k: _value_from_proto(v) for k, v in env.metadata.items()},
         'message': message,
         'blob_ref': blob_ref,
+        'blob_inner_type': blob_inner_type,
+        'hydrated': is_stop_signal or (decode_payload and (blob_ref is None or resolve_blobs)),
     }
 
 # ==========================================================================
@@ -632,7 +646,7 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
                     event_ts : float | None = None, blob_store : BlobStore | None = None,
                     version : int | None = None, blob_readers : int | None = None,
                     blob_ttl_seconds : int | None = None,
-                    error : dict | None = None) -> bytes:
+                    error : dict | None = None, inline_threshold : int | None = None) -> bytes:
     '''
     Encodes a full wire message and returns the bytes to publish to a broker subject.
 
@@ -654,13 +668,18 @@ def encode_envelope(producer_name : str, flow_id : str, run_id : str, trace_id :
             enables refcounted blob reclamation (BLOB-5). ``None`` ⇒ TTL-only blobs.
         - blob_ttl_seconds: TTL for an offloaded payload (and its counter); \
             ``None`` ⇒ ``DEFAULT_BLOB_TTL_SECONDS``.
+        - inline_threshold: encoded payload size above which the payload is \
+            offloaded; ``None`` ⇒ ``MAX_INLINE_PAYLOAD_BYTES``. A messenger passes \
+            the value it negotiated against the broker's ``max_payload`` \
+            (``safe_inline_threshold``), so an unsafe default cannot bypass the limit.
     '''
     version = DEFAULT_ENVELOPE_VERSION if version is None else version
     if version == 4:
         return _encode_envelope_v4(producer_name, flow_id, run_id, trace_id, seq, msg_type,
                                 metadata, payload, span_id, parent_span_id, replica_id,
                                 event_ts, blob_store, blob_readers = blob_readers,
-                                blob_ttl_seconds = blob_ttl_seconds, error = error)
+                                blob_ttl_seconds = blob_ttl_seconds, error = error,
+                                inline_threshold = inline_threshold)
     raise ValueError(f'Cannot emit envelope version {version!r}; emittable: {EMITTABLE_ENVELOPE_VERSIONS}')
 
 def _is_msgpack_map(first_byte : int) -> bool:
@@ -670,7 +689,7 @@ def _is_msgpack_map(first_byte : int) -> bool:
     # cheaply recognizes a legacy envelope in order to refuse it with a clear error.
     return 0x80 <= first_byte <= 0x8f or first_byte in (0xde, 0xdf)
 
-def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
+def decode_envelope(buf : bytes, blob_store : BlobStore | None = None, resolve_blobs : bool = True) -> dict:
     '''
     Decodes wire bytes back into a dict with keys ``producer_name``, ``flow_id``, \
         ``run_id``, ``trace_id``, ``seq``, ``event_ts`` (``None`` when absent), \
@@ -684,6 +703,9 @@ def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
         ``None`` when the payload was inline — lets the caller release the blob \
         after the message is acked, BLOB-6). Only the protobuf \
         v4 envelope is supported; a legacy msgpack (v2/v3) envelope is refused.
+        - resolve_blobs: False leaves an offloaded payload unfetched: ``message`` is None, \
+        ``hydrated`` is False and ``blob_ref``/``blob_inner_type`` say what to fetch; \
+        ``hydrate_message`` completes it. Inline payloads are always decoded.
     '''
     if not buf:
         raise ValueError('Cannot decode an empty envelope buffer')
@@ -691,4 +713,63 @@ def decode_envelope(buf : bytes, blob_store : BlobStore | None = None) -> dict:
         raise ValueError(
             'Refusing to decode a legacy msgpack (v2/v3) envelope: that wire has been '
             'removed. Re-emit the message on the protobuf v4 wire.')
-    return _decode_envelope_v4(buf, blob_store = blob_store)
+    return _decode_envelope_v4(buf, blob_store = blob_store, resolve_blobs = resolve_blobs)
+
+
+def peek_envelope(buf : bytes) -> dict:
+    '''
+    The routing view of an envelope — every key ``decode_envelope`` returns except
+    that ``message`` is never decoded (``None``, ``hydrated`` False for data): the
+    parse a receiver can afford on its transport thread to decide ownership and
+    replay scope (``PART-4``, ``DELIV-16``) before a delivery is parked, without
+    paying for the payload it may never process. ``blob_ref`` is still reported so
+    an ack-and-skip can release the reader's share.
+    '''
+    if not buf:
+        raise ValueError('Empty envelope')
+    if _is_msgpack_map(buf[0]):
+        raise ValueError('Legacy msgpack (v2/v3) envelope is no longer supported; expected protobuf v4')
+    return _decode_envelope_v4(buf, resolve_blobs = False, decode_payload = False)
+
+def hydrate_message(decoded : dict, blob_store : BlobStore) -> Any:
+    '''
+    Completes an envelope decoded with ``resolve_blobs = False``: fetches the
+    offloaded bytes and decodes the inner payload. Returns the message; the
+    caller stores it (``decoded['message']``) and marks ``hydrated``. A store
+    failure propagates as the store raised it (``KeyError`` for a missing object
+    from ``RedisBlobStore``; a payload store's typed read outcomes are the
+    messenger's to classify — transient failures retry, missing or corrupt
+    objects are dead-lettered, BLOB-15).
+    '''
+    if decoded.get('hydrated', True):
+        return decoded.get('message')
+    ref = decoded.get('blob_ref')
+    inner = decoded.get('blob_inner_type')
+    if ref is None or inner is None:
+        return decoded.get('message')
+    return _decode_payload_v4(inner, blob_store.get(ref), blob_store = blob_store)
+
+def serialized_payload_size(payload : Any) -> int:
+    '''
+    The byte length a payload occupies on the wire once encoded (PAY-020): a
+    decoded ``ndarray`` costs its ``nbytes`` plus the tensor framing, never the
+    compressed source it was read from. The same encoder the publisher uses,
+    so the estimate equals the measurement.
+    '''
+    _payload_type, buf = _encode_payload_v4(payload)
+    return len(buf)
+
+#: Bytes the v4 envelope adds around a payload at most (headers, ids, an event
+#: timestamp, small metadata): the margin ``safe_inline_threshold`` keeps
+#: between the inline threshold and the broker's ``max_payload``.
+ENVELOPE_OVERHEAD_BYTES = 4096
+
+def safe_inline_threshold(max_payload_bytes : int, inline_threshold : int = MAX_INLINE_PAYLOAD_BYTES) -> int:
+    '''
+    The inline threshold a broker with ``max_payload_bytes`` can carry: an
+    envelope whose payload is just under the threshold must still fit with its
+    framing. Returns ``inline_threshold`` when it is safe, else the largest
+    safe value; ``ConfigError`` is the caller's to raise when the configured
+    threshold cannot be honoured (PAY-001).
+    '''
+    return min(inline_threshold, max(0, max_payload_bytes - ENVELOPE_OVERHEAD_BYTES))

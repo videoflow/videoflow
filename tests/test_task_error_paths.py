@@ -242,6 +242,33 @@ def test_a_producer_ends_cleanly_on_stop_iteration():
     assert messenger.aborts == []          # a clean finish is not an abort
 
 
+def test_a_processor_relays_the_end_of_stream_but_not_a_hard_stop():
+    # Every parent ended (EOS): the processor closes its own stream. A hard stop
+    # (CTRL-3: the flow stopping, this process being replaced, its partition
+    # lost) is not an end of stream — a replacement continues it, and an EOS
+    # relayed here would complete every child without the rest (RUN-030).
+    graceful = RecordingMessenger(inputs = [RecordingMessenger.data(1), RecordingMessenger.eos()])
+    ProcessorTask(_Doubler(name = 'x'), graceful, True, ['p']).run()
+    assert graceful.stop_signals == 1
+    hard = RecordingMessenger(inputs = [RecordingMessenger.data(1), RecordingMessenger.hard_stop()])
+    ProcessorTask(_Doubler(name = 'x'), hard, True, ['p']).run()
+    assert hard.acks == 1 and hard.stop_signals == 0
+
+
+def test_a_producer_closes_its_stream_on_the_control_stop_only():
+    # CTRL-2: the flow-wide stop ends the source, so its stream is closed; a
+    # producer whose partition went to a replacement (or that is being quiesced
+    # for one) must stay silent — the replacement carries the stream on.
+    for reason, signals in ((None, 1), (RecordingMessenger.STOP_CONTROL, 1),
+                            (RecordingMessenger.STOP_AUTHORITY_LOST, 0), (RecordingMessenger.STOP_QUIESCE, 0)):
+        messenger = RecordingMessenger()
+        messenger.terminated = True
+        messenger.reason = reason
+        ProducerTask(_Counter(limit = 10, name = 'c'), messenger, True).run()
+        assert messenger.published == [], reason
+        assert messenger.stop_signals == signals, reason
+
+
 def test_a_dying_producer_never_claims_a_clean_finish():
     '''
     The hang this whole mechanism exists for: a producer that raises never reaches

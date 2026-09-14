@@ -84,6 +84,45 @@ I verified with kubectl -v=8: kubectl label does a GET, then an unconditional me
 
 To be precise, and correcting the reviewer's stronger claim: kubectl's own GET happens ~2 ms before its PATCH, so this is a narrow TOCTOU window, not an absence of protection. But it is not the CAS the docstring claims, and multi-tenant node ownership is the one place the difference matters. The fix already exists 450 lines above in the same file — _publish_mig_configmap does get → replace carrying resourceVersion → retry on conflict (gpu.py:574-587). ~15 lines.
 
+## Verification notes (Sep 2026 — backend contracts + conformance suite)
+
+The conformance suite (`tests/conformance/`, catalog case ids below) and the
+Unknown-is-not-zero work landed executable checks for several items above. Nothing
+here closes an item that is not marked done; it records what now guards it.
+
+- **#12 (unreachable cluster → misleading LayoutError)** — `cluster.gpu_inventory_observed`
+  returns `Unknown` when the node listing fails and `MixGpu.resolve_specs` raises
+  `UnobservableState` ("the GPU pool could not be listed") instead of solving
+  against `[]`; the display-only `gpu_inventory()` still folds to `[]`. Covered by
+  **ALLOC-007** (`test_alloc_ownership.py`: `mix-strategy` variant; primary needs the
+  k3s cluster) and `tests/test_unknown_states.py`.
+- **#17 (`classify_gpu_resource` optimistic on mixed evidence)** —
+  `cluster.classify_gfd_labels` + `combine_classifications`: an unlabeled advertiser
+  next to a labeled one now yields `unknown`, MPS is recognised, and MIG-capable +
+  `all-disabled` is physical; classification reads pool nodes only, from the same
+  snapshot as capacity. Covered by **ALLOC-008** (`kubectl-fake` variant) and
+  **ALLOC-009** (`test_alloc_planning.py`, negative control included).
+- **#18 (`memory_gib_per_card` dead)** — read by `_Card.fits` in `deploy/mig.py`
+  (compute slices and memory are separate budgets). Covered by **ALLOC-001** and
+  `tests/test_mig_solver.py`.
+- **#19 / #20 (the owner stamp is not a CAS)** — `_stamp_node_owners` now writes
+  `videoflow.io/gpu-owner` + `videoflow.io/gpu-owner-epoch` with
+  `kubectl label --resource-version=<rv>` from the read that found the node unowned,
+  and raises `OwnershipConflict` on a 409; `_release_owner` is the same CAS and only
+  strips the exact (owner, epoch) claim. Per #19 the guard is a unit test asserting the
+  argv carries the precondition, against `tests/support_kubectl.FakeKubectl`, which
+  answers 409 to a stale resourceVersion — **ALLOC-007** and `tests/test_mix_strategy.py`.
+  Verified live against the k3s cluster once, by hand.
+- **Tombstone instead of last-one-out delete** (decision D3) — the shared
+  `videoflow-mig-parted-config` is never deleted; the last flow out strips its entries
+  by CAS and annotates `videoflow.io/mig-config-tombstone`; the operator deletes it.
+  `tests/test_mix_strategy.py` cleanup assertions were changed deliberately for this.
+- **Per-host packing** (not an item above, but the same family) — `gpu.pack_pod_claims`
+  places every pod's claim on per-node free counts in the exclusive preflight, so
+  free `[3, 3]` against three `gpu_count = 2` replicas is reported. **ALLOC-010**,
+  `tests/test_gpu_packing.py`.
+- Still open as written: #8, #4, #11, #13, #15, #16.
+
 ## Suggested fix order (if/when we act)
 
 1. ~~#1 + #2 + #9 together~~ — **done** (ClusterPolicy wiring, geometry-true

@@ -11,7 +11,8 @@ import sys
 import pytest
 
 from videoflow.core.errors import EXIT_ENVIRONMENT, EXIT_FLOW_FAILED, EXIT_USER
-from videoflow.deploy import cli, localinfra, solution
+from videoflow.deploy import admission, cli, localinfra, solution
+from videoflow.deploy.broker_profiles import RedisProfile
 
 GRAPH = '''
 from videoflow.consumers import CommandlineConsumer
@@ -42,6 +43,8 @@ class _FakeEngine:
 
 
 class _FakeFlow:
+    flow_type = 'realtime'          # run-local admits the composition per flow type
+
     def __init__(self, tasks_data = None):
         self.flow_id = 'demo'
         self.run_id = 'run1'
@@ -79,6 +82,11 @@ def wiring(tmp_path, monkeypatch):
                         lambda c: calls.append(('teardown', c)))
     monkeypatch.setattr(solution, 'run_prepare_local',
                         lambda d, c = None: calls.append('prepare') or True)
+    # The live read-back of a bring-your-own broker/store, recorded rather than run.
+    monkeypatch.setattr(cli, 'jetstream_capabilities_observed',
+                        lambda url, **kw: calls.append(('probe-nats', url)) or admission.jetstream_capabilities(None))
+    monkeypatch.setattr(cli, 'redis_payload_capabilities_observed',
+                        lambda url, **kw: calls.append(('probe-redis', url)) or admission.redis_payload_capabilities(None))
     return tmp_path, calls
 
 
@@ -114,6 +122,48 @@ def test_no_infra_uses_the_default_url_without_docker(wiring):
     assert _FakeEngine.instances[0].kwargs['nats_url'] == localinfra.DEFAULT_NATS_URL
 
 
+def test_a_bring_your_own_broker_is_read_back_not_assumed(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--nats', 'nats://elsewhere:4222')
+    assert ('probe-nats', 'nats://elsewhere:4222') in calls
+    assert not any(c[0] == 'probe-redis' for c in calls if isinstance(c, tuple))
+
+
+def test_no_infra_reads_back_whatever_listens_on_the_default_url(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--no-infra')
+    assert ('probe-nats', localinfra.DEFAULT_NATS_URL) in calls
+
+
+def test_the_dev_containers_are_judged_by_their_declared_shape(wiring):
+    tmp_path, calls = wiring
+    _run(tmp_path)
+    assert not any(c[0].startswith('probe-') for c in calls if isinstance(c, tuple))
+
+
+def test_whatever_already_answers_on_the_dev_ports_is_read_back(wiring, monkeypatch):
+    # localinfra started nothing: a compose server (or a --keep-infra leftover)
+    # answered, whose shape is not this run's to declare.
+    tmp_path, calls = wiring
+    monkeypatch.setattr(localinfra, 'ensure_local_infra',
+                        lambda **kw: calls.append(('ensure', kw)) or (localinfra.local_infra_urls(), []))
+    _run(tmp_path)
+    assert ('probe-nats', localinfra.DEFAULT_NATS_URL) in calls
+    assert ('probe-redis', localinfra.DEFAULT_REDIS_URL) in calls
+    assert not any(isinstance(c, tuple) and c[0] == 'teardown' for c in calls)
+
+
+def test_a_bring_your_own_store_is_read_back_beside_dev_infra(wiring, monkeypatch):
+    tmp_path, calls = wiring
+    _run(tmp_path, '--blob-redis-url', 'redis://flag:6379/3')
+    assert ('probe-redis', 'redis://flag:6379/3') in calls
+    assert not any(c[0] == 'probe-nats' for c in calls if isinstance(c, tuple))
+    calls.clear()
+    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
+    _run(tmp_path)
+    assert ('probe-redis', 'redis://env:6379/2') in calls
+
+
 def test_prepare_runs_before_the_graph_is_loaded(wiring):
     tmp_path, calls = wiring
     _run(tmp_path)
@@ -139,6 +189,37 @@ def test_explicit_blob_redis_url_wins_over_environment(wiring, monkeypatch):
     monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
     _run(tmp_path, '--blob-redis-url', 'redis://flag:6379/3')
     assert _FakeEngine.instances[0].kwargs['blob_redis_url'] == 'redis://flag:6379/3'
+
+
+def test_a_batch_flow_is_admitted_on_the_dev_containers(wiring, monkeypatch):
+    # The dev Redis persists and never evicts (RedisProfile.dev()), which is what
+    # every BATCH channel's reliable_work asks of a payload store.
+    tmp_path, calls = wiring
+    monkeypatch.setattr(_FakeFlow, 'flow_type', 'batch')
+    assert _run(tmp_path) == 0
+    assert _FakeEngine.instances and _FakeEngine.instances[-1].kwargs['blob_redis_url'] == localinfra.DEFAULT_REDIS_URL
+
+
+def test_a_refused_flow_tears_its_dev_containers_down(wiring, monkeypatch, capsys):
+    # A bring-your-own store that turns out evictable refuses a BATCH flow before
+    # anything runs; the containers this run started for it do not outlive it.
+    tmp_path, calls = wiring
+    monkeypatch.setattr(_FakeFlow, 'flow_type', 'batch')
+    # The stub flow has no nodes; give admission the real graph's channels to judge.
+    from videoflow.core.compiler import compile_flow
+    from videoflow.deploy.compile import load_flow
+    real_specs = compile_flow(load_flow(str(tmp_path / 'graph.py')))
+    monkeypatch.setattr(cli, 'compile_flow', lambda flow, **kw: real_specs)
+    monkeypatch.setattr(cli, 'redis_payload_capabilities_observed',
+                        lambda url, **kw: admission.redis_payload_capabilities(
+                            RedisProfile(persistence = 'none', eviction = 'volatile-lru')))
+    assert _run(tmp_path, '--blob-redis-url', 'redis://cache:6379/0') == 2
+    assert 'VF_INCOMPATIBLE_PROFILE' in capsys.readouterr().err
+    assert ('teardown', ['nats', 'redis']) in calls
+    assert not _FakeEngine.instances
+    calls.clear()
+    assert _run(tmp_path, '--blob-redis-url', 'redis://cache:6379/0', '--keep-infra') == 2
+    assert not any(isinstance(c, tuple) and c[0] == 'teardown' for c in calls)
 
 
 def test_infra_is_torn_down_even_when_the_run_raises(wiring, monkeypatch):

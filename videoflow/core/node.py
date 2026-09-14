@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, NoReturn, Optional, Set, TypeAlias, Union, cast
 
 logger = logging.getLogger(__package__)
@@ -11,6 +12,7 @@ from ..utils.graph import has_cycle, topological_sort
 from .constants import CPU, DEVICE_TYPES, GPU, LOGGING_LEVEL
 from .errors import DISPOSITIONS
 from .policies import DELIVERY_MODES, JoinPolicy
+from .provenance import FIELD_GPU_COUNT, builtin_defaults, node_declarations, resolve_gpu_requirements
 
 _SLUG_RE = re.compile(r'[^a-z0-9]+')
 
@@ -20,6 +22,22 @@ JoinPolicyArg : TypeAlias = Union[JoinPolicy, dict, None]
 
 def _slugify(value : str) -> str:
     return _SLUG_RE.sub('-', value.lower()).strip('-')
+
+@dataclass(frozen = True)
+class AssetRequirement:
+    '''
+    One file a node depends on: ``path`` on the worker's filesystem, the
+    ``sha256`` hex digest its bytes must have, and whether the asset is
+    ``portable`` — available on every host through a claim, an image layer or a
+    download — or local-only (a hostPath that exists on one machine). A
+    hostPath is never evidence that the same bytes exist everywhere; a
+    local-only asset constrains where the node may run, and a relocated worker
+    finds out at open time, explicitly.
+    '''
+    path : str
+    sha256 : str
+    portable : bool = True
+
 
 class Node:
     '''
@@ -41,8 +59,66 @@ class Node:
             omitted, the image is taken from the deploy-time default (``--image``); \
             a deploy-time ``--image-override`` beats both. Ignored by the local \
             engine, which runs workers in the current Python environment.
+
+    Two class-level declarations (RFC 0006, plan Phase 3) describe how a node's \
+        *results* may be recovered; they are class attributes rather than \
+        constructor parameters so a node's ``get_params()`` — and with it every \
+        compiled spec — is unchanged by declaring them:
+
+        - ``deterministic``: whether the same input always yields the same \
+            output (True by default). A stochastic component sets it False.
+        - ``replay_policy``: ``'recompute'`` (the default: a redelivered input is \
+            processed again, which for a deterministic node yields the same \
+            output and the same message id) or ``'committed'`` (a result the \
+            worker committed before a crash is re-published byte-for-byte from \
+            the runtime ledger, never recomputed — what a nondeterministic \
+            component under a reliable profile needs).
+
+    Two more (plan Phase 4) describe what a GPU node needs from its *grant*, \
+        checked by the worker before the node is opened (``runtime.gpucheck``):
+
+        - ``gpu_fallback``: ``'cpu'`` (the default: a node granted fewer devices \
+            than its ``gpu_count`` — none at all on a GPU-less host — still opens, \
+            and the worker reports the shortfall and the CPU execution explicitly) \
+            or ``'none'`` (a hard requirement: the worker refuses to open the node \
+            under a short, empty or unverifiable grant, RUN-044).
+        - ``requires_peer_access``: a multi-device node whose execution path needs \
+            peer access between its devices (NVLink/PCIe P2P). Verified against the \
+            delivered devices before readiness; a two-device grant without the \
+            property fails the node instead of silently satisfying a count (RUN-043).
+
+    Two more (plan Phase 5) declare execution shapes no shipped engine provides; \
+        they exist so a declaration is *refused at admission* — before anything \
+        is deployed — rather than silently run as ordinary nodes:
+
+        - ``execution_group``: the name of a fused execution group this node \
+            belongs to (RUN-035). Members of one group would run in one worker \
+            with their internal edges never serialized through the broker; an \
+            engine that cannot do that (both shipped engines) rejects the flow \
+            with ``VF_INCOMPATIBLE_PROFILE``.
+        - ``batching_policy``: a dynamic-batching contract the runtime would have \
+            to honour — ``{'max_batch': N, 'max_wait_ms': D, 'fairness': ...}`` \
+            (RUN-036). Distinct from transport fetch batching; rejected the same way.
     '''
     _name_counters: Dict[str, int] = {}
+    deterministic : bool = True
+    replay_policy : str = 'recompute'
+    gpu_fallback : str = 'cpu'
+    requires_peer_access : bool = False
+    execution_group : Optional[str] = None
+    batching_policy : Optional[Dict[str, Any]] = None
+
+    def required_assets(self) -> 'List[AssetRequirement]':
+        '''
+        The files this node needs on the machine it runs on, with their content
+        identity (plan Phase 4, RUN-033). The worker verifies every one before the
+        node is opened: a missing file or different bytes end the worker with
+        ``ResourceUnavailable`` naming the host, rather than processing with a
+        model or input that is not the declared one. Default: none. Override in a
+        node whose constructor takes the paths (they are known in the worker,
+        after ``get_params()`` rebuilt the node).
+        '''
+        return []
 
     def __init__(self, name : Optional[str] = None, image : Optional[str] = None) -> None:
         if name is None:
@@ -281,7 +357,24 @@ class ConsumerNode(ErrorHandlingMixin, Leaf):
             durable alert sink.
         - on_error (str): see ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
+
+    Class-level declaration ``effect_guarantee`` (RFC 0006, RUN-017): what this \
+        sink can promise about its external effects — ``'at_least_once'`` (the \
+        default: a redelivery may repeat an effect) or ``'idempotent_key'`` (the sink \
+        applies each effect through its external system's own idempotency key or \
+        transaction, keyed by ``ctx.input_key``, so one logical effect occurs). A \
+        runtime marker alone never certifies exactly-once; only the second \
+        declaration lets the planner admit ``exactly_once_effects`` for the sink.
     '''
+    effect_guarantee : str = 'at_least_once'
+
+    #: How a partitioned replica treats a record whose partition key is unusable
+    #: (RFC 0006, RUN-020): ``None`` is the default ``PartitionKeyPolicy`` (reject:
+    #: dead-lettered as ``VF_POISON_PARTITION_KEY``); a class may declare
+    #: ``{'invalid': 'fallback', 'fallback_partition': 0}`` instead. A class
+    #: attribute, so ``get_params()`` and the compiled spec are unchanged.
+    partition_key_policy : Optional[Dict[str, Any]] = None
+
     def __init__(self, metadata : bool = False, name : Optional[str] = None,
                 join_policy : JoinPolicyArg = None, idempotent : bool = False,
                 delivery : Optional[str] = None, on_error : Optional[str] = None,
@@ -340,7 +433,9 @@ class ProcessorNode(ErrorHandlingMixin, Node):
             (``device_type=GPU`` only — a positive count on a CPU node is a build \
             error). ``N > 1`` grants N whole devices on one host, visible as \
             ``cuda:0..N-1`` (RFC 0003); locally the engine partitions the host's \
-            devices to match.
+            devices to match. Unset (``None``, the default) means one device; \
+            whether the ``1`` was explicit or defaulted is kept in \
+            ``gpu_provenance``.
         - gpu_memory_gib (int | float): GPU memory this node needs, in GiB \
             (``device_type=GPU`` only). Under ``--gpu-mode mix`` each replica gets \
             an exclusive MIG slice of at least this size, chosen by the layout \
@@ -354,9 +449,16 @@ class ProcessorNode(ErrorHandlingMixin, Node):
             ``ErrorHandlingMixin``.
         - name (str): see ``Node``.
     '''
+    #: How a partitioned replica treats a record whose partition key is unusable
+    #: (RFC 0006, RUN-020): ``None`` is the default ``PartitionKeyPolicy`` (reject:
+    #: dead-lettered as ``VF_POISON_PARTITION_KEY``); a class may declare
+    #: ``{'invalid': 'fallback', 'fallback_partition': 0}`` instead. A class
+    #: attribute, so ``get_params()`` and the compiled spec are unchanged.
+    partition_key_policy : Optional[Dict[str, Any]] = None
+
     def __init__(self, nb_tasks : int = 1, device_type : str = CPU, name : Optional[str] = None,
                 partition_by : Optional[str] = None, join_policy : JoinPolicyArg = None,
-                gpu_count : int = 1, gpu_memory_gib : int | float | None = None,
+                gpu_count : int | None = None, gpu_memory_gib : int | float | None = None,
                 delivery : Optional[str] = None, on_error : Optional[str] = None,
                 **kwargs : Any) -> None:
         self._set_error_handling(delivery, on_error)
@@ -364,13 +466,25 @@ class ProcessorNode(ErrorHandlingMixin, Node):
         if device_type not in DEVICE_TYPES:
             raise ValueError('Device is not one of {}'.format(",".join(DEVICE_TYPES)))
         self._device_type = device_type
-        if not isinstance(gpu_count, int) or isinstance(gpu_count, bool) or gpu_count < 1:
+        if gpu_count is not None and (not isinstance(gpu_count, int) or isinstance(gpu_count, bool)
+                                      or gpu_count < 1):
             raise ValueError(f'gpu_count must be a positive integer, got {gpu_count!r}')
-        if gpu_count > 1 and device_type != GPU:
-            raise ValueError(f'gpu_count={gpu_count} requires device_type=GPU, got '
+        # One resolver for every source a GPU requirement can come from (RFC
+        # 0003/0004): here the sources are the explicit arguments and the
+        # built-in defaults, and the record says which of the two each value is;
+        # ``core.remote.component`` adds a descriptor's declarations to the same
+        # call. A node contradicting itself (cpu + gpu_count=2 in one call) is
+        # not the resolver's to judge — the checks below reject it with the
+        # messages the API documents.
+        resolution = resolve_gpu_requirements(
+            node_declarations(device_type, gpu_count, gpu_memory_gib) + builtin_defaults(),
+            subject = name or type(self).__name__)
+        resolved_count : int = resolution.values[FIELD_GPU_COUNT]
+        if resolved_count > 1 and device_type != GPU:
+            raise ValueError(f'gpu_count={resolved_count} requires device_type=GPU, got '
                              f'{device_type!r} — a CPU node cannot hold a GPU grant. '
                              f'Pass device_type=GPU, or drop gpu_count.')
-        self._gpu_count = gpu_count
+        self._gpu_count = resolved_count
         if gpu_memory_gib is not None:
             if isinstance(gpu_memory_gib, bool) or not isinstance(gpu_memory_gib, (int, float)) \
                     or gpu_memory_gib <= 0:
@@ -379,12 +493,13 @@ class ProcessorNode(ErrorHandlingMixin, Node):
                 raise ValueError(f'gpu_memory_gib={gpu_memory_gib} requires device_type=GPU, got '
                                  f'{device_type!r} — a memory demand only means something on a GPU. '
                                  f'Pass device_type=GPU, or drop gpu_memory_gib.')
-            if gpu_count > 1:
-                raise ValueError(f'gpu_memory_gib and gpu_count={gpu_count} are mutually exclusive: '
+            if resolved_count > 1:
+                raise ValueError(f'gpu_memory_gib and gpu_count={resolved_count} are mutually exclusive: '
                                  f'a model cannot span MIG slices, so a node declares either a '
                                  f'fraction of one device (gpu_memory_gib) or whole devices '
                                  f'(gpu_count > 1), never both.')
         self._gpu_memory_gib = gpu_memory_gib
+        self._gpu_provenance : Dict[str, str] = resolution.provenance
         self._partition_by = partition_by
         # Stored as a plain dict so get_params() stays JSON-serializable.
         if isinstance(join_policy, JoinPolicy):
@@ -415,6 +530,19 @@ class ProcessorNode(ErrorHandlingMixin, Node):
     def gpu_memory_gib(self) -> int | float | None:
         '''GPU memory demand in GiB (drives the ``mix`` strategy's MIG slice choice), or None.'''
         return self._gpu_memory_gib
+
+    @property
+    def gpu_provenance(self) -> Dict[str, str]:
+        '''
+        Where each GPU requirement value came from, as ``{field: source}`` over \
+            ``device_type``, ``gpu_count`` and ``gpu_memory_gib``: ``'node'`` for an \
+            explicit argument, ``'default'`` for the built-in default, and \
+            ``'descriptor'`` when a remote component's ``component.yaml`` supplied \
+            it (see ``videoflow.core.provenance``). Deliberately not a ``NodeSpec`` \
+            field — the serialized spec is unchanged; \
+            ``videoflow.core.compiler.gpu_provenance`` collects it per flow.
+        '''
+        return dict(self._gpu_provenance)
 
     @property
     def partition_by(self) -> Optional[str]:
@@ -663,7 +791,24 @@ class ProducerNode(Node):
             uses this to decide whether to deploy the producer as a ``Job`` (finite) or \
             a ``Deployment`` (infinite).
         - name (str): see ``Node``.
+
+    Class-level declaration ``replayable`` (RFC 0006 ``MSGID-6``, off by default): \
+        the source has a stable position of its own (a frame index, a record offset), \
+        so a re-run or a restart re-mints the identical message ids and downstream \
+        deduplication and sink idempotency engage. A replayable producer implements \
+        ``seek(offset)`` so a replacement resumes after the last *accepted* offset the \
+        runtime checkpointed; a live source (the default) mints a fresh capture epoch \
+        per process instead (``MSGID-5``).
+
+    ``analysis_version`` (``MSGID-6``, replayable sources only): a deliberately new \
+        analysis of the same media declares a version and mints \
+        ``{node}:{analysis_version}:{offset}``, a namespace of its own, instead of \
+        re-minting — and colliding with — the identities of the earlier analysis. \
+        ``None`` (the default) is the plain ``{node}:{offset}`` form.
     '''
+    replayable : bool = False
+    analysis_version : Optional[str] = None
+
     def __init__(self, is_finite : bool = True, name : Optional[str] = None, **kwargs : Any) -> None:
         self._is_finite = is_finite
         super(ProducerNode, self).__init__(name = name, **kwargs)
@@ -671,6 +816,15 @@ class ProducerNode(Node):
     @property
     def is_finite(self) -> bool:
         return self._is_finite
+
+    def seek(self, offset : int) -> None:
+        '''
+        Position the source so the next ``next()`` yields item ``offset + 1`` (a
+        replayable producer resuming after a restart; ``offset`` is the last
+        accepted item, 0 for none). The default ignores it: a live source has no
+        position to return to.
+        '''
+        return None
 
     def next(self) -> Any:
         '''

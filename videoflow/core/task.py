@@ -6,13 +6,16 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any, Callable, List, Optional
 
+from ..backends import faults
 from ..utils.generic_utils import DelayedKeyboardInterrupt
-from .context import RuntimeContext
+from .context import CHECKPOINT_METADATA_KEY, RuntimeContext
 from .engine import Messenger
 from .errors import (
     DEFAULT_DISPOSITION,
     WORKER_FATAL,
     UpstreamAborted,
+    VideoflowUserError,
+    WorkerFatal,
     as_runtime_error,
     classify,
 )
@@ -24,6 +27,7 @@ if TYPE_CHECKING:
     # handed down to the task, so a real import here would invert the
     # core <- runtime dependency direction for nothing but an annotation.
     from ..runtime.idempotency import IdempotencyStore
+    from ..runtime.watchdog import ProgressWatchdog
 
 # ``supervision`` is imported plainly rather than deferred: it is core, pure, and
 # has no optional dependencies, so there is nothing to gain by hiding it.
@@ -115,19 +119,30 @@ class NodeTask(Task):
             handed down, like ``idempotency_store``.
         - deadline: trips when the node stops acking while work is pending.
         - on_error (str): disposition for exceptions nothing classifies.
+        - watchdog: re-checks ``deadline`` on its own thread while the node is \
+            inside ``process()``/``consume()`` (see ``videoflow.runtime.watchdog``). \
+            Started once ``open()`` has returned and stopped when the loop ends; \
+            it must hold the same ``deadline`` instance, or it measures silence \
+            the loop never resets.
     '''
     def __init__(self, computation_node : Node, messenger : Messenger, has_children : bool,
                 ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         self._messenger = messenger
         self._computation_node = computation_node
         self._has_children = has_children
         self._ctx = ctx
+        if ctx is not None:
+            # A checkpoint taken while processing an input is committed with the
+            # output that follows it; a node with no output commits it at once.
+            ctx.emits_output = has_children
         self._breaker = breaker
         self._deadline = deadline
         self._on_error = on_error
+        self._watchdog = watchdog
         self._async_loop: Optional[asyncio.AbstractEventLoop] = None
 
     @property
@@ -157,6 +172,19 @@ class NodeTask(Task):
             run_async = self._run_async, on_error = self._on_error,
         )
 
+    def _output_metadata(self, proc_time : float, actual_proc_time : float) -> dict:
+        '''
+        The metadata published with an output: the timings, plus — under the
+        reserved ``CHECKPOINT_METADATA_KEY`` — the checkpoint the node took while
+        producing it, so the messenger commits state and output in one ledger
+        write (RFC 0006 ``CTRL-4``; RUN-003, RUN-022). The key never reaches the wire.
+        '''
+        metadata : dict = {'proctime': proc_time, 'actual_proctime': actual_proc_time}
+        pending = self._ctx.take_pending_checkpoint() if self._ctx is not None else None
+        if pending is not None:
+            metadata[CHECKPOINT_METADATA_KEY] = pending
+        return metadata
+
     def _abort_downstream(self, error : BaseException) -> None:
         '''
         Tells this node's children that its stream has ended abnormally — but only
@@ -181,6 +209,22 @@ class NodeTask(Task):
             self._messenger.publish_abort(error)
         except Exception:
             logger.debug('could not publish ABORT marker', exc_info = True)
+
+    def _refuse_configuration(self, error : VideoflowUserError) -> None:
+        '''
+        A configuration problem that only surfaced while a message was in flight —
+        a durability claim the composed ledger cannot keep, a profile the broker
+        does not carry. The message is fine; this worker's setup is not. So the
+        input is handed back unblamed (``worker_fatal``: never counted, never
+        dead-lettered) and the error propagates as itself, so the worker stops
+        with the user diagnostic and its exit code (2) rather than retrying the
+        same refusal on every message until the breaker trips.
+        '''
+        handed = WorkerFatal(f'{type(error).__name__}: {error}', remedy = error.remedy,
+                             node = self._computation_node.name)
+        handed.__cause__ = error
+        self._messenger.fail_inputs(handed)
+        raise error
 
     def _record_failure(self, exc : BaseException) -> None:
         '''
@@ -232,6 +276,14 @@ class NodeTask(Task):
             # half-open state to release), but downstream must still be told.
             self._abort_downstream(e)
             raise
+        # open() is where a model loads, and a slow load is not silence: the
+        # deadline was constructed before it, so reset the window here or the
+        # first check would read the load time as a stall. Only then may the
+        # watchdog start looking.
+        if self._deadline is not None:
+            self._deadline.record_progress()
+        if self._watchdog is not None:
+            self._watchdog.start()
         try:
             self._run()
         except UpstreamAborted:
@@ -245,6 +297,11 @@ class NodeTask(Task):
                 self._abort_downstream(e)
             raise
         finally:
+            # The watchdog supervises the run loop, not the teardown: stopped
+            # first, so it cannot exit the process mid-close() and overwrite the
+            # real cause of death with a stall report.
+            if self._watchdog is not None:
+                self._watchdog.stop()
             try:
                 self._call(self._computation_node.close)
             except Exception:
@@ -269,12 +326,24 @@ class ProducerTask(NodeTask):
                 ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None,
+                resume_offset : int = 0) -> None:
+        '''
+        - Arguments:
+            - resume_offset: the last accepted offset of a replayable source \
+                (``Messenger.resume_offset``); the producer is asked to ``seek`` \
+                past it before its first ``next()``, so a replacement re-mints \
+                nothing already accepted (RFC 0006 ``MSGID-6``). 0 starts afresh.
+        '''
         self._producer = producer
+        self._resume_offset = resume_offset
         super(ProducerTask, self).__init__(producer, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     def _run(self) -> None:
+        if self._resume_offset > 0:
+            self._call(self._producer.seek, self._resume_offset)
         previous_end_t = time.time()
         while True:
             try:
@@ -288,19 +357,17 @@ class ProducerTask(NodeTask):
                     actual_proc_time = end_t - previous_end_t
                     previous_end_t = end_t
                     if self._has_children:
-                        self._messenger.publish_message(
-                            a,
-                            {
-                                'proctime': proc_time,
-                                'actual_proctime': actual_proc_time
-                            }
-                        )
+                        self._messenger.publish_message(a, self._output_metadata(proc_time, actual_proc_time))
             except StopIteration:
                 break
             except KeyboardInterrupt:
                 logger.info('Interrupt signal received. Sending signal to stop flow.')
                 break
-        if self._has_children:
+        # The source ended, or the flow is stopping (CTRL-2): close the stream. A
+        # process that lost its partition to a replacement, or is being stopped
+        # so a replacement can continue, must not — its successor carries on the
+        # very stream an EOS here would end for every child (RUN-030).
+        if self._has_children and self._messenger.stop_reason() in (None, Messenger.STOP_CONTROL):
             self._messenger.publish_stop_signal()
 
 class ProcessorTask(NodeTask):
@@ -315,7 +382,8 @@ class ProcessorTask(NodeTask):
                 parent_names : List[str], ctx : Optional[RuntimeContext] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         '''
         - Arguments:
             - parent_names ([str]): names of this node's real parents, in the exact \
@@ -328,7 +396,7 @@ class ProcessorTask(NodeTask):
         self._processor = processor
         self._parent_names = list(parent_names)
         super(ProcessorTask, self).__init__(processor, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     @property
     def device_type(self) -> str:
@@ -349,7 +417,12 @@ class ProcessorTask(NodeTask):
                     entries = [inputs_d[name] for name in self._parent_names]
                     raise_if_aborted(entries, self._messenger, self._has_children)
                     if any(e['is_stop_signal'] for e in entries):
-                        if self._has_children:
+                        # Every parent ended: relay the end of stream. A hard stop
+                        # (CTRL-3: the flow is stopping, this process is being
+                        # replaced, or it lost its partition) is not an end of
+                        # stream — a replacement continues it, and a child that
+                        # recorded an EOS here would complete without the rest.
+                        if self._has_children and not any(e.get('is_hard_stop') for e in entries):
                             self._messenger.publish_stop_signal()
                         break
 
@@ -366,18 +439,14 @@ class ProcessorTask(NodeTask):
                             proc_time = end_t - start_2_t
                             actual_proc_time = end_t - previous_end_t
                             previous_end_t = end_t
-                            self._messenger.publish_message(
-                                output,
-                                {
-                                    'proctime': proc_time,
-                                    'actual_proctime': actual_proc_time
-                                }
-                            )
+                            self._messenger.publish_message(output, self._output_metadata(proc_time, actual_proc_time))
                         else:
                             self._call(self._processor.process, *inputs)
                         self._messenger.ack_inputs()
                         self._record_success()
                     except Exception as e:
+                        if isinstance(e, VideoflowUserError):
+                            self._refuse_configuration(e)
                         error = as_runtime_error(e, default = self._on_error,
                                                 node = self._processor.name)
                         logger.exception(
@@ -401,13 +470,14 @@ class ConsumerTask(NodeTask):
                 idempotency_store : Optional["IdempotencyStore"] = None,
                 breaker : Optional[ConsecutiveFailureBreaker] = None,
                 deadline : Optional[ProgressDeadline] = None,
-                on_error : str = DEFAULT_DISPOSITION) -> None:
+                on_error : str = DEFAULT_DISPOSITION,
+                watchdog : Optional["ProgressWatchdog"] = None) -> None:
         self._consumer = consumer
         self._parent_names = list(parent_names)
         # Sink-effect dedup (opt-in via ConsumerNode(idempotent=True) + a store).
         self._idem_store = idempotency_store if consumer.idempotent else None
         super(ConsumerTask, self).__init__(consumer, messenger, has_children, ctx,
-                                        breaker, deadline, on_error)
+                                        breaker, deadline, on_error, watchdog)
 
     def _run(self) -> None:
         while True:
@@ -429,18 +499,27 @@ class ConsumerTask(NodeTask):
                             self._record_success()
                             continue
 
+                        # The effect boundary (RUN-017): the external effect happens
+                        # inside consume(); the runtime marker is written only after
+                        # it returned, so a crash between the two leaves the effect
+                        # applied and unmarked — which is why a marker alone never
+                        # certifies exactly-once (the sink's own key does).
+                        faults.barrier('sink.effect.before', node = self._consumer.name, key = key)
                         if not self._consumer.metadata:
                             inputs = [e['message'] for e in entries]
                             self._call(self._consumer.consume, *inputs)
                         else:
                             metadatas = [e['metadata'] for e in entries]
                             self._call(self._consumer.consume, *metadatas)
+                        faults.barrier('sink.effect.after', node = self._consumer.name, key = key)
 
                         if store is not None and key is not None:
                             store.mark(key)
                         self._messenger.ack_inputs()
                         self._record_success()
                     except Exception as e:
+                        if isinstance(e, VideoflowUserError):
+                            self._refuse_configuration(e)
                         error = as_runtime_error(e, default = self._on_error,
                                                 node = self._consumer.name)
                         logger.exception(

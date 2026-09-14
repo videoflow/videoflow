@@ -55,9 +55,20 @@ class ComponentDescriptor:
         self.singleton : bool = constraints.get('singleton', False)
         # spec.resources.gpu (RFC 0003/0004): the component's default GPU request.
         # Graph-side gpu_count=/gpu_memory_gib= override these — defaults, not floors.
-        gpu = ((spec.get('resources') or {}).get('gpu')) or {}
+        resources = spec.get('resources') or {}
+        gpu = resources.get('gpu') or {}
         self.gpu_count : int = gpu.get('count', 1)
+        # ``spec.resources.gpu.count`` exactly as written, or None when the
+        # descriptor is silent. ``gpu_count`` folds the silence into 1, which is
+        # right for consumers of the value and wrong for provenance: the resolver
+        # in ``core.provenance`` must not record a default the file never made.
+        self.gpu_count_declared : Optional[int] = gpu.get('count')
         self.gpu_memory_gib : int | float | None = gpu.get('memoryGiB')
+        # spec.resources.cpu / memory: optional host-resource requests per
+        # replica, as Kubernetes quantities ('500m', '2Gi'). Accepted and parsed
+        # so a renderer can pick them up; nothing renders them yet.
+        self.cpu_request : Optional[str] = _quantity(resources.get('cpu'))
+        self.memory_request : Optional[str] = _quantity(resources.get('memory'))
 
     @classmethod
     def from_dict(cls, raw : dict, source : str | None = None) -> 'ComponentDescriptor':
@@ -99,6 +110,10 @@ class ComponentDescriptor:
     def __repr__(self) -> str:
         return f'ComponentDescriptor(name={self.name!r}, version={self.version!r}, role={self.role!r})'
 
+def _quantity(value : object) -> Optional[str]:
+    '''A ``spec.resources.cpu``/``memory`` value as the quantity string Kubernetes takes (``2`` -> ``'2'``), or None.'''
+    return None if value is None else str(value)
+
 def load_descriptor(ref : str) -> ComponentDescriptor:
     '''
     Load a descriptor from a reference:
@@ -137,6 +152,7 @@ def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     # Cross-field GPU check first: JSON Schema cannot express "count > 1 requires
     # the gpu device type", so it runs regardless of jsonschema availability.
     _validate_gpu_resources(raw.get('spec') or {}, where)
+    _validate_host_resources(raw.get('spec') or {}, where)
     # Prefer full JSON Schema validation when jsonschema is available.
     try:
         import jsonschema  # optional dependency (extra): full validation only when installed
@@ -206,6 +222,26 @@ def _validate_gpu_resources(spec : dict, where : str) -> None:
                             f'are mutually exclusive — a model cannot span MIG slices, so a component '
                             f'declares either a memory demand (a fraction of one device) or a '
                             f'whole-device count, never both (RFC 0004)')
+
+def _validate_host_resources(spec : dict, where : str) -> None:
+    '''
+    Validate ``spec.resources.cpu`` / ``spec.resources.memory``: optional
+    host-resource requests, each a Kubernetes quantity — a non-empty string
+    (``'500m'``, ``'2Gi'``) or a positive number. Type-only, mirroring the JSON
+    Schema; runs regardless of jsonschema availability so a bare install rejects
+    the same shapes an installed one does.
+    '''
+    resources = spec.get('resources') or {}
+    for key, example in (('cpu', '500m'), ('memory', '2Gi')):
+        if key not in resources:
+            continue
+        value = resources[key]
+        acceptable = ((isinstance(value, str) and value.strip() != '')
+                      or (isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0))
+        if not acceptable:
+            raise ValueError(f'component descriptor{where}: spec.resources.{key} must be a Kubernetes '
+                            f'quantity (a non-empty string such as {example!r}, or a positive number), '
+                            f'got {value!r}')
 
 # -- minimal params validation (JSON Schema subset) ------------------------
 

@@ -14,7 +14,8 @@ so the two grouping strategies are testable without a broker:
 An assembler is fed decoded envelope entries (see
 ``videoflow.wire.serialization.decode_envelope``) paired with their broker ack
 handles. It owns the pending buffers and resolves the handles of anything it
-*discards* (evicted, superseded, expired); handles of everything it *emits*
+*discards* (evicted, expired) and *supersedes* (retired locally, no broker
+settlement); handles of everything it *emits*
 travel out unresolved inside the ``ReadyGroup`` for the task loop to ack/fail
 after processing — preserving ack-after-process semantics end to end.
 
@@ -38,6 +39,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from ..backends.runtime import group_identity
 from ..core.policies import JOIN_TIME, MISSING_ERROR, JoinPolicy
 
 logger = logging.getLogger(__package__)
@@ -157,6 +159,8 @@ def make_assembler(node_name : str, parent_names : list[str], policy : JoinPolic
 class GroupAssembler:
     '''Base interface: feed entries with ``add``, expire with ``sweep``, drain with ``pop_ready``.'''
     def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
+        #: Groups discarded (evicted or expired) so far — read by the messenger's drop accounting.
+        self.evictions = 0
         self._node_name = node_name
         self._parent_names = list(parent_names)
         self._policy = policy
@@ -173,6 +177,14 @@ class GroupAssembler:
 
     def has_pending_from(self, parent_name : str) -> bool:
         '''Whether any buffered state still holds a message from this parent (EOS drain check).'''
+        raise NotImplementedError
+
+    def pending_count(self) -> int:
+        '''Incomplete groups held right now.'''
+        raise NotImplementedError
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        '''How long the oldest incomplete group has waited (0 when none).'''
         raise NotImplementedError
 
 class TraceGroupAssembler(GroupAssembler):
@@ -195,9 +207,11 @@ class TraceGroupAssembler(GroupAssembler):
         handles = self._handles.setdefault(trace_id, {})
         if parent_name in handles:
             # Redelivery of a half we already buffered (the group hadn't completed
-            # yet). Supersede: terminate the stale handle and keep the fresh
-            # delivery so its ack deadline restarts.
-            handles[parent_name].term()
+            # yet). Supersede: retire the stale handle *locally* and keep the fresh
+            # delivery so its ack deadline restarts. Never TERM it — the stale
+            # handle and the fresh one name the same logical broker message, and a
+            # TERM would discard exactly the delivery being kept (MSG-011).
+            handles[parent_name].supersede()
         elif trace_id not in self._order:
             self._order.append(trace_id)
             self._first_seen[trace_id] = time.monotonic()
@@ -218,6 +232,7 @@ class TraceGroupAssembler(GroupAssembler):
                             reason = f'join timeout ({timeout}s)')
 
     def _evict(self, trace_id : str, missing : str, reason : str) -> None:
+        self.evictions += 1
         group = self._groups.pop(trace_id, None)
         if group is None:
             return
@@ -254,6 +269,14 @@ class TraceGroupAssembler(GroupAssembler):
 
     def has_pending_from(self, parent_name : str) -> bool:
         return any(parent_name in group for group in self._groups.values())
+
+    def pending_count(self) -> int:
+        return len(self._groups)
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        if not self._first_seen:
+            return 0.0
+        return max(0.0, (now if now is not None else time.monotonic()) - min(self._first_seen.values()))
 
 class _TimeGroup:
     __slots__ = ('gid', 'ts', 'first_seen', 'entries', 'handles')
@@ -338,11 +361,12 @@ class TimeGroupAssembler(GroupAssembler):
 
         # Redelivery of a message already buffered in a pending group: supersede
         # in place so its ack deadline restarts, instead of seeding a duplicate.
+        # Retired locally, never TERMed (see TraceGroupAssembler.add).
         for group in self._groups.values():
             existing = group.entries.get(parent_name)
             if (existing is not None and existing.trace_id == entry.trace_id
                     and existing.seq == entry.seq):
-                group.handles[parent_name].term()
+                group.handles[parent_name].supersede()
                 group.entries[parent_name] = entry
                 group.handles[parent_name] = handle
                 return
@@ -406,6 +430,7 @@ class TimeGroupAssembler(GroupAssembler):
                 self._collect_buffers[parent] = kept
 
     def _evict(self, gid : int, missing : str, reason : str) -> None:
+        self.evictions += 1
         group = self._groups.pop(gid, None)
         if group is None:
             return
@@ -461,7 +486,12 @@ class TimeGroupAssembler(GroupAssembler):
         # Identity of the group is its event time: stable across redelivery (the
         # same members regroup to the same min ts), so downstream dedup holds.
         seq = int(round(group.ts * 1e6))
-        return ReadyGroup(f'tw-{seq}', seq, group.ts, entries, handles)
+        # JOIN-23: distinct groups whose event times round to the same
+        # microsecond get distinct ids — the digest is over the sync members'
+        # logical ids, so the same members still regroup to the same id.
+        members = {parent: (entry.producer_name, entry.trace_id, entry.seq)
+                   for parent, entry in entries.items() if isinstance(entry, EnvelopeEntry)}
+        return ReadyGroup(group_identity(members, None, seq), seq, group.ts, entries, handles)
 
     def has_pending_from(self, parent_name : str) -> bool:
         # Groups staged by sweep but not yet handed to the task still hold this
@@ -477,3 +507,12 @@ class TimeGroupAssembler(GroupAssembler):
         if parent_name in self._collect_buffers:
             return bool(self._collect_buffers[parent_name])
         return any(parent_name in g.entries for g in self._groups.values())
+
+    def pending_count(self) -> int:
+        return len(self._groups) + len(self._ready)
+
+    def oldest_wait_seconds(self, now : float | None = None) -> float:
+        if not self._groups:
+            return 0.0
+        current = now if now is not None else time.monotonic()
+        return max(0.0, current - min(group.first_seen for group in self._groups.values()))

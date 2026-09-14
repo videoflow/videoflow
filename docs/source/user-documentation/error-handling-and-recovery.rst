@@ -52,15 +52,36 @@ says who is at fault:
     │   ├── GraphError              cycles, duplicate names, bad joins
     │   ├── NodeContractError       get_params round trip, kind mismatch
     │   ├── ConfigError             flow type, join policy, mounts, images
-    │   └── CapabilityError         asking a component for what it cannot do
+    │   ├── CapabilityError         asking a component for what it cannot do
+    │   ├── IncompatibleProfile     VF_INCOMPATIBLE_PROFILE: the broker/store cannot
+    │   │                           provide a guarantee a channel requires (at deploy,
+    │   │                           in the provision Job, and in a worker at bind when
+    │   │                           an explicit --require-profile is not carried by
+    │   │                           the streams it reads back)
+    │   └── IdentityCollision       VF_IDENTITY_COLLISION: two names encode to one
+    │                               broker or Kubernetes name
     ├── VideoflowEnvironmentError   the world is not as required      → exit 3
     │   ├── BrokerUnavailable
     │   ├── ClusterError
-    │   └── ResourceUnavailable
+    │   ├── ResourceUnavailable     a resource the flow needs is missing — also
+    │   │                           the worker's verdict, before open(), on a GPU
+    │   │                           grant short of a hard requirement
+    │   │                           (gpu_fallback = 'none', requires_peer_access)
+    │   │                           and on a declared asset missing or changed
+    │   │                           on this host (required_assets())
+    │   ├── UnobservableState       VF_STATE_UNKNOWN: a read the decision needed
+    │   │                           could not be made, and unknown is not zero
+    │   ├── OwnershipConflict       VF_OWNERSHIP_CONFLICT: a compare-and-swap on
+    │   │                           shared cluster state lost to another writer,
+    │   │                           or a partition lease another live process holds
+    │   └── ActiveRunConflict       VF_ACTIVE_RUN: --single-run found another run
+    │                               of the flow active in the namespace
     └── VideoflowRuntimeError       something failed mid-stream
         ├── PoisonMessage           the DATA is bad
         ├── TransientFailure        the WORLD blipped
-        └── WorkerFatal             THIS WORKER is sick
+        ├── WorkerFatal             THIS WORKER is sick
+        └── StaleAuthority          VF_STALE_AUTHORITY: this worker's ownership
+                                    epoch was superseded (worker_fatal)
 
 Every one carries a stable ``code`` (``VF_POISON_SCHEMA``), a ``message``, and a
 ``remedy`` — the fix, kept as its own field so the CLI, the dead-letter inspector
@@ -88,7 +109,16 @@ thing a component author needs to get right:
     A wedged GPU, a missing model file, an exhausted disk. The message is fine;
     this process is not. It is handed back to the broker for a healthy replica,
     never dead-lettered — and the worker then **stops**, so a replacement can take
-    over.
+    over. ``StaleAuthority`` is the same disposition for a different reason: the
+    worker tried to commit under an ownership epoch a newer owner has superseded
+    (a partition transferred, a replacement replica started). The message is fine;
+    this writer is not the one allowed to decide it. A *configuration* error that
+    only surfaces while a message is in flight — a ``replay_policy = 'committed'``
+    result or a ``ctx.checkpoint`` on a ledger that dies with the process
+    (``IncompatibleProfile``) — is treated the same way at the message: it is
+    handed back unblamed, and the worker stops with the user diagnostic and its
+    own exit code (2), rather than retrying the same refusal until the breaker
+    trips.
 
 The failure this prevents is worth stating plainly. Before dispositions existed,
 a pod whose GPU wedged failed every message it touched, and each one was
@@ -160,6 +190,32 @@ have no probes.
 If a node legitimately takes longer than that per message, raise the timeout
 rather than disabling it.
 
+The deadline is consulted in two places. The run loop checks it between
+messages, which catches a node that is alive but no longer acking — and misses
+the one failure the deadline was written for: a ``process()`` that never
+returns. Such a callback never gets back to the loop, so the loop never checks,
+while the broker lease heartbeats stay perfectly healthy. So a **watchdog
+thread** re-checks the *same* deadline every ``VF_WATCHDOG_INTERVAL_SECONDS``
+(default 5; ``0`` disables the thread and leaves the loop's own check). A node
+that is merely slow keeps recording progress on every ack and is never touched; a
+node stuck with work pending trips the deadline within ``timeout + interval``,
+and because a thread cannot unwind the main thread's wedged frame, the watchdog
+writes the reason to the termination log and ends the process with the error's
+exit code — ``5`` (the flow stalled) for a ``ProgressStalled``. The un-acked
+inputs go back to the broker for the replacement, exactly as after any other
+death.
+
+**Unknown is not zero.** The deadline's pending probe is a broker query, and a
+query that failed used to read as "nothing pending" — which is how a node whose
+broker connection had wedged could look idle. The probe now answers *unknown*
+when it could not observe the broker, and the deadline treats that
+differently from both other answers: it neither resets the silence window (that
+would hide a stall) nor trips it (that would blame the node for the broker).
+Sustained unobservability is its own failure: after a grace period (twice the
+progress timeout by default) the node stops with ``BrokerUnavailable`` (exit
+``3``), whose message says how long the broker state was unknown — it neither
+completed nor stalled while the query was failing.
+
 Failure propagation
 -------------------
 
@@ -225,8 +281,108 @@ opposite, and are most wanted right after a run that failed and was torn down.
 
 ``replay`` re-publishes the original bytes onto the subject the failing node reads
 from, with a fresh message id (reusing the original would land inside the stream's
-de-duplication window and be silently discarded) and a ``VF-Replay`` header naming
-the run it came from.
+de-duplication window and be silently discarded), a ``VF-Replay`` header naming
+the run it came from, and a ``VF-Replay-Target`` header naming the node that failed.
+That subject is the parent's, which every child of the parent reads: the other
+children acknowledge and skip a replay addressed to a sibling before fetching its
+payload, so a node-scoped replay reprocesses nothing elsewhere.
+
+Routing a dead letter needs only its envelope metadata, so ``--dry-run`` prints the
+target subject of every entry — inline or offloaded — while the payload store is
+unreachable, and an offloaded entry is never skipped for lack of a store. Whether
+the bytes can actually be obtained is a separate check: pass ``--blob-redis-url``
+and every offloaded payload is read before anything is published; a payload the
+store cannot return fails the whole replay with ``VF_RESOURCE_UNAVAILABLE`` and
+leaves every entry in place, rather than replaying messages that would only be
+dead-lettered again.
+
+Undecodable bytes and terminal records
+--------------------------------------
+
+Bytes that cannot be decoded — a foreign publisher, a truncated envelope, an
+offloaded payload the store reports as missing or corrupt — are poison at the
+transport layer: no node ever sees them, so no node can classify them. A payload
+store that was merely *unreachable* is not that case: the fetch is retried with
+the transient ladder, never terminated, because the bytes may well exist.
+
+A delivery is only ever terminated against a durable record of why. An
+undecodable message follows the poison ladder exactly as a node that raised
+``PoisonMessage`` would: its raw bytes are dead-lettered under
+``VF_POISON_DECODE`` (``dlq show`` prints the headers and the byte length), and
+the delivery is terminated only once the broker accepted that dead letter — a
+dead-letter publish that failed keeps the delivery for a later attempt. The same
+holds for any dead letter whose payload lives in the store: the worker pins the
+payload for the DLQ retention first (``dlq/<flow>`` obligation), and a pin that
+could not be taken also keeps the delivery, because a dead letter whose bytes may
+vanish before anyone inspects it is not a record. A dead letter that was sampled
+out (``dlq: sampled``) or switched off (``dlq: off``) leaves a terminal-log entry
+instead, so a message never disappears with its own disappearance as the only
+trace.
+
+The delivery count the retry ladder consults is the broker's — unless the run has
+a **durable, shared ledger** (``VF_RUNTIME_STORE_URL`` pointing at a ``file://``
+directory on one host or a Redis that reads back with persistence on and
+``noeviction``). Then at-least-once durables are provisioned
+with an unbounded broker cap (``max_deliver = -1``: the broker never strands a
+message) and the budget of ``VF_MAX_RETRIES + 1`` attempts is counted in the
+ledger, where a ``worker_fatal`` failure never increments it: a wedged worker's
+redeliveries cost the message nothing. A memory-only ledger never qualifies —
+attempt counts would reset with the process and a crashing worker would redeliver
+a poison message forever — so the broker cap stays.
+
+The same ledger leases a node's partition to the one process that holds it. A
+second replica of a singleton — a join, a ``partition_by`` node at one replica —
+started by scaling its workload by hand finds a live lease and stops with
+``VF_OWNERSHIP_CONFLICT`` (exit 3) instead of splitting the work; the remedy is
+to redeploy at the replica count the node should own its keys at. A crashed
+holder stops renewing and its replacement takes over once the lease lapses
+(``VF_PARTITION_LEASE_SECONDS``, default 10 — a graceful stop releases at once).
+The same lease hands out replica identities where the platform gives none: a
+competing node's Deployment pods have no ordinal, so each claims the lowest
+free replica slot through the ledger at start — a replacement resumes the slot
+(and the ledger records) of the pod it replaces, and a pod that finds every
+slot held is one replica too many and stops with ``VF_OWNERSHIP_CONFLICT``.
+A BATCH node with several replicas renders as an Indexed Job instead, whose
+completion index is the replica id.
+
+Two more records live in that ledger. A dead letter the broker did not accept is
+kept as a *pending handoff* and re-published under its original id by the next
+attempt or by a replacement worker, so ``VF_POISON_*`` evidence is never lost to a
+DLQ outage; while it is pending, the input it stands for counts as *unresolved*
+in the node's subscription status — in the process that failed the dead letter
+and in any replacement that could not record it either — never as an empty
+queue. And under BATCH with ``VF_PARENT_REPLICAS`` set, a child declares a
+parent finished only when every replica's terminator is recorded, every id those
+terminators count has been received (the union over the child's replicas), no join
+half is pending, and the broker reads *known and empty*: a duplicate terminator
+cannot finish a parent twice, an unobservable broker cannot finish it at all, and
+an ABORT recorded before a crash still outranks a clean end after the restart.
+
+Records with a partition key the node cannot use (absent, ``None``, empty, a
+container) are dead-lettered as ``VF_POISON_PARTITION_KEY`` by the node's first
+replica — never hashed as the string ``"None"`` into an undeclared hot partition —
+unless the node class declares a fallback partition (``partition_key_policy``).
+
+Teardown and incomplete cleanup
+-------------------------------
+
+``videoflow teardown`` (and both engines, from their ``finally``) deletes a run's
+streams by **exact ownership**, never by name prefix: a stream is this run's if the
+owner labels in its JetStream metadata say so, or — for a stream created before
+the labels existed — if its dot-delimited data subject names this flow and run
+token for token. Tearing down run ``r`` cannot touch run ``r-x``, and the flow's
+dead-letter stream is never a candidate.
+
+The result is reported truthfully. When the stream listing could not be read, or
+an owned stream's delete did not land, ``teardown`` prints
+
+.. code-block:: text
+
+    WARNING: broker cleanup incomplete for flow <flow> run <run>: <reason>; removed: ...; remaining: ...
+
+on stderr and carries on with the workloads and infra it was asked to delete; the
+engines log the same line. A listing that failed deletes nothing and is not
+"nothing to delete" — re-run the teardown once the broker answers.
 
 Exit codes
 ----------
@@ -258,6 +414,13 @@ parsing stderr:
    * - ``130``
      - interrupted
      - —
+
+Which class an error belongs to decides the code, so the newer codes fall where
+their branch of the taxonomy puts them: ``VF_INCOMPATIBLE_PROFILE`` and
+``VF_IDENTITY_COLLISION`` are ``2`` (change the flow or the request),
+``VF_STATE_UNKNOWN``, ``VF_OWNERSHIP_CONFLICT`` and ``VF_ACTIVE_RUN`` are ``3`` (restore the read, or
+redeploy against the current state), and a stall the watchdog thread found is
+``5`` with the reason in the termination log.
 
 Errors print as a message and a fix, never a traceback. Set ``VF_DEBUG=1`` when
 the traceback is the thing you want.
@@ -309,7 +472,8 @@ Every failure produces three artifacts, all keyed by the same ``code``:
 
 A crash-looping pod reports its own cause: ``rollout_report`` reads the worker's
 termination message and says ``VF_DEVICE: CUDA out of memory — lower the batch
-size`` instead of ``crash-looping, see the logs``.
+size`` instead of ``crash-looping, see the logs``. A stall the watchdog thread
+detected is written the same way, by that thread, before the process exits.
 
 Worked example
 --------------

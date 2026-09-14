@@ -54,7 +54,14 @@ What ``videoflow deploy`` does, step by step
    StatefulSets — not the provision Job). The single-path form mounts the same
    absolute path on both sides, which is what a flow compiled against local
    files needs: the paths baked into node params must resolve identically
-   inside the pods.
+   inside the pods. Data that lives in the cluster rather than on your machine
+   — a shared model cache, an RWX work directory on a multi-node cluster where
+   no node's own filesystem holds it — is mounted from an existing
+   PersistentVolumeClaim with ``--mount-pvc claim:/path[:ro]`` (or an
+   ``x-mounts`` entry ``pvc:claim:/path[:ro]``). The two compose by one rule: a
+   ``--mount`` host path at or under a claim's mount path is served by the claim
+   in the pods (a hostPath there would shadow it with an empty directory on every
+   node but one) and still by the host in the prepare/compile containers.
 
 6. **Cluster mechanics** — deploy classifies the cluster kubectl points at
    (``k3s`` / ``kind`` / ``minikube`` / ``docker-desktop`` / generic remote)
@@ -69,14 +76,36 @@ What ``videoflow deploy`` does, step by step
      minikube nodes are VMs/containers with their own filesystem) and what to
      do about it.
    - for flows with GPU nodes, preflights what the generated GPU manifests need —
-     a node labeled ``videoflow.io/gpu-pool=true``, **enough allocatable units of
-     each requested GPU resource to cover the whole flow's demand** (every replica
-     claims its own devices exclusively; a partially-schedulable flow stalls), and
+     a node labeled ``videoflow.io/gpu-pool=true``, **enough free units of each
+     requested GPU resource to cover the whole flow's demand** (every replica
+     claims its own devices exclusively; a partially-schedulable flow stalls),
+     **a placement for every pod on the per-node free counts** (the total and
+     the largest node are necessary, not sufficient: two nodes with 3 free GPUs
+     each hold only two of three ``gpu_count = 2`` replicas), and
      a ``--gpu-runtime-class`` where the NVIDIA runtime is an opt-in RuntimeClass —
      and prints copy-pasteable fix commands. These are warnings by default;
      ``--strict-preflight`` turns them into a non-zero exit before anything is
-     applied. See :doc:`gpu-sharing` for running more GPU nodes than you have
-     GPUs.
+     applied. A pod listing the API refused is reported as ``unobservable GPU
+     state`` rather than read as an idle pool — a warning for exclusive claims,
+     fatal under ``--gpu-mode mix``. See :doc:`gpu-sharing` for running more GPU
+     nodes than you have GPUs.
+   - checks that the broker and payload store it is about to use can provide
+     what every channel asks for — ``reliable_work`` for a BATCH flow,
+     ``live_latest`` for REALTIME, or whatever ``--require-profile
+     CHANNEL=PROFILE`` names. A broker or store this deploy provisions is judged
+     by the profile it renders; one the namespace already runs (an earlier
+     ``--keep-infra``, a shared dev cluster) by the profile recorded on its
+     Service (``videoflow.io/profile``), and the provision Job reads it back
+     in-cluster before creating a stream; a bring-your-own ``--nats`` /
+     ``--blob-redis-url`` is read back live here (a short probe, before any
+     infrastructure exists), and what the probe cannot read is reported as
+     unknown, never assumed. A composition that definitely cannot provide a
+     guarantee — an evictable cache brought as the store of a BATCH flow, a
+     server without JetStream — stops the deploy before anything is applied
+     (exit 2); an *unobserved* guarantee is a warning unless the operator named
+     the profile with ``--require-profile``, when it is refused too (exit 3).
+     Nothing is quietly downgraded. Both shipped profiles admit BATCH and
+     REALTIME flows: the dev Redis persists and never evicts (see step 7).
 
 7. **Broker infra** — with no ``--nats``, deploy creates the namespace if
    needed and applies a dev NATS JetStream (and, when ``--blob-redis-url`` is
@@ -85,8 +114,24 @@ What ``videoflow deploy`` does, step by step
    (``nats://nats.<ns>.svc:4222``, ``redis://redis.<ns>.svc:6379/0``). A
    pre-existing ``nats``/``redis`` Service in the namespace is **reused and
    never owned**; only components deploy itself created are labeled
-   ``videoflow.io/infra`` and torn down later. For production, bring your own
-   broker (the official NATS Helm chart) and pass ``--nats``.
+   ``videoflow.io/infra`` and torn down later. Each Service records the profile
+   that rendered it (``videoflow.io/profile``); a deploy that reuses it adopts
+   that profile — its stream copies follow the real broker — and a
+   ``--broker-profile`` that contradicts the record is refused rather than
+   silently served the other shape. The dev profile is one emptyDir server
+   each: the NATS file store and the Redis append-only file both live for the
+   pod (a container restart replays them, a pod loss does not), and the Redis
+   runs ``noeviction`` — a blob is never dropped while a reader still holds it,
+   which is what a BATCH flow's ``reliable_work`` channels require; a full store
+   refuses a write instead (every key still carries a TTL, and the reconciler
+   reclaims orphans, so that is what bounds memory). ``--broker-profile
+   durable`` renders a NATS StatefulSet with cluster routes and a
+   PersistentVolumeClaim per pod plus the same Redis on a claim, sized with
+   ``--broker-replicas N`` (odd, default 3) and ``--broker-storage-class NAME``
+   (default ``local-path``); its claims are kept at teardown. ``--priority-class NAME`` puts every pod the deploy creates —
+   workers, provision Job and this broker — in that PriorityClass. For
+   production, bring your own broker (the official NATS Helm chart) and pass
+   ``--nats``.
 
 8. **Apply & run** — the manifests are applied in two phases (broker
    provisioning Job first, then workers). A BATCH flow then runs to
@@ -127,6 +172,15 @@ broker also published on the host — and ``./scripts/kind-down.sh`` deletes it.
 is what the ``tests/integration/k8s`` suite deploys against on every CI build, so
 it is also the shortest way to try a deploy without a real cluster. See
 ``tests/integration/README.md``.
+
+The same suite runs against a shared, multi-node k3s cluster through
+``./scripts/k3s-test-up.sh``, which *verifies* rather than creates: it checks the
+kubeconfig and that the current context is the expected one (it never switches
+it), then prepares only namespaced objects — the test namespace, an RWX claim the
+pods and the host share (``k8s/test-pvc.yaml``), the dev broker, a NodePort — and
+pushes the images to the cluster's registry with ``scripts/push-images.sh``
+(crane, from user space, no docker restart). Every pod it creates carries
+``priorityClassName: cluster-batch`` so it yields to other tenants' work.
 
 One thing it has to arrange is worth knowing before you point a solution at any
 kind cluster: a solution's ``work_dir`` is hostPath-mounted into the worker pods at
@@ -186,6 +240,60 @@ Option reference
     containers. Absolute paths; single-path form mounts the same path on both
     sides. Repeatable; solution ``x-mounts`` are added automatically.
 
+``--mount-pvc CLAIM:PATH[:ro]``
+    An existing PersistentVolumeClaim (in ``--namespace``) mounted at ``PATH``
+    in every node workload. A ``--mount`` host path at or under ``PATH`` is served
+    by the claim in the pods and by the host in the prep/compile containers.
+    Repeatable; solution ``x-mounts`` of the form ``pvc:CLAIM:PATH`` are added
+    automatically.
+
+``--priority-class NAME``
+    ``priorityClassName`` for every pod this deploy creates — workers, the
+    provision Job and any broker it provisions. The PriorityClass must exist.
+
+``--broker-profile {dev,durable}`` / ``--broker-replicas N`` / ``--broker-storage-class NAME``
+    Shape of the auto-provisioned NATS/Redis when ``--nats`` is omitted (step 7).
+    Omitted, the deploy renders ``dev`` for what is missing and adopts whatever
+    the namespace already runs. ``teardown --infra`` reads the profile from the
+    record on the ``nats`` Service, or takes the same ``--broker-profile``, so it
+    deletes the right workload kinds.
+
+``--require-profile CHANNEL=PROFILE``
+    Require a messaging profile (``live_latest``, ``reliable_work``,
+    ``durable_control``, ``replay_archive``) on the named channel — the output of
+    that node. The composition check is always binding for a definite
+    incompatibility; naming a profile additionally refuses an *unobserved*
+    guarantee (a bring-your-own store whose configuration could not be read
+    back), and refuses a profile the flow type's own streams cannot carry
+    (``reliable_work`` on a REALTIME channel) before anything is applied.
+    Repeatable; also on ``run-local``, against the dev containers. The
+    requests reach the provision Job and the workers as
+    ``VF_PROFILE_REQUESTS_JSON``: the Job admits the composition against the
+    live broker before creating any stream and verifies the streams it created
+    carry the requested profiles, and each worker verifies its own channel and
+    its parents' before it opens — a contradiction ends the worker with exit 2,
+    an unreadable stream with exit 3. ``VF_ADMISSION_TIMEOUT_SECONDS`` (default
+    60) bounds those read-backs.
+
+    The render also carries the run ledger: the ``VF_NATS_URL`` ConfigMap
+    carries ``VF_RUNTIME_STORE_URL`` (the blob Redis) and every node's ConfigMap
+    ``VF_PARENT_REPLICAS``. The provision Job reads the ledger's persistence back
+    like the store's: only a Redis with ``appendonly yes`` and ``noeviction``
+    (both shipped profiles; not an evictable cache brought as
+    ``--blob-redis-url``) makes the ledger durable, and only then are
+    at-least-once durables provisioned with an unbounded broker cap and their
+    retry budget kept in the ledger, a singleton node's partition leased to the
+    one pod that holds it (a second pod started by hand is refused at bind time
+    instead of splitting the work), and payload obligations reconciled from the
+    ledger at start and periodically; against a cache the broker cap stays and
+    the ledger is process-local.
+
+    Every object of a run is named for it — ``vf-<flow>-<run>-<node>`` and the
+    run-wide ``-broker`` / ``-specs`` / ``-provision`` ConfigMaps and Job, with
+    selectors carrying the ``videoflow.io/run-id`` label — so two runs of one
+    flow coexist in a namespace without applying over each other; only the
+    NetworkPolicy is shared by the flow's runs.
+
 ``--nats`` / ``--blob-redis-url``
     Bring-your-own broker / blob store; omitting them auto-provisions dev
     equivalents in ``--namespace`` (see step 7).
@@ -205,7 +313,56 @@ Option reference
 
 ``--autoscaling`` / ``--max-replicas``
     Emit a KEDA ``ScaledObject`` per processor that scales on broker backlog,
-    using ``nb_tasks`` as the minimum replica count.
+    using ``nb_tasks`` as the minimum replica count. Only a processor that renders
+    as a Deployment can be scaled: a BATCH flow's nodes are Jobs, whose
+    parallelism is fixed at creation, so ``--autoscaling`` on a BATCH flow is
+    refused at render time (a ``CapabilityError``) instead of emitting a scaler
+    that would dangle on a Deployment that never exists. Partitioned and, without
+    ``--gpu-autoscaling``, GPU nodes keep their fixed scale. A scaler carries one
+    trigger per parent and KEDA scales on the highest, so a join whose second
+    input backs up is scaled too. A multi-parent join at one replica and a
+    node that declares ``partition_by`` at ``nb_tasks = 1`` also keep their
+    declared scale: scaled by KEDA, the first would split every group's halves
+    across competing replicas and the second would split one key's history
+    across replicas bound to the same competing durable. Redeploy such a node at
+    the replica count it should own its keys at instead.
+
+``--single-run``
+    Refuse to start this run while another run of the same flow holds workloads
+    in the namespace — decided before anything of the new run is created, so the
+    active run is never reconfigured (exit 3, ``VF_ACTIVE_RUN``; a namespace
+    that cannot be listed is not a free one). Without it runs of one flow
+    coexist under their run-scoped names.
+
+``--rollout-policy {drain,surge}``
+    How a node's Deployment replaces its pods on an update. ``drain`` renders
+    ``strategy: Recreate`` — every old replica stops before a new one starts,
+    which is what a GPU node needs when its devices cannot be held by two
+    generations at once. ``surge`` renders a rolling update with one extra
+    replica and none unavailable, and is admitted against the GPU pool's free
+    devices: with nothing spare it is refused before anything is applied,
+    because the replacement would wait forever behind the old pod. Omitted, the
+    Kubernetes default rolling update stays — deploy warns when the pool is
+    full, since that default stalls the same way.
+
+``--gpu-nodes HOST[,HOST...]``
+    Pin every GPU pod to these hosts: a required ``kubernetes.io/hostname``
+    node-affinity term on top of the pool label, for a shared cluster where only
+    some GPU nodes are yours to use.
+
+``--resources NODE=key:quantity[,key:quantity...]``
+    Host requests and limits for a node's worker container — ``cpu`` and
+    ``memory`` are requests, ``cpu_limit`` and ``memory_limit`` limits;
+    ``NODE=*`` applies to every node, a node entry overrides it, and both
+    override a component descriptor's ``spec.resources.cpu`` / ``memory``.
+    Repeatable. Host memory is a scheduler request, never a GPU memory
+    declaration: a node whose replicas fit the GPUs but not a node's RAM stays
+    Pending with the scheduler's reason instead of being admitted on GPU
+    capacity alone.
+
+``--gpu-mode dra``
+    Render Dynamic Resource Allocation claims instead of an extended-resource
+    limit (see :doc:`gpu-sharing`); needs a GPU DRA driver in the cluster.
 
 ``--dry-run`` / ``--render-only`` / ``--output``
     Manifest generation without touching the cluster (see above).
@@ -227,7 +384,11 @@ Other CLI commands
     ``--namespace`` it also ``kubectl delete``\ s the flow's workloads, and with
     ``--infra`` it deletes auto-provisioned NATS/Redis (only resources labeled
     ``videoflow.io/infra`` — a bring-your-own broker is never touched). This is
-    the escape hatch for REALTIME flows deployed with auto-infra.
+    the escape hatch for REALTIME flows deployed with auto-infra. Streams are
+    matched by exact ownership, never by name prefix; if the stream listing failed
+    or a delete did not land, teardown prints ``WARNING: broker cleanup
+    incomplete ...`` naming what remains and carries on — re-run it once the
+    broker answers.
 
 ``python -m videoflow.compile graph.py[:factory]``
     Compile a graph to a JSON specs document on stdout — what deploy runs inside
@@ -244,7 +405,9 @@ How graph concepts map onto Kubernetes
 | ``flow_type=BATCH``                   | at-least-once, loss-free delivery (interest retention +     |
 |                                       | backpressure); failures retry then dead-letter to a DLQ     |
 +---------------------------------------+-------------------------------------------------------------+
-| ``ProcessorNode(nb_tasks=N)``         | N Deployment replicas (competing consumers)                 |
+| ``ProcessorNode(nb_tasks=N)``         | N Deployment replicas (competing consumers), each claiming  |
+|                                       | a replica slot through the run ledger at start; in a BATCH  |
+|                                       | flow an Indexed Job of N completions (index = replica id)   |
 +---------------------------------------+-------------------------------------------------------------+
 | ``ProcessorNode(..., partition_by=)`` | N StatefulSet replicas, partitioned by key (scales joins);  |
 |                                       | not autoscaled                                              |
@@ -264,6 +427,9 @@ How graph concepts map onto Kubernetes
 +---------------------------------------+-------------------------------------------------------------+
 | ``--mount`` / solution ``x-mounts``   | hostPath volume + volumeMount on every node workload        |
 +---------------------------------------+-------------------------------------------------------------+
+| ``--mount-pvc`` / ``x-mounts``        | ``persistentVolumeClaim`` volume + volumeMount on every     |
+| ``pvc:...``                           | node workload; shadowed hostPaths dropped from the pods     |
++---------------------------------------+-------------------------------------------------------------+
 
 Observability
 -------------
@@ -274,7 +440,9 @@ Every worker pod exposes an HTTP endpoint (port 8080) with:
   so a pod whose model is still loading is not sent traffic.
 - ``/healthz`` — liveness: a heartbeat updated on every loop iteration; a stalled
   worker is restarted.
-- ``/metrics`` — Prometheus metrics for per-node processing time.
+- ``/metrics`` — Prometheus metrics: per-node processing-time histograms
+  (``_bucket{le=...}`` plus ``_count``/``_sum``), throughput and drop counters,
+  and errors by code and disposition.
 
 The generated Deployments/Jobs reference the readiness and liveness probes
 automatically. See :doc:`../user-documentation/debugging-flow-applications`.

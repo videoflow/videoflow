@@ -117,7 +117,8 @@ ships a `config.template.yaml`, runs its `prepare.py` hook, starts a dev broker 
 none is listening, spawns one worker subprocess per node, waits for the flow to
 finish, reports any node that exited non-zero, and stops only the containers it
 started. Overrides: `--nats`, `--config`, `--no-prepare`, `--no-infra`,
-`--keep-infra`, `--blob-redis-url`, `--blob-ttl-seconds`, `--run-id`.
+`--keep-infra`, `--blob-redis-url`, `--blob-ttl-seconds`, `--run-id`,
+`--require-profile CHANNEL=PROFILE` (see below).
 
 Running the script directly still works when you have a broker up:
 
@@ -129,7 +130,7 @@ python my_flow.py
 
 ## Example solutions
 
-[`solutions/`](solutions) holds three complete, deployable applications built
+[`solutions/`](solutions) holds four complete, deployable applications built
 from core nodes only — no models, no footage, no extra dependencies. They are
 the fastest way to see the whole path (config, prep hook, image, broker, workers,
 teardown) actually work, and the best code to read after this README.
@@ -162,8 +163,11 @@ videoflow deploy my_flow.py
 ```
 
 `deploy` compiles the graph and renders one Deployment (or a Job, for finite
-producers) plus a ConfigMap per node — and by default automates everything
-around that: it builds the node image from the `[gpu.]Dockerfile` next to your
+producers) plus a ConfigMap per node, every object named for the run
+(`vf-<flow>-<run>-<node>`, selectors carrying the run label) so two runs of one
+flow coexist in a namespace without overwriting each other — pass `--single-run`
+to have a second run refused before anything of it is created instead — and by
+default automates everything around that: it builds the node image from the `[gpu.]Dockerfile` next to your
 graph (auto-building `videoflow-base` first when missing) and loads it into the
 detected cluster flavor, provisions a dev NATS (+ Redis for the blob store) in
 the namespace, applies the flow, and — for a BATCH flow — waits for completion
@@ -173,7 +177,44 @@ a `config.template.yaml` (deploy asks its questions interactively to generate
 compiling); when the graph's ML deps aren't installed on the operator machine,
 deploy compiles the graph inside the image too. Local input files are exposed to
 the pods with repeatable `--mount /abs/path[:ro]` hostPath mounts (solution
-`x-mounts` are added automatically).
+`x-mounts` are added automatically). Data that lives in the cluster rather than
+on your machine — a shared model cache, an RWX work directory on a multi-node
+cluster where no node's own filesystem holds it — is mounted from an existing
+PersistentVolumeClaim with `--mount-pvc claim:/path[:ro]` (or an `x-mounts` entry
+`pvc:claim:/path`); a `--mount` under that path is served by the claim in the
+pods and by the host in the prepare container. On a shared cluster,
+`--priority-class cluster-batch` puts every pod the deploy creates — workers,
+provision Job and the broker it provisions — in that PriorityClass. The
+auto-provisioned broker is dev-grade by default (one emptyDir server each: a
+NATS file store and an append-only, never-evicting Redis that both live as long
+as their pod — enough for BATCH and REALTIME flows alike, not for surviving a
+pod loss); `--broker-profile durable` renders a NATS StatefulSet with cluster
+routes and a PersistentVolumeClaim per pod plus the same Redis on a claim, sized
+with `--broker-replicas N` (odd) and `--broker-storage-class NAME`. A broker the
+namespace already runs is reused as it is (its Service records the profile that
+rendered it; naming a different `--broker-profile` is refused rather than
+silently served). Before anything is applied, deploy checks that the broker and
+store it is about to use can actually provide what every channel asks for —
+`reliable_work` for a BATCH flow, `live_latest` for REALTIME — and stops if not
+(an evictable cache brought as the store of a BATCH flow, say — exit 2, nothing
+applied). A broker deploy provisions is judged by its profile; a bring-your-own
+`--nats` / `--blob-redis-url` is read back live, and what cannot be read is
+reported as unknown rather than assumed: a warning, unless `--require-profile
+CHANNEL=PROFILE` (the channel is the publishing node's name; profiles are
+`live_latest`, `reliable_work`, `durable_control`, `replay_archive`) named the
+guarantee, in which case an unobserved one is refused too — at deploy, again in
+the provision Job before any stream is created, and in every worker before it
+opens. The same flag on `run-local` checks the dev containers, which are judged
+by the same dev profile. Three placement flags are
+opt-in and change nothing when absent: `--rollout-policy drain|surge` decides
+how a node's Deployment replaces its pods (`drain` stops the old replica before
+the new one starts — what a GPU node needs when its devices cannot be held
+twice; `surge` starts one extra replica first, and is refused up front when the
+GPU pool has no spare device for it), `--gpu-nodes HOST,...` pins every GPU pod
+to those hosts on top of the pool label, and `--resources NODE=cpu:500m,memory:1Gi`
+(repeatable; `*` for every node; `cpu_limit`/`memory_limit` for limits) sets
+the worker containers' host requests, over whatever a component's descriptor
+declares in `spec.resources`.
 
 Because that image is built locally and loaded straight into the cluster, every
 container is rendered with `imagePullPolicy: IfNotPresent` — there is nothing to
@@ -199,7 +240,9 @@ videoflow deploy my_flow.py:build_flow \
     --nats nats://nats.videoflow.svc:4222 \
     --namespace videoflow \
     --image ghcr.io/acme/app:v1 \
-    --autoscaling                             # optional KEDA scalers
+    --autoscaling                             # optional KEDA scalers (REALTIME flows — a BATCH
+                                              # flow's nodes are Jobs, which no scaler can scale,
+                                              # so deploy refuses the flag for them)
 ```
 
 Use `--dry-run` to print the manifests to stdout (including the dev-infra
@@ -482,16 +525,30 @@ The pod then requests `nvidia.com/gpu: 2` and Kubernetes grants both whole
 devices to that one worker, on one host. Inside the worker the contract is
 simple: **the visible GPUs are exactly the granted GPUs, `cuda:0..N-1`, with
 `N == gpu_count`** — true on Kubernetes (device plugin) and under `run-local`
-(the engine partitions `CUDA_VISIBLE_DEVICES`). How the model spreads across
+(the engine partitions `CUDA_VISIBLE_DEVICES`; by UUID, so the identity of each
+device survives renumbering). When a host has fewer devices than the flow asks
+for, `run-local --gpu-policy strict` refuses to start rather than hand out
+short grants; the default `shared` policy lets workers share devices (fine for
+development) and tells each worker the grant it really got
+(`VF_GPU_GRANT_JSON`, the delivered device list, marked non-exclusive). A node
+that cannot run short says so with `gpu_fallback = 'none'`, and one whose
+execution path needs peer access between its devices with
+`requires_peer_access = True`; the worker checks both against the real grant
+before the node opens. How the model spreads across
 them is the node's own `open()`: `device_map='auto'` for Hugging Face models,
 a `tensor_parallel_size` for engines that take one, or explicit `.to('cuda:1')`
 placement for multi-model nodes. A component can declare its need in its
 `component.yaml` (`spec: {resources: {gpu: {count: 2}}}`) so graph authors don't
 have to pass `gpu_count=` by hand. Two things to know: all `gpu_count` devices
 must fit on **one** cluster node (preflight checks the largest node, not just the
-total — prefer NVLink-connected GPUs for tensor parallelism), and sliced GPUs
-don't qualify (MIG and time-sliced units can't be combined into one model —
-preflight hard-errors on the attempt).
+total — and then packs every pod's claim onto the per-node free counts, because
+two nodes with 3 free GPUs each hold only two of three `gpu_count = 2` replicas
+even though both aggregate checks pass; prefer NVLink-connected GPUs for tensor
+parallelism), and sliced GPUs don't qualify (MIG, time-sliced and MPS units
+can't be combined into one model — preflight hard-errors on the attempt). A
+preflight whose occupancy read the API refused says so (`unobservable GPU
+state`) rather than assuming the pool is idle; under `--gpu-mode mix` that is
+fatal, since mix repartitions cards on the strength of it.
 
 **Sharing GPUs with isolation: `--gpu-mode mix`.** On MIG-capable hardware
 (A30/A100/H100), a flow can mix models that share a card with models that span
@@ -524,7 +581,18 @@ the exact `nvidia-mig-parted` config to apply by hand. `gpu_memory_gib` and
 `gpu_count > 1` are mutually exclusive on one node — a model can never span MIG
 slices, so a node declares either a fraction of one device or whole devices.
 Under every other mode `gpu_memory_gib` is simply unused (the node gets a whole
-device), so a mix-authored flow still deploys anywhere.
+device), so a mix-authored flow still deploys anywhere — except on a pool node an
+administrator carved statically (`nvidia.com/mig-*` advertised), where the default
+mode consumes a free slice as advertised and never repartitions. Readiness is
+observed, not read off a label: a node counts as prepared only once the MIG
+manager reports success **and** advertises the requested slices, and teardown
+reverts a node only once it advertises whole cards again with no slice left on
+offer (the manager reports success before the device plugin it restarted is
+back) and no pod still holds one of its slices. `--gpu-mode dra` renders Dynamic Resource
+Allocation claims (`ResourceClaimTemplate`s and the pod references of
+`resource.k8s.io/v1`) for a cluster with a GPU DRA driver; without one deploy
+stops at preflight, and the claim lifecycle itself is not managed by videoflow
+in this release.
 
 ### How graph concepts map onto the broker and Kubernetes
 
@@ -532,12 +600,12 @@ device), so a mix-authored flow still deploys anywhere.
 | --- | --- |
 | `flow_type=REALTIME` | broker keeps only the freshest message per edge — stale frames are dropped, producers never block |
 | `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
-| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas) |
+| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas, each claiming a replica slot through the run ledger at start; an Indexed Job of N completions in a BATCH flow) |
 | `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
 | `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `--gpu-resource-name`) plus a GPU-pool nodeSelector/toleration — exclusive whole physical devices; under `--gpu-mode mix`, nodes with `gpu_memory_gib` request a solver-chosen exclusive MIG slice instead |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
 | `flow.stop()` | publishes on a control channel every worker subscribes to, then tears the workloads down |
-| observability | each worker exposes `/metrics` (Prometheus) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag |
+| observability | each worker exposes `/metrics` (Prometheus — latency histograms, throughput and drop counters, errors by code) and `/readyz` + `/healthz` + `startupProbe`; `--autoscaling` adds KEDA scalers on broker lag to REALTIME processors |
 
 ### Reliability
 
@@ -562,7 +630,11 @@ flow type:
 An exception you do not classify is treated as the middle case, so nothing changes
 until you opt in. Workers also protect themselves: a run of unexplained failures
 trips a circuit breaker, and a node that stops acking while work is pending is
-declared stalled rather than hanging the run forever.
+declared stalled rather than hanging the run forever — checked between messages
+by the run loop and, from a watchdog thread every `VF_WATCHDOG_INTERVAL_SECONDS`
+(default 5; `0` disables the thread), *during* a `process()` that never returns,
+so a wedged callback with healthy broker heartbeats is still caught and the
+reason lands in the pod's termination message.
 
 Dead letters land on the flow's DLQ stream (`vf-<flow>-dlq`) with the error code
 attached. It is scoped to the flow, not the run, so tearing a run down does not
@@ -779,6 +851,19 @@ implement, with stable IDs), the protobuf IDL under `spec/proto/videoflow/v1/`, 
 golden test vectors in `spec/vectors/` replayed against every SDK to enforce
 lockstep. A vendor can hand-write a conforming component against the spec today; the
 Python worker is the executable reference implementation.
+
+The same idea applies one layer down. The transport, payload store, accelerator
+allocator and runtime that sit under a flow have explicit contracts in
+[`videoflow/backends/`](videoflow/backends) with in-memory reference
+implementations, and a 130-case **backend conformance suite** under
+[`tests/conformance/`](tests/conformance) (`uv run pytest tests/conformance -q -rs`,
+then `uv run python tests/conformance/report.py`) that a new backend is developed
+against. A case whose fixture is absent reports `NOT_RUN`, never a green skip. The
+wire- and routing-observable parts of that work — per-replica terminator counts,
+source-epoch ids, owner-labelled streams, payload obligations, the runtime ledger,
+run-scoped Kubernetes names — are
+[`spec/rfcs/0006`](spec/rfcs/0006-backend-contracts-and-runtime-ledger.md), accepted
+in September 2026 and normative in [`spec/PROTOCOL.md`](spec/PROTOCOL.md).
 
 ---
 

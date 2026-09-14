@@ -125,6 +125,11 @@ def run_in_image(image : str, command : List[str], mounts : Optional[List['Mount
     (``Mount`` records from ``manifests.parse_mounts``) — how deploy executes the
     prepare hook and the graph compile without the graph's deps on the host.
 
+    Claim mounts (``manifests.parse_pvc_mounts``, ``Mount.claim`` set) are skipped:
+    a PersistentVolumeClaim exists only inside the cluster, and this container runs
+    on the operator's host, where the same directory is reached by the hostPath
+    the claim shadows in the pods (see ``manifests.pod_mounts``).
+
     - Returns:
         - the command's stdout when ``capture``, else None.
 
@@ -137,6 +142,8 @@ def run_in_image(image : str, command : List[str], mounts : Optional[List['Mount
     if gpus:
         cmd += ['--gpus', 'all']
     for m in mounts or []:
+        if m.claim is not None:
+            continue
         suffix = ':ro' if m.read_only else ''
         cmd += ['-v', f'{m.host_path}:{m.container_path}{suffix}']
     if workdir:

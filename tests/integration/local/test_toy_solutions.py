@@ -54,10 +54,29 @@ from support_solutions import (
 
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 REDIS_URL = os.environ.get('VF_TEST_REDIS_URL', 'redis://localhost:6379/0')
+#: The append-only, ``noeviction`` Redis of ``docker compose --profile redis-durable``.
+#: A BATCH flow with a payload store is admitted only against a store that cannot
+#: lose an accepted envelope's bytes (RFC 0006), so the dev cache is refused —
+#: truthfully — and this one is used instead when it answers.
+REDIS_DURABLE_URL = os.environ.get('VF_TEST_REDIS_DURABLE_URL', 'redis://localhost:6381/0')
 
 # A whole flow — provisioning, N worker subprocesses, drain and stream teardown.
 # Generous because it bounds a hang, not the expected runtime (~5-10s each).
 RUN_TIMEOUT_SECONDS = 300
+
+def _store_url() -> str | None:
+    '''
+    The Redis a run may be pointed at, or None to run without one. The compose
+    default is the dev profile's shape (append-only, never evicting), which a
+    BATCH flow's ``reliable_work`` channels are admitted on; the durable
+    profile's twin (``--profile redis-durable``) does as well. Either answers, or
+    the run goes without a store — the solution must pass both ways.
+    '''
+    for url in (REDIS_URL, REDIS_DURABLE_URL):
+        if _redis_available(url):
+            return url
+    return None
+
 
 def _redis_available(url = REDIS_URL) -> bool:
     '''
@@ -104,8 +123,10 @@ def run_solution(tmp_path : pathlib.Path, name : str,
            # Never prompt and never start docker containers: the broker is the
            # one this suite already probed for.
            '--non-interactive', '--no-infra']
-    if blob_redis and _redis_available():
-        cmd += ['--blob-redis-url', REDIS_URL]
+    if blob_redis:
+        store = _store_url()
+        if store is not None:
+            cmd += ['--blob-redis-url', store]
 
     proc = subprocess.run(cmd, cwd = work, capture_output = True, text = True,
                           timeout = RUN_TIMEOUT_SECONDS)

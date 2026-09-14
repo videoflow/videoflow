@@ -157,99 +157,16 @@ def test_decode_envelope_surfaces_blob_ref():
 
 # -- _AckHandle release discipline ----------------------------------------
 
-class _StubMessenger:
-    '''Just enough of NATSMessenger for _AckHandle: forget + release recording.'''
-    def __init__(self):
-        self.released = []
-
-    def _forget_handle(self, handle):
-        pass
-
-    def _release_blob(self, blob_ref):
-        self.released.append(blob_ref)
-
-
-class _StubMsg:
-    def __init__(self, fail_ack = False):
-        self._fail_ack = fail_ack
-        self.acked = 0
-
-    async def ack(self):
-        if self._fail_ack:
-            raise RuntimeError('broker gone')
-        self.acked += 1
-
-    async def nak(self, delay = None):
-        pass
-
-    async def term(self):
-        pass
-
-
-def _handle(msg, messenger, blob_ref):
-    import asyncio
-    import threading
-
-    pytest.importorskip('nats')   # the messenger module imports the optional extra
-    from videoflow.messaging.nats_messenger import _AckHandle
-
-    # _AckHandle._run bridges to the messenger's event loop; give the stub one.
-    loop = asyncio.new_event_loop()
-    t = threading.Thread(target = loop.run_forever, daemon = True)
-    t.start()
-    messenger._loop = loop
-    h = _AckHandle(msg, messenger, blob_ref = blob_ref)
-    return h, loop
-
-
-def test_ack_releases_exactly_once():
-    m = _StubMessenger()
-    msg = _StubMsg()
-    h, loop = _handle(msg, m, 'vf-blob-abc')
-    try:
-        h.ack()
-        h.ack()  # idempotent: _resolved guard
-        assert msg.acked == 1
-        assert m.released == ['vf-blob-abc']
-    finally:
-        loop.call_soon_threadsafe(loop.stop)
-
-
-def test_failed_ack_does_not_release():
-    # BLOB-6: a failed ack may mean redelivery, and a redelivery re-reads the blob.
-    m = _StubMessenger()
-    h, loop = _handle(_StubMsg(fail_ack = True), m, 'vf-blob-abc')
-    try:
-        h.ack()
-        assert m.released == []
-    finally:
-        loop.call_soon_threadsafe(loop.stop)
-
-
-def test_nak_and_term_never_release():
-    for resolve in ('nak', 'term'):
-        m = _StubMessenger()
-        h, loop = _handle(_StubMsg(), m, 'vf-blob-abc')
-        try:
-            getattr(h, resolve)()
-            assert m.released == [], resolve
-        finally:
-            loop.call_soon_threadsafe(loop.stop)
-
-
-# -- messenger TTL resolution (BLOB-7) -------------------------------------
-
 def test_messenger_ttl_defaults_by_flow_type(monkeypatch):
     pytest.importorskip('nats')
     from videoflow.core.constants import BATCH, REALTIME
     from videoflow.messaging import nats_messenger as nm
     from videoflow.producers import IntProducer
 
-    # __init__ runs _setup() (broker connect + stream provisioning) on its loop;
-    # stub it out — this test is about the TTL/readers attribute resolution only.
-    async def _no_setup(self):
-        pass
-    monkeypatch.setattr(nm.NATSMessenger, '_setup', _no_setup)
+    # __init__ runs _setup() (broker connect + stream provisioning) through the
+    # backend; stub it out — this test is about the TTL/readers attribute
+    # resolution only.
+    monkeypatch.setattr(nm.NATSMessenger, '_setup', lambda self: None)
 
     made = []
     def make(flow_type, **kwargs):
@@ -268,4 +185,4 @@ def test_messenger_ttl_defaults_by_flow_type(monkeypatch):
         assert make(REALTIME, blob_readers = 3)._blob_readers == 3
     finally:
         for m in made:
-            m._loop.call_soon_threadsafe(m._loop.stop)
+            m.close()

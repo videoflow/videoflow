@@ -197,3 +197,50 @@ def test_coercer_valueerror_still_reprompts(monkeypatch, capsys):
     result = solution.ask_questions(questions, '.', input_fn = lambda _p: next(answers_iter))
     assert result == {'n': 3}
     assert 'Invalid value' in capsys.readouterr().out
+
+
+# -- pvc: x-mounts ------------------------------------------------------------
+
+PVC_TEMPLATE = '''
+work_dir: ./out
+models_dir: /models
+x-mounts:
+  - 'pvc:model-cache:{models_dir}:ro'
+  - 'pvc:vf-test-share:{work_dir}'
+  - '{work_dir}'
+  - 'pvc:literal-claim:/mnt/literal'
+'''
+
+
+def test_resolve_mounts_pvc_entries_resolve_like_host_paths(tmp_path):
+    '''
+    A ``pvc:<claim>:<path>[:ro]`` entry keeps its prefix through resolution — the
+    path part takes the same {dotted} lookup and graph-dir-relative resolution as
+    the host forms — and ``split_mount_specs`` hands each parser its own list.
+    '''
+    template = yaml.safe_load(PVC_TEMPLATE)
+    config = {'work_dir': './out', 'models_dir': '/models'}
+    specs = solution.resolve_mounts(template, config, str(tmp_path))
+    out = str(tmp_path / 'out')
+    assert specs == ['pvc:model-cache:/models:ro', f'pvc:vf-test-share:{out}', out,
+                     'pvc:literal-claim:/mnt/literal']
+    host, claims = solution.split_mount_specs(specs)
+    assert host == [out]
+    assert claims == ['model-cache:/models:ro', f'vf-test-share:{out}', 'literal-claim:/mnt/literal']
+    # Ready for the manifests parsers, prefix-free.
+    from videoflow.deploy.manifests import parse_mounts, parse_pvc_mounts
+    assert [m.claim for m in parse_pvc_mounts(claims)] == ['model-cache', 'vf-test-share', 'literal-claim']
+    assert [m.host_path for m in parse_mounts(host)] == [out]
+
+
+@pytest.mark.parametrize('entry', ['pvc:models', 'pvc::/models', 'pvc:models:', 'pvc:'])
+def test_pvc_entry_needs_a_claim_and_a_path(tmp_path, entry):
+    template = {'x-mounts': [entry]}
+    with pytest.raises(ValueError, match = 'pvc:<claim>:<path>'):
+        solution.resolve_mounts(template, {}, str(tmp_path))
+
+
+def test_split_mount_specs_leaves_host_specs_untouched():
+    host, claims = solution.split_mount_specs(['/a:ro', '/h:/c', 'pvc:x:/p:ro'])
+    assert host == ['/a:ro', '/h:/c'] and claims == ['x:/p:ro']
+    assert solution.split_mount_specs([]) == ([], [])

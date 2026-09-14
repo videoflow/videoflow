@@ -14,11 +14,16 @@ from __future__ import absolute_import, division, print_function
 import logging
 import subprocess
 
+from videoflow.backends.allocation import DeviceIdentity
+from videoflow.backends.outcomes import known
 from videoflow.utils import system
 
 
 def _fake_gpus(monkeypatch, n):
     monkeypatch.setattr(system, 'get_number_of_gpus', lambda: n)
+    # The identity-carrying read a UUID mask resolves against (plan Phase 4).
+    monkeypatch.setattr(system, 'host_devices_observed', lambda: known(
+        [DeviceIdentity(None, i, f'GPU-{i:04x}', None, 'Fake', 1 << 30) for i in range(n)]))
 
 
 def test_granted_gpus_defaults_to_all_system_devices(monkeypatch):
@@ -35,10 +40,28 @@ def test_granted_gpus_are_cuda_indices_not_physical_ordinals(monkeypatch):
 
 def test_granted_gpus_drops_junk_entries_with_a_warning(monkeypatch, caplog):
     _fake_gpus(monkeypatch, 2)
+    # A UUID that names nothing ends the enumeration where the CUDA runtime ends
+    # it (plan Phase 4, ALLOC-015): nothing past it is exposed, and the warning
+    # names the entries left out.
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-8a7b,1,7')
     with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
-        assert system.granted_gpus() == [0]
+        assert system.granted_gpus() == []
     assert 'GPU-8a7b' in caplog.text
+    caplog.clear()
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-0001,GPU-8a7b,GPU-0000')
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
+        assert system.granted_gpus() == [0]
+        assert system.visible_physical_gpus() == [1]
+    assert 'GPU-8a7b, GPU-0000' in caplog.text
+    # A UUID that names a real card is a grant, not junk (plan Phase 4, ALLOC-015):
+    # resolved through nvidia-smi -L to the card's ordinal, in mask order.
+    caplog.clear()
+    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-0001,GPU-0000')
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
+        assert system.granted_gpus() == [0, 1]
+        assert system.visible_physical_gpus() == [0, 1]
+        assert [d.uuid for d in system.visible_devices()] == ['GPU-0001', 'GPU-0000']
+    assert not caplog.records
     # '' is the standard hide-all idiom, not misconfiguration — no devices, no warning.
     caplog.clear()
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '')
@@ -69,7 +92,7 @@ def test_visible_physical_gpus_warns_on_junk_but_not_out_of_range_entries(monkey
     _fake_gpus(monkeypatch, 2)
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-8a7b,1,7')
     with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
-        assert system.visible_physical_gpus() == [1]
+        assert system.visible_physical_gpus() == []          # the runtime stops at the junk entry
     assert 'GPU-8a7b' in caplog.text
     # Out-of-range ordinals ('7' on a 2-GPU host) are dropped by the intersection and
     # a trailing comma's stray '' is harmless — both stay silent.

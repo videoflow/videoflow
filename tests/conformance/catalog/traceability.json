@@ -1,0 +1,677 @@
+{
+  "scope": "Reported failures and related contracts; not a guarantee of all possible failure detection. Some rows are architectural limitations or previously fixed behavior retained as regressions.",
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Capability/profile admission and no silent downgrade",
+      "cases": [
+        "MSG-001",
+        "ALLOC-023",
+        "ALLOC-024"
+      ]
+    },
+    {
+      "id": "F-002",
+      "title": "Reliable alerts overwritten by global live retention",
+      "cases": [
+        "MSG-002"
+      ]
+    },
+    {
+      "id": "F-003",
+      "title": "Latest-per-camera fairness, age and gap accounting",
+      "cases": [
+        "MSG-003"
+      ]
+    },
+    {
+      "id": "F-004",
+      "title": "Fan-out versus competing subscription obligations",
+      "cases": [
+        "MSG-004",
+        "PAY-021"
+      ]
+    },
+    {
+      "id": "F-005",
+      "title": "Provisioning before publication and effective config reconciliation",
+      "cases": [
+        "MSG-005",
+        "MSG-006"
+      ]
+    },
+    {
+      "id": "F-006",
+      "title": "Offline subscribers, worker replacement and recovery obligations",
+      "cases": [
+        "MSG-007"
+      ]
+    },
+    {
+      "id": "F-007",
+      "title": "Worker-fatal delivery-limit exhaustion",
+      "cases": [
+        "MSG-008",
+        "MSG-012"
+      ]
+    },
+    {
+      "id": "F-008",
+      "title": "Final-attempt DLQ outage and durable handoff",
+      "cases": [
+        "MSG-009",
+        "PAY-014"
+      ]
+    },
+    {
+      "id": "F-009",
+      "title": "Poison envelopes versus transient payload failures",
+      "cases": [
+        "MSG-010",
+        "PAY-002",
+        "PAY-003"
+      ]
+    },
+    {
+      "id": "F-010",
+      "title": "Stale delivery settlement destroys newer join attempts",
+      "cases": [
+        "MSG-011",
+        "RUN-001"
+      ]
+    },
+    {
+      "id": "F-011",
+      "title": "Unknown or exhausted broker state is not empty or complete",
+      "cases": [
+        "MSG-012",
+        "RUN-009"
+      ]
+    },
+    {
+      "id": "F-012",
+      "title": "Publish timeout, late asynchronous send and lost acknowledgment",
+      "cases": [
+        "MSG-013",
+        "MSG-014",
+        "MSG-023",
+        "RUN-003",
+        "RUN-013"
+      ]
+    },
+    {
+      "id": "F-013",
+      "title": "Live acceptance/readiness, reconnect and observable slow-consumer loss",
+      "cases": [
+        "MSG-015",
+        "MSG-025"
+      ]
+    },
+    {
+      "id": "F-014",
+      "title": "Count and byte backpressure with 1 MB frames",
+      "cases": [
+        "MSG-016",
+        "PAY-001",
+        "PAY-020"
+      ]
+    },
+    {
+      "id": "F-015",
+      "title": "Shared consumer credits cap useful replica concurrency",
+      "cases": [
+        "MSG-017",
+        "RUN-024"
+      ]
+    },
+    {
+      "id": "F-016",
+      "title": "Data pressure evicts control and final-frame obligations",
+      "cases": [
+        "MSG-018",
+        "RUN-007",
+        "RUN-010"
+      ]
+    },
+    {
+      "id": "F-017",
+      "title": "Broker normalized-name collisions and unsafe prefix deletion",
+      "cases": [
+        "MSG-019",
+        "MSG-020"
+      ]
+    },
+    {
+      "id": "F-018",
+      "title": "Replication, persistent storage, pod loss, quorum loss and full disks",
+      "cases": [
+        "MSG-021",
+        "MSG-022",
+        "MSG-023"
+      ]
+    },
+    {
+      "id": "F-019",
+      "title": "Working retention is not a replay archive",
+      "cases": [
+        "MSG-024",
+        "PAY-014"
+      ]
+    },
+    {
+      "id": "F-020",
+      "title": "Stream/consumer proliferation and measured topology limits",
+      "cases": [
+        "MSG-026"
+      ]
+    },
+    {
+      "id": "F-021",
+      "title": "Lost ACK reclaims a still-recoverable payload",
+      "cases": [
+        "PAY-004"
+      ]
+    },
+    {
+      "id": "F-022",
+      "title": "Duplicate logical-reader release and concurrent counter mutation",
+      "cases": [
+        "PAY-005",
+        "PAY-008"
+      ]
+    },
+    {
+      "id": "F-023",
+      "title": "Crash after settlement before payload release leaks data",
+      "cases": [
+        "PAY-006"
+      ]
+    },
+    {
+      "id": "F-024",
+      "title": "Partial create/publish, rejection and deduplication orphan payloads",
+      "cases": [
+        "PAY-007",
+        "PAY-013"
+      ]
+    },
+    {
+      "id": "F-025",
+      "title": "TTL shorter than recovery or replay horizon",
+      "cases": [
+        "PAY-009",
+        "PAY-014"
+      ]
+    },
+    {
+      "id": "F-026",
+      "title": "Evictable/nonpersistent payload tier undermines reliable envelope",
+      "cases": [
+        "PAY-010",
+        "PAY-011"
+      ]
+    },
+    {
+      "id": "F-027",
+      "title": "Live drops and disconnected readers leak unowned bytes",
+      "cases": [
+        "PAY-012",
+        "PAY-021"
+      ]
+    },
+    {
+      "id": "F-028",
+      "title": "DLQ metadata routing wrongly hydrates large payloads",
+      "cases": [
+        "PAY-015"
+      ]
+    },
+    {
+      "id": "F-029",
+      "title": "Replay reuses old ownership and broadcasts unintended effects",
+      "cases": [
+        "PAY-016",
+        "RUN-015",
+        "RUN-017"
+      ]
+    },
+    {
+      "id": "F-030",
+      "title": "Repeated full-frame copies across metadata stages",
+      "cases": [
+        "PAY-017"
+      ]
+    },
+    {
+      "id": "F-031",
+      "title": "Nonowner replicas download every image before partition routing",
+      "cases": [
+        "PAY-018",
+        "RUN-034"
+      ]
+    },
+    {
+      "id": "F-032",
+      "title": "Blocking payload I/O stalls broker control and lease renewal",
+      "cases": [
+        "PAY-019"
+      ]
+    },
+    {
+      "id": "F-033",
+      "title": "Decoded frame size and end-to-end byte amplification",
+      "cases": [
+        "PAY-020",
+        "PAY-022"
+      ]
+    },
+    {
+      "id": "F-034",
+      "title": "MIG solver ignores memory capacity and legal placements",
+      "cases": [
+        "ALLOC-001",
+        "ALLOC-002"
+      ]
+    },
+    {
+      "id": "F-035",
+      "title": "Historical MIG success falsely completes a new operation",
+      "cases": [
+        "ALLOC-003"
+      ]
+    },
+    {
+      "id": "F-036",
+      "title": "Ownership claims lack server-enforced conflict protection",
+      "cases": [
+        "ALLOC-004"
+      ]
+    },
+    {
+      "id": "F-037",
+      "title": "Last-owner cleanup races another flow and deletes its config",
+      "cases": [
+        "ALLOC-005"
+      ]
+    },
+    {
+      "id": "F-038",
+      "title": "Failed restoration destroys recoverable ownership/configuration",
+      "cases": [
+        "ALLOC-006",
+        "ALLOC-033"
+      ]
+    },
+    {
+      "id": "F-039",
+      "title": "Failed inventory reads become false idle capacity",
+      "cases": [
+        "ALLOC-007"
+      ]
+    },
+    {
+      "id": "F-040",
+      "title": "Sharing classification and admission ignore the requested pool",
+      "cases": [
+        "ALLOC-008",
+        "ALLOC-009"
+      ]
+    },
+    {
+      "id": "F-041",
+      "title": "Aggregate GPU capacity hides per-node fragmentation",
+      "cases": [
+        "ALLOC-010"
+      ]
+    },
+    {
+      "id": "F-042",
+      "title": "Singleton/cached plan leaks between deployments",
+      "cases": [
+        "ALLOC-011"
+      ]
+    },
+    {
+      "id": "F-043",
+      "title": "Foreign workload arrives between inventory and repartition",
+      "cases": [
+        "ALLOC-012"
+      ]
+    },
+    {
+      "id": "F-044",
+      "title": "Retained/terminating workload still uses released device",
+      "cases": [
+        "ALLOC-013",
+        "RUN-030"
+      ]
+    },
+    {
+      "id": "F-045",
+      "title": "Local GPU undersupply silently wraps or downgrades",
+      "cases": [
+        "ALLOC-014",
+        "RUN-044"
+      ]
+    },
+    {
+      "id": "F-046",
+      "title": "UUID/MIG enumeration differs from host device count",
+      "cases": [
+        "ALLOC-015",
+        "RUN-039"
+      ]
+    },
+    {
+      "id": "F-047",
+      "title": "Cooperative sharing ignores aggregate peak memory",
+      "cases": [
+        "ALLOC-016",
+        "RUN-040"
+      ]
+    },
+    {
+      "id": "F-048",
+      "title": "Static MIG consumption must preserve external geometry",
+      "cases": [
+        "ALLOC-017"
+      ]
+    },
+    {
+      "id": "F-049",
+      "title": "DRA and device-plugin or managed-MIG authorities overlap",
+      "cases": [
+        "ALLOC-018",
+        "ALLOC-028"
+      ]
+    },
+    {
+      "id": "F-050",
+      "title": "Per-pod claims versus deliberate shared-claim lifetimes",
+      "cases": [
+        "ALLOC-019",
+        "ALLOC-020"
+      ]
+    },
+    {
+      "id": "F-051",
+      "title": "Allocated, prepared and application-ready are different states",
+      "cases": [
+        "ALLOC-021"
+      ]
+    },
+    {
+      "id": "F-052",
+      "title": "DRA pod/plugin crash, duplicate prepare/unprepare and reclamation",
+      "cases": [
+        "ALLOC-022"
+      ]
+    },
+    {
+      "id": "F-053",
+      "title": "DRA release/gate support differs from base API stability",
+      "cases": [
+        "ALLOC-023",
+        "ALLOC-024"
+      ]
+    },
+    {
+      "id": "F-054",
+      "title": "Consumable accounting, configuration consistency and released capacity",
+      "cases": [
+        "ALLOC-025"
+      ]
+    },
+    {
+      "id": "F-055",
+      "title": "Scheduling reservation is not runtime memory isolation",
+      "cases": [
+        "ALLOC-026"
+      ]
+    },
+    {
+      "id": "F-056",
+      "title": "MPS cap scope, incompatible modes and orphan daemons",
+      "cases": [
+        "ALLOC-027"
+      ]
+    },
+    {
+      "id": "F-057",
+      "title": "Exact-capacity rollout cannot satisfy default surge",
+      "cases": [
+        "ALLOC-029",
+        "RUN-029"
+      ]
+    },
+    {
+      "id": "F-058",
+      "title": "Autoscaled replicas exceed prepared profiles or other resources",
+      "cases": [
+        "ALLOC-030",
+        "RUN-028",
+        "RUN-031"
+      ]
+    },
+    {
+      "id": "F-059",
+      "title": "GPU feature, locality and topology constraints are dropped",
+      "cases": [
+        "ALLOC-031",
+        "RUN-032",
+        "RUN-043"
+      ]
+    },
+    {
+      "id": "F-060",
+      "title": "Memory-fitting profiles lack compute/media/latency qualification",
+      "cases": [
+        "ALLOC-032"
+      ]
+    },
+    {
+      "id": "F-061",
+      "title": "Lifecycle crash points, original-label presence and allocation epochs",
+      "cases": [
+        "ALLOC-033"
+      ]
+    },
+    {
+      "id": "F-062",
+      "title": "Explicit GPU count and descriptor/default memory conflict",
+      "cases": [
+        "ALLOC-034"
+      ]
+    },
+    {
+      "id": "F-063",
+      "title": "Crash between group input ACKs loses recoverable join state",
+      "cases": [
+        "RUN-002"
+      ]
+    },
+    {
+      "id": "F-064",
+      "title": "State commit, outputs and nondeterministic replay disagree",
+      "cases": [
+        "RUN-003",
+        "RUN-004"
+      ]
+    },
+    {
+      "id": "F-065",
+      "title": "Adversarial parent order deadlocks limited join credits",
+      "cases": [
+        "RUN-005"
+      ]
+    },
+    {
+      "id": "F-066",
+      "title": "Missing branch or hung callback renews work indefinitely",
+      "cases": [
+        "RUN-006",
+        "RUN-011",
+        "RUN-012"
+      ]
+    },
+    {
+      "id": "F-067",
+      "title": "First-replica EOS or idle timeout completes before final outputs",
+      "cases": [
+        "RUN-007",
+        "RUN-008"
+      ]
+    },
+    {
+      "id": "F-068",
+      "title": "ABORT and successful completion race",
+      "cases": [
+        "RUN-010"
+      ]
+    },
+    {
+      "id": "F-069",
+      "title": "Restarted live sources reuse event IDs; replay identity policy",
+      "cases": [
+        "RUN-014",
+        "RUN-015"
+      ]
+    },
+    {
+      "id": "F-070",
+      "title": "Time-join IDs collide after timestamp rounding",
+      "cases": [
+        "RUN-016"
+      ]
+    },
+    {
+      "id": "F-071",
+      "title": "Sink check-effect-mark race and marker expiry",
+      "cases": [
+        "RUN-017"
+      ]
+    },
+    {
+      "id": "F-072",
+      "title": "Autoscaled singleton join or partition loses ownership intent",
+      "cases": [
+        "RUN-018",
+        "RUN-019"
+      ]
+    },
+    {
+      "id": "F-073",
+      "title": "Missing keys, frame ordering, late data and duplicate state",
+      "cases": [
+        "RUN-020",
+        "RUN-021"
+      ]
+    },
+    {
+      "id": "F-074",
+      "title": "Stateful restart and partition transfer need checkpoints and fences",
+      "cases": [
+        "RUN-022",
+        "RUN-023"
+      ]
+    },
+    {
+      "id": "F-075",
+      "title": "Prefetch hoarding and resident-byte admission",
+      "cases": [
+        "RUN-025"
+      ]
+    },
+    {
+      "id": "F-076",
+      "title": "Latest-only lag hides offered demand and overload",
+      "cases": [
+        "RUN-026"
+      ]
+    },
+    {
+      "id": "F-077",
+      "title": "Batch scaler targets the wrong controller kind",
+      "cases": [
+        "RUN-027"
+      ]
+    },
+    {
+      "id": "F-078",
+      "title": "HostPath/model assets differ after relocation",
+      "cases": [
+        "RUN-033"
+      ]
+    },
+    {
+      "id": "F-079",
+      "title": "GPU fusion unavailable; internal transfers need explicit qualification",
+      "cases": [
+        "RUN-035"
+      ]
+    },
+    {
+      "id": "F-080",
+      "title": "Cross-camera batching lacks latency/fairness/recovery contract",
+      "cases": [
+        "RUN-036"
+      ]
+    },
+    {
+      "id": "F-081",
+      "title": "Tracktor model and re-ID tensors use different CUDA devices",
+      "cases": [
+        "RUN-037"
+      ]
+    },
+    {
+      "id": "F-082",
+      "title": "GPU-requested SigLIP actually executes on CPU",
+      "cases": [
+        "RUN-038"
+      ]
+    },
+    {
+      "id": "F-083",
+      "title": "Pose image installs conflicting ONNX distributions/provider fallback",
+      "cases": [
+        "RUN-041"
+      ]
+    },
+    {
+      "id": "F-084",
+      "title": "VLM automatic placement permits offload without throughput contract",
+      "cases": [
+        "RUN-042"
+      ]
+    },
+    {
+      "id": "F-085",
+      "title": "Count and sum cannot establish p95 latency",
+      "cases": [
+        "RUN-045"
+      ]
+    },
+    {
+      "id": "F-086",
+      "title": "Autoscaler reads only the first parent and misdiagnoses joins",
+      "cases": [
+        "RUN-046"
+      ]
+    },
+    {
+      "id": "F-087",
+      "title": "Kubernetes run names overwrite another run's configuration",
+      "cases": [
+        "RUN-047"
+      ]
+    },
+    {
+      "id": "F-088",
+      "title": "Local supervisor waits on earlier live child and misses later failure",
+      "cases": [
+        "RUN-048"
+      ]
+    }
+  ]
+}

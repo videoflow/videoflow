@@ -1,0 +1,109 @@
+[
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "producer",
+    "name": "events",
+    "nb_tasks": 1,
+    "node_class": "toy_recovery_nodes.EventProducer",
+    "params": {
+      "count": 24,
+      "image": null,
+      "is_finite": true,
+      "name": "events",
+      "rate_fps": 400.0
+    },
+    "parents": [],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 1,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": true,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "processor",
+    "name": "fragile",
+    "nb_tasks": 1,
+    "node_class": "toy_recovery_nodes.FragileProcessor",
+    "params": {
+      "crash_at": 12,
+      "delivery": null,
+      "device_type": "cpu",
+      "gpu_count": 1,
+      "gpu_memory_gib": null,
+      "image": null,
+      "join_policy": null,
+      "marker_path": "<ROOT>/toy_recovery/out/crashed_once.marker",
+      "name": "fragile",
+      "nb_tasks": 1,
+      "on_error": null,
+      "partition_by": null,
+      "poison_values": [
+        7,
+        19
+      ]
+    },
+    "parents": [
+      "events"
+    ],
+    "partition_by": null,
+    "protocol_version": null
+  },
+  {
+    "blob_readers": 0,
+    "command": null,
+    "component_ref": null,
+    "delivery": null,
+    "descriptor": null,
+    "device_type": "cpu",
+    "gpu_count": 1,
+    "gpu_memory_gib": null,
+    "gpu_resource_name": null,
+    "has_children": false,
+    "image": null,
+    "is_finite": true,
+    "join_policy": null,
+    "kind": "consumer",
+    "name": "ledger",
+    "nb_tasks": 1,
+    "node_class": "toy_recovery_nodes.RecoveryLedger",
+    "params": {
+      "delivery": null,
+      "expected_path": "<ROOT>/toy_recovery/out/expected_recovery.json",
+      "idempotent": false,
+      "image": null,
+      "join_policy": null,
+      "ledger_path": "<ROOT>/toy_recovery/out/ledger.jsonl",
+      "metadata": false,
+      "name": "ledger",
+      "on_error": null,
+      "report_path": "<ROOT>/toy_recovery/out/recovery_report.json"
+    },
+    "parents": [
+      "fragile"
+    ],
+    "partition_by": null,
+    "protocol_version": null
+  }
+]

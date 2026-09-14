@@ -143,12 +143,12 @@ def test_a_provision_job_retry_does_not_abort_the_deploy(monkeypatch, engine):
     # Same trap on the other wait path: the provision Job is OnFailure with
     # backoffLimit 6, so a single failed attempt must not be read as "the broker
     # streams were not created".
-    cluster = _FakeCluster(jobs = 'vf-f-provision||\n')
+    cluster = _FakeCluster(jobs = 'vf-f-run1-provision||\n')
     _install(monkeypatch, cluster)
 
     def succeeds_on_retry(cmd, **kwargs):
         if k8s_engine.time.time() > 20:
-            cluster.jobs = 'vf-f-provision|True||\n'
+            cluster.jobs = 'vf-f-run1-provision|True||\n'
         return cluster(cmd, **kwargs)
     monkeypatch.setattr(k8s_engine.subprocess, 'run', succeeds_on_retry)
 
