@@ -164,6 +164,10 @@ never acknowledged (a realtime flow evicting stale frames, a crashed worker, a
 dead-lettered message): one hour for realtime flows and 24 hours for batch flows,
 whose backlog can legitimately delay a payload's first read well past an hour.
 Override it with ``--blob-ttl-seconds`` on ``deploy``/``run-local`` if your batch
-flows drain slower than that. The provisioned Redis runs with ``maxmemory 4gb`` and
-``volatile-lru`` eviction, so under memory pressure the oldest payloads are evicted
-rather than the server growing without bound.
+flows drain slower than that. The provisioned Redis runs with an append-only file,
+``noeviction`` and ``maxmemory 4gb``: a payload is never dropped while a reader
+still holds it — which is what a BATCH flow's ``reliable_work`` channels require of
+the store — and a server that fills up refuses the write (the publisher sees a
+typed transient failure) rather than growing without bound or silently evicting
+someone's frame. Steady-state size is the in-flight backlog; the TTL and the
+obligation reconciler are what bound orphans.

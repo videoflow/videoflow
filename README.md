@@ -163,8 +163,11 @@ videoflow deploy my_flow.py
 ```
 
 `deploy` compiles the graph and renders one Deployment (or a Job, for finite
-producers) plus a ConfigMap per node — and by default automates everything
-around that: it builds the node image from the `[gpu.]Dockerfile` next to your
+producers) plus a ConfigMap per node, every object named for the run
+(`vf-<flow>-<run>-<node>`, selectors carrying the run label) so two runs of one
+flow coexist in a namespace without overwriting each other — pass `--single-run`
+to have a second run refused before anything of it is created instead — and by
+default automates everything around that: it builds the node image from the `[gpu.]Dockerfile` next to your
 graph (auto-building `videoflow-base` first when missing) and loads it into the
 detected cluster flavor, provisions a dev NATS (+ Redis for the blob store) in
 the namespace, applies the flow, and — for a BATCH flow — waits for completion
@@ -182,21 +185,27 @@ PersistentVolumeClaim with `--mount-pvc claim:/path[:ro]` (or an `x-mounts` entr
 pods and by the host in the prepare container. On a shared cluster,
 `--priority-class cluster-batch` puts every pod the deploy creates — workers,
 provision Job and the broker it provisions — in that PriorityClass. The
-auto-provisioned broker is dev-grade by default (one emptyDir server each);
-`--broker-profile durable` renders a NATS StatefulSet with cluster routes and a
-PersistentVolumeClaim per pod plus an append-only Redis, sized with
-`--broker-replicas N` (odd) and `--broker-storage-class NAME`. Before anything is
-applied, deploy checks that the broker and store it is about to use can actually
-provide what every channel asks for — `reliable_work` for a BATCH flow,
-`live_latest` for REALTIME — and says so if not (a dev-grade broker under a BATCH
-flow, say). An auto-provisioned broker is judged by its profile; a bring-your-own
+auto-provisioned broker is dev-grade by default (one emptyDir server each: a
+NATS file store and an append-only, never-evicting Redis that both live as long
+as their pod — enough for BATCH and REALTIME flows alike, not for surviving a
+pod loss); `--broker-profile durable` renders a NATS StatefulSet with cluster
+routes and a PersistentVolumeClaim per pod plus the same Redis on a claim, sized
+with `--broker-replicas N` (odd) and `--broker-storage-class NAME`. A broker the
+namespace already runs is reused as it is (its Service records the profile that
+rendered it; naming a different `--broker-profile` is refused rather than
+silently served). Before anything is applied, deploy checks that the broker and
+store it is about to use can actually provide what every channel asks for —
+`reliable_work` for a BATCH flow, `live_latest` for REALTIME — and stops if not
+(an evictable cache brought as the store of a BATCH flow, say — exit 2, nothing
+applied). A broker deploy provisions is judged by its profile; a bring-your-own
 `--nats` / `--blob-redis-url` is read back live, and what cannot be read is
-reported as unknown rather than assumed. That verdict is a warning today;
-`--require-profile CHANNEL=PROFILE` (the channel is the publishing node's name;
-profiles are `live_latest`, `reliable_work`, `durable_control`,
-`replay_archive`) makes it binding — at deploy, again in the provision Job
-before any stream is created, and in every worker before it opens — and the
-same flag on `run-local` checks the dev containers. Three placement flags are
+reported as unknown rather than assumed: a warning, unless `--require-profile
+CHANNEL=PROFILE` (the channel is the publishing node's name; profiles are
+`live_latest`, `reliable_work`, `durable_control`, `replay_archive`) named the
+guarantee, in which case an unobserved one is refused too — at deploy, again in
+the provision Job before any stream is created, and in every worker before it
+opens. The same flag on `run-local` checks the dev containers, which are judged
+by the same dev profile. Three placement flags are
 opt-in and change nothing when absent: `--rollout-policy drain|surge` decides
 how a node's Deployment replaces its pods (`drain` stops the old replica before
 the new one starts — what a GPU node needs when its devices cannot be held
@@ -591,7 +600,7 @@ in this release.
 | --- | --- |
 | `flow_type=REALTIME` | broker keeps only the freshest message per edge — stale frames are dropped, producers never block |
 | `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
-| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas) |
+| `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas, each claiming a replica slot through the run ledger at start; an Indexed Job of N completions in a BATCH flow) |
 | `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
 | `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `--gpu-resource-name`) plus a GPU-pool nodeSelector/toleration — exclusive whole physical devices; under `--gpu-mode mix`, nodes with `gpu_memory_gib` request a solver-chosen exclusive MIG slice instead |
 | finite `ProducerNode` (`is_finite=True`) | Kubernetes **Job**; infinite/streaming producers and all other nodes are **Deployments** |
@@ -847,12 +856,14 @@ The same idea applies one layer down. The transport, payload store, accelerator
 allocator and runtime that sit under a flow have explicit contracts in
 [`videoflow/backends/`](videoflow/backends) with in-memory reference
 implementations, and a 130-case **backend conformance suite** under
-[`tests/conformance/`](tests/conformance) (`VF_RFC0006=1 uv run pytest
-tests/conformance -q -rs`, then `uv run python tests/conformance/report.py`) that
-a new backend is developed against. A case whose fixture is absent reports
-`NOT_RUN`, never a green skip. The wire- and routing-observable parts of that work
-are proposed in [`spec/rfcs/0006`](spec/rfcs/0006-backend-contracts-and-runtime-ledger.md)
-and stay off by default until it is accepted.
+[`tests/conformance/`](tests/conformance) (`uv run pytest tests/conformance -q -rs`,
+then `uv run python tests/conformance/report.py`) that a new backend is developed
+against. A case whose fixture is absent reports `NOT_RUN`, never a green skip. The
+wire- and routing-observable parts of that work — per-replica terminator counts,
+source-epoch ids, owner-labelled streams, payload obligations, the runtime ledger,
+run-scoped Kubernetes names — are
+[`spec/rfcs/0006`](spec/rfcs/0006-backend-contracts-and-runtime-ledger.md), accepted
+in September 2026 and normative in [`spec/PROTOCOL.md`](spec/PROTOCOL.md).
 
 ---
 

@@ -91,7 +91,6 @@ nodes are Kubernetes Jobs, whose parallelism is fixed when the Job is created an
 is not what a scaler drives, so ``--autoscaling`` on a BATCH flow is refused at
 render time rather than emitting a scaler that would dangle on a Deployment that
 never exists — set ``nb_tasks`` to the parallelism you want instead. A scaler
-watches the node's first declared parent; with the ``VF_RFC0006`` switch on it
 carries one trigger per parent and scales on the highest, which is also how the
 framework sizes demand in-process (``videoflow.runtime.scaling``): the maximum
 over parents, a parent that could not be observed making the whole decision

@@ -449,5 +449,34 @@ def test_a_sigtermed_worker_still_dies_of_sigterm_after_quiescing():
     assert proc.stdout.split() == ['quiesced']
 
 
+def test_a_sigtermed_pid_1_exits_instead_of_living_on():
+    '''
+    As PID 1 of a container the kernel withholds a default-action SIGTERM, so
+    the re-raise alone would leave the worker running — and a worker that lived
+    on would break out of its loop and relay an end of stream its replacement is
+    about to continue (a stage pod deleted mid-run completed its sink with a
+    fraction of the inputs). Modelled by a kill that does not land: the
+    follow-up then exits 128 + SIGTERM itself.
+    '''
+    script = '\n'.join([
+        'import os, signal',
+        'from videoflow.core.engine import Messenger',
+        'from videoflow.runtime.worker import install_sigterm_quiesce',
+        'class M(Messenger):',
+        '    def quiesce(self):',
+        "        print('quiesced', flush = True)",
+        'install_sigterm_quiesce(M())',
+        'real_kill = os.kill',
+        'os.kill = lambda pid, sig: None      # PID 1: the default action never arrives',
+        'handler = signal.getsignal(signal.SIGTERM)',
+        'handler(signal.SIGTERM, None)',
+        "print('survived', flush = True)",
+    ])
+    proc = subprocess.run([sys.executable, '-c', script], capture_output = True,
+                          text = True, timeout = 60)
+    assert proc.returncode == 128 + signal.SIGTERM, (proc.returncode, proc.stderr)
+    assert proc.stdout.split() == ['quiesced']
+
+
 if __name__ == '__main__':
     pytest.main([__file__])

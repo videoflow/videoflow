@@ -18,9 +18,26 @@ this module owns, with one constructor per named profile:
                                    and a PVC per pod, so a stream with
                                    ``jetstream_replicas`` copies survives a pod
                                    and a node.
-  - ``RedisProfile.dev()``       — the transport-only cache (no persistence,
-                                   volatile-lru).
-  - ``RedisProfile.durable()``   — append-only file on a PVC, never evicts.
+  - ``RedisProfile.dev()``       — one server with an append-only file on an
+                                   emptyDir and ``noeviction``: the same standing
+                                   as the dev NATS (its file store is on an
+                                   emptyDir too), so a BATCH flow's
+                                   ``reliable_work`` channels are admitted on the
+                                   dev pair and a pod loss costs both alike.
+  - ``RedisProfile.durable()``   — the same append-only file on a PVC, so the
+                                   blobs survive a pod and a node.
+
+The dev Redis used to be a transport-only cache (persistence off,
+``volatile-lru``). RFC 0006 made composition admission binding, and an
+evictable store cannot certify ``reliable_work`` (PAY-010: a blob whose
+obligations are outstanding must not be evicted, and a store that keeps nothing
+across a restart lets an accepted envelope outlive its bytes). Every key still
+carries a TTL (PROTOCOL.md BLOB-7) and the reconciler still reclaims orphans, so
+memory stays bounded; under pressure a full store now *refuses* a write — a typed
+``TransientFailure`` the publisher sees — instead of silently dropping the oldest
+blob. An operator who wants the old cache shape brings their own Redis
+(``--blob-redis-url``), which admission reads back live and refuses for a BATCH
+flow.
 
 The records are dataclasses rather than dicts because we own their shape (the
 Kubernetes objects they become stay dicts, per ``deploy.manifests``). Validation
@@ -44,8 +61,13 @@ BROKER_PROFILE_NAMES = ('dev', 'durable')
 
 #: What ``RedisProfile.persistence`` may be. ``none`` renders ``--appendonly no``
 #: with RDB snapshots off (transport, not storage); ``appendonly`` renders an AOF
-#: on a PersistentVolumeClaim.
+#: under ``/data`` — on the volume ``RedisProfile.storage`` names.
 REDIS_PERSISTENCE_MODES = ('none', 'appendonly')
+
+#: Where ``RedisProfile.persistence`` writes: an ``emptyDir`` that lives as long
+#: as the pod (a container restart replays the file, a pod loss does not — the
+#: dev NATS file store has the same standing) or a PersistentVolumeClaim.
+REDIS_STORAGE_MODES = ('emptyDir', 'claim')
 
 #: Redis ``maxmemory-policy`` values, as the server spells them.
 REDIS_EVICTION_POLICIES = ('noeviction', 'volatile-lru', 'allkeys-lru', 'volatile-lfu',
@@ -115,6 +137,11 @@ class BrokerProfile:
         '''
         return self.persistence or self.replicas > 1
 
+    @property
+    def name(self) -> str:
+        '''The ``--broker-profile`` name this shape answers to (``deploy.infra`` records it on the Service).'''
+        return 'durable' if self.persistence else 'dev'
+
     @classmethod
     def dev(cls, priority_class : str | None = None) -> 'BrokerProfile':
         '''Today's single-replica, emptyDir NATS — what ``profile = None`` means.'''
@@ -139,17 +166,21 @@ class RedisProfile:
 
     - Arguments:
         - persistence: ``'none'`` (RDB and AOF off; the store is transport) or \
-            ``'appendonly'`` (an AOF under ``/data`` on a PersistentVolumeClaim).
-        - eviction: the ``maxmemory-policy``. The dev profile evicts TTL'd blobs \
-            oldest-first under pressure (every videoflow key carries a TTL, \
-            PROTOCOL.md BLOB-7); a durable store refuses writes instead.
-        - storage_class: StorageClass of the claim when persisting; ``None`` takes \
-            the cluster default.
+            ``'appendonly'`` (an AOF under ``/data`` on the volume ``storage`` names).
+        - eviction: the ``maxmemory-policy``. Both shipped profiles refuse a write \
+            when the store is full (``noeviction``) rather than drop a blob whose \
+            readers have not released it; every videoflow key still carries a TTL \
+            (PROTOCOL.md BLOB-7), which is what bounds orphans, not eviction.
+        - storage: ``'emptyDir'`` (the pod's lifetime; the dev profile) or \
+            ``'claim'`` (a PersistentVolumeClaim; the durable profile). Meaningful \
+            only with persistence on — a store that writes nothing needs no volume.
+        - storage_class: StorageClass of the claim; ``None`` takes the cluster default.
         - storage_size: size of that claim.
         - priority_class: ``priorityClassName`` for the Redis pod, or none.
     '''
     persistence : str = 'none'
     eviction : str = 'noeviction'
+    storage : str = 'emptyDir'
     storage_class : str | None = None
     storage_size : str = '10Gi'
     priority_class : str | None = None
@@ -166,25 +197,54 @@ class RedisProfile:
                 f'unknown Redis eviction policy {self.eviction!r}. Known policies: '
                 f'{", ".join(REDIS_EVICTION_POLICIES)}.',
                 remedy = "Spell it the way redis-server's --maxmemory-policy does.")
+        if self.storage not in REDIS_STORAGE_MODES:
+            raise ConfigError(
+                f'unknown Redis storage mode {self.storage!r}. Known modes: '
+                f'{", ".join(REDIS_STORAGE_MODES)}.',
+                remedy = "Use storage = 'emptyDir' for the pod's lifetime or 'claim' for a PersistentVolumeClaim.")
+        if self.storage == 'claim' and self.persistence == 'none':
+            raise ConfigError('a Redis claim without persistence keeps nothing on it.',
+                              remedy = "Use persistence = 'appendonly' with storage = 'claim', or drop the claim.")
         if not self.storage_size:
             raise ConfigError('storage_size must be a non-empty Kubernetes quantity.',
                               remedy = "Use a quantity such as '10Gi'.")
 
     @property
+    def persistent(self) -> bool:
+        '''Whether the server writes its data set to disk at all (an AOF under ``/data``).'''
+        return self.persistence != 'none'
+
+    @property
     def stateful(self) -> bool:
         '''Whether the profile keeps its data on a PersistentVolumeClaim.'''
-        return self.persistence != 'none'
+        return self.persistent and self.storage == 'claim'
+
+    @property
+    def name(self) -> str:
+        '''
+        The profile name recorded on the Service: ``durable`` (on a claim), ``dev``
+        (persistent on an emptyDir) or ``cache`` (nothing written — the shape an
+        operator asks for explicitly; no ``--broker-profile`` name renders it).
+        '''
+        return 'durable' if self.stateful else 'dev' if self.persistent else 'cache'
 
     @classmethod
     def dev(cls, priority_class : str | None = None) -> 'RedisProfile':
-        '''Today's transport-only cache: no persistence, volatile-lru eviction.'''
-        return cls(persistence = 'none', eviction = 'volatile-lru', priority_class = priority_class)
+        '''
+        One server, an append-only file on an emptyDir, ``noeviction``: a blob
+        outlives a container restart (like the dev NATS file store) and is never
+        dropped while its readers hold it, which is what ``reliable_work`` asks
+        of a payload store; a pod loss takes it, which is what
+        ``tolerated_failures`` refuses the dev pair for.
+        '''
+        return cls(persistence = 'appendonly', eviction = 'noeviction', storage = 'emptyDir',
+                   priority_class = priority_class)
 
     @classmethod
     def durable(cls, storage_class : str | None = DEFAULT_STORAGE_CLASS,
                 priority_class : str | None = None) -> 'RedisProfile':
-        '''An append-only Redis on a claim that never evicts a blob.'''
-        return cls(persistence = 'appendonly', eviction = 'noeviction',
+        '''The same append-only, never-evicting Redis on a claim, so its blobs survive a pod and a node.'''
+        return cls(persistence = 'appendonly', eviction = 'noeviction', storage = 'claim',
                    storage_class = storage_class, priority_class = priority_class)
 
 def broker_profiles(name : str, replicas : int | None = None, storage_class : str | None = None,

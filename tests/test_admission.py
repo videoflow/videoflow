@@ -24,7 +24,7 @@ from videoflow.backends.capabilities import (
 )
 from videoflow.backends.outcomes import Known, Unknown
 from videoflow.consumers import CommandlineConsumer
-from videoflow.core import Flow, constants
+from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import EXIT_USER, ConfigError, IncompatibleProfile, UnobservableState
@@ -54,12 +54,21 @@ def test_declared_broker_capabilities_follow_the_profile():
 
 
 def test_declared_store_capabilities_need_persistence_and_noeviction():
+    # Both shipped profiles persist and never evict; they differ in what holds
+    # the file (emptyDir vs a claim), which is the broker-loss question, not this one.
     dev = admission.redis_payload_capabilities(RedisProfile.dev())
-    assert dev.durable.value is False
+    assert dev.durable.value is True and dev.evictable.value is False
     assert admission.redis_payload_capabilities(RedisProfile.durable()).durable.value is True
+    cache = admission.redis_payload_capabilities(RedisProfile(persistence = 'none', eviction = 'volatile-lru'))
+    assert cache.durable.value is False and cache.evictable.value is True
     lru = admission.redis_payload_capabilities(RedisProfile(persistence = 'appendonly', eviction = 'volatile-lru'))
     assert lru.durable.value is False and lru.evictable.value is True
+    aof_only = admission.redis_payload_capabilities(RedisProfile(persistence = 'none', eviction = 'noeviction'))
+    assert aof_only.durable.value is False and aof_only.evictable.value is False
     assert isinstance(admission.redis_payload_capabilities(None).durable, Unknown)
+    # The local dev containers are judged by the same record localinfra starts them with.
+    _messaging, local_store = admission.local_dev_capabilities()
+    assert (local_store.durable.value, local_store.evictable.value) == (True, False)
 
 
 def test_parse_profile_requests_validates_channels_and_profiles():
@@ -85,18 +94,32 @@ def test_requirements_merge_explicit_requests_over_the_presets():
     assert {r.channel: r.profile for r in merged.profiles} == {'src': LIVE_LATEST, 'work': RELIABLE_WORK}
 
 
-def test_admission_is_advisory_without_explicit_requests(capsys, monkeypatch):
-    monkeypatch.setattr(constants, 'RFC0006', False)
+_CACHE = RedisProfile(persistence = 'none', eviction = 'volatile-lru')      # the pre-RFC dev cache
+
+
+def test_admission_is_binding_for_the_flow_type_presets(capsys, monkeypatch):
+    # RFC 0006 accepted: a definite incompatibility is binding even when the flow
+    # asked for nothing explicitly — a BATCH flow on an evictable store is refused.
     specs = _specs(BATCH)
     requirements = admission.requirements_for(BATCH, specs)
+    with pytest.raises(IncompatibleProfile, match = 'evictable'):
+        admission.admit(requirements, admission.jetstream_capabilities(BrokerProfile.dev()),
+                        admission.redis_payload_capabilities(_CACHE),
+                        payload_refs_in_use = True, enforce = admission.enforce_admission([]),
+                        unknown_is_fatal = admission.unknown_admission([]), where = 'deploy')
+    # The advisory path remains for a caller that asks for it explicitly.
     plan = admission.admit(requirements, admission.jetstream_capabilities(BrokerProfile.dev()),
-                           admission.redis_payload_capabilities(RedisProfile.dev()),
-                           payload_refs_in_use = True, enforce = admission.enforce_admission([]),
-                           unknown_is_fatal = admission.unknown_admission([]), where = 'deploy')
+                           admission.redis_payload_capabilities(_CACHE),
+                           payload_refs_in_use = True, enforce = False, unknown_is_fatal = False, where = 'deploy')
     assert plan is None
     err = capsys.readouterr().err
-    assert 'WARNING: deploy' in err and 'evictable' in err and '--require-profile' in err
-    # With durable infrastructure the same flow is admitted outright.
+    assert 'WARNING: deploy' in err and 'evictable' in err
+    # The dev pair itself admits the flow: its Redis persists and never evicts.
+    plan = admission.admit(requirements, admission.jetstream_capabilities(BrokerProfile.dev()),
+                           admission.redis_payload_capabilities(RedisProfile.dev()),
+                           payload_refs_in_use = True, enforce = True, unknown_is_fatal = True, where = 'deploy')
+    assert plan is not None and plan.channel_profiles == {'src': RELIABLE_WORK, 'work': RELIABLE_WORK}
+    # And so does durable infrastructure.
     plan = admission.admit(requirements, admission.jetstream_capabilities(BrokerProfile.durable()),
                            admission.redis_payload_capabilities(RedisProfile.durable()),
                            payload_refs_in_use = True, enforce = False, unknown_is_fatal = False, where = 'deploy')
@@ -109,10 +132,9 @@ def test_admission_binds_with_an_explicit_request_or_the_switch(monkeypatch):
     requirements = admission.requirements_for(BATCH, specs, explicit)
     with pytest.raises(IncompatibleProfile, match = 'evictable'):
         admission.admit(requirements, admission.jetstream_capabilities(BrokerProfile.dev()),
-                        admission.redis_payload_capabilities(RedisProfile.dev()),
+                        admission.redis_payload_capabilities(_CACHE),
                         payload_refs_in_use = True, enforce = admission.enforce_admission(explicit),
                         unknown_is_fatal = admission.unknown_admission(explicit), where = 'deploy')
-    monkeypatch.setattr(constants, 'RFC0006', True)
     assert admission.enforce_admission([]) is True and admission.unknown_admission([]) is False
     # A bring-your-own broker is unread, not unavailable: under the switch that is
     # still a warning until the read-back lands; an explicit request makes it binding.

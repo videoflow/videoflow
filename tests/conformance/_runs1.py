@@ -190,6 +190,13 @@ def terminator_bytes(flow_id : str, run_id : str, parent : str, kind : str, repl
                            None, None, replica_id = replica_id, error = error)
 
 
+def _declare_dead(messengers : Sequence[NATSMessenger], node : str, replica_id : int = 0) -> None:
+    '''A replacement is being built: earlier messengers of the same identity forfeit their partition lease (see ``_runs2.declare_dead``).'''
+    for previous in messengers:
+        if previous._node.name == node and previous._replica_id == replica_id:
+            previous._stop_lease_renewal(release = True)
+
+
 def ledger(store_dir : str, flow_id : str, run_id : str, node : str, replica_id : int = 0, nb_tasks : int = 1,
            parent_replicas : Optional[Dict[str, int]] = None) -> FlowRuntime:
     '''A reader over the file ledger a worker (or a rig messenger) wrote.'''
@@ -349,6 +356,7 @@ class ModelRig:
     def messenger(self, name : str, parents : Sequence[str], runtime : Optional[FlowRuntime] = None,
                   **kwargs : Any) -> NATSMessenger:
         kwargs.setdefault('ack_wait', 2)
+        _declare_dead(self._messengers, name, int(kwargs.get('replica_id', 0)))
         m = NATSMessenger(StubNode(name), list(parents), self.nats_url, self.flow_id, BATCH, self.run_id,
                           backend = self.backend, runtime = runtime, **kwargs)
         self._messengers.append(m)
@@ -358,6 +366,7 @@ class ModelRig:
         '''The process dies: nothing it holds is settled or handed back; its leases lapse on the model clock.'''
         messenger._closing.set()
         messenger._termination_event.set()
+        messenger._stop_lease_renewal(release = True)       # the partition lease lapses with the process
 
     def publish_data(self, parent : str, trace : str, seq : int, payload : Any, replica_id : int = 0,
                      msg_id : Optional[str] = None, event_ts : Optional[float] = None) -> str:
@@ -448,6 +457,7 @@ class BrokerRig:
     def messenger(self, name : str, parents : Sequence[str], runtime : Optional[FlowRuntime] = None,
                   keepalive : bool = True, **kwargs : Any) -> NATSMessenger:
         kwargs.setdefault('ack_wait', 2)
+        _declare_dead(self._messengers, name, int(kwargs.get('replica_id', 0)))
         backend = JetStreamMessagingBackend(self.nats_url, self.flow_id, self.run_id, BATCH, keepalive = keepalive)
         self._backends.append(backend)
         m = NATSMessenger(StubNode(name), list(parents), self.nats_url, self.flow_id, BATCH, self.run_id,
@@ -458,6 +468,7 @@ class BrokerRig:
     def kill(self, messenger : NATSMessenger) -> None:
         '''The process dies: the connection drops without a NAK; its leases lapse on the broker's clock.'''
         messenger._closing.set()
+        messenger._stop_lease_renewal(release = True)       # the partition lease lapses with the process
         messenger._termination_event.set()
         backend = messenger._backend
         assert isinstance(backend, JetStreamMessagingBackend)
@@ -600,7 +611,7 @@ def worker_env(name : str, kind : str, node_class : str, nats_url : str, flow_id
     The environment ``videoflow.runtime.worker`` reads (its module docstring is the
     contract): exactly what ``engines.local._worker_env`` renders for one replica,
     plus the RFC 0006 rows (``VF_RUNTIME_STORE_URL``, ``VF_PARENT_REPLICAS``,
-    ``VF_RFC0006``) and, for a fault case, the schedule (``ENV-16``/``ENV-17``).
+    and, for a fault case, the schedule (``ENV-16``/``ENV-17``).
     '''
     env = dict(os.environ)
     path = [str(HERE), str(HERE.parent)]
@@ -608,7 +619,6 @@ def worker_env(name : str, kind : str, node_class : str, nats_url : str, flow_id
         path.append(env['PYTHONPATH'])
     env['PYTHONPATH'] = os.pathsep.join(path)
     env.update({
-        'VF_RFC0006': '1',
         'VF_NODE_CLASS': node_class,
         'VF_NODE_PARAMS_JSON': json.dumps(params or {}),
         'VF_NODE_KIND': kind,
@@ -626,6 +636,7 @@ def worker_env(name : str, kind : str, node_class : str, nats_url : str, flow_id
         'VF_EOS_QUIESCENCE_MS': str(eos_quiescence_ms),
         'VF_HEALTH_PORT': '0',
         'VF_PROGRESS_TIMEOUT_SECONDS': str(progress_timeout),
+        'VF_PARTITION_LEASE_SECONDS': '2',   # a crashed worker's lease lapses fast; its replacement binds in seconds
     })
     for stale in ('VF_FAULT_SCHEDULE_JSON', 'VF_FAULT_MARKER_DIR', 'VF_JOIN_POLICY_JSON', 'VF_PARENT_REPLICAS',
                   'VF_RUNTIME_STORE_URL', 'VF_TERMINATION_LOG', 'VF_BLOB_REDIS_URL', 'VF_PARTITION_BY'):

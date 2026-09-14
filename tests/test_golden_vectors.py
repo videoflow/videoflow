@@ -176,3 +176,25 @@ def test_reject_vector(case):
 
 if __name__ == '__main__':
     pytest.main([__file__])
+
+
+def _load_group_identity():
+    with open(os.path.join(VECTORS, 'join', 'group_identity.json')) as f:
+        return json.load(f)
+
+@pytest.mark.parametrize('vec', _load_group_identity(), ids = lambda v: v['expected_trace_id'])
+def test_group_identity_vector(vec):
+    '''
+    JOIN-23 (RFC 0006): a time group's identity is ``tw-{rounded µs}-{digest}``
+    over its sync members' logical ids — pinned here with the rounding and the
+    hash input, because two groups at the same rounded time must never share it.
+    '''
+    from videoflow.backends.runtime import group_identity
+    members = {parent: (m['producer_name'], m['trace_id'], m['seq']) for parent, m in vec['members'].items()}
+    rounded = int(round(vec['group_ts'] * 1e6))
+    assert rounded == vec['rounded_micros']
+    got = group_identity(members, vec['window_id'], rounded)
+    assert got == vec['expected_trace_id']
+    assert got.startswith(f'tw-{rounded}-') and len(got.rsplit('-', 1)[-1]) == 12
+    canonical = '|'.join(f'{p}={m[0]}:{m[1]}:{m[2]}' for p, m in sorted(members.items()))
+    assert vec['hash_input'] == '|' + canonical

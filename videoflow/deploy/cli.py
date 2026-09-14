@@ -34,6 +34,7 @@ from typing import Any
 
 import numpy as np
 
+from ..backends.capabilities import kubernetes_execution_capabilities, local_execution_capabilities
 from ..components.descriptor import load_descriptor
 from ..components.oci import inspect_component, pull_component, push_component
 from ..core.compiler import compile_flow, specs_from_tasks_data
@@ -67,9 +68,10 @@ from .admission import (
     rollout_problems,
     run_stream_names,
     unknown_admission,
+    verify_graph_size,
     verify_topology_shape,
 )
-from .broker_profiles import BROKER_PROFILE_NAMES, BrokerProfile, broker_profiles
+from .broker_profiles import BROKER_PROFILE_NAMES, BrokerProfile, RedisProfile, broker_profiles
 from .build import autobuild, docker_gpus_available, image_exists, run_in_image
 from .cluster import (
     detect_cluster,
@@ -77,7 +79,7 @@ from .cluster import (
     hostpath_warning,
     load_images,
 )
-from .compile import load_flow, specs_from_document
+from .compile import declared_requirements, load_flow, requirements_from_document, specs_from_document
 from .gpu import (
     GPU_STRATEGY_ENTRY_POINT_GROUP,
     IMPOSSIBLE_GPU_REQUEST,
@@ -239,9 +241,12 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     except ValueError as e:
         raise ConfigError(str(e)) from e
     # Resolved before any step that costs time: a bad --broker-replicas should not
-    # wait for an image build to be reported.
+    # wait for an image build to be reported. ``args.broker_profile`` is None
+    # when the operator left the choice to the deploy: then a broker the
+    # namespace already runs is adopted as it is; a named profile that
+    # contradicts one is refused (adopt_profiles, below).
     broker_profile, redis_profile = broker_profiles(
-        args.broker_profile, replicas = args.broker_replicas,
+        args.broker_profile or 'dev', replicas = args.broker_replicas,
         storage_class = args.broker_storage_class, priority_class = args.priority_class)
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
@@ -270,8 +275,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
 
     # 3. Compile: locally when the graph's deps import on the host, else inside
     # the image (specs round-trip as JSON — same format as the specs ConfigMap).
-    flow_id, flow_type, specs = _compile_graph(args, graph_target, graph_dir, image,
-                                               container_mounts, gpus)
+    flow_id, flow_type, specs, declared = _compile_graph(args, graph_target, graph_dir, image,
+                                                         container_mounts, gpus)
     if args.flow_id:
         flow_id = args.flow_id
     run_id = args.run_id or uuid.uuid4().hex[:12]
@@ -381,24 +386,48 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     explicit_profiles = parse_profile_requests(args.require_profile, specs)
     verify_topology_shape(flow_type, flow_id, run_id, explicit_profiles)
     store_configured = args.blob_redis_url is not None or args.nats is None
+    # optional dep: infra imports yaml at module scope
+    from .infra import adopt_profiles, ensure_infra, ensure_namespace, reused_infra, teardown_infra, wait_infra_ready
+    judged_broker : BrokerProfile | None = broker_profile
+    judged_redis : RedisProfile | None = redis_profile
+    reused : list[str] = []
+    if args.nats is None:
+        # The namespace may already run a broker and store (an earlier deploy
+        # with --keep-infra, scripts/k3s-test-up.sh); ensure_infra reuses them,
+        # so admission must judge what is there — the profile their creator
+        # recorded on the Service — not what this deploy would have rendered. A
+        # component with no record is unread here (the provision Job reads it
+        # back in-cluster before it creates a stream).
+        reuse = reused_infra(args.kubectl, args.namespace, need_redis = args.blob_redis_url is None)
+        judged_broker, judged_redis = adopt_profiles(reuse, args.broker_profile, broker_profile,
+                                                     redis_profile, args.namespace)
+        reused = reuse.components()
+        if judged_broker is not None and reuse.nats is not None:
+            broker_profile = judged_broker      # stream replicas and the teardown hint follow the real broker
     if args.nats is not None:
         messaging_caps = jetstream_capabilities_observed(
             args.nats, stream_names = run_stream_names(flow_id, run_id, specs))
     else:
-        messaging_caps = jetstream_capabilities(broker_profile)
+        messaging_caps = jetstream_capabilities(
+            judged_broker, unread = f'the nats Service in namespace {args.namespace} records no profile '
+                                    f'(created by hand or by an older videoflow); the provision Job reads '
+                                    f'it back in-cluster')
     payload_caps = (None if not store_configured
                     else redis_payload_capabilities_observed(args.blob_redis_url)
                     if args.blob_redis_url is not None
-                    else redis_payload_capabilities(redis_profile))
-    admit(requirements_for(flow_type, specs, explicit_profiles), messaging_caps, payload_caps,
+                    else redis_payload_capabilities(
+                        judged_redis, unread = f'the redis Service in namespace {args.namespace} records no '
+                                               f'profile (created by hand or by an older videoflow); the '
+                                               f'provision Job reads it back in-cluster'))
+    verify_graph_size(specs, flow_id, run_id, messaging_caps)
+    admit(requirements_for(flow_type, specs, explicit_profiles, declared), messaging_caps, payload_caps,
           payload_refs_in_use = store_configured, enforce = enforce_admission(explicit_profiles),
-          unknown_is_fatal = unknown_admission(explicit_profiles), where = 'deploy')
+          unknown_is_fatal = unknown_admission(explicit_profiles), where = 'deploy',
+          execution = kubernetes_execution_capabilities(bool(args.autoscaling)))
     profile_requests = requests_env(explicit_profiles)
 
     # 5. Broker infra: bring-your-own via --nats, else auto-provision dev NATS
     # (+ Redis for the blob store) in the namespace, owning only what we created.
-    # optional dep: infra imports yaml at module scope
-    from .infra import ensure_infra, ensure_namespace, teardown_infra, wait_infra_ready
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url
     created = []
@@ -414,16 +443,20 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         nats_url = urls['nats']
         blob_redis_url = blob_redis_url or urls['redis']
         if created:
-            print(f'Provisioned dev {" + ".join(created)} in namespace {args.namespace}.')
+            print(f'Provisioned {broker_profile.name} {" + ".join(created)} in namespace {args.namespace}.')
+        if reused:
+            print(f'Reusing the {" + ".join(reused)} namespace {args.namespace} already runs'
+                  + (f' ({judged_broker.name} profile)' if judged_broker is not None and 'nats' in reused else '')
+                  + '; not owned, not torn down.')
 
     keep_infra = args.keep or args.keep_infra
     teardown_cmd = (f'  videoflow teardown --flow-id {flow_id} --run-id {run_id} '
                     f'--nats {nats_url} --namespace {args.namespace}'
                     + (' --infra' if created and not keep_infra else '')
-                    # Same reason as --gpu-mode below: teardown must know the infra
-                    # is a StatefulSet to delete it, and the cluster does not say
-                    # which profile rendered it.
-                    + (f' --broker-profile {args.broker_profile}'
+                    # teardown must know the infra is a StatefulSet to delete it; the
+                    # Service records the profile, and the printed flag makes the
+                    # command self-contained for a cluster where that record is gone.
+                    + (f' --broker-profile {broker_profile.name}'
                        if created and not keep_infra and broker_profile.stateful else '')
                     # The run's GPU mode is not recoverable from the cluster, so the
                     # printed command carries it: teardown needs it to call the
@@ -439,6 +472,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # depend on the keyword at all.
         engine_options['priority_class'] = args.priority_class
     engine_options.update(_placement_options(args))
+    if args.single_run:
+        engine_options['single_run'] = True
     engine = KubernetesExecutionEngine(
         nats_url = nats_url, namespace = args.namespace, default_image = image,
         image_overrides = overrides, blob_redis_url = blob_redis_url,
@@ -537,8 +572,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
 def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : str,
                    image : str | None, container_mounts : list, gpus : bool) -> tuple:
     '''
-    ``(flow_id, flow_type, specs)`` — via a local import when the graph's deps are
-    installed on the host (cheap), else compiled inside the solution image (the
+    ``(flow_id, flow_type, specs, declared requirements)`` — via a local import when
+    the graph's deps are installed on the host (cheap), else compiled inside the solution image (the
     graph dir is mounted at the same absolute path, so config paths resolve
     identically).
     '''
@@ -563,14 +598,14 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
             # traceback instead of a message the operator can act on.
             raise ResourceUnavailable(f'Compiling the graph in {image} produced no output. '
                             'Re-run with --no-build and an importable graph, or rebuild the image.') from e
-        return specs_from_document(out)
+        return specs_from_document(out) + (requirements_from_document(out),)
 
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     try:
         specs = compile_flow(flow, envelope_version = args.envelope_version)
     except ValueError as e:
         raise ConfigError(str(e)) from e
-    return flow.flow_id, flow.flow_type, specs
+    return flow.flow_id, flow.flow_type, specs, declared_requirements(flow)
 
 def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flow_id : str,
                               flow_type : str, specs : list, run_id : str, overrides : dict,
@@ -597,7 +632,7 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
     stream_replicas = 1
     if nats_url is None:
         broker_profile, redis_profile = broker_profiles(
-            args.broker_profile, replicas = args.broker_replicas,
+            args.broker_profile or 'dev', replicas = args.broker_replicas,
             storage_class = args.broker_storage_class, priority_class = args.priority_class)
         stream_replicas = broker_profile.jetstream_replicas
         urls = infra_urls(args.namespace)
@@ -772,24 +807,36 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     # re-exports as PYTHONPATH so the workers can import its sibling modules.
     flow = _load_flow(graph_target)
     from ..engines.local import LocalProcessEngine  # optional dep: the local engine imports nats
-    # Composition admission: the dev containers are judged by the shape localinfra
-    # starts them with; a bring-your-own broker (--nats, or whatever listens under
-    # --no-infra) and a bring-your-own store are read back live — see
-    # deploy.admission. Advisory unless --require-profile or the RFC 0006 switch.
+    # Composition admission: a container this run just started is judged by the
+    # shape localinfra starts it with; whatever already answered on the dev port
+    # (a compose server, a leftover --keep-infra container), a bring-your-own
+    # broker (--nats, or whatever listens under --no-infra) and a bring-your-own
+    # store are read back live — see deploy.admission. Binding for a definite
+    # incompatibility; an unobserved guarantee binds only under --require-profile.
     local_specs = compile_flow(flow)
     explicit_profiles = parse_profile_requests(args.require_profile, local_specs)
     verify_topology_shape(flow.flow_type, flow.flow_id, args.run_id or 'run', explicit_profiles)
-    if args.nats is None and not args.no_infra:
-        messaging_caps, dev_payload_caps = local_dev_capabilities()
+    dev_messaging_caps, dev_payload_caps = local_dev_capabilities()
+    if args.nats is None and not args.no_infra and 'nats' in created:
+        messaging_caps = dev_messaging_caps
     else:
         messaging_caps = jetstream_capabilities_observed(nats_url)
-        dev_payload_caps = None
     payload_caps = (None if blob_redis_url is None
-                    else redis_payload_capabilities_observed(blob_redis_url) if byo_redis
-                    else dev_payload_caps)
-    admit(requirements_for(flow.flow_type, local_specs, explicit_profiles), messaging_caps, payload_caps,
-          payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit_profiles),
-          unknown_is_fatal = unknown_admission(explicit_profiles), where = 'run-local')
+                    else dev_payload_caps if not byo_redis and 'redis' in created
+                    else redis_payload_capabilities_observed(blob_redis_url))
+    try:
+        verify_graph_size(local_specs, flow.flow_id, args.run_id or 'run', messaging_caps)
+        admit(requirements_for(flow.flow_type, local_specs, explicit_profiles, declared_requirements(flow)),
+              messaging_caps, payload_caps,
+              payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit_profiles),
+              unknown_is_fatal = unknown_admission(explicit_profiles), where = 'run-local',
+              execution = local_execution_capabilities())
+    except VideoflowError:
+        # A refused flow leaves nothing behind: the containers this run started
+        # for it go too (--keep-infra keeps them, as it would after a run).
+        if created and not args.keep_infra:
+            teardown_local_infra(created)
+        raise
     # 4a. Image, but only if some node actually needs one. A pure-Python flow runs as
     # host subprocesses, so building the solution image would cost minutes and buy
     # nothing; a native component without a localCommand is docker-run and can't start
@@ -993,12 +1040,18 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
     if args.infra:
         if not args.namespace:
             raise ConfigError('--infra requires --namespace.')
-        from .infra import teardown_infra  # optional dep: infra imports yaml at module scope
+        # optional dep: infra imports yaml at module scope
+        from .infra import LABEL_PROFILE, NATS_SERVICE, service_labels, teardown_infra
         # The profile decides the kinds deleted (a durable NATS is a StatefulSet);
         # the persistent claims of a durable profile are kept, see deploy.infra.
-        profile, _redis_profile = broker_profiles(args.broker_profile)
+        # The Service records the profile that rendered it; an explicit flag wins.
+        name = args.broker_profile
+        if name is None:
+            recorded = (service_labels(args.kubectl, args.namespace, NATS_SERVICE) or {}).get(LABEL_PROFILE)
+            name = recorded if recorded in BROKER_PROFILE_NAMES else 'dev'
+        profile, _redis_profile = broker_profiles(name)
         teardown_infra(args.kubectl, args.namespace, ['nats', 'redis'], profile = profile)
-        print(f'Deleted auto-provisioned infra in namespace {args.namespace}.')
+        print(f'Deleted auto-provisioned {name} infra in namespace {args.namespace}.')
     # Undo any per-run cluster reconfiguration the GPU mode applied at deploy time.
     # This is the terminal hook for a REALTIME run, which stays up past deploy and
     # so is never cleaned up there. Built-in modes have a no-op cleanup().
@@ -1368,6 +1421,10 @@ def build_parser() -> argparse.ArgumentParser:
                                'the provision Job and any broker it provisions. The PriorityClass '
                                'must exist in the cluster; on a shared cluster it is how the flow '
                                'yields to (or preempts) other tenants\' work.')
+    deploy.add_argument('--single-run', action = 'store_true',
+                        help = 'Refuse to start this run while another run of the same flow holds workloads '
+                               'in the namespace (checked before anything is created). Default: runs of one '
+                               'flow coexist under run-scoped names.')
     deploy.add_argument('--rollout-policy', choices = ['drain', 'surge'], default = None,
                         help = 'How a node\'s Deployment replaces its pods on an update: drain '
                                '(Recreate — old replicas stop before new ones start; what a GPU '
@@ -1383,12 +1440,15 @@ def build_parser() -> argparse.ArgumentParser:
                                'memory (requests), cpu_limit, memory_limit (limits); NODE=* for '
                                'every node. Repeatable; a node entry overrides the * entry, '
                                'both override a component descriptor\'s spec.resources.')
-    deploy.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = 'dev',
+    deploy.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = None,
                         help = 'Shape of the auto-provisioned NATS/Redis when --nats is omitted. '
-                               'dev (default): one emptyDir server each, torn down with a BATCH '
-                               'run. durable: a NATS StatefulSet with cluster routes and a '
-                               'PersistentVolumeClaim per pod, plus an append-only Redis on a '
-                               'claim, so streams and blobs survive a pod or a node.')
+                               'dev (default): one emptyDir server each — an append-only, '
+                               'never-evicting Redis, so BATCH flows are admitted — torn down '
+                               'with a BATCH run. durable: a NATS StatefulSet with cluster routes '
+                               'and a PersistentVolumeClaim per pod, plus the same Redis on a '
+                               'claim, so streams and blobs survive a pod or a node. A broker the '
+                               'namespace already runs is reused as it is; naming a profile that '
+                               'contradicts its record is refused.')
     deploy.add_argument('--broker-replicas', type = int, default = None, metavar = 'N',
                         help = 'NATS servers for --broker-profile durable (default 3; odd). '
                                'Streams keep min(N, 3) copies.')
@@ -1581,10 +1641,11 @@ def build_parser() -> argparse.ArgumentParser:
     teardown.add_argument('--infra', action = 'store_true',
                           help = 'Also delete auto-provisioned dev NATS/Redis in --namespace '
                                  '(only resources labeled videoflow.io/infra).')
-    teardown.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = 'dev',
+    teardown.add_argument('--broker-profile', choices = list(BROKER_PROFILE_NAMES), default = None,
                           help = 'The broker profile the run was deployed with; with --infra, '
                                  'durable also deletes the NATS StatefulSet (its claims are kept). '
-                                 'deploy prints this flag in the teardown command when it applies.')
+                                 'Read from the record on the nats Service when omitted; deploy '
+                                 'prints this flag in the teardown command when it applies.')
     teardown.add_argument('--gpu-mode', default = None,
                           help = 'The GPU mode the run was deployed with. Only needed when that '
                                  'mode reconfigured the cluster in prepare() and must be undone; '

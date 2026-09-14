@@ -57,12 +57,13 @@ def test_starts_missing_components_with_labels_and_ports(monkeypatch):
     assert localinfra.NATS_IMAGE in nats_run and '-js' in nats_run
     assert f'{localinfra.LABEL_INFRA}=redis' in redis_run
     assert '6379:6379' in redis_run and localinfra.REDIS_IMAGE in redis_run
-    # Persistence off — the blob store is transport, not storage.
-    assert '--appendonly' in redis_run and 'no' in redis_run
-    # Memory capped with volatile-lru: every videoflow key has a TTL, so under
-    # pressure Redis evicts old blobs instead of eating the host.
-    assert '--maxmemory' in redis_run and '4gb' in redis_run
-    assert '--maxmemory-policy' in redis_run and 'volatile-lru' in redis_run
+    # The shape RedisProfile.dev() renders in a cluster and admission judges the
+    # container by: an append-only file and noeviction (a blob is never dropped
+    # while a reader holds it), memory capped so a stuck run is refused a write
+    # instead of eating the host.
+    assert redis_run[redis_run.index('--appendonly') + 1] == 'yes'
+    assert redis_run[redis_run.index('--maxmemory') + 1] == '4gb'
+    assert redis_run[redis_run.index('--maxmemory-policy') + 1] == 'noeviction'
     assert urls['redis'] == localinfra.DEFAULT_REDIS_URL
 
 

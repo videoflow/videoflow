@@ -42,7 +42,7 @@ def _render(tmp_path, monkeypatch, argv_extra = ()):
     monkeypatch.setattr(cli, 'docker_gpus_available', lambda: False)
 
     code = cli.main(['deploy', str(graph), '--render-only', '--output', str(out),
-                     '--non-interactive', *argv_extra])
+                     '--non-interactive', '--run-id', 'r1', *argv_extra])
     return code, out
 
 def _images(out):
@@ -100,14 +100,14 @@ def test_mount_pvc_and_priority_class_reach_the_rendered_pods(tmp_path, monkeypa
                          '--priority-class', 'cluster-batch'])
     assert code == 0
     docs = _docs(out)
-    worker = _pod_spec(docs[('Job', 'vf-render-numbers')])
+    worker = _pod_spec(docs[('Job', 'vf-render-r1-numbers')])
     assert worker['volumes'] == [
         {'name': 'vf-mount-1', 'hostPath': {'path': '/models'}},
         {'name': 'vf-pvc-0', 'persistentVolumeClaim': {'claimName': 'vf-test-share'}}]
     assert [m['mountPath'] for m in worker['containers'][0]['volumeMounts']] == \
         ['/models', '/opt/data/share']
-    for key in (('Job', 'vf-render-numbers'), ('Job', 'vf-render-printer'),
-                ('Job', 'vf-render-provision'), ('Deployment', 'nats'), ('Deployment', 'redis')):
+    for key in (('Job', 'vf-render-r1-numbers'), ('Job', 'vf-render-r1-printer'),
+                ('Job', 'vf-render-r1-provision'), ('Deployment', 'nats'), ('Deployment', 'redis')):
         assert _pod_spec(docs[key])['priorityClassName'] == 'cluster-batch', key
 
 def test_the_default_render_carries_no_priority_or_claim(tmp_path, monkeypatch):

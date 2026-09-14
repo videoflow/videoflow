@@ -1,8 +1,10 @@
 '''
 RedisPayloadStore (RFC 0006 BLOB-13/14/15) against a live Redis: real
 WATCH/MULTI/EXEC, real expiry, two real clients racing on the last two
-obligations of one object, and the capability read-back of the dev compose
-server (persistence off, ``volatile-lru``).
+obligations of one object, and the capability read-back of the compose server
+as it is actually configured (the dev profile's append-only, ``noeviction``
+shape since RFC 0006 was accepted; the pre-RFC ``volatile-lru`` cache is
+recognised for what it is when that is what answers).
 
 Gated like test_blob_reclamation.py: a raw socket probe of VF_TEST_REDIS_URL,
 never a client connect at collection time. This bucket's conftest also skips
@@ -150,15 +152,17 @@ def test_companion_keys_share_the_blob_key_slot(store, rps):
         with pytest.raises(store._errors.ResponseError):   # standalone: the probe is not even attempted
             store.client.cluster('KEYSLOT', key)
 
-def test_capabilities_observed_on_the_dev_server(store, rps):
-    policy = store.client.config_get('maxmemory-policy')['maxmemory-policy']
-    if policy == 'noeviction':
-        pytest.skip(f'{REDIS_URL} is not the dev compose cache (maxmemory-policy = {policy})')
+def test_capabilities_observed_match_the_servers_configuration(store, rps):
+    # Read back, never assumed: the verdict follows the live CONFIG, whichever
+    # shape the compose file (or an operator) started the server with.
+    config = {k: store.client.config_get(k)[k] for k in ('maxmemory-policy', 'appendonly', 'save')}
+    evicts = config['maxmemory-policy'] != 'noeviction'
+    persists = config['appendonly'] == 'yes' or config['save'] != ''
     caps = rps.redis_capabilities_observed(store.client)
     assert caps.adapter == 'redis' and caps.reader_identities and caps.max_object_bytes == 512 << 20
-    assert isinstance(caps.evictable, Known) and caps.evictable.value is True
-    assert isinstance(caps.durable, Known) and caps.durable.value is False
-    assert store.capabilities().durable.value is False
+    assert isinstance(caps.evictable, Known) and caps.evictable.value is evicts
+    assert isinstance(caps.durable, Known) and caps.durable.value is (persists and not evicts)
+    assert store.capabilities().durable.value is caps.durable.value
 
 def test_counter_only_blob_uses_the_rfc0002_fallback(store, rps, tracked):
     from videoflow.wire.serialization import RedisBlobStore

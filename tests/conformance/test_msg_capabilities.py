@@ -44,10 +44,11 @@ from videoflow.messaging import topology
 
 # -- MSG-001 ----------------------------------------------------------------------
 
-#: Which advertised capability each profile cannot do without (the planner's rules).
+#: Which advertised transport capability each profile cannot do without (the
+#: planner's rules). Durable control is the run ledger's, not the transport's
+#: (RFC 0006 CTRL-4): it is refused below by weakening the *runtime store*.
 _MANDATORY = {
     RELIABLE_WORK: ('retained_backlog', 'recoverable_delivery'),
-    DURABLE_CONTROL: ('durable_control',),
     REPLAY_ARCHIVE: ('archive',),
 }
 
@@ -109,8 +110,15 @@ def _oracle_msg_001(planner : Callable[..., Any], report : List[Dict[str, Any]])
             backend = _full_backend(clock)
             weakened = dataclasses.replace(backend.capabilities(), **{capability: False})
             expect_rejection(backend, profile, capability, capabilities = weakened, runtime = _DURABLE_RUNTIME)
-    # Durable control also needs a durable runtime store, and payload references a durable store.
+    # Durable control needs a durable, shared runtime store — with none composed,
+    # with a memory store, and with a store whose durability was not observed —
+    # whatever the transport declares; payload references need a durable store.
     expect_rejection(_full_backend(clock), DURABLE_CONTROL, 'durable runtime store')
+    memory_runtime = RuntimeCapabilities('memory', durable = known(False), shared_across_processes = False,
+                                         restart_safe_joins = False, elastic_state = False)
+    transient = dataclasses.replace(_full_backend(clock).capabilities(), durable_control = False)
+    expect_rejection(_full_backend(clock), DURABLE_CONTROL, 'memory runtime store', capabilities = transient,
+                     runtime = memory_runtime)
     evictable = PayloadCapabilities('memory', durable = known(False), evictable = known(True),
                                     atomic_multikey = known(True), max_object_bytes = None,
                                     reader_identities = True)
@@ -119,9 +127,16 @@ def _oracle_msg_001(planner : Callable[..., Any], report : List[Dict[str, Any]])
 
     # Core-only cannot downgrade: composing a durable runtime does not make the
     # transport retain or recover anything, and the rejection says which half is missing.
-    for profile in (RELIABLE_WORK, DURABLE_CONTROL, REPLAY_ARCHIVE):
+    for profile in (RELIABLE_WORK, REPLAY_ARCHIVE):
         core = MemoryMessagingBackend(clock, core_only = True)
         expect_rejection(core, profile, 'core-only transport', runtime = _DURABLE_RUNTIME)
+    # Durable control, by contrast, is the ledger's promise: a core transport that
+    # only wakes workers is enough once the run-state records live in a durable,
+    # shared store (CTRL-1a/CTRL-4).
+    core = MemoryMessagingBackend(clock, core_only = True)
+    plan = _deploy(core, FlowRequirements(profiles = (ProfileRequest('p', DURABLE_CONTROL),)), planner,
+                   runtime = _DURABLE_RUNTIME)
+    assert plan.channel_profiles == {'p': DURABLE_CONTROL}
     core = MemoryMessagingBackend(clock, core_only = True)
     plan = _deploy(core, FlowRequirements(profiles = (ProfileRequest('p', LIVE_LATEST),)), planner)
     assert plan.channel_profiles == {'p': LIVE_LATEST}
@@ -154,7 +169,7 @@ def test_msg_001_capability_negotiation_rejects_unsupported_reliability(evidence
     report : List[Dict[str, Any]] = []
     _oracle_msg_001(plan_composition, report)
     (evidence_dir / 'capability_manifest.json').write_text(json.dumps(report, indent = 2))
-    assert sum(r['outcome'] == 'rejected' for r in report) >= 9
+    assert sum(r['outcome'] == 'rejected' for r in report) >= 8
 
 
 @pytest.mark.negative_control(of = 'MSG-001')
@@ -359,11 +374,9 @@ def test_msg_020_run_teardown_uses_exact_ownership_and_preserves_other_runs(nats
     record : Dict[str, Any] = {'flow': flow}
 
     async def _streams(js : Any) -> set:
-        names = set()
-        page = await js.streams_info_iterator(offset = 0) if hasattr(js, 'streams_info_iterator') else await js.streams_info()
-        for info in page:
-            names.add(info.config.name)
-        return names
+        # Every page: a shared dev broker holds far more than the 256 streams one
+        # STREAM.LIST reply carries, and this run's streams sort late.
+        return {info.config.name for info in await topology._list_streams(js)}
 
     async def _go() -> None:
         nc = await nats.connect(nats_url)

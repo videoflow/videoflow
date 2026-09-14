@@ -24,6 +24,7 @@ from __future__ import absolute_import, division, print_function
 
 import hashlib
 import logging
+import os
 import random
 import threading
 import time
@@ -73,12 +74,13 @@ from ..backends.runtime import (
     COMPLETION_UNKNOWN,
     OUTCOME_ACCEPTED,
     OUTCOME_DUPLICATE,
+    RECONCILE_INTERVAL_ENV,
     FlowRuntime,
     OwnershipToken,
+    reconcile_interval_from_env,
     replayable_trace_id,
     source_epoch_trace_id,
 )
-from ..core import constants
 from ..core.constants import REALTIME
 from ..core.context import CHECKPOINT_METADATA_KEY
 from ..core.engine import Messenger
@@ -93,6 +95,7 @@ from ..core.errors import (
     DecodeError,
     IncompatibleProfile,
     PartitionKeyError,
+    StaleAuthority,
     TransientFailure,
     WorkerFatal,
     classify,
@@ -135,7 +138,6 @@ from .jetstream_backend import (
 )
 from .topology import (
     DLQ_RETENTION_SECONDS,
-    LEGACY_BIND_CREDIT,
     consumer_credit,
     durable_name_for,
     join_item_credit,
@@ -325,10 +327,9 @@ class NATSMessenger(Messenger):
         - backend: the ``MessagingBackend`` to compose; a \
             ``JetStreamMessagingBackend`` on ``nats_url`` when None.
         - payload_store: an obligation-keeping ``PayloadStore`` (RFC 0006). Used \
-            instead of ``blob_store`` when the ``VF_RFC0006`` switch is on: puts \
-            acquire the reader obligations in ``blob_reader_ids`` and the \
-            publisher's intent, releases happen by reader id after a confirmed \
-            settlement (BLOB-14). Ignored with the switch off.
+            instead of ``blob_store`` when given: puts acquire the reader \
+            obligations in ``blob_reader_ids`` and the publisher's intent, \
+            releases happen by reader id after a confirmed settlement (BLOB-14).
         - blob_reader_ids ([str]): the reader obligations every put acquires \
             (``VF_BLOB_READER_IDS``): ``<child>`` per competing child, \
             ``<child>/p<i>`` per partitioned replica.
@@ -402,7 +403,7 @@ class NATSMessenger(Messenger):
         # This node's own reader obligation id (BLOB-13): one per competing node,
         # one per replica of a partitioned node.
         self._reader_id = f'{node.name}/p{replica_id}' if self._partition_by else node.name
-        self._payload_store = payload_store if constants.RFC0006 else None
+        self._payload_store = payload_store
         self._blob_reader_ids = list(blob_reader_ids or [])
         # (publication id, content id) of the message being encoded, so the payload
         # bridge can name the publisher's intent and the content at put time.
@@ -429,9 +430,9 @@ class NATSMessenger(Messenger):
         # RUN-004: a node that declares its committed results must be replayed
         # byte-for-byte keeps their bytes in the ledger (``replay_policy``).
         self._replay_committed = node.replay_policy == 'committed'
-        # Under the switch: the barrier, the ledger budget and source epochs are
-        # decided once, from the store's read-back, not per message.
-        self._ledger = constants.RFC0006 and self._runtime.durable_shared()
+        # The barrier, the ledger budget and the partition lease are decided
+        # once, from the store's read-back, not per message.
+        self._ledger = self._runtime.durable_shared()
         self._max_deliver = max_deliver_for(flow_type, max_retries, delivery_policy, ledger_budget = self._ledger)
         self._authority : OwnershipToken | None = None
         # Members of groups whose output was committed before a crash (outbox says
@@ -489,6 +490,7 @@ class NATSMessenger(Messenger):
         #   producers (to stop early) and by receive_message (to stop waiting).
         # _closing: set only by close().
         self._termination_event = threading.Event()
+        self._stop_reason : str | None = None
         self._closing = threading.Event()
 
         self._backend : MessagingBackend = backend if backend is not None else JetStreamMessagingBackend(
@@ -510,29 +512,27 @@ class NATSMessenger(Messenger):
         # ensuring them here is the idempotent fallback it always was.
         backend.ensure_channel(channel_spec_for(self._flow_id, self._run_id, self._node.name, self._flow_type,
                                                 profile), operation)
-        backend.subscribe_control(self._termination_event.set)
+        backend.subscribe_control(lambda: self._stop(Messenger.STOP_CONTROL))
         for parent_name in self._parent_names:
             channel = ChannelId(self._flow_id, self._run_id, parent_name)
             backend.ensure_channel(channel_spec_for(self._flow_id, self._run_id, parent_name, self._flow_type,
                                                     profile), operation)
             # Data consumer: shared durable (competing consumers), or a per-replica
             # durable for a partitioned node (broadcast + client-side ownership).
-            # The broker-side credit is the pre-RFC value until RFC 0006 derives it
-            # from the replica count (STREAM-15), the same way provisioning does.
+            # The broker-side credit derives from the replica count and the join
+            # working set (STREAM-15), the same way provisioning does.
             working_set = join_item_credit(self._parent_names, self._join_policy.to_dict(), self._flow_type)
-            credit = (consumer_credit(self._nb_tasks, self._partition_by is not None, item_credit = working_set)
-                      if constants.RFC0006 else LEGACY_BIND_CREDIT)
+            credit = consumer_credit(self._nb_tasks, self._partition_by is not None, item_credit = working_set)
             data = SubscriptionId(channel, self._node.name,
                                   self._replica_id if self._partition_by else None, SUBSCRIPTION_DATA)
             verified = backend.ensure_subscription(subscription_spec_for(data, self._ack_wait, self._max_deliver,
                                                                          credit), operation)
             self._admit_join_credit(parent_name, verified.effective, working_set)
-            if self._partition_by or constants.RFC0006:
-                # Decide ownership and replay scope where the delivery arrives, so a
-                # message this replica will never process is acked out of its ack
-                # window at once instead of waiting behind the one being processed;
-                # a backend without the filter gets the same decision in _admit_data.
-                backend.set_admission(data, self._admit_on_loop, self._on_skipped)
+            # Decide ownership and replay scope where the delivery arrives, so a
+            # message this replica will never process is acked out of its ack
+            # window at once instead of waiting behind the one being processed;
+            # a backend without the filter gets the same decision in _admit_data.
+            backend.set_admission(data, self._admit_on_loop, self._on_skipped)
             # EOS consumer: per-replica durable so every replica observes EOS.
             eos = SubscriptionId(channel, self._node.name, None, SUBSCRIPTION_EOS, instance = self._instance_id)
             backend.ensure_subscription(subscription_spec_for(eos, 30, 1, 1), operation)
@@ -549,7 +549,11 @@ class NATSMessenger(Messenger):
         """
         runtime = self._runtime
         if self._ledger:
-            self._authority = runtime.acquire_partition()
+            # A worker that claimed its replica slot through the ledger already
+            # holds the partition (claim_replica_slot); everyone else takes it here.
+            self._authority = runtime.held_partition() or runtime.acquire_partition()
+            self._reconcile_obligations('start')
+            self._start_lease_renewal()
             # A parent whose terminator an earlier process recorded (EOS-7) has
             # ended for this process too: the record is the fact, not the marker
             # this process's own EOS durable will replay as a duplicate (RUN-010).
@@ -586,7 +590,7 @@ class NATSMessenger(Messenger):
         safe = safe_inline_threshold(max_payload.value, self._inline_threshold)
         if safe >= self._inline_threshold:
             return
-        if self._blob_store is None and constants.RFC0006:
+        if self._blob_store is None:
             raise ConfigError(
                 f'{self._node.name}: the inline payload threshold ({self._inline_threshold} bytes) exceeds what '
                 f'the broker can carry (max_payload {max_payload.value} bytes, {ENVELOPE_OVERHEAD_BYTES} reserved '
@@ -601,11 +605,11 @@ class NATSMessenger(Messenger):
         """
         A join whose durable admits fewer un-acked deliveries than its working set
         can be filled with halves that never complete (RUN-005): refused before
-        any input is taken, under the switch, naming both numbers. The credit read
-        back is the durable's *effective* one — provisioning may have created it
-        with another value, and a bind never changes an existing durable.
+        any input is taken, naming both numbers. The credit read back is the
+        durable's *effective* one — provisioning may have created it with another
+        value, and a bind never changes an existing durable.
         """
-        if not constants.RFC0006 or len(self._parent_names) < 2:
+        if len(self._parent_names) < 2:
             return
         # JetStream reports the durable's ``max_ack_pending``; the reference model its ``item_credit``.
         raw = effective.get('max_ack_pending', effective.get('item_credit'))
@@ -649,7 +653,7 @@ class NATSMessenger(Messenger):
             key = trace_id
         else:
             key = (metadata or {}).get(self._partition_by)
-        if constants.RFC0006 and not PartitionKeyPolicy.is_valid_key(key):
+        if not PartitionKeyPolicy.is_valid_key(key):
             if self._key_policy.invalid == INVALID_KEY_FALLBACK:
                 return min(self._key_policy.fallback_partition, self._nb_tasks - 1), True
             return 0, True
@@ -657,9 +661,9 @@ class NATSMessenger(Messenger):
         return int(digest[:8], 16) % self._nb_tasks, False
 
     def _replay_addressed_elsewhere(self, headers : Any) -> bool:
-        """A replayed dead letter names its target (DELIV-16): honoured under RFC 0006, every child processes it otherwise."""
+        """A replayed dead letter names its target (DELIV-16): a child it is not addressed to acks and skips it."""
         target = headers.get('VF-Replay-Target') if headers else None
-        return bool(constants.RFC0006 and target and target != self._node.name)
+        return bool(target and target != self._node.name)
 
     def _admit_on_loop(self, delivery : Delivery) -> bool:
         """
@@ -764,12 +768,98 @@ class NATSMessenger(Messenger):
 
     def close(self) -> None:
         self._closing.set()
+        self._stop_lease_renewal(release = True)
         self._backend.shutdown()
+
+    # -- obligation reconciliation (BLOB-14 step 4) --------------------------
+
+    def _reconcile_obligations(self, when : str) -> None:
+        '''
+        Reclaim what nobody owes any more, judged from the run ledger and the
+        broker's own facts (``RuntimeObligationLedger``): at start, so a release
+        an earlier process never made is not a leak forever (PAY-006), and
+        periodically, so a live channel's evictions free their objects
+        (PAY-012). Never on a memory ledger — its outboxes are process-local.
+        '''
+        if self._payload_store is None or not self._ledger:
+            return
+        # Function-level: obligations imports this module's peers; the ledger is
+        # only ever built here, after the runtime store's read-back.
+        from .obligations import RuntimeObligationLedger
+        channels = list(self._parent_names) + [self._node.name]
+        try:
+            observation = self._payload_store.reconcile(
+                RuntimeObligationLedger(self._runtime, self._backend, channels),
+                f'{self._node.name}:r{self._replica_id}:{when}')
+        except Exception as e:  # noqa: BLE001 — a store hiccup: the next pass retries; nothing is decided
+            logger.warning(f'{self._node.name}: obligation reconciliation ({when}) failed: {e!r}')
+            return
+        if observation.reclaimed or observation.unknown:
+            logger.info(f'{self._node.name}: reconciliation ({when}) reclaimed {len(observation.reclaimed)} object(s), '
+                        f'{len(observation.unknown)} unobservable')
+
+    # -- partition lease (RUN-018/019) -------------------------------------
+
+    def _start_lease_renewal(self) -> None:
+        '''
+        Keep this process's partition lease alive while it runs: renewed every
+        third of the lease, on a daemon thread, so a live holder is never
+        usurped and a dead one lapses within one lease. A renewal refused by the
+        ledger (a newer owner took over) stops the messenger the way a stale
+        commit would — the next receive sees the termination.
+        '''
+        if self._authority is None:
+            return
+        self._lease_stop = threading.Event()
+        interval = max(0.5, self._runtime.lease_seconds / 3.0)
+        reconcile_every = reconcile_interval_from_env(os.environ.get(RECONCILE_INTERVAL_ENV))
+        last_reconcile = time.monotonic()
+
+        def renew() -> None:
+            nonlocal last_reconcile
+            while not self._lease_stop.wait(interval):
+                try:
+                    assert self._authority is not None
+                    self._runtime.renew_partition(self._authority)
+                except StaleAuthority as e:
+                    logger.error(f'{self._node.name}: partition lease lost ({e}); stopping')
+                    self._stop(Messenger.STOP_AUTHORITY_LOST)
+                    return
+                except Exception as e:  # noqa: BLE001 — a store hiccup: try again next interval
+                    logger.warning(f'{self._node.name}: partition lease renewal failed ({e!r})')
+                if reconcile_every > 0 and time.monotonic() - last_reconcile >= reconcile_every:
+                    last_reconcile = time.monotonic()
+                    self._reconcile_obligations('periodic')
+        self._lease_thread = threading.Thread(target = renew, name = f'lease-{self._node.name}', daemon = True)
+        self._lease_thread.start()
+
+    def _stop_lease_renewal(self, release : bool) -> None:
+        stop = getattr(self, '_lease_stop', None)
+        if stop is None:
+            return
+        stop.set()
+        thread = getattr(self, '_lease_thread', None)
+        if thread is not None and thread is not threading.current_thread():
+            thread.join(5.0)
+        if release and self._authority is not None:
+            try:
+                self._runtime.release_partition(self._authority)
+            except Exception as e:  # noqa: BLE001 — a replacement waits out the lease instead
+                logger.warning(f'{self._node.name}: partition lease not released ({e!r})')
 
     # -- Messenger interface ---------------------------------------------
 
     def check_for_termination(self) -> bool:
         return self._termination_event.is_set()
+
+    def stop_reason(self) -> str | None:
+        return self._stop_reason
+
+    def _stop(self, reason : str) -> None:
+        """Record why this process is stopping (the first reason wins) and raise the termination flag."""
+        if self._stop_reason is None:
+            self._stop_reason = reason
+        self._termination_event.set()
 
     def quiesce(self) -> None:
         """
@@ -777,9 +867,10 @@ class NATSMessenger(Messenger):
         held by the task still settles normally, and what the adapter prefetched
         but never handed out goes back to the broker at once, so a survivor picks
         it up now rather than after ``ack_wait`` lapses on a process that is
-        about to die (RUN-030). Idempotent.
+        about to die (RUN-030). Idempotent. A quiesced process publishes no EOS:
+        its replacement continues the stream (``stop_reason``).
         """
-        self._termination_event.set()
+        self._stop(Messenger.STOP_QUIESCE)
         backend = self._backend
         if isinstance(backend, JetStreamMessagingBackend):
             backend.stop_receiving()
@@ -829,9 +920,7 @@ class NATSMessenger(Messenger):
             # was derived from, so a re-run derives the same message_id (dedup).
             self._trace_counter += 1
             seq = self._trace_counter
-            if not constants.RFC0006:
-                trace_id = f'{self._node.name}:{self._trace_counter}'
-            elif self._replayable:
+            if self._replayable:
                 # MSGID-6: the source's own offset, so a re-run re-mints the same
                 # id; a declared analysis version is a namespace of its own.
                 analysis = self._node.analysis_version if isinstance(self._node, ProducerNode) else None
@@ -885,8 +974,8 @@ class NATSMessenger(Messenger):
                     error = error_to_dict(error))
 
     def _terminator_seq(self) -> int:
-        """EOS-7 under the switch: the distinct DATA ids this replica published; the last input seq otherwise."""
-        return self._runtime.published_count() if constants.RFC0006 else self._last_seq
+        """EOS-7: the distinct DATA ids this replica published."""
+        return self._runtime.published_count()
 
     def checkpoint(self, state : bytes) -> None:
         """
@@ -901,9 +990,9 @@ class NATSMessenger(Messenger):
         its checkpoint to ``publish_message`` instead (``RuntimeContext``), and
         ``_publish`` commits state and output together. A superseded owner is
         refused (RUN-023); a ledger that dies with the process is refused too,
-        under the switch, rather than faking durability (RUN-022).
+        rather than faking durability (RUN-022).
         """
-        if constants.RFC0006 and not self._ledger:
+        if not self._ledger:
             self._refuse_ephemeral_ledger('a checkpoint (ctx.checkpoint)')
         if self._ledger and self._authority is not None:
             self._runtime.check_authority(self._authority)
@@ -928,11 +1017,11 @@ class NATSMessenger(Messenger):
 
     def resume_offset(self) -> int:
         """
-        For a replayable producer under the switch: the last *accepted* source
-        offset in the ledger, so the source resumes from the next one after a
-        restart (``MSGID-6``). 0 when nothing was accepted (or the node is live).
+        For a replayable producer: the last *accepted* source offset in the
+        ledger, so the source resumes from the next one after a restart
+        (``MSGID-6``). 0 when nothing was accepted (or the node is live).
         """
-        if not (constants.RFC0006 and self._replayable):
+        if not self._replayable:
             return 0
         state, position = self._runtime.restore_checkpoint()
         if state is not None:
@@ -1051,7 +1140,7 @@ class NATSMessenger(Messenger):
         digest = hashlib.sha256(buf).hexdigest()[:16]
         committing = kind == KIND_DATA
         if committing:
-            if constants.RFC0006 and not self._ledger and (self._replay_committed or checkpoint is not None):
+            if not self._ledger and (self._replay_committed or checkpoint is not None):
                 self._refuse_ephemeral_ledger('replay_policy = "committed"' if self._replay_committed
                                               else 'a checkpoint (ctx.checkpoint)')
             faults.barrier('group.commit.before', op_id = publication_id, node = node_name)
@@ -1060,7 +1149,8 @@ class NATSMessenger(Messenger):
                 # owner is refused here, at the last moment before anything is
                 # written or sent.
                 runtime.check_authority(self._authority)
-        runtime.intend_publication(publication_id, digest, (put_ref.key,) if put_ref is not None else (), kind)
+        runtime.intend_publication(publication_id, digest, (put_ref.key,) if put_ref is not None else (), kind,
+                                   readers = self._blob_reader_ids if put_ref is not None else ())
         if committing:
             if checkpoint is not None and not self._replayable:
                 # The state and the output it produced, in one record: a replacement
@@ -1080,7 +1170,7 @@ class NATSMessenger(Messenger):
             faults.barrier('group.commit.after', op_id = publication_id, node = node_name)
         outcome, failure, orphaned = self._publish_envelope(envelope, is_abort = msg_type == MSG_TYPE_ABORT)
         runtime.resolve_publication(publication_id, outcome)
-        if committing and self._replayable and constants.RFC0006 and isinstance(outcome, Accepted):
+        if committing and self._replayable and isinstance(outcome, Accepted):
             # MSGID-6: the last *accepted* offset is the replay position — never a
             # sent one, so an ambiguous send can not advance it past a lost offset.
             if checkpoint is not None:
@@ -1353,7 +1443,7 @@ class NATSMessenger(Messenger):
             admitted = self._dlq_sampler.admit(code, self._node.name)
             if admitted:
                 record = self._dlq_publish(handle, error) or None
-                if record is None and constants.RFC0006:
+                if record is None:
                     # The specimen was owed and could not be recorded: keep the
                     # delivery for a later attempt rather than lose the evidence.
                     self._mark_unresolved(handle.token.subscription, handle.stream_seq)
@@ -1646,7 +1736,7 @@ class NATSMessenger(Messenger):
             # replica finishing normally does not undo another one dying.
             self._aborted_parents[parent_name] = decoded.get('error') or {}
         handle = _AckHandle(delivery.token, self, raw = delivery.envelope_bytes)
-        if constants.RFC0006 and decoded:
+        if decoded:
             # EOS-7: every terminator is a fact keyed by (parent, replica, kind),
             # recorded before it is acked; a duplicate of a recorded one is acked.
             kind = 'abort' if aborted else 'eos'
@@ -1774,13 +1864,10 @@ class NATSMessenger(Messenger):
         poison = error if isinstance(error, DecodeError) else DecodeError(
             f'{type(error).__name__}: {error}'[:512],
             remedy = 'The wire bytes could not be decoded; inspect the dead letter with videoflow dlq show.')
-        if constants.RFC0006:
-            # The poison ladder, exactly as for a node that raised: dead-lettered
-            # (or sampled) before the delivery is terminated; a failed dead-letter
-            # publish keeps the delivery.
-            self._settle_failure(handle, dict(error_to_dict(poison), disposition = POISON), POISON)
-            return
-        handle.term(self._terminal_record(handle, {'code': poison.code, 'message': str(error)}, 'undecodable'))
+        # The poison ladder, exactly as for a node that raised: dead-lettered
+        # (or sampled) before the delivery is terminated; a failed dead-letter
+        # publish keeps the delivery (DELIV-15).
+        self._settle_failure(handle, dict(error_to_dict(poison), disposition = POISON), POISON)
 
     # -- EOS drain -------------------------------------------------------
 
@@ -1789,11 +1876,16 @@ class NATSMessenger(Messenger):
         The all-parents-stopped shape ``receive_message`` returns when this node
         should end. An aborted parent is reported as such so the task raises the
         real cause and relays it downstream, instead of treating a crashed
-        upstream as a clean end of stream.
+        upstream as a clean end of stream. A hard stop — the termination flag
+        with no parent actually ended (CTRL-3) — is marked ``is_hard_stop`` so
+        the task breaks without relaying an end of stream nobody published.
         """
+        hard = self._termination_event.is_set() and not self._all_parents_stopped() \
+            and not self._any_parent_aborted_and_drained()
         return {
             name: {
                 'message': None, 'metadata': None, 'is_stop_signal': True,
+                'is_hard_stop': hard,
                 'is_abort': name in self._aborted_parents,
                 'abort_origin': name if name in self._aborted_parents else None,
                 'abort_error': self._aborted_parents.get(name),

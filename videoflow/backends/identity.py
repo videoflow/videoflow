@@ -108,7 +108,7 @@ def derived_names(specs : Sequence[NodeSpec], flow_id : str, run_id : str,
     # Function-level: topology imports the optional `nats` extra and manifests the
     # optional `yaml` extra at module scope; identities must be computable wherever
     # the graph can be compiled (an operator machine without either).
-    from ..deploy.manifests import k8s_name
+    from ..deploy.manifests import flow_name, run_name
     from ..messaging import topology as t
 
     names : dict[str, list[LogicalIdentity]] = {}
@@ -119,8 +119,10 @@ def derived_names(specs : Sequence[NodeSpec], flow_id : str, run_id : str,
     add(t.control_subject_for(flow_id, run_id), 'control_subject', flow_id, run_id)
     add(t.dlq_stream_name(flow_id), 'dlq_stream', flow_id)
     add(t.stream_label_selector(flow_id, run_id), 'stream_prefix', flow_id, run_id)
-    for k8s_kind in ('broker', 'specs', 'netpol', 'provision'):
-        add(k8s_name('vf', flow_id, k8s_kind), 'k8s_' + k8s_kind, flow_id)
+    # Kubernetes names are run-scoped (RFC 0006 §10); only the NetworkPolicy is the flow's.
+    for k8s_kind in ('broker', 'specs', 'provision'):
+        add(run_name(flow_id, run_id, k8s_kind), 'k8s_' + k8s_kind, flow_id, run_id)
+    add(flow_name(flow_id, 'netpol'), 'k8s_netpol', flow_id)
     by_name = {spec.name: spec for spec in specs}
     for spec in specs:
         n = spec.name
@@ -129,9 +131,9 @@ def derived_names(specs : Sequence[NodeSpec], flow_id : str, run_id : str,
         add(t.eos_subject_for(flow_id, run_id, n), 'eos_subject', flow_id, run_id, n)
         add(t.eos_anchor_durable_name_for(n), 'eos_anchor', n)
         add(t.dlq_subject_for(flow_id, run_id, n), 'dlq_subject', flow_id, run_id, n)
-        add(k8s_name('vf', flow_id, n), 'k8s_workload', flow_id, n)
+        add(run_name(flow_id, run_id, n), 'k8s_workload', flow_id, run_id, n)
         for suffix in ('env', 'hl', 'pdb', 'scaler'):
-            add(k8s_name('vf', flow_id, n, suffix), 'k8s_' + suffix, flow_id, n)
+            add(run_name(flow_id, run_id, n, suffix), 'k8s_' + suffix, flow_id, run_id, n)
         for parent in spec.parents:
             if parent not in by_name:
                 continue
@@ -188,11 +190,11 @@ def node_name_collisions(names : Sequence[str]) -> list[Collision]:
     '''
     # Function-level: topology imports the optional `nats` extra and manifests the
     # optional `yaml` extra at module scope; graph validation must not need either.
-    from ..deploy.manifests import k8s_name
+    from ..deploy.manifests import run_name
     from ..messaging.topology import sanitize
 
     found : list[Collision] = []
-    for kind, encode in (('broker', sanitize), ('kubernetes', lambda n: k8s_name('vf', 'f', n))):
+    for kind, encode in (('broker', sanitize), ('kubernetes', lambda n: run_name('f', 'r', n))):
         groups : dict[str, list[str]] = {}
         for name in names:
             groups.setdefault(encode(name), []).append(name)

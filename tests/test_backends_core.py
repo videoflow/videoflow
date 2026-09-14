@@ -281,7 +281,7 @@ def test_sanitize_collisions_are_detected_on_compiled_specs():
 def test_k8s_name_case_and_truncation_collisions_are_detected():
     from videoflow.backends.identity import node_name_collisions
     found = node_name_collisions(['p', 'Node', 'node'])
-    assert any(c.physical == 'vf-f-node' and c.identities[0].kind == 'kubernetes' for c in found)
+    assert any(c.physical == 'vf-f-r-node' and c.identities[0].kind == 'kubernetes' for c in found)
     long_a, long_b = 'x' * 70 + 'a', 'x' * 70 + 'b'
     assert any(c.identities[0].kind == 'kubernetes' for c in node_name_collisions([long_a, long_b]))
     assert node_name_collisions(['p', 'a', 'c']) == []

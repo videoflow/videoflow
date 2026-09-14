@@ -27,7 +27,7 @@ import socket
 import subprocess
 import sys
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from videoflow.backends.outcomes import Unknown
 from videoflow.utils.system import host_devices_observed
@@ -96,7 +96,8 @@ def busy_now(uuids : List[str]) -> Dict[str, List[int]]:
 
 
 def run_probe(mask : Optional[str], mode : str = 'enumerate', hold_bytes : int = 0, hold_seconds : float = 0.0,
-              timeout : float = 60.0, extra_env : Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+              timeout : float = 60.0, extra_env : Optional[Dict[str, str]] = None,
+              extra_args : Sequence[str] = ()) -> Dict[str, Any]:
     '''
     The CUDA probe as a child process under ``mask`` (None = unset the
     variable). Returns its JSON report; a probe that crashed reports
@@ -107,7 +108,7 @@ def run_probe(mask : Optional[str], mode : str = 'enumerate', hold_bytes : int =
     if mask is not None:
         env['CUDA_VISIBLE_DEVICES'] = mask
     env.update(extra_env or {})
-    args = [sys.executable, str(PROBE), mode, str(hold_bytes), str(hold_seconds)]
+    args = [sys.executable, str(PROBE), mode, str(hold_bytes), str(hold_seconds), *extra_args]
     try:
         proc = subprocess.run(args, capture_output = True, text = True, timeout = timeout, env = env, check = False)
     except subprocess.TimeoutExpired:

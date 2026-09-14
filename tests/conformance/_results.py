@@ -28,7 +28,7 @@ DEFECT_NOT_DETECTED = 'DEFECT_NOT_DETECTED'
 #: Environment variables whose presence means a gate *may* be open. Recorded, not
 #: interpreted: the fixtures decide whether the resource actually answered.
 GATE_ENV = (
-    'VF_RFC0006', 'VF_TEST_SEED', 'VF_TEST_NATS_URL', 'VF_TEST_NATS_CLUSTER_URLS',
+    'VF_TEST_SEED', 'VF_TEST_NATS_URL', 'VF_TEST_NATS_CLUSTER_URLS',
     'VF_TEST_NATS_PROXIED_URL', 'VF_TEST_NATS_RESTRICTED_URL', 'VF_TEST_TOXIPROXY_URL',
     'VF_TEST_REDIS_URL', 'VF_TEST_REDIS_DURABLE_URL', 'VF_TEST_REDIS_SMALL_URL',
     'VF_K8S_CONTEXT', 'VF_K8S_NAMESPACE', 'VF_K8S_PVC', 'VF_K8S_NATS_URL',

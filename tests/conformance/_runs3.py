@@ -165,7 +165,10 @@ def worker_env(nats_url : str, flow_id : str, run_id : str, node_name : str, nod
         'VF_NODE_NAME': node_name, 'VF_PARENT_NAMES': ','.join(parents), 'VF_HAS_CHILDREN': '0',
         'VF_NATS_URL': nats_url, 'VF_FLOW_ID': flow_id, 'VF_FLOW_TYPE': BATCH, 'VF_RUN_ID': run_id,
         'VF_REPLICA_ID': '0', 'VF_ACK_WAIT_SECONDS': str(ack_wait), 'VF_MAX_RETRIES': str(max_retries),
-        'VF_HEALTH_PORT': '0', 'VF_RFC0006': '1',
+        'VF_HEALTH_PORT': '0',
+        # A crashed worker's partition lease lapses this fast, so the replacement a
+        # case starts right after a real crash binds within seconds, not a default lease.
+        'VF_PARTITION_LEASE_SECONDS': '2',
         'PYTHONPATH': os.pathsep.join([str(HERE)] + [p for p in [os.environ.get('PYTHONPATH')] if p]),
     })
     env.update(extra or {})
@@ -225,7 +228,17 @@ class Messengers:
     def ledger_messenger(self, driver : JetStreamDriver, root : str, node : str, parents : Sequence[str],
                          max_retries : int, ack_wait : int = 2, delivery : Optional[dict] = None,
                          flow_type : str = BATCH) -> NATSMessenger:
-        '''A worker's messenger over the file ledger: with RFC 0006 on, it binds at the ledger budget (``max_deliver = -1``).'''
+        '''
+        A worker's messenger over the file ledger: with RFC 0006 on, it binds at
+        the ledger budget (``max_deliver = -1``). A second messenger for the same
+        node is a *replacement*: the predecessor this pool still holds is
+        declared dead first (its partition lease forfeited, as a crashed process's
+        would lapse), so the replacement binds at once instead of being refused
+        as a scaled-out singleton.
+        '''
+        for previous in list(self._open):
+            if previous._node.name == node:
+                previous._stop_lease_renewal(release = True)
         m = NATSMessenger(StubNode(node), list(parents), driver.client_url, driver.flow_id, flow_type, driver.run_id,
                           max_retries = max_retries, ack_wait = ack_wait, delivery_policy = delivery,
                           runtime = ledger_runtime(root, driver.flow_id, driver.run_id, node))

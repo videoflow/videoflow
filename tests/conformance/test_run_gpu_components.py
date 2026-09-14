@@ -11,8 +11,13 @@ does with its grant before the node opens (``videoflow.runtime.gpucheck``, calle
 ``videoflow.runtime.worker`` right after the node is rebuilt). The process level runs
 it against a fake ``nvidia-smi`` on PATH (``tools/fake_nvidia_smi.py``); the gpu level
 against this host's idle test devices with the CUDA-runtime probe of ``_gpu.py`` as
-the independent witness. The fused/batching cases (035/036) and the contrib
-component cases (037/038/040/041/042) stay pending.
+the independent witness. The fused/batching cases (035/036) are the execution
+shapes no shipped engine provides: a node may *declare* a fused execution group
+or a batching contract (``Node.execution_group`` / ``Node.batching_policy``),
+and the composition admission refuses the flow before anything is deployed —
+the primary (gpu) level is therefore UNSUPPORTED, truthfully, with the
+rejection half PASS. The contrib component cases (037/038/040/041/042) are
+implemented in ``../videoflow-contrib``, where the components live.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -24,15 +29,31 @@ from typing import Any, Callable, Dict, List, Optional
 
 import defects
 import defects_alloc
+import defects_run3
 import pytest
 from _gpu import FAKE_SMI, run_probe
+from _status import unsupported
 
+from videoflow.backends import capabilities
 from videoflow.backends.allocation import DeliveredGrant, DeviceIdentity
-from videoflow.core.constants import GPU
-from videoflow.core.errors import ResourceUnavailable
+from videoflow.backends.capabilities import (
+    FlowRequirements,
+    kubernetes_execution_capabilities,
+    local_execution_capabilities,
+)
+from videoflow.consumers import CommandlineConsumer
+from videoflow.core import Flow
+from videoflow.core.compiler import compile_flow
+from videoflow.core.constants import GPU, REALTIME
+from videoflow.core.errors import IncompatibleProfile, ResourceUnavailable
 from videoflow.core.node import ProcessorNode
+from videoflow.deploy.admission import jetstream_capabilities, requirements_for
 from videoflow.deploy.allocation_local import GRANT_ENV, LocalAllocationBackend
+from videoflow.deploy.broker_profiles import broker_profiles
+from videoflow.deploy.compile import declared_requirements
 from videoflow.engines.local import _runs_via_docker, allocate_local_gpus
+from videoflow.processors import IdentityProcessor
+from videoflow.producers import IntProducer
 from videoflow.runtime import gpucheck
 from videoflow.runtime.gpucheck import verify_grant, verify_node_grant
 
@@ -95,10 +116,74 @@ def _report(requested : int, fallback : str, environ : Dict[str, str], peer : bo
     return verify_grant(requested, fallback, peer, environ, grant = grant).to_dict()
 
 
+# -- RUN-035 / RUN-036: declared execution shapes are refused, never approximated ----------------
+
+class _FusedDecode(IdentityProcessor):
+    execution_group = 'decode-infer'
+
+
+class _FusedInfer(IdentityProcessor):
+    execution_group = 'decode-infer'
+
+
+class _Batcher(IdentityProcessor):
+    batching_policy = {'max_batch': 8, 'max_wait_ms': 20, 'fairness': 'round_robin'}
+
+
+def _declaring_flow(kind : str) -> Flow:
+    cam = IntProducer(0, 10, name = 'cam')
+    if kind == 'fused':
+        decode = _FusedDecode(name = 'decode')(cam)
+        infer = _FusedInfer(name = 'infer')(decode)
+        return Flow([CommandlineConsumer(name = 'sink')(infer)], flow_type = REALTIME, flow_id = 'run035')
+    batcher = _Batcher(name = 'batcher')(cam)
+    return Flow([CommandlineConsumer(name = 'sink')(batcher)], flow_type = REALTIME, flow_id = 'run036')
+
+
+def _oracle_declared_shape(kind : str, evidence : Dict[str, Any]) -> None:
+    '''
+    The declaration reaches the compiled document, and every shipped engine's
+    admission refuses it by name before deployment — while a flow declaring
+    nothing is admitted by the same planner. A refusal is a typed error with a
+    remedy, never a warning.
+    '''
+    flow = _declaring_flow(kind)
+    declared = declared_requirements(flow)
+    document = FlowRequirements.from_dict(declared.to_dict())
+    if kind == 'fused':
+        assert document.execution_groups == {'decode-infer': ('decode', 'infer')}, document.execution_groups
+    else:
+        assert document.batching == {'batcher': _Batcher.batching_policy}, document.batching
+    specs = compile_flow(flow)
+    messaging = jetstream_capabilities(broker_profiles('dev')[0])
+    rejections : Dict[str, str] = {}
+    for engine in (local_execution_capabilities(), kubernetes_execution_capabilities(autoscaling = True)):
+        requirements = requirements_for(flow.flow_type, specs, (), document)
+        with pytest.raises(IncompatibleProfile) as e:
+            capabilities.plan_composition(requirements, messaging, execution = engine)
+        text = str(e.value.message)
+        rejections[engine.engine] = text
+        if kind == 'fused':
+            assert 'decode-infer' in text and 'decode' in text and 'infer' in text and 'serialized through' in text, text
+        else:
+            assert 'batcher' in text and 'batching contract' in text, text
+        assert e.value.remedy and ('execution_group' in e.value.remedy or 'batching_policy' in e.value.remedy)
+        # Without an engine in the composition the declaration is refused too.
+        with pytest.raises(IncompatibleProfile):
+            capabilities.plan_composition(requirements, messaging)
+    plain = Flow([CommandlineConsumer(name = 'sink')(IdentityProcessor(name = 'p')(IntProducer(0, 10, name = 'cam')))],
+                 flow_type = REALTIME, flow_id = 'plain')
+    admitted = capabilities.plan_composition(requirements_for(REALTIME, compile_flow(plain), (), declared_requirements(plain)),
+                                             messaging, execution = local_execution_capabilities())
+    assert admitted.channel_profiles, 'the undeclared flow was not admitted'
+    evidence['rejections'] = rejections
+    evidence['engines'] = {e.engine: {'execution_groups': e.execution_groups, 'dynamic_batching': e.dynamic_batching}
+                           for e in (local_execution_capabilities(), kubernetes_execution_capabilities())}
+
+
 @pytest.mark.case('RUN-035')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
-def test_run_035_fused_gpu_execution_groups_preserve_semantics_and_remove() -> None:
+def test_run_035_fused_gpu_execution_groups_preserve_semantics_and_remove(evidence_dir) -> None:
     '''
     RUN-035 (P2, component, gpu): Fused GPU execution groups preserve semantics and remove
     internal transfers.
@@ -106,13 +191,36 @@ def test_run_035_fused_gpu_execution_groups_preserve_semantics_and_remove() -> N
     Acceptance: A supported fused path matches the reference semantics and has zero broker body
     transfers on declared internal edges; unsupported fusion must fail compilation before
     deployment.
+
+    No shipped engine advertises ``execution_groups``, so the fused path cannot be
+    measured here: the case is UNSUPPORTED, with the rejection half — the
+    declaration fails admission before deployment, by name — asserted first.
     '''
+    evidence : Dict[str, Any] = {}
+    _oracle_declared_shape('fused', evidence)
+    (evidence_dir / 'fusion_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
+    unsupported('no composed engine advertises execution_groups; a declared fused group is refused at admission '
+                '(evidence: fusion_admission.json) — the fused path itself cannot be measured')
+
+
+@pytest.mark.case('RUN-035')
+@pytest.mark.level('model')
+@pytest.mark.variant('admission')
+def test_run_035_a_declared_fused_group_is_refused_before_deployment(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_declared_shape('fused', evidence)
+    (evidence_dir / 'fusion_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'RUN-035')
+def test_run_035_detects_a_planner_blind_to_execution_groups(monkeypatch) -> None:
+    defects_run3.shape_blind_planner(monkeypatch)
+    assert defects.detects(_oracle_declared_shape, 'fused', {})
 
 
 @pytest.mark.case('RUN-036')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
-def test_run_036_cross_camera_dynamic_batching_respects_latency_identity() -> None:
+def test_run_036_cross_camera_dynamic_batching_respects_latency_identity(evidence_dir) -> None:
     '''
     RUN-036 (P2, component, gpu): Cross-camera dynamic batching respects latency, identity and
     fairness contracts.
@@ -120,12 +228,36 @@ def test_run_036_cross_camera_dynamic_batching_respects_latency_identity() -> No
     Acceptance: All admitted items are accounted for, maximum batching delay honors D plus
     declared tolerance, and the selected fairness policy holds without an invented throughput
     target.
+
+    No shipped runtime advertises ``dynamic_batching`` (the transport's fetch
+    batching is not a batching contract), so the contract cannot be measured
+    here: UNSUPPORTED, with the declaration refused at admission first.
     '''
+    evidence : Dict[str, Any] = {}
+    _oracle_declared_shape('batching', evidence)
+    (evidence_dir / 'batching_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
+    unsupported('no composed runtime advertises dynamic_batching; a declared batching contract is refused at '
+                'admission (evidence: batching_admission.json) — the contract itself cannot be measured')
+
+
+@pytest.mark.case('RUN-036')
+@pytest.mark.level('model')
+@pytest.mark.variant('admission')
+def test_run_036_a_declared_batching_contract_is_refused_before_deployment(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_declared_shape('batching', evidence)
+    (evidence_dir / 'batching_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'RUN-036')
+def test_run_036_detects_a_planner_blind_to_batching(monkeypatch) -> None:
+    defects_run3.shape_blind_planner(monkeypatch)
+    assert defects.detects(_oracle_declared_shape, 'batching', {})
 
 
 @pytest.mark.case('RUN-037')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
+@pytest.mark.pending('the videoflow-contrib follow-up (the tracktor component lives there; core ships the harness)')
 def test_run_037_tracktor_model_and_tensors_use_compatible_granted_cuda() -> None:
     '''
     RUN-037 (P1, component, gpu): Tracktor model and tensors use compatible granted CUDA
@@ -138,7 +270,7 @@ def test_run_037_tracktor_model_and_tensors_use_compatible_granted_cuda() -> Non
 
 @pytest.mark.case('RUN-038')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
+@pytest.mark.pending('the videoflow-contrib follow-up (the TeamClassifier component live there; core ships the harness)')
 def test_run_038_teamclassifier_siglip_executes_on_its_declared_backend() -> None:
     '''
     RUN-038 (P1, component, gpu): TeamClassifier SigLIP executes on its declared backend.
@@ -244,7 +376,7 @@ def test_run_039_detects_integer_only_grants(fake_smi, monkeypatch) -> None:
 
 @pytest.mark.case('RUN-040')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
+@pytest.mark.pending('the videoflow-contrib follow-up (the TensorFlow components live there; core ships the harness)')
 def test_run_040_shared_tensorflow_workers_honor_declared_peak_memory() -> None:
     '''
     RUN-040 (P1, component, gpu): Shared TensorFlow workers honor declared peak-memory
@@ -259,7 +391,7 @@ def test_run_040_shared_tensorflow_workers_honor_declared_peak_memory() -> None:
 
 @pytest.mark.case('RUN-041')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
+@pytest.mark.pending('the videoflow-contrib follow-up (the pose components live there; core ships the harness)')
 def test_run_041_pose_gpu_environment_selects_one_onnx_runtime_distribution() -> None:
     '''
     RUN-041 (P1, component, gpu): Pose GPU environment selects one ONNX Runtime distribution and
@@ -272,7 +404,7 @@ def test_run_041_pose_gpu_environment_selects_one_onnx_runtime_distribution() ->
 
 @pytest.mark.case('RUN-042')
 @pytest.mark.level('gpu')
-@pytest.mark.pending('phase 5')
+@pytest.mark.pending('the videoflow-contrib follow-up (the VLM components live there; core ships the harness)')
 def test_run_042_vlm_automatic_device_mapping_reports_actual_use_and() -> None:
     '''
     RUN-042 (P1, component, gpu): VLM automatic device mapping reports actual use and enforces

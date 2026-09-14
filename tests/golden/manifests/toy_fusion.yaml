@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-broker
+  name: vf-golden-toy-fusion-run0-broker
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -10,6 +10,7 @@ metadata:
 data:
   VF_NATS_URL: nats://nats.videoflow-test.svc:4222
   VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+  VF_RUNTIME_STORE_URL: redis://redis.videoflow-test.svc:6379/0
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,7 +36,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-specs
+  name: vf-golden-toy-fusion-run0-specs
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -86,7 +87,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-fusion-provision
+  name: vf-golden-toy-fusion-run0-provision
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -110,7 +111,7 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         env:
         - name: VF_FLOW_ID
           value: golden-toy_fusion
@@ -127,12 +128,12 @@ spec:
       volumes:
       - name: specs
         configMap:
-          name: vf-golden-toy-fusion-specs
+          name: vf-golden-toy-fusion-run0-specs
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-cam0-env
+  name: vf-golden-toy-fusion-run0-cam0-env
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -154,11 +155,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: fuse
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-fusion-cam0
+  name: vf-golden-toy-fusion-run0-cam0
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -177,9 +179,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-cam0-env
+            name: vf-golden-toy-fusion-run0-cam0-env
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -197,7 +199,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-cam1-env
+  name: vf-golden-toy-fusion-run0-cam1-env
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -219,11 +221,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: fuse
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-fusion-cam1
+  name: vf-golden-toy-fusion-run0-cam1
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -242,9 +245,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-cam1-env
+            name: vf-golden-toy-fusion-run0-cam1-env
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -262,7 +265,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-fuse-env
+  name: vf-golden-toy-fusion-run0-fuse-env
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -289,11 +292,13 @@ data:
   VF_JOIN_POLICY_JSON: '{"timeout_seconds": 0.25, "missing": "drop", "max_pending":
     256, "mode": "time", "tolerance_ms": 15.0, "quorum": 1, "collect": {"imu": 40.0}}'
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: live-report
+  VF_PARENT_REPLICAS: 1,1,1
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vf-golden-toy-fusion-fuse
+  name: vf-golden-toy-fusion-run0-fuse
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -306,6 +311,7 @@ spec:
     matchLabels:
       videoflow.io/node: fuse
       videoflow.io/flow-id: golden-toy-fusion
+      videoflow.io/run-id: run0
   template:
     metadata:
       labels: *id001
@@ -316,9 +322,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-fuse-env
+            name: vf-golden-toy-fusion-run0-fuse-env
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         readinessProbe:
           httpGet:
             path: /readyz
@@ -353,7 +359,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-imu-env
+  name: vf-golden-toy-fusion-run0-imu-env
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -375,11 +381,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_fusion_nodes.SimSensorProducer
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: fuse
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-fusion-imu
+  name: vf-golden-toy-fusion-run0-imu
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -398,9 +405,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-imu-env
+            name: vf-golden-toy-fusion-run0-imu-env
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -418,7 +425,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-fusion-live-report-env
+  name: vf-golden-toy-fusion-run0-live-report-env
   labels:
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -442,11 +449,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_fusion_nodes.LiveStateWriter
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: vf-golden-toy-fusion-live-report
+  name: vf-golden-toy-fusion-run0-live-report
   labels: &id001
     videoflow.io/flow-id: golden-toy-fusion
     app.kubernetes.io/managed-by: videoflow
@@ -459,6 +467,7 @@ spec:
     matchLabels:
       videoflow.io/node: live-report
       videoflow.io/flow-id: golden-toy-fusion
+      videoflow.io/run-id: run0
   template:
     metadata:
       labels: *id001
@@ -469,9 +478,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-fusion-live-report-env
+            name: vf-golden-toy-fusion-run0-live-report-env
         - configMapRef:
-            name: vf-golden-toy-fusion-broker
+            name: vf-golden-toy-fusion-run0-broker
         readinessProbe:
           httpGet:
             path: /readyz

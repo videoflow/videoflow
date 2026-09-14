@@ -86,12 +86,27 @@ class Node:
             peer access between its devices (NVLink/PCIe P2P). Verified against the \
             delivered devices before readiness; a two-device grant without the \
             property fails the node instead of silently satisfying a count (RUN-043).
+
+    Two more (plan Phase 5) declare execution shapes no shipped engine provides; \
+        they exist so a declaration is *refused at admission* — before anything \
+        is deployed — rather than silently run as ordinary nodes:
+
+        - ``execution_group``: the name of a fused execution group this node \
+            belongs to (RUN-035). Members of one group would run in one worker \
+            with their internal edges never serialized through the broker; an \
+            engine that cannot do that (both shipped engines) rejects the flow \
+            with ``VF_INCOMPATIBLE_PROFILE``.
+        - ``batching_policy``: a dynamic-batching contract the runtime would have \
+            to honour — ``{'max_batch': N, 'max_wait_ms': D, 'fairness': ...}`` \
+            (RUN-036). Distinct from transport fetch batching; rejected the same way.
     '''
     _name_counters: Dict[str, int] = {}
     deterministic : bool = True
     replay_policy : str = 'recompute'
     gpu_fallback : str = 'cpu'
     requires_peer_access : bool = False
+    execution_group : Optional[str] = None
+    batching_policy : Optional[Dict[str, Any]] = None
 
     def required_assets(self) -> 'List[AssetRequirement]':
         '''

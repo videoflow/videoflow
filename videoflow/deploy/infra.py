@@ -7,10 +7,13 @@ carry an ownership label for selective teardown.
 
 Two shapes, chosen by a ``deploy.broker_profiles`` profile:
 
-  - the **dev** profile (``profile = None``): single replica, emptyDir, no
-    persistence — a faithful port of ``k8s/nats.yaml``, rendered byte-for-byte
-    as it always was. For production, bring your own broker (the official NATS
-    Helm chart, a managed Redis) and pass ``--nats``/``--blob-redis-url``.
+  - the **dev** profile (``profile = None``): single replica, emptyDir — a
+    faithful port of ``k8s/nats.yaml`` for NATS, and a Redis whose append-only
+    file lives on an emptyDir with ``noeviction`` (``RedisProfile.dev()``), so
+    the pair has one standing: both survive a container restart, neither a pod
+    loss, and a BATCH flow's ``reliable_work`` channels are admitted on it. For
+    production, bring your own broker (the official NATS Helm chart, a managed
+    Redis) and pass ``--nats``/``--blob-redis-url``.
   - the **durable** profile: a NATS StatefulSet whose pods route to each other
     through a headless Service (``cluster { routes }``) and keep the JetStream
     file store on a PersistentVolumeClaim each, plus an append-only Redis on a
@@ -19,20 +22,33 @@ Two shapes, chosen by a ``deploy.broker_profiles`` profile:
 
 Ownership rule: a pre-existing ``nats``/``redis`` Service in the namespace is
 reused as-is and never owned; only components this module applied are returned
-as "created" and later torn down. Persistent claims a durable profile created
+as "created" and later torn down. Each Service records the profile it was
+rendered from (``videoflow.io/profile``, plus ``videoflow.io/replicas`` for
+NATS) so a later deploy that finds it can judge what it is reusing — admission
+runs against the recorded profile, not the one the deploy would have rendered —
+and refuse an explicit ``--broker-profile`` that contradicts it
+(``reused_infra`` / ``adopt_profiles``). Persistent claims a durable profile created
 are deliberately *not* torn down with the workloads — the data is the point —
 so a redeploy finds it; reclaim them by hand with
 ``kubectl delete pvc -n <namespace> -l videoflow.io/infra``.
 '''
 from __future__ import absolute_import, division, print_function
 
+import json
 import subprocess
+from dataclasses import dataclass
 from typing import List, Optional
 
+from ..core.errors import ConfigError
 from .broker_profiles import BrokerProfile, RedisProfile
 from .manifests import LABEL_MANAGED_BY, dump_manifests
 
 LABEL_INFRA = 'videoflow.io/infra'
+#: Recorded on each client Service: the profile it was rendered from
+#: (``BrokerProfile.name`` / ``RedisProfile.name``) and, for NATS, its replica
+#: count — what a later deploy reads to judge the infrastructure it reuses.
+LABEL_PROFILE = 'videoflow.io/profile'
+LABEL_REPLICAS = 'videoflow.io/replicas'
 
 #: The client Service every profile exposes (what ``infra_urls`` names) and the
 #: headless one a StatefulSet's pods address each other through.
@@ -47,6 +63,14 @@ _NATS_ROUTE_PORT = 6222
 
 def _infra_labels(component : str) -> dict:
     return {'app': component, LABEL_INFRA: component, LABEL_MANAGED_BY: 'videoflow'}
+
+def _service_labels(component : str, profile : 'BrokerProfile | RedisProfile') -> dict:
+    '''The workload labels plus the profile record only the client Service carries.'''
+    labels = dict(_infra_labels(component))
+    labels[LABEL_PROFILE] = profile.name
+    if isinstance(profile, BrokerProfile):
+        labels[LABEL_REPLICAS] = str(profile.replicas)
+    return labels
 
 def nats_conf(namespace : str, profile : Optional[BrokerProfile] = None) -> str:
     '''
@@ -187,7 +211,7 @@ def nats_manifests(namespace : str, profile : Optional[BrokerProfile] = None) ->
         {
             'apiVersion': 'v1',
             'kind': 'Service',
-            'metadata': {'name': NATS_SERVICE, 'namespace': namespace, 'labels': labels},
+            'metadata': {'name': NATS_SERVICE, 'namespace': namespace, 'labels': _service_labels('nats', profile)},
             'spec': {
                 'selector': {'app': 'nats'},
                 'ports': [
@@ -222,21 +246,28 @@ def redis_manifests(namespace : str, profile : Optional[RedisProfile] = None) ->
     '''
     Single-replica Redis for the large-payload blob store.
 
-    Dev profile (``None``): persistence off — it is transport, not storage.
-    Memory is capped with volatile-lru eviction — every key videoflow writes
-    carries a TTL (PROTOCOL.md BLOB-7), so under pressure Redis evicts our oldest
-    blobs instead of growing until the node OOMs (the redis:7 default is
-    unlimited memory with noeviction). The container limit sits above maxmemory
-    to leave headroom for allocator fragmentation.
+    Both shipped profiles run ``noeviction`` with an append-only file under
+    ``/data``: a blob is never dropped while a reader still holds it (every key
+    carries a TTL, PROTOCOL.md BLOB-7, and the reconciler reclaims orphans, so
+    that is what bounds memory), and a container restart replays the file.
+    ``maxmemory`` stays capped at 4 GB so a stuck pipeline hits a refused write —
+    a typed failure the publisher sees — before the node OOMs (the redis:7
+    default is unlimited memory); the container limit sits above it to leave
+    headroom for allocator fragmentation.
 
-    Durable profile: an append-only file under ``/data`` on a
-    PersistentVolumeClaim, ``noeviction`` so a full store refuses a write rather
-    than dropping a blob, and a ``Recreate`` strategy, since a ReadWriteOnce
-    claim cannot be held by the old and the new pod at once during a rollout.
+    Dev profile (``None``): the file lives on an emptyDir, the pod's lifetime —
+    the same standing as the dev NATS file store.
+
+    Durable profile: the file lives on a PersistentVolumeClaim, and the
+    Deployment uses a ``Recreate`` strategy, since a ReadWriteOnce claim cannot
+    be held by the old and the new pod at once during a rollout.
+
+    ``RedisProfile(persistence = 'none')`` still renders the old transport-only
+    cache (no volume, nothing written) for an operator who asks for it.
     '''
     profile = profile or RedisProfile.dev()
     labels = _infra_labels('redis')
-    args = ['--save', '', '--appendonly', 'yes' if profile.stateful else 'no',
+    args = ['--save', '', '--appendonly', 'yes' if profile.persistent else 'no',
             '--maxmemory', '4gb', '--maxmemory-policy', profile.eviction]
     container : dict = {
         'name': 'redis',
@@ -255,9 +286,10 @@ def redis_manifests(namespace : str, profile : Optional[RedisProfile] = None) ->
         'template': {'metadata': {'labels': labels}, 'spec': pod_spec},
     }
     manifests : list = []
-    if profile.stateful:
+    if profile.persistent:
         args += ['--dir', '/data']
         container['volumeMounts'] = [{'name': 'data', 'mountPath': '/data'}]
+    if profile.stateful:
         pod_spec['volumes'] = [{'name': 'data',
                                 'persistentVolumeClaim': {'claimName': REDIS_CLAIM}}]
         deployment_spec['strategy'] = {'type': 'Recreate'}
@@ -273,6 +305,8 @@ def redis_manifests(namespace : str, profile : Optional[RedisProfile] = None) ->
             'metadata': {'name': REDIS_CLAIM, 'namespace': namespace, 'labels': labels},
             'spec': claim_spec,
         })
+    elif profile.persistent:
+        pod_spec['volumes'] = [{'name': 'data', 'emptyDir': {}}]
     if profile.priority_class:
         pod_spec['priorityClassName'] = profile.priority_class
     manifests += [
@@ -285,7 +319,7 @@ def redis_manifests(namespace : str, profile : Optional[RedisProfile] = None) ->
         {
             'apiVersion': 'v1',
             'kind': 'Service',
-            'metadata': {'name': 'redis', 'namespace': namespace, 'labels': labels},
+            'metadata': {'name': 'redis', 'namespace': namespace, 'labels': _service_labels('redis', profile)},
             'spec': {
                 'selector': {'app': 'redis'},
                 'ports': [{'port': 6379, 'targetPort': 6379, 'name': 'client'}],
@@ -314,6 +348,104 @@ def service_exists(kubectl : str, namespace : str, name : str) -> bool:
     proc = subprocess.run([kubectl, 'get', 'svc', name, '-n', namespace],
                           capture_output = True, check = False)
     return proc.returncode == 0
+
+def service_labels(kubectl : str, namespace : str, name : str) -> Optional[dict]:
+    '''The labels of a Service in the namespace, or ``None`` when there is no such Service.'''
+    proc = subprocess.run([kubectl, 'get', 'svc', name, '-n', namespace, '-o', 'json'],
+                          capture_output = True, check = False)
+    if proc.returncode != 0:
+        return None
+    try:
+        return dict(json.loads(proc.stdout.decode('utf-8', 'replace')).get('metadata', {}).get('labels') or {})
+    except (ValueError, AttributeError):
+        return {}
+
+
+@dataclass(frozen = True)
+class ReusedInfra:
+    '''
+    What ``ensure_infra`` will find and reuse: the labels of the ``nats`` and
+    ``redis`` Services already in the namespace (``None`` = absent, so this
+    deploy creates it). A component that is present but carries no profile
+    record was created by hand or by an older videoflow.
+    '''
+    nats : Optional[dict]
+    redis : Optional[dict]
+
+    def components(self) -> List[str]:
+        return [c for c, labels in (('nats', self.nats), ('redis', self.redis)) if labels is not None]
+
+
+def reused_infra(kubectl : str, namespace : str, need_redis : bool) -> ReusedInfra:
+    '''The Services a deploy into ``namespace`` would reuse rather than create.'''
+    return ReusedInfra(nats = service_labels(kubectl, namespace, NATS_SERVICE),
+                       redis = service_labels(kubectl, namespace, 'redis') if need_redis else None)
+
+
+def _recorded_broker(labels : dict) -> Optional[BrokerProfile]:
+    name = labels.get(LABEL_PROFILE)
+    if name == 'dev':
+        return BrokerProfile.dev()
+    if name == 'durable':
+        try:
+            return BrokerProfile.durable(replicas = int(labels.get(LABEL_REPLICAS, 3)))
+        except (ValueError, ConfigError):
+            return None
+    return None
+
+
+def _recorded_redis(labels : dict) -> Optional[RedisProfile]:
+    name = labels.get(LABEL_PROFILE)
+    if name == 'dev':
+        return RedisProfile.dev()
+    if name == 'durable':
+        return RedisProfile.durable()
+    if name == 'cache':
+        return RedisProfile(persistence = 'none', eviction = 'volatile-lru')
+    return None
+
+
+def adopt_profiles(reuse : ReusedInfra, requested : Optional[str], broker : BrokerProfile,
+                   redis : RedisProfile, namespace : str) -> tuple[Optional[BrokerProfile], Optional[RedisProfile]]:
+    '''
+    The profiles admission judges a deploy by, given what the namespace already
+    runs: a component this deploy creates is judged by the profile it renders;
+    a reused one by the profile its creator recorded on the Service, or by
+    nothing (``None`` — unread, for the planner to rule on) when it carries no
+    record. An operator who named a profile that contradicts a record is
+    refused: ``ensure_infra`` would reuse the other shape silently otherwise.
+
+    - Arguments:
+        - reuse: what ``reused_infra`` found.
+        - requested: the ``--broker-profile`` name the operator passed, or ``None`` \
+            when they left the choice to the deploy.
+        - broker / redis: the profiles the deploy renders for what is missing.
+
+    - Returns: ``(BrokerProfile | None, RedisProfile | None)``.
+
+    - Raises:
+        - ConfigError: an explicit profile contradicts a reused component's record.
+    '''
+    effective_broker : Optional[BrokerProfile] = broker
+    effective_redis : Optional[RedisProfile] = redis
+    for component, labels in (('nats', reuse.nats), ('redis', reuse.redis)):
+        if labels is None:
+            continue
+        recorded = labels.get(LABEL_PROFILE)
+        if requested is not None and recorded is not None and recorded != requested:
+            raise ConfigError(
+                f'namespace {namespace} already runs the {recorded} broker profile (Service {component} '
+                f'records videoflow.io/profile={recorded}); --broker-profile {requested} cannot replace it '
+                f'in place, and reusing it would not give this flow the {requested} shape.',
+                remedy = f'Drop --broker-profile to reuse what is there, deploy into another namespace, or '
+                         f'`videoflow teardown --infra --namespace {namespace} --broker-profile {recorded}` '
+                         f'once nothing uses it.')
+        if component == 'nats':
+            effective_broker = _recorded_broker(labels)
+        else:
+            effective_redis = _recorded_redis(labels)
+    return effective_broker, effective_redis
+
 
 def ensure_infra(kubectl : str, namespace : str, need_redis : bool,
                  profile : Optional[BrokerProfile] = None,

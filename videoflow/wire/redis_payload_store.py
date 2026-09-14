@@ -220,6 +220,8 @@ def redis_capabilities_observed(client : Any, max_object_bytes : int = MAX_OBJEC
         eviction policy is ``noeviction``; ``evictable`` is ``Known(policy != \
         'noeviction')``; both are ``Unknown('auth', …)`` when ``CONFIG GET`` is denied \
         (ACL ``NOPERM``, or the command renamed/disabled on a managed offering). \
+        ``persistent_storage`` stays ``Unknown('unread')``: what backs the data \
+        directory (a volume that outlives the pod, or not) is not visible over the wire. \
         ``atomic_multikey`` is ``Known(True)`` on a standalone server, and on a cluster \
         only when ``CLUSTER KEYSLOT`` agrees for the three keys of a probe blob; any \
         failure to observe it is ``Unknown`` — the planner treats that as "not offered".
@@ -268,7 +270,11 @@ def redis_capabilities_observed(client : Any, max_object_bytes : int = MAX_OBJEC
         atomic = unknown('malformed', f'cluster probe reply not understood: {e}')
 
     return PayloadCapabilities(STORE_ID, durable = durable, evictable = evictable, atomic_multikey = atomic,
-                               max_object_bytes = max_object_bytes, reader_identities = True)
+                               max_object_bytes = max_object_bytes, reader_identities = True,
+                               persistent_storage = unknown(
+                                   'unread', 'what backs the Redis data directory (a volume that outlives the pod, '
+                                             'or an emptyDir) is not visible over the wire; the profile record on '
+                                             'the Service (videoflow.io/profile) or the operator declares it'))
 
 # -- the store ---------------------------------------------------------------------------
 
@@ -631,6 +637,7 @@ class RedisPayloadStore(PayloadStore):
         by name.
         '''
         required = {key: tuple(ids) for key, ids in ledger.required_obligations().items()}
+        authoritative = ledger.authoritative
         now = self._clock()
         reclaimed : list[str] = []
         retained : list[str] = []
@@ -642,7 +649,7 @@ class RedisPayloadStore(PayloadStore):
             return ReclamationObservation((), (), (f'{BLOB_KEY_PREFIX}*',))
         for key in candidates:
             try:
-                fate = self._reconcile_one(key, required, now)
+                fate = self._reconcile_one(key, required, now, authoritative)
             except self._transient as e:
                 logger.warning('reconcile %s: %s unreadable (%s: %s)', operation_id, key, type(e).__name__, e)
                 unknown_keys.append(key)
@@ -658,7 +665,8 @@ class RedisPayloadStore(PayloadStore):
                     len(reclaimed), len(retained), len(unknown_keys))
         return ReclamationObservation(tuple(reclaimed), tuple(retained), tuple(unknown_keys))
 
-    def _reconcile_one(self, key : str, required : Mapping[str, tuple[str, ...]], now : float) -> str:
+    def _reconcile_one(self, key : str, required : Mapping[str, tuple[str, ...]], now : float,
+                       authoritative : Callable[[str], bool] = lambda obligation_id: True) -> str:
         '''
         One object's fate — ``'reclaimed'``, ``'retained'`` or ``'gone'`` (already
         absent) — decided and applied under ``WATCH`` so a concurrent acquire or
@@ -675,9 +683,9 @@ class RedisPayloadStore(PayloadStore):
                         pipe.unwatch()
                         return 'gone'
                     if key in required:
-                        cancel = members - set(required[key])
+                        cancel = {m for m in members - set(required[key]) if authoritative(m)}
                     else:
-                        cancel = {m for m in members if m.startswith(INTENT_PREFIX)}
+                        cancel = {m for m in members if m.startswith(INTENT_PREFIX) and authoritative(m)}
                     remaining = members - cancel
                     if remaining:
                         if cancel:

@@ -43,6 +43,7 @@ class RecordingMessenger(Messenger):
         self.acks = 0
         self.stop_signals = 0
         self.terminated = False
+        self.reason : Optional[str] = None      # stop_reason() when terminated; None means the control stop
 
     # -- helpers ------------------------------------------------------------
 
@@ -56,6 +57,12 @@ class RecordingMessenger(Messenger):
     def eos(parent : str = 'p') -> dict:
         return {parent: {'message': None, 'metadata': None, 'is_stop_signal': True,
                         'is_abort': False}}
+
+    @staticmethod
+    def hard_stop(parent : str = 'p') -> dict:
+        '''The CTRL-3 shape: the termination flag with no parent actually ended.'''
+        return {parent: {'message': None, 'metadata': None, 'is_stop_signal': True,
+                        'is_hard_stop': True, 'is_abort': False}}
 
     @staticmethod
     def abort(parent : str = 'p', error : Optional[dict] = None) -> dict:
@@ -91,6 +98,11 @@ class RecordingMessenger(Messenger):
 
     def check_for_termination(self) -> bool:
         return self.terminated
+
+    def stop_reason(self) -> Optional[str]:
+        if not self.terminated:
+            return None
+        return self.reason or self.STOP_CONTROL
 
     def ack_inputs(self) -> None:
         self.calls.append(('ack', None))

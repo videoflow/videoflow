@@ -57,6 +57,8 @@ from videoflow.wire.serialization import MSG_TYPE_DATA, RedisBlobStore, encode_e
 NATS_TIMEOUT = 180
 _DURABLE_RUNTIME = RuntimeCapabilities('redis', durable = known(True), shared_across_processes = True,
                                        restart_safe_joins = True, elastic_state = False)
+_MEMORY_RUNTIME = RuntimeCapabilities('memory', durable = known(False), shared_across_processes = False,
+                                      restart_safe_joins = False, elastic_state = False)
 
 
 def _write(evidence_dir : Any, name : str, record : Dict[str, Any]) -> None:
@@ -548,10 +550,14 @@ def test_msg_018_control_retention_is_independent_of_frame_eviction_and(nats_url
     pressure. Same-epoch stale completion cannot erase an accepted abort. Compaction passes if
     these semantics survive; full command history is tested only when explicitly requested.
 
-    JetStream declares ``durable_control = False`` (the run-state ledger is Phase 3), so the
-    profile is an expected rejection there. The data-slot half is still decided here: a
-    per-subject limit keeps the final frame and the terminator apart, while the default
-    shared slot — declared as ``control_shares_data_slot = True`` — evicts one for the other.
+    JetStream keeps control state in transient notifications only
+    (``durable_control = False``): the profile is admitted solely through a
+    durable, shared run ledger (RFC 0006 section 9) and refused with a memory
+    one, before anything is provisioned. The data-slot half is decided here: a
+    per-subject limit keeps the final frame and the terminator apart, while the
+    default shared slot — declared as ``control_shares_data_slot = True`` —
+    evicts one for the other. The ledger's own control semantics on a real
+    durable store are the ``ledger`` variant.
     '''
     flow, run = unique_ids('msg018')
     driver = JetStreamDriver(nats_url, flow, run, REALTIME)
@@ -561,11 +567,14 @@ def test_msg_018_control_retention_is_independent_of_frame_eviction_and(nats_url
         record['declared'] = {'durable_control': capabilities.durable_control,
                               'control_shares_data_slot': capabilities.control_shares_data_slot}
         assert capabilities.durable_control is False and capabilities.control_shares_data_slot is True
+        request = FlowRequirements(profiles = (ProfileRequest('frames', DURABLE_CONTROL),))
         with pytest.raises(IncompatibleProfile) as info:
-            plan_composition(FlowRequirements(profiles = (ProfileRequest('frames', DURABLE_CONTROL),)), capabilities,
-                             runtime = _DURABLE_RUNTIME)
+            plan_composition(request, capabilities, runtime = _MEMORY_RUNTIME)
         assert driver.channel_ids() == []
         record['rejection'] = str(info.value)[:300]
+        admitted = plan_composition(request, capabilities, runtime = _DURABLE_RUNTIME)
+        assert admitted.channel_profiles == {'frames': DURABLE_CONTROL}
+        record['admitted_with_durable_ledger'] = admitted.render()
         # Per-subject slots: the terminator and the final frame survive each other.
         frames = driver.channel('frames', LIVE_LATEST, RETENTION_LIMITS, max_msgs = 1, per_subject = True)
         for pid, body, kind in (('A', b'A', 'data'), ('C', b'EOS', KIND_EOS), ('B', b'B', 'data')):
@@ -582,8 +591,6 @@ def test_msg_018_control_retention_is_independent_of_frame_eviction_and(nats_url
     finally:
         driver.close()
         _write(evidence_dir, 'control_retention.json', record)
-    unsupported('jetstream declares durable_control=False: no run-state ledger is composed (RFC 0006 section 9, '
-                'Phase 3); the profile was rejected before provisioning with zero side effects')
 
 
 @pytest.mark.case('MSG-018')
@@ -602,13 +609,70 @@ def test_msg_018_memory_control_ledger_survives_data_pressure_and_stale_completi
 @pytest.mark.case('MSG-018')
 @pytest.mark.level('broker')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_msg_018_ledger_durable_control_on_jetstream_with_a_durable_runtime_store() -> None:
+def test_msg_018_ledger_durable_control_on_jetstream_with_a_durable_runtime_store(nats_url, redis_durable_url,
+                                                                                   evidence_dir) -> None:
     '''
-    The run-state bucket of RFC 0006 section 9 on a durable RuntimeStore
-    (``redis_durable_url``): versioned epoch state and terminal evidence that a late
-    controller reconciles independently of the node streams. Needs the Phase-3 ledger.
+    The run-state bucket of RFC 0006 section 9 on a real durable ``RuntimeStore``
+    (the append-only Redis) beside real JetStream streams: the epoch is a
+    compare-and-swap record, the completion is committed under its fencing token,
+    an abort recorded for the same epoch outranks a completion and a later
+    same-epoch completion cannot erase it, and a *late controller* — a fresh
+    ledger over the same store — reconstructs all of it while the data channel
+    evicted every frame and a full reliable channel refused publications.
     '''
+    from videoflow.backends.runtime import COMPLETION_ABORTED, FlowRuntime
+    from videoflow.core.errors import StaleAuthority
+    from videoflow.deploy.admission import runtime_capabilities_observed
+    from videoflow.runtime.runtime_stores import make_runtime_store
+    flow, run = unique_ids('msg018l')
+    driver = JetStreamDriver(nats_url, flow, run, REALTIME)
+    record : Dict[str, Any] = {'flow': flow, 'run': run, 'store': redis_durable_url}
+    try:
+        observed = runtime_capabilities_observed(redis_durable_url)
+        record['runtime'] = {'durable': getattr(observed.durable, 'value', None), 'shared': observed.shared_across_processes}
+        plan = plan_composition(FlowRequirements(profiles = (ProfileRequest('frames', DURABLE_CONTROL),)),
+                                driver.capabilities(), runtime = observed)
+        assert plan.channel_profiles == {'frames': DURABLE_CONTROL}, plan
+        store = make_runtime_store(redis_durable_url)
+        viewer = FlowRuntime(store, flow, run, 'viewer', parent_replicas = {'frames': 1}, lease_seconds = 5)
+        token = viewer.acquire_partition()
+        assert token.epoch == 1
+        # Live frames under a one-slot channel, then the terminator: the ledger records it, the channel evicts.
+        frames = driver.channel('frames', LIVE_LATEST, RETENTION_LIMITS, max_msgs = 1)
+        for pid in ('A', 'B', 'C'):
+            assert isinstance(driver.publish(frames, pid, pid.encode()), Accepted)
+        assert viewer.record_terminator('frames', 0, 'eos', 3)
+        receipt = viewer.commit_completion('frames', token)
+        assert receipt.epoch == 1 and receipt.final_sequence == 3
+        # Data pressure on a full reliable channel: refused publications never touch the control records.
+        work = driver.channel('work', RELIABLE_WORK, RETENTION_INTEREST, max_msgs = 2)
+        driver.bind(work, 'w', receiver = 'w', ack_wait = 60, max_deliver = 4, credit = 4, prefetch = 1)
+        for pid in ('w1', 'w2'):
+            assert isinstance(driver.publish(work, pid, pid.encode()), Accepted)
+        assert isinstance(driver.publish(work, 'w3', b'w3'), Rejected)
+        # An authoritative abort for the same epoch outranks the completion; a same-epoch
+        # completion committed afterwards cannot erase it.
+        assert viewer.record_terminator('frames', 0, 'abort', 3, error = {'code': 'VF_TEST', 'message': 'injected'})
+        viewer.commit_completion('frames', token)
+        assert 'frames' in viewer.aborted_parents()
+        assert viewer.completion_state('frames', 'viewer--from--frames', known((0, 0))) == COMPLETION_ABORTED
+        # A late controller: a fresh ledger over the store, no channel read at all.
+        late = FlowRuntime(store, flow, run, 'viewer', parent_replicas = {'frames': 1}, lease_seconds = 5)
+        kinds = sorted((t.kind, t.seq) for t in late.terminators('frames'))
+        assert kinds == [('abort', 3), ('eos', 3)], kinds
+        assert late.current_epoch() == 1 and 'frames' in late.completed_parents() and 'frames' in late.aborted_parents()
+        # A superseded owner cannot rewrite the control state: the replacement's epoch fences the old token.
+        viewer.release_partition(token)
+        new_token = late.acquire_partition()
+        assert new_token.epoch == 2
+        with pytest.raises(StaleAuthority):
+            viewer.commit_completion('frames', token)
+        record['trace'] = {'terminators': kinds, 'epoch': late.current_epoch(), 'retained_frames': driver.retained(frames),
+                           'completion_state': COMPLETION_ABORTED}
+        assert driver.retained(frames) <= 1
+    finally:
+        driver.close()
+        _write(evidence_dir, 'control_ledger.json', record)
 
 
 @pytest.mark.negative_control(of = 'MSG-018')
@@ -736,10 +800,19 @@ def _oracle_msg_025(driver : Any, record : Dict[str, Any]) -> None:
                           'recoverable_delivery': capabilities.recoverable_delivery,
                           'publication_ledger': capabilities.publication_ledger}
     assert not capabilities.retained_backlog and not capabilities.recoverable_delivery
-    for profile in (RELIABLE_WORK, DURABLE_CONTROL, REPLAY_ARCHIVE):
+    # No false durability claim: the transport retains and recovers nothing, so the
+    # reliable and archive profiles are refused whatever ledger is composed.
+    for profile in (RELIABLE_WORK, REPLAY_ARCHIVE):
         with pytest.raises(IncompatibleProfile):
             plan_composition(FlowRequirements(profiles = (ProfileRequest('cam', profile),)), capabilities,
                              runtime = _DURABLE_RUNTIME)
+    # Durable control is the run ledger's promise (CTRL-4), not the transport's: refused
+    # without a durable shared ledger, admitted with one even over a core transport.
+    with pytest.raises(IncompatibleProfile):
+        plan_composition(FlowRequirements(profiles = (ProfileRequest('cam', DURABLE_CONTROL),)), capabilities,
+                         runtime = _MEMORY_RUNTIME)
+    assert plan_composition(FlowRequirements(profiles = (ProfileRequest('cam', DURABLE_CONTROL),)), capabilities,
+                            runtime = _DURABLE_RUNTIME).channel_profiles == {'cam': DURABLE_CONTROL}
     assert plan_composition(FlowRequirements(profiles = (ProfileRequest('cam', LIVE_LATEST),)), capabilities) \
         .channel_profiles == {'cam': LIVE_LATEST}
     channel = driver.channel('cam', LIVE_LATEST, RETENTION_LIMITS)

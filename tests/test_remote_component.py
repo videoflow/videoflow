@@ -282,7 +282,7 @@ def test_command_override_flows_to_pod():
     remote = next(s for s in specs if s.is_remote)
     assert remote.command == ['/bin/thing', '--serve']
     from videoflow.deploy.manifests import workload
-    wl = workload(remote, 'flow', 'realtime', 'x:1', 'nats-cm')
+    wl = workload(remote, 'flow', 'r', 'realtime', 'x:1', 'nats-cm')
     container = wl['spec']['template']['spec']['containers'][0]
     assert container['command'] == ['/bin/thing', '--serve']
 

@@ -89,14 +89,32 @@ def checkpoint_snapshot(runtime : FlowRuntime) -> Dict[str, Any]:
 
 # -- messengers over a rig ------------------------------------------------------------------
 
+def declare_dead(messengers : Sequence[NATSMessenger], node : str, replica_id : int = 0) -> None:
+    '''
+    A replacement for ``node``'s replica is being built: every earlier messenger
+    of that identity still held by the harness is declared dead — its partition
+    lease forfeited the way a crashed process's lapses (the wait skipped), its
+    renewals stopped. Without this an in-process "crash" would keep renewing and
+    the replacement would be refused as a scaled-out singleton (RUN-018/019).
+    '''
+    for previous in messengers:
+        if previous._node.name == node and previous._replica_id == replica_id:
+            previous._stop_lease_renewal(release = True)
+
+
+_BUILT : Dict[int, List[NATSMessenger]] = {}
+
+
 def messenger_for(rig : Any, node : Node, parents : Sequence[str], runtime : Optional[FlowRuntime] = None,
                   run_id : Optional[str] = None, nats_url : Optional[str] = None, **kwargs : Any) -> NATSMessenger:
     '''
     A ``NATSMessenger`` bound to a real node object on the rig's backend (memory)
     or on the compose broker (its own connection), with the node's class-level
     declarations (``replayable``, ``replay_policy``, ``partition_key_policy``)
-    read exactly as the worker reads them.
+    read exactly as the worker reads them. A second messenger for the same node
+    and replica on one rig is a replacement: see ``declare_dead``.
     '''
+    declare_dead(_BUILT.get(id(rig), []), node.name, int(kwargs.get('replica_id', 0)))
     if isinstance(rig, MemoryRig):
         kwargs.setdefault('backend', rig.backend)
         kwargs.setdefault('payload_store', rig.store)
@@ -112,6 +130,7 @@ def messenger_for(rig : Any, node : Node, parents : Sequence[str], runtime : Opt
         kwargs.setdefault('nb_tasks', node.nb_tasks)
     m = NATSMessenger(node, list(parents), nats_url or rig.nats_url, rig.flow_id, rig.flow_type,
                       run_id or rig.run_id, runtime = runtime, **kwargs)
+    _BUILT.setdefault(id(rig), []).append(m)
     rig._messengers.append(m)
     return m
 
@@ -270,7 +289,6 @@ def worker_env(rig : Any, node : Node, kind : str, parents : Sequence[str], has_
     env = dict(os.environ)
     env['PYTHONPATH'] = str(HERE) + (os.pathsep + env['PYTHONPATH'] if env.get('PYTHONPATH') else '')
     env.update({
-        'VF_RFC0006': '1',
         'VF_NODE_CLASS': f'{type(node).__module__}.{type(node).__name__}',
         'VF_NODE_PARAMS_JSON': json.dumps(node.get_params()),
         'VF_NODE_KIND': kind, 'VF_NODE_NAME': node.name,
@@ -280,6 +298,7 @@ def worker_env(rig : Any, node : Node, kind : str, parents : Sequence[str], has_
         'VF_ACK_WAIT_SECONDS': str(ack_wait), 'VF_MAX_RETRIES': str(getattr(rig, 'max_retries', 3)),
         'VF_RUNTIME_STORE_URL': store_url, 'VF_HEALTH_PORT': '0', 'VF_WATCHDOG_INTERVAL_SECONDS': '0',
         'VF_PROGRESS_TIMEOUT_SECONDS': '0', 'VF_EOS_QUIESCENCE_MS': '200',
+        'VF_PARTITION_LEASE_SECONDS': '2',   # a crashed worker's lease lapses fast; its replacement binds in seconds
     })
     if isinstance(node, (ProcessorNode, ConsumerNode)) and node.partition_by:
         env['VF_PARTITION_BY'] = node.partition_by

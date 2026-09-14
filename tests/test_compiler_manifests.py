@@ -134,12 +134,12 @@ def test_default_image_and_override_applied_to_pods():
                                 default_image = IMG, image_overrides = {'identity': 'ghcr.io/acme/gpu:v1'})
     images = {}
     for m in manifests:
-        if m['kind'] in ('Deployment', 'Job') and m['metadata']['name'].startswith('vf-demo-') \
-                and m['metadata']['name'] != 'vf-demo-provision':
+        if m['kind'] in ('Deployment', 'Job') and m['metadata']['name'].startswith('vf-demo-run1-') \
+                and m['metadata']['name'] != 'vf-demo-run1-provision':
             images[m['metadata']['name']] = m['spec']['template']['spec']['containers'][0]['image']
-    assert images['vf-demo-producer'] == IMG            # default
-    assert images['vf-demo-printer'] == IMG             # default
-    assert images['vf-demo-identity'] == 'ghcr.io/acme/gpu:v1'  # override wins
+    assert images['vf-demo-run1-producer'] == IMG            # default
+    assert images['vf-demo-run1-printer'] == IMG             # default
+    assert images['vf-demo-run1-identity'] == 'ghcr.io/acme/gpu:v1'  # override wins
 
 def _pull_policies(manifests):
     '''Every container's imagePullPolicy, keyed by resource name (workers + provision Job).'''
@@ -166,7 +166,7 @@ def test_provision_job_pull_policy_matches_the_workers():
     manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, image_pull_policy = 'Always')
     policies = _pull_policies(manifests)
-    assert policies['vf-demo-provision'] == 'Always'
+    assert policies['vf-demo-run1-provision'] == 'Always'
     assert set(policies.values()) == {'Always'}
 
 def test_invalid_image_pull_policy_names_the_valid_values():
@@ -182,15 +182,15 @@ def test_finite_producer_is_job_infinite_is_deployment():
     manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
                                 namespace = 'ns', default_image = IMG)
     by_name = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    assert ('Job', 'vf-demo-producer') in by_name
+    assert ('Job', 'vf-demo-run1-producer') in by_name
     # processors and consumer are Deployments
-    assert ('Deployment', 'vf-demo-identity') in by_name
-    assert ('Deployment', 'vf-demo-printer') in by_name
+    assert ('Deployment', 'vf-demo-run1-identity') in by_name
+    assert ('Deployment', 'vf-demo-run1-printer') in by_name
 
 def test_nb_tasks_maps_to_replicas():
     specs = compile_flow(_demo_flow())
     manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-demo-identity'][0]
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-demo-run1-identity'][0]
     assert dep['spec']['replicas'] == 2
 
 def test_gpu_node_resources():
@@ -199,7 +199,7 @@ def test_gpu_node_resources():
     printer = CommandlineConsumer(name = 'c')(gpu)
     flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
     container = dep['spec']['template']['spec']['containers'][0]
     assert container['resources']['limits']['nvidia.com/gpu'] == 1
     assert dep['spec']['template']['spec']['nodeSelector'] == {'videoflow.io/gpu-pool': 'true'}
@@ -216,9 +216,9 @@ def test_gpu_runtime_class_applies_only_to_gpu_pods():
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, gpu_runtime_class = 'nvidia')
     by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
-    assert by_name['vf-g-g']['spec']['template']['spec']['runtimeClassName'] == 'nvidia'
+    assert by_name['vf-g-run1-g']['spec']['template']['spec']['runtimeClassName'] == 'nvidia'
     # A CPU node must not get it — it would pin the pod to the GPU runtime for nothing.
-    assert 'runtimeClassName' not in by_name['vf-g-c']['spec']['template']['spec']
+    assert 'runtimeClassName' not in by_name['vf-g-run1-c']['spec']['template']['spec']
 
 def _gpu_flow(**gpu_kwargs):
     producer = IntProducer(name = 'p')
@@ -234,7 +234,7 @@ def test_mix_mode_gpu_pods_get_owner_aware_affinity():
                                  'nats://x:4222', 'run1', default_image = IMG,
                                  gpu_mode = 'mix')
     by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
-    pod = by_name['vf-g-g']['spec']['template']['spec']
+    pod = by_name['vf-g-run1-g']['spec']['template']['spec']
     assert 'nodeSelector' not in pod
     terms = (pod['affinity']['nodeAffinity']
              ['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms'])
@@ -249,13 +249,13 @@ def test_mix_mode_gpu_pods_get_owner_aware_affinity():
         ]},
     ] == terms
     # CPU pods carry neither the selector nor the affinity.
-    assert 'affinity' not in by_name['vf-g-c']['spec']['template']['spec']
+    assert 'affinity' not in by_name['vf-g-run1-c']['spec']['template']['spec']
 
 def test_gpu_count_reaches_the_pod_spec():
     flow = _gpu_flow(gpu_count = 2)
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG)
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
     assert limits == {'nvidia.com/gpu': 2}
 
@@ -266,12 +266,12 @@ def test_strategy_resolved_resource_name_wins_over_the_deploy_default():
     next(s for s in specs if s.name == 'g').gpu_resource_name = 'nvidia.com/mig-1g.10gb'
     manifests = render_manifests(specs, 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, gpu_resource_name = 'amd.com/gpu')
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
     assert limits == {'nvidia.com/mig-1g.10gb': 1}
     manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, gpu_resource_name = 'amd.com/gpu')
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-g'][0]
+    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
     limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
     assert limits == {'amd.com/gpu': 1}
 
@@ -376,11 +376,11 @@ def test_autoscaling_skips_gpu_nodes_by_default():
     scaled = {m['metadata']['name'] for m in manifests if m['kind'] == 'ScaledObject'}
     # The CPU processor autoscales; the GPU one does not (each extra replica would
     # claim its own whole GPU and can strand the flow Pending).
-    assert scaled == {'vf-g-k-scaler'}
+    assert scaled == {'vf-g-run1-k-scaler'}
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, autoscaling = True, gpu_autoscaling = True)
     scaled = {m['metadata']['name'] for m in manifests if m['kind'] == 'ScaledObject'}
-    assert scaled == {'vf-g-g-scaler', 'vf-g-k-scaler'}
+    assert scaled == {'vf-g-run1-g-scaler', 'vf-g-run1-k-scaler'}
 
 def test_manifests_are_valid_yaml():
     specs = compile_flow(_demo_flow())
@@ -390,7 +390,7 @@ def test_manifests_are_valid_yaml():
     parsed = list(yaml.safe_load_all(ystr))
     assert len(parsed) == len(manifests)
     scaled = [m for m in parsed if m['kind'] == 'ScaledObject']
-    assert len(scaled) == 3  # identity, identity1, joined
+    assert len(scaled) == 2  # identity, identity1 — a join keeps its declared scale (RUN-018)
 
 # -- partitioning: policy, compiled specs, rendered workload -----------------
 #
@@ -432,16 +432,16 @@ def test_partitioned_node_renders_statefulset_and_headless_service():
     manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, autoscaling = True)
     by = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    assert ('StatefulSet', 'vf-part-joined') in by
-    assert ('Service', 'vf-part-joined-hl') in by
+    assert ('StatefulSet', 'vf-part-run1-joined') in by
+    assert ('Service', 'vf-part-run1-joined-hl') in by
     # Non-partitioned processor 'a' stays a Deployment.
-    assert ('Deployment', 'vf-part-a') in by
+    assert ('Deployment', 'vf-part-run1-a') in by
     # Partitioned nodes are not KEDA-autoscaled (rehash on scale is unsafe).
     scaled = [m for m in manifests if m['kind'] == 'ScaledObject']
     scaled_names = {m['metadata']['name'] for m in scaled}
-    assert 'vf-part-joined-scaler' not in scaled_names
+    assert 'vf-part-run1-joined-scaler' not in scaled_names
     # The StatefulSet pod gets POD_NAME via the downward API for its replica id.
-    ss = by[('StatefulSet', 'vf-part-joined')]
+    ss = by[('StatefulSet', 'vf-part-run1-joined')]
     env = ss['spec']['template']['spec']['containers'][0].get('env', [])
     assert any(e['name'] == 'POD_NAME' for e in env)
 
@@ -472,16 +472,11 @@ def test_stream_replicas_reach_the_provision_job_only_for_a_replicated_profile()
     assert dump_manifests(plain) != dump_manifests(replicated)
     assert [m for m in plain if m['kind'] != 'Job'] == [m for m in replicated if m['kind'] != 'Job']
 
-def test_reader_ids_are_rendered_only_under_the_switch(monkeypatch):
-    from videoflow.core import constants
+def test_reader_ids_are_rendered_per_publisher(monkeypatch):
     specs = compile_flow(_demo_flow())
     def node_cms(manifests):
         return {m['data']['VF_NODE_NAME']: m['data'] for m in manifests
                 if m['kind'] == 'ConfigMap' and 'VF_NODE_NAME' in m.get('data', {})}
-    off = node_cms(render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG))
-    assert not any('VF_BLOB_READER_IDS' in data for data in off.values())
-    monkeypatch.setattr(constants, 'RFC0006', True)
     on = node_cms(render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG))
-    assert on['producer']['VF_BLOB_READER_IDS'] == 'identity'
+    assert on['producer']['VF_BLOB_READER_IDS'] == 'identity'           # ENV-12: the child that reads it
     assert 'VF_BLOB_READER_IDS' not in on['printer']                    # no readers at all
-    assert {k: v for k, v in on['producer'].items() if k != 'VF_BLOB_READER_IDS'} == off['producer']

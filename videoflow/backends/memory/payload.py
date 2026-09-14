@@ -7,8 +7,9 @@ Two tiers are modelled because the design package insists they be told apart:
 - ``tier='durable'``: an object under obligation is never expired or evicted;
   acquiring an obligation extends the object's life to the obligation deadline;
   a put over budget is refused (backpressure) rather than admitted by eviction.
-- ``tier='evictable'``: the Redis ``volatile-lru`` shape — every object has a TTL
-  that fires regardless of obligations, and under memory pressure the
+- ``tier='evictable'``: the Redis ``volatile-lru`` shape (the compose
+  ``redis-small`` fixture; the dev server before RFC 0006) — every object has a
+  TTL that fires regardless of obligations, and under memory pressure the
   least-recently-used TTL-bearing object is evicted *even if a reader still
   needs it*. That is the finding the reliable profile must reject; this model
   makes it observable.
@@ -114,10 +115,13 @@ class MemoryPayloadStore(PayloadStore):
     # -- capabilities ---------------------------------------------------------------
 
     def capabilities(self) -> PayloadCapabilities:
+        # The durable tier models a store on a claim (the design package's
+        # "protected durable tier"): what it holds survives the process *and* the
+        # pod, as far as a model can say so.
         return PayloadCapabilities(self._id, durable = known(self._tier == TIER_DURABLE),
                                    evictable = known(self._tier == TIER_EVICTABLE),
                                    atomic_multikey = known(True), max_object_bytes = self._max_bytes,
-                                   reader_identities = True)
+                                   reader_identities = True, persistent_storage = known(self._tier == TIER_DURABLE))
 
     # -- put -------------------------------------------------------------------------
 
@@ -265,9 +269,9 @@ class MemoryPayloadStore(PayloadStore):
             self._sweep(now)
             for key, obj in list(self._objects.items()):
                 if key in required:
-                    cancel = {o for o in obj.obligations if o not in set(required[key])}
+                    cancel = {o for o in obj.obligations if o not in set(required[key]) and ledger.authoritative(o)}
                 else:
-                    cancel = {o for o in obj.obligations if o.startswith('intent/')}
+                    cancel = {o for o in obj.obligations if o.startswith('intent/') and ledger.authoritative(o)}
                 for obligation in cancel:
                     del obj.obligations[obligation]
                 if obj.obligations:

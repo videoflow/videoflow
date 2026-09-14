@@ -30,12 +30,12 @@ time — which is how CI runs them.
 
 Redis is genuinely optional. `test_blob_reclamation.py` hard-skips without it;
 `local/test_toy_solutions.py` uses it opportunistically, passing `--blob-redis-url`
-only when Redis answers, because `toy_router`'s idempotent sink must produce the
-same answer either way. Under `VF_RFC0006=1` it points at the **durable** instance
-(`--profile redis-durable`, `VF_TEST_REDIS_DURABLE_URL`) instead, or at none: with
-the switch on, `run-local` reads the live store's persistence back and refuses a
-BATCH flow on the evictable dev cache rather than admit a guarantee the store
-cannot keep. The Python clients come from the `dev` dependency group, so
+only when the **durable** instance answers (`--profile redis-durable`,
+`VF_TEST_REDIS_DURABLE_URL`), because `toy_router`'s idempotent sink must produce
+the same answer either way and `run-local` reads the live store's persistence
+back: a BATCH flow on the evictable dev cache is refused rather than admitted to
+a guarantee the store cannot keep. The Python clients come from the `dev`
+dependency group, so
 a plain `uv sync` is enough.
 
 ### Start it
@@ -47,7 +47,11 @@ docker compose up -d
 ```
 
 [docker-compose.yml](../../docker-compose.yml) runs `nats:2.10` with `-js -m 8222`
-(4222 for clients, 8222 for monitoring) and `redis:7` with persistence off.
+(4222 for clients, 8222 for monitoring) and `redis:7` with the dev profile's settings
+(`--appendonly yes --maxmemory-policy noeviction`, a 4 GB cap): the same shape
+`videoflow deploy` and `run-local` provision, and one a BATCH flow is admitted on —
+admission reads a bring-your-own store back and refuses an evictable cache for
+`reliable_work`, so the `redis-small` profile below is where eviction is exercised.
 
 **Optional compose profiles** — the fixtures the *broker-level conformance cases*
 (`tests/conformance`, `-m level_broker`) need beyond the default pair. Each is gated
@@ -62,20 +66,39 @@ export VF_TEST_TOXIPROXY_URL=http://localhost:8474 VF_TEST_NATS_PROXIED_URL=nats
 export VF_TEST_REDIS_PROXIED_URL=redis://localhost:6380/0
 export VF_TEST_REDIS_DURABLE_URL=redis://localhost:6381/0 VF_TEST_REDIS_SMALL_URL=redis://localhost:6382/0
 export VF_TEST_NATS_RESTRICTED_URL=nats://restricted:restricted@localhost:4224
-VF_RFC0006=1 uv run pytest tests/conformance -q -rs -m level_broker
+uv run pytest tests/conformance -q -rs -m level_broker
 ```
 
 | Profile | Service | Port(s) | Used by |
 |---|---|---|---|
 | `cluster` | three-server JetStream cluster (`nats-1/2/3`, file store) | 4231 / 4232 / 4233 | replication and quorum cases (MSG-016, MSG-018) |
 | `toxiproxy` | `toxiproxy` in front of `nats` (4242) and `redis` (6380); control API | 8474 | lost acks, stalled publishes, severed connections (MSG-013/014/015, PAY-004, RUN-013) |
-| `redis-durable` | Redis with `--appendonly yes` | 6381 | durable payload obligations (MSG-018, PAY-006) |
+| `redis-durable` | Redis with `--appendonly yes` on a named volume | 6381 | the durable profile's local twin: payload obligations and the run ledger across restarts (MSG-018, PAY-006, PAY-011) |
 | `redis-small` | Redis with `--maxmemory 64mb --maxmemory-policy volatile-lru` | 6382 | eviction under pressure (PAY-010) |
 | `restricted` | NATS with a `restricted` user denied `$JS.API.CONSUMER.CREATE.>` | 4224 | provisioning without permission (MSG-005) |
 
 The proxies are seeded from the compose file, so a case only adds and removes
 toxics ([`tests/conformance/_toxiproxy.py`](../conformance/_toxiproxy.py)); every
 fixture resets them afterwards. The default services are unchanged by the profiles.
+
+Every test names its run uniquely and tears its streams down, but a run killed
+mid-way (a timeout, a Ctrl-C) leaves them, and a few cases deliberately leave a
+flow's DLQ behind to prove it survives a run's teardown. Over weeks a dev broker
+accumulates hundreds of `vf-*` streams, and one `$JS.API.STREAM.LIST` reply carries
+256 of them — the product pages (`topology._list_streams`), and so must a test that
+lists streams itself. Sweep the compose broker when it fills up (every stream on it
+is a test's; nothing else uses it):
+
+```bash
+uv run python -c "
+import asyncio, nats
+from videoflow.messaging.topology import _list_streams
+async def go():
+    nc = await nats.connect('nats://localhost:4222'); js = nc.jetstream()
+    for s in await _list_streams(js): await js.delete_stream(s.config.name)
+    await nc.close()
+asyncio.run(go())"
+```
 
 **Bare binaries (what CI does)**
 
@@ -150,8 +173,13 @@ rules, all enforced by `scripts/k3s-test-up.sh` and `k8s/conftest.py`:
                                      #  which gate the conformance durability cases MSG-021/022/023, PAY-011)
 # The conformance kubernetes level runs only with VF_K8S_NAMESPACE (and, for the
 # durability cases, VF_K8S_HA_NAMESPACE) exported explicitly: those cases delete
-# broker pods and scale the durable StatefulSet, so a plain `pytest` on a host that
-# is a cluster node reports them NOT_RUN instead of touching the cluster by itself.
+# broker pods (PAY-011 restarts the dev namespace's Redis too, to show its emptyDir
+# loses what its claim-backed twin keeps) and scale the durable StatefulSet, so a
+# plain `pytest` on a host that is a cluster node reports them NOT_RUN instead of
+# touching the cluster by itself. The script is idempotent: rerun it after pulling
+# a tree that changes worker-side code (the images) or the dev profile (it replaces
+# a Redis whose arguments no longer match the profile and stamps the profile
+# record every deploy reads onto Services created before the record existed).
 uv run pytest tests/integration/k8s -q -rs
 kubectl delete ns videoflow-test     # when you are done (and videoflow-test-ha)
 ```
@@ -232,6 +260,14 @@ explicit export and both refusing devices that are not idle:
 | `VF_TEST_GPU_UUIDS` | the `gpu` level on **this host** (ALLOC-014/015/016, RUN-039/043): `run-local`-style grants on real devices with a CUDA-runtime probe as the independent witness | `cuda-python` installed (`uv sync --group gpu-test`), every UUID present per `nvidia-smi -L`, **no compute process on any of them** (`nvidia-smi --query-compute-apps`, re-checked at teardown), and never GPUs 0/1 of `lnmcltappgke02` (a service runs there) |
 | `VF_K8S_GPU_NODES` | in-cluster GPU pods (ALLOC-004/008/017/029/030/031, RUN-028/029/032): inert `sleep` holders of the base image on the pool nodes named | each node carries `videoflow.io/gpu-pool=true` — applied by the operator (`kubectl label node <n> videoflow.io/gpu-pool=true`), never by a test or script — none is `lnmcltappgke02`, and the allocated-GPU read is Known |
 | `VF_K8S_MIG_NODE` | managed-MIG lifecycle on hardware (ALLOC-003/005/006/012/013/033) — geometry applied and restored through the GPU Operator | one node from `VF_K8S_GPU_NODES` with zero allocated GPUs and `nvidia.com/mig.capable=true`; the cases additionally need the operator's *mixed* MIG strategy on it (managed MIG names `nvidia.com/mig-<profile>` resources) and report NOT_RUN under `single` |
+| `VF_TEST_MIG_GPU_UUID` | host-side MIG placement (ALLOC-002) and profile qualification (ALLOC-032): MIG mode switched on one of the `VF_TEST_GPU_UUIDS` devices, every accepted layout instantiated through `nvidia-smi mig -cgi` and read back, mode restored at the end | one of the gated devices; passwordless `sudo` (instance creation is privileged); **no driver client holding `/dev/nvidia<N>` open** (`fuser` — a container started with every card visible blocks instance creation with "In use by another client", and is never ours to stop) |
+| `VF_BENCH_THRESHOLDS_JSON` | the `benchmark` level (MSG-026, PAY-017, PAY-022, ALLOC-032): a path to, or the inline JSON of, *your* SLOs and workload parameters keyed by case id — [tests/conformance/bench/thresholds.example.json](../conformance/bench/thresholds.example.json) is the shape and what one developer box sustains | the case's entry present; the infrastructure each benchmark measures (the compose broker's monitoring port `VF_TEST_NATS_MONITOR_URL`, default `http://localhost:8222`; Redis; a MIG-capable device). A benchmark passes only against supplied thresholds and always writes what it measured with the environment it measured on — it is never a universal scale claim |
+
+**A green GPU test is not evidence a model ran.** The gpu-level cases prove what
+the *runtime* does with a grant — enumeration, masks, memory budgets, peer access,
+MIG placement — with a CUDA-runtime probe as the witness; none of them loads a
+model. The component cases that do (RUN-037/038/040/041/042) live with the
+components in `../videoflow-contrib` and report NOT_RUN here, on purpose.
 
 The DRA cases (ALLOC-018..028, kubernetes/gpu levels) gate on a DRA driver
 publishing GPU `ResourceSlices` and report NOT_RUN without one; their model-level
@@ -240,9 +276,17 @@ state machine on the reference allocator) run everywhere. The process-level
 local-GPU cases use a fake `nvidia-smi` on `PATH`
 ([tests/conformance/tools/fake_nvidia_smi.py](../conformance/tools/fake_nvidia_smi.py)),
 so a host with one, zero or unobservable GPUs is a fixture, not a machine. The
-cluster cases that run a real worker pod (RUN-030's cluster variant, RUN-033) need
-the fixtures image rebuilt from the current tree — `scripts/k3s-test-up.sh` does it
-— because the fixture nodes they use and the worker-side checks live in the image.
+cluster cases that run a real worker pod (RUN-018/019/026/027/047, RUN-030's
+cluster variant, RUN-033) need the base and fixtures images rebuilt from the
+current tree — `scripts/k3s-test-up.sh` does it — because the fixture nodes they
+use and the worker-side code they exercise (the partition lease, the obligation
+reconciler) live in the images. RUN-018/019 deploy into the test namespace and
+start their extra pods by hand from the Job's template (a Job's parallelism is
+bounded by its completions, so it cannot be "scaled"): the run ledger that refuses
+a scaled-out singleton at bind time needs a Redis that persists and never evicts,
+which the dev profile's append-only, `noeviction` Redis is — its emptyDir is what
+separates it from the durable profile, and that only matters for surviving a pod
+loss (PAY-011, MSG-021).
 
 ### kind, for CI
 

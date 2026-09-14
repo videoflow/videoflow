@@ -16,7 +16,10 @@ the original graph-building script::
     VF_FLOW_ID          shared flow identifier (stable across runs)
     VF_FLOW_TYPE        realtime | batch
     VF_RUN_ID           per-run identifier that scopes this run's broker streams
-    VF_REPLICA_ID       index of this replica (0 for single-task nodes)
+    VF_REPLICA_ID       index of this replica (0 for single-task nodes); absent and with no
+                        pod ordinal either, a competing replica claims the lowest free slot
+                        through the run ledger (ENV-5 step 3, up to VF_REPLICA_SLOTS — the
+                        scaler's ceiling when one drives the node — else VF_NB_TASKS)
     VF_ACK_WAIT_SECONDS optional; per-message ack deadline (default 60)
     VF_MAX_RETRIES      optional; BATCH redelivery attempts before dead-letter (default 3)
     VF_EOS_QUIESCENCE_MS optional; drain quiescence window before honoring EOS (default 500)
@@ -34,13 +37,14 @@ the original graph-building script::
                         stops fetching (RUN-025). Unset ⇒ bounded by the prefetch count only.
     VF_RUNTIME_STORE_URL optional; the run ledger (RFC 0006 ENV-10): memory:// (default),
                         file://<dir> (one host) or redis:// (read back for persistence).
-                        Under VF_RFC0006 a durable, shared store turns on the EOS-7
-                        completion barrier and the ledger-budgeted delivery cap (D11).
+                        A durable, shared store turns on the EOS-7 completion
+                        barrier, the partition lease and the ledger-budgeted
+                        delivery cap (D11).
     VF_PARENT_REPLICAS  optional; per-parent replica counts aligned with VF_PARENT_NAMES
                         (ENV-11); a count mismatch fails fast. Absent ⇒ the EOS-3 drain.
     VF_BLOB_READER_IDS  optional; the reader obligations each payload this node
                         publishes is held for, comma-separated (RFC 0006 BLOB-13);
-                        honoured only under VF_RFC0006 with a redis:// blob store.
+                        honoured with a redis:// blob store (the obligation store).
     VF_BLOB_READERS     optional; how many downstream reads each message this node
                         publishes receives — enables refcounted blob reclamation
                         (PROTOCOL.md BLOB-5). Unset ⇒ blobs are TTL-only.
@@ -121,8 +125,13 @@ from ..backends.capabilities import (
     admission_timeout_from_env,
     requests_from_env,
 )
-from ..backends.runtime import FlowRuntime
-from ..core import constants
+from ..backends.runtime import (
+    PARTITION_LEASE_ENV,
+    FlowRuntime,
+    claim_replica_slot,
+    partition_lease_from_env,
+    store_shared_and_durable,
+)
 from ..core.compiler import NODE_KIND_CONSUMER, NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER
 from ..core.context import RuntimeContext
 from ..core.engine import Messenger
@@ -259,9 +268,11 @@ def install_sigterm_quiesce(messenger : Messenger,
     back what it prefetched but never delivered) *before* the process is gone,
     instead of leaving those messages to time out on the broker; the default
     action afterwards keeps every existing contract about how a SIGTERMed worker
-    dies — exit status, no clean end-of-stream, un-acked inputs redelivered.
-    Finishing the in-flight message before exiting is the rollout drain's job
-    (a later phase), not this hook's.
+    dies — exit status, no clean end-of-stream, un-acked inputs redelivered
+    (as PID 1 of a container the process exits ``128 + SIGTERM`` itself, since
+    init is never killed by a default-action signal). Finishing the in-flight
+    message before exiting is the rollout drain's job (a later phase), not this
+    hook's.
 
     Only the main thread may install a signal handler, so from any other thread
     (a test driving ``run_from_env`` in-process) this installs nothing.
@@ -283,6 +294,12 @@ def install_sigterm_quiesce(messenger : Messenger,
     def _resignal_default(signum : int) -> None:
         signal.signal(signum, signal.SIG_DFL)
         os.kill(os.getpid(), signum)
+        # PID 1 of a container never dies of a default-action signal (the kernel
+        # withholds it from init), so the re-raise above is a no-op there — and a
+        # worker that lived on would break out of its loop and relay an end of
+        # stream its replacement is about to continue. Die the way the signal
+        # would have had it been delivered: exit 128 + signum, nothing more.
+        os._exit(128 + signum)
 
     follow_up = then if then is not None else _resignal_default
 
@@ -310,11 +327,12 @@ def _import_class(fq_class : str) -> type:
     module = importlib.import_module(module_path)
     return getattr(module, class_name)
 
-def _resolve_replica_id() -> int:
+def _declared_replica_id() -> int | None:
     '''
-    Replica id from VF_REPLICA_ID (local engine sets it), else parsed from the
-    trailing ordinal of POD_NAME/HOSTNAME (a StatefulSet pod is ``<name>-<n>``),
-    else 0.
+    The replica id the environment declares (ENV-5 steps 1 and 2): VF_REPLICA_ID
+    (the local engine sets it; a Kubernetes Indexed Job feeds its completion
+    index into it), else the trailing ordinal of POD_NAME/HOSTNAME (a
+    StatefulSet pod is ``<name>-<n>``); None when neither says.
     '''
     explicit = os.environ.get('VF_REPLICA_ID')
     if explicit not in (None, ''):
@@ -328,7 +346,19 @@ def _resolve_replica_id() -> int:
             tail = val.rsplit('-', 1)[1]
             if tail.isdigit():
                 return int(tail)
-    return 0
+    return None
+
+
+def _resolve_replica_id() -> int:
+    '''
+    Replica id from VF_REPLICA_ID (local engine sets it), else parsed from the
+    trailing ordinal of POD_NAME/HOSTNAME (a StatefulSet pod is ``<name>-<n>``),
+    else 0. ``run_from_env`` claims a slot through the run ledger instead of
+    settling for 0 when the node has competing replicas and the ledger is shared
+    (ENV-5 step 3, ``backends.runtime.claim_replica_slot``).
+    '''
+    declared = _declared_replica_id()
+    return 0 if declared is None else declared
 
 _N = TypeVar('_N', bound = Node)
 
@@ -485,7 +515,7 @@ def run_from_env() -> None:
     # Env var name is historical: any registered URL scheme works, not just Redis.
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL')
     if blob_redis_url:
-        if constants.RFC0006 and urlparse(blob_redis_url).scheme in ('redis', 'rediss'):
+        if urlparse(blob_redis_url).scheme in ('redis', 'rediss'):
             # Obligation-keeping store (RFC 0006 BLOB-13..15) on the same keys the
             # counter store used, so a blob written either way is readable both ways.
             payload_store = RedisPayloadStore(blob_redis_url)
@@ -519,8 +549,26 @@ def run_from_env() -> None:
 
     # The run ledger (RFC 0006 CTRL-4): memory unless VF_RUNTIME_STORE_URL names a
     # store; what it can promise is read back by the store itself.
-    runtime = FlowRuntime(make_runtime_store(os.environ.get(RUNTIME_STORE_ENV)), flow_id, run_id, node_name,
-                          replica_id, nb_tasks, partition_by, parent_replicas)
+    store = make_runtime_store(os.environ.get(RUNTIME_STORE_ENV))
+    lease_seconds = partition_lease_from_env(os.environ.get(PARTITION_LEASE_ENV))
+    # VF_REPLICA_SLOTS: an autoscaled Deployment's ceiling — its pods beyond
+    # nb_tasks are wanted replicas, so that many identities may be claimed.
+    replica_slots = int(os.environ.get('VF_REPLICA_SLOTS') or nb_tasks)
+    if _declared_replica_id() is None and max(nb_tasks, replica_slots) > 1 and not partition_by \
+            and store_shared_and_durable(store):
+        # A competing replica the environment gave no identity (a Deployment pod
+        # has no ordinal): claim the lowest free replica slot through the ledger,
+        # so the N live pods carry distinct ids and a replacement resumes the slot
+        # of the pod it replaces (ENV-5 step 3). An extra pod finds every slot
+        # held and is refused (VF_OWNERSHIP_CONFLICT), never a second replica 0.
+        runtime = claim_replica_slot(store, flow_id, run_id, node_name, nb_tasks, partition_by, parent_replicas,
+                                     slots = max(nb_tasks, replica_slots), lease_seconds = lease_seconds)
+        replica_id = runtime.replica_id
+        logger.info(f'{node_name}: claimed replica slot {replica_id} of {max(nb_tasks, replica_slots)} '
+                    f'through the run ledger')
+    else:
+        runtime = FlowRuntime(store, flow_id, run_id, node_name, replica_id, nb_tasks, partition_by,
+                              parent_replicas, lease_seconds = lease_seconds)
     replayable = isinstance(node, ProducerNode) and node.replayable
 
     messenger: Messenger = NATSMessenger(
@@ -583,7 +631,7 @@ def run_from_env() -> None:
     elif kind == NODE_KIND_CONSUMER:
         consumer = require_node_kind(node, ConsumerNode, kind)
         idem_store : IdempotencyStore | None = None
-        if consumer.idempotent and constants.RFC0006 and runtime.durable_shared():
+        if consumer.idempotent and runtime.durable_shared():
             # The run ledger keeps the markers with the node's other durable facts.
             idem_store = LedgerIdempotencyStore(runtime, EFFECT_RETENTION_SECONDS)
         elif consumer.idempotent and blob_redis_url:

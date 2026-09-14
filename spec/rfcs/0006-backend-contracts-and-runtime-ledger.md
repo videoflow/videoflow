@@ -1,6 +1,6 @@
 # RFC 0006: Backend contracts and the runtime ledger
 
-- **Status:** proposed
+- **Status:** accepted (2026-09-14; the `VF_RFC0006` switch is gone, the off-path deleted)
 - **Author(s):** videoflow maintainers
 - **Created:** 2026-09-11
 - **Protocol version affected:** 1 (no version change — the envelope bytes and every
@@ -26,9 +26,10 @@ being defined — see Open questions.)
 Videoflow's transport, payload store, accelerator allocator and runtime are being
 given explicit contracts (`videoflow/backends/`), reference in-memory implementations,
 and a 130-case conformance suite (`tests/conformance/`). Most of that work changes
-nothing a peer can observe. This RFC records the part that does. Every item below is
-gated behind one switch, `VF_RFC0006` (default off), so the default path stays
-byte-identical until the RFC is accepted:
+nothing a peer can observe. This RFC records the part that does. While it was
+proposed, every item below sat behind one switch, `VF_RFC0006` (default off), so
+the default path stayed byte-identical; at acceptance the switch was removed and
+these are simply the protocol:
 
 1. **Terminators carry the per-replica final count** (`EOS-7`): an EOS or ABORT's
    `seq` is the number of DATA messages that replica published, and a receiver
@@ -53,10 +54,14 @@ byte-identical until the RFC is accepted:
    behaviour.
 8. **Durable control state** (`CTRL-4`) in a `RuntimeStore` with compare-and-swap,
    and which stores qualify a flow as `restart_safe`.
-9. **Run-scoped Kubernetes names** (opt-in `--run-scoped-names` — not yet
-   implemented, plan Phase 6 — the default at acceptance) and compile-time
-   rejection of identity collisions (implemented), with no renaming of today's
+9. **Run-scoped Kubernetes names** (`vf-<flow>-<run>-<node>`, the only naming
+   since acceptance; `--single-run` refuses a second run of a flow) and
+   compile-time rejection of identity collisions, with no renaming of the broker
    names.
+10. **Leased partition ownership** (`acquire_partition` refuses a live holder,
+   renewals from the worker, release on close) and **runtime-derived obligation
+   reconciliation** (`RuntimeObligationLedger`, at start and periodically) —
+   both landed in plan Phase 5 as the ledger semantics §9 left "still to land".
 
 ## Motivation
 
@@ -142,16 +147,15 @@ unchanged so the requirement text, the contracts and the tests name the same thi
 
 ## Proposal
 
-### 1. The `VF_RFC0006` switch
+### 1. The `VF_RFC0006` switch (historical)
 
-`VF_RFC0006=1` is read once, in `videoflow/core/constants.py`, as `RFC0006`. It is
-**off by default**. While off, every rendered manifest, compiled spec, broker name,
-stream/consumer configuration and wire identity is byte-identical to the pre-RFC
-build; `tests/test_render_goldens.py` and `tests/test_golden_vectors.py` are the
-check. With it on, the conformance suite exercises the semantics below, and the
-same goldens are recorded separately under `tests/golden/rfc0006/`.
-
-The switch gates exactly:
+While this RFC was proposed, `VF_RFC0006=1` (read once, in
+`videoflow/core/constants.py`, as `RFC0006`, off by default) gated every
+observable change so the default path stayed byte-identical to the pre-RFC build,
+with the switch-on goldens recorded separately under `tests/golden/rfc0006/`. At
+acceptance the variable was deleted (a value still set is ignored per `ENV-4`), the
+off-path removed, and `tests/golden/` re-recorded once — that diff is the RFC's
+observable footprint (`tests/test_render_goldens.py`). What the switch gated:
 
 | Gated | Sections |
 |---|---|
@@ -162,20 +166,19 @@ The switch gates exactly:
 | The observable half of the runtime ledger: durable terminators, received sets and the completion barrier, the outbox as a source of truth | §9 |
 | Default *emission* of the new environment rows by the control planes (§8); *reading* them is never gated — a row that is absent means today's behaviour whether or not the switch is on | §8 |
 
-Not gated: `--run-scoped-names` (an explicit flag whose default flips at
-acceptance, §10; not yet implemented — plan Phase 6), compile-time
-identity-collision rejection (§10), and everything in
+Never gated: compile-time identity-collision rejection (§10) and everything in
 [Shipped behaviourally](#shipped-behaviourally-not-rfc-worthy).
 
-**Acceptance plan (plan Phase 6).** Preconditions: the conformance run at every
-reachable level (memory, compose broker, k3s, GPU) reports no `FAIL`, and the broker
-and local integration suites are green with the switch on. Then, in one change set:
-flip the default on; delete the off-path (no permanent dual path — decision D1);
-regenerate `tests/golden/` and `spec/vectors/` (the EOS manifest description, new
-`message_id` entries for the three trace-id forms, a new `join/group_identity.json`);
-land the amended requirement text and the new IDs in `spec/PROTOCOL.md`; update
-`spec/conformance-map.md`; set this RFC to `accepted`. After that the variable is no
-longer read; a value still set is ignored per `ENV-4`.
+**Acceptance (done, plan Phase 6).** Preconditions held: the conformance run at
+every reachable level (memory, compose broker, k3s, GPUs 2/3 of the dev host)
+reported no `FAIL`, and the broker and local integration suites were green with
+the switch on. In one change set: the off-path was deleted (no permanent dual path
+— decision D1); `tests/golden/` and `spec/vectors/` were regenerated (the EOS
+manifest description, `message_id` entries for the three trace-id forms, the new
+`join/group_identity.json`; every existing `.bin` byte-identical); the amended
+requirement text and the new IDs landed in `spec/PROTOCOL.md`;
+`spec/conformance-map.md` was updated; run-scoped names became the only naming and
+`--single-run` landed. The open questions below were settled as recorded there.
 
 ### 2. Terminators carry the per-replica final count — `EOS-7`
 
@@ -384,11 +387,9 @@ with `group.ts = 1700000000.5`: `seq = 1700000000500000`, hash input
 
   Stream/consumer `metadata` needs nats-server ≥ 2.10 (the dev broker and
   `k8s/nats.yaml` pin `nats:2.10`; nats-py 2.15.0 exposes `StreamConfig.metadata`
-  and `ConsumerConfig.metadata`, and omits a `None` field from the request, which
-  is what keeps the switched-off configs byte-identical). An older server silently
-  drops the field; the read-back then reports `metadata` as not carried, which
-  under the switch is an `IncompatibleProfile` whose remedy says to upgrade the
-  server or run without `VF_RFC0006`.
+  and `ConsumerConfig.metadata`). An older server silently drops the field; the
+  read-back then reports `metadata` as not carried, an `IncompatibleProfile` whose
+  remedy says to upgrade the server.
 
 - **`STREAM-15`** (delivery cap and credit):
 
@@ -595,7 +596,7 @@ byte-identical manifests and worker environments.
 | **`ENV-10`** | `VF_RUNTIME_STORE_URL` | URL: `memory://`, `file://<dir>`, `redis://…` / `rediss://…` | `memory://` — no durable state, `restart_safe` rejected | local engine: `file://<termination_dir>/ledger` (under the switch; default at acceptance); manifests: the value of `VF_BLOB_REDIS_URL` when a blob store is configured | worker (`FlowRuntime`), `provision.py` and the CLI (admission, `STREAM-15` cap) |
 | **`ENV-11`** | `VF_PARENT_REPLICAS` | comma-separated non-negative integers, positionally aligned with `VF_PARENT_NAMES` | unset — the `EOS-7` barrier is not evaluated; `EOS-3` applies | both control planes, from each parent's `nb_tasks` | worker (`EOS-7`); an entry count that differs from the parent count fails fast (`ConfigError`, as `ENV-1`) |
 | **`ENV-12`** | `VF_BLOB_READER_IDS` | comma-separated obligation ids (`BLOB-13`) | unset — `VF_BLOB_READERS` count semantics (`BLOB-5`), else TTL-only | compile time, alongside `VF_BLOB_READERS` | the publisher's put (`BLOB-14`) |
-| **`ENV-13`** | `VF_PROFILE_REQUESTS_JSON` | JSON list of the operator's explicit requests, `[{channel, profile, options}]` (`backends.capabilities.requests_env`; the other `FlowRequirements` fields travel beside the specs, not here) | unset — `default_requirements(flow_type, specs)`, i.e. today's presets (BATCH ⇒ `reliable_work`, REALTIME ⇒ `live_latest`, per-node `delivery` overrides honoured), and nothing is read back | both control planes, on every node ConfigMap / worker env **and the provision Job**, only when the operator passed `--require-profile`. Deploy-time admission (`deploy/admission.py`) judges an auto-provisioned broker/store by its declared profile and reads a bring-your-own one back live (`jetstream_capabilities_observed`: `max_payload`, the account's file-store allowance, existing streams' `storage`/`num_replicas`; `redis_payload_capabilities_observed`), `Unknown` with a reason for whatever it could not read | `provision.py`: admission against the live broker and store before any stream is created (also under `VF_RFC0006=1` without requests, where an unobserved capability is a warning), then `topology.read_back_streams` + `verify_channel_profiles` on the streams it created — a stream contradicting its requested profile or request (`reliable_work` on limits/discard-old, `num_replicas` below `VF_STREAM_REPLICAS`) is `IncompatibleProfile` (exit 2), a missing one `BrokerUnavailable`, an unreadable one `UnobservableState` (exit 3); a rejection is rendered `ERROR [code]: message` + remedy, never a traceback. The worker (`verify_explicit_profiles`): the same read-back of its own channel and its parents' before the node is built or opened — a producer publishes nothing on rejection — over a connection of its own, never the messenger's. Both bound by `VF_ADMISSION_TIMEOUT_SECONDS` (default 60) |
+| **`ENV-13`** | `VF_PROFILE_REQUESTS_JSON` | JSON list of the operator's explicit requests, `[{channel, profile, options}]` (`backends.capabilities.requests_env`; the other `FlowRequirements` fields travel beside the specs, not here) | unset — `default_requirements(flow_type, specs)`, i.e. today's presets (BATCH ⇒ `reliable_work`, REALTIME ⇒ `live_latest`, per-node `delivery` overrides honoured), and nothing is read back | both control planes, on every node ConfigMap / worker env **and the provision Job**, only when the operator passed `--require-profile`. Deploy-time admission (`deploy/admission.py`) judges an auto-provisioned broker/store by its declared profile and reads a bring-your-own one back live (`jetstream_capabilities_observed`: `max_payload`, the account's file-store allowance, existing streams' `storage`/`num_replicas`; `redis_payload_capabilities_observed`), `Unknown` with a reason for whatever it could not read | `provision.py`: admission against the live broker and store before any stream is created (without explicit requests an unobserved capability is a warning), then `topology.read_back_streams` + `verify_channel_profiles` on the streams it created — a stream contradicting its requested profile or request (`reliable_work` on limits/discard-old, `num_replicas` below `VF_STREAM_REPLICAS`) is `IncompatibleProfile` (exit 2), a missing one `BrokerUnavailable`, an unreadable one `UnobservableState` (exit 3); a rejection is rendered `ERROR [code]: message` + remedy, never a traceback. The worker (`verify_explicit_profiles`): the same read-back of its own channel and its parents' before the node is built or opened — a producer publishes nothing on rejection — over a connection of its own, never the messenger's. Both bound by `VF_ADMISSION_TIMEOUT_SECONDS` (default 60) |
 | **`ENV-14`** | `VF_GPU_GRANT_JSON` | JSON, `DeliveredGrant.to_dict()`: `workload_id`, `devices: [{node, ordinal, uuid, mig_uuid, product, memory_bytes, mig_profile}]`, `exclusive`, `requested`, `policy`, `host` (`observed` \| `unobserved`) | unset — `VF_GPU_COUNT` / `VF_GPU_RESOURCE_NAME` only (RFC 0003); the worker enumerates the CUDA-visible namespace instead | the local allocation backend (`run-local --gpu-policy strict`, or `shared` under the switch); never a Kubernetes pod, where the device plugin's mask is the grant | the worker before `open()` (`runtime/gpucheck.verify_node_grant`): the grant is measured against the node's `gpu_count`; fatal only for `gpu_fallback = 'none'` or an unverifiable `requires_peer_access`. Informational, not routing; `exclusive = false` under `--gpu-policy shared`; `host = unobserved` with an empty device list means "discovery failed", never "no GPUs" |
 | **`ENV-15`** | `VF_WATCHDOG_INTERVAL_SECONDS` | float ≥ 0 | `5` (`runtime/watchdog.py::DEFAULT_WATCHDOG_INTERVAL_SECONDS`); `0` disables the watchdog thread (the in-loop `ProgressDeadline.check` remains), as does `VF_PROGRESS_TIMEOUT_SECONDS=0` | control planes, only when the operator overrides | the worker (`watchdog_interval_from_env`), for non-producers; a non-numeric or negative value fails fast (`ConfigError`); on a stall it writes the termination reason and exits `5` (`EXIT_FLOW_STALLED`) |
 | **`ENV-16`** | `VF_FAULT_SCHEDULE_JSON` | JSON object: barrier name (∈ `faults.BARRIERS`) → action spec — `{"kind": "crash", "exit_code": 137}`, `{"kind": "raise", "code", "message", "disposition"}`, `{"kind": "delay", "seconds"}`, `{"kind": "drop"}`, `{"kind": "pause", "name", "timeout_seconds"}`, `{"kind": "nth", "n", "action": {…}}` | unset — no schedule; a barrier is one attribute read | the conformance harness (`FaultSchedule.to_env()`); a control plane MUST NOT emit it for a deployment | the worker at start (`FaultSchedule.from_env().install()`); an unknown barrier name is refused (`UnknownBarrier`) |
@@ -603,9 +604,13 @@ byte-identical manifests and worker environments.
 
 | **`ENV-18`** | `VF_STREAM_REPLICAS` | integer ≥ 1 | unset — the server's default replica count, i.e. the single-server request as it always was | manifests, on the provision Job only, when the broker profile's `jetstream_replicas` exceeds 1 (`--broker-profile durable`) | `provision.py`: requested as every stream's `num_replicas` (the DLQ stream included) and read back like any other field (`STREAM-14`) |
 
-`VF_RFC0006` itself is a transitional variable, not a protocol row: it is deleted at
-acceptance (§1). `VF_PAYLOAD_CONCURRENCY` (hydration thread-pool size, default 4) is
-a tuning knob of the reference worker and is not part of the contract.
+`VF_RFC0006` was a transitional variable, not a protocol row: deleted at acceptance
+(§1). `VF_PAYLOAD_CONCURRENCY` (hydration thread-pool size, default 4),
+`VF_PARTITION_LEASE_SECONDS` (the partition lease, default 10; §9) and
+`VF_RECONCILE_INTERVAL_SECONDS` (the obligation reconciler's period, default 60;
+`BLOB-14` step 4) are tuning knobs of the reference worker and are not part of the
+contract; `VF_MAX_STREAMS` / `VF_MAX_CONSUMERS` declare an operator-measured
+supported graph size the admission refuses larger graphs against (MSG-026).
 
 ### 9. Durable control state — `CTRL-4`
 
@@ -650,31 +655,84 @@ a tuning knob of the reference worker and is not part of the contract.
   with `appendonly yes` and `noeviction` — the same condition `reliable_work` with
   payload refs already imposes on the payload store.
 
+  **Replica identity on Kubernetes (found at acceptance).** The per-replica
+  terminators and leases assume `ENV-5` gives every replica a distinct, stable
+  id, and the Kubernetes render did not: a competing BATCH node was a
+  NonIndexed Job and a competing REALTIME node is a Deployment, whose pods
+  have no ordinal, so every pod resolved to replica 0 — with a shared ledger,
+  one terminator where the barrier expected N (`toy_calculator` hung on
+  `square`, terminators 1/2), and N pods fighting over one lease. Every BATCH
+  node with `nb_tasks > 1` now renders as an Indexed Job (`VF_REPLICA_ID` from
+  the completion index; a retried index resumes that replica's ledger), and a
+  process the environment gives no identity claims the lowest free replica
+  slot through the ledger's partition lease (`ENV-5` step 3,
+  `backends.runtime.claim_replica_slot`): live pods carry distinct ids, a
+  replacement resumes the crashed pod's slot once its lease lapses, and an
+  extra pod is refused with `VF_OWNERSHIP_CONFLICT` — the RUN-018 semantics,
+  applied to a scaled-out Deployment.
+
+  **A stopped worker relayed an end of stream (found at acceptance).** The task
+  loop published EOS to its children whenever `receive_message` returned the
+  all-parents-stopped shape, which `CTRL-3` also uses for the termination flag —
+  and as PID 1 of a container a SIGTERMed worker never died of the re-raised
+  signal, so a stage pod deleted mid-run quiesced, broke out of its loop, relayed
+  an EOS with its own published count as `seq`, and its sink completed with a
+  fraction of the inputs while the replacement stage went on publishing to
+  nobody (RUN-047 K). The same path fired when a worker lost its partition
+  lease. Now: the hard stop is marked (`is_hard_stop`) and relays nothing; a
+  producer closes its stream only on the flow-wide control stop
+  (`Messenger.stop_reason()`, `CTRL-2`); and the SIGTERM hook exits
+  `128 + SIGTERM` itself when the default action does not arrive.
+
+  **The shipped dev Redis changed shape at acceptance.** Binding admission
+  refuses an evictable, non-persistent store for `reliable_work` (PAY-010), and
+  the dev Redis every `deploy` and `run-local` provisioned was exactly that — a
+  `volatile-lru` cache with persistence off — so accepting the RFC as written
+  would have refused every BATCH flow on the dev path. Rather than weaken the
+  rule, the dev profile (`RedisProfile.dev()`, `localinfra`, the compose
+  `redis` service) now runs an append-only file with `noeviction` on the pod's
+  emptyDir: the same standing as the dev NATS file store (a container restart
+  replays both, a pod loss loses both), so the dev pair admits BATCH and
+  REALTIME flows alike and `tolerated_failures` still refuses it. Every key
+  keeps its TTL (`BLOB-7`) and the reconciler reclaims orphans, so memory stays
+  bounded by the in-flight backlog; a full store now refuses a write — a typed
+  `TransientFailure` the publisher sees — where it used to drop someone's
+  oldest frame. `RedisProfile(persistence = 'none', eviction = 'volatile-lru')`
+  still renders the old cache for an operator who wants one, and admission
+  refuses it for BATCH by name. Each infra Service also records the profile
+  that rendered it (`videoflow.io/profile`), so a deploy that reuses a broker
+  the namespace already runs judges *that* profile, not the one it would have
+  rendered, and refuses an explicit `--broker-profile` that contradicts it.
+  `PayloadCapabilities` gained `persistent_storage` for the distinction this
+  makes necessary: `durable` (persistence on, `noeviction` — what
+  `reliable_work` asks) is not the same as data on a volume that outlives the
+  pod (what `tolerated_failures` additionally asks, PAY-011); the wire cannot
+  show which backs a data directory, so a read-back leaves it `Unknown` and
+  the profile record declares it — `Known(False)` for the dev emptyDir.
+
 ### 10. Run-scoped Kubernetes names and identity collisions
 
-Today every run of a flow renders the same resource names — `vf-<flow>-<node>`
-(workload), `-env`, `-hl`, `-pdb`, `-scaler`, and the flow-wide `vf-<flow>-specs`,
-`-provision`, `-broker`, `-netpol` — and workload selectors match
-`videoflow.io/node` + `videoflow.io/flow-id` only. A second concurrent run
-`kubectl apply`s over the first (RUN-047).
+Before this RFC every run of a flow rendered the same resource names —
+`vf-<flow>-<node>` (workload), `-env`, `-hl`, `-pdb`, `-scaler`, and the flow-wide
+`vf-<flow>-specs`, `-provision`, `-broker`, `-netpol` — and workload selectors
+matched `videoflow.io/node` + `videoflow.io/flow-id` only. A second concurrent run
+`kubectl apply`ed over the first (RUN-047).
 
-- **`--run-scoped-names`** (`deploy`, `render`, `teardown`; opt-in now, the default
-  at acceptance — **not yet implemented**, plan Phase 6): the per-run resources are named
-  `k8s_name('vf', flow_id, run_id, node[, suffix])` — workloads, env ConfigMaps,
-  headless Services, PDBs, ScaledObjects — and the run-wide ones
-  `k8s_name('vf', flow_id, run_id, 'specs' | 'provision' | 'broker')`. Selectors
-  (`matchLabels`, the headless Service selector, KEDA `scaleTargetRef`) MUST include
-  `videoflow.io/run-id`. The NetworkPolicy stays flow-scoped: it selects by flow
-  label, is shared by concurrent runs, and is removed only by a flow-wide teardown.
-  `k8s_name` still truncates to 63 characters, so the collision check below MUST
-  run over the run-scoped names. Goldens for the flag live under
-  `tests/golden/rfc0006/manifests/`.
-- **`--single-run`** (opt-in; **not yet implemented**, plan Phase 6): `deploy` MUST
-  refuse to start run B of a flow before
+- **Run-scoped names** (the only naming since acceptance; `manifests.run_name`):
+  the per-run resources are named `k8s_name('vf', flow_id, run_id, node[, suffix])`
+  — workloads, env ConfigMaps, headless Services, PDBs, ScaledObjects — and the
+  run-wide ones `k8s_name('vf', flow_id, run_id, 'specs' | 'provision' | 'broker')`.
+  Selectors (`matchLabels`, the headless Service selector, KEDA `scaleTargetRef`)
+  include `videoflow.io/run-id`. The NetworkPolicy stays flow-scoped
+  (`manifests.flow_name`): it selects by flow label, is shared by concurrent runs,
+  and is removed only by a flow-wide teardown. `k8s_name` still truncates to 63
+  characters, so the collision check below runs over the run-scoped names
+  (`identity.derived_names`).
+- **`--single-run`** (`deploy`): the engine refuses to start run B of a flow before
   mutating anything when resources labelled `videoflow.io/flow-id=<flow>` with a
-  different `videoflow.io/run-id` exist (RUN-047 A3). With flow-scoped names and
-  without `--single-run`, today's overwrite happens; that hazard is documented, and
-  is why the default flips.
+  different `videoflow.io/run-id` exist (`cluster.refuse_concurrent_run`,
+  `ActiveRunConflict`, code `VF_ACTIVE_RUN`, exit `3`; RUN-047 A3). A listing that
+  fails is `UnobservableState` — an unverifiable namespace is not a free one.
 - **Identity collisions are rejected at compile time, without renaming anything**
   (decision D2). `core/graph.py::_check_name_collisions` emits a
   `VF_GRAPH_NAME_COLLISION` diagnostic for node names that encode to one broker
@@ -687,10 +745,10 @@ Today every run of a flow renders the same resource names — `vf-<flow>-<node>`
   may share a string (a subject and a stream never occupy one namespace).
 
 *Examples.* Nodes `a.b` and `a_b` both sanitize to `a_b` → rejected. Nodes `Node`
-and `node` both render `vf-f-node` → rejected. Two 70-character names that truncate
-to one 63-character Deployment name → rejected. Under `--run-scoped-names`, flow
-`f`, run `r`, node `det` renders Deployment `vf-f-r-det`, ConfigMap `vf-f-r-det-env`,
-Job `vf-f-r-provision`; the stream stays `vf-f-r-det` (`NAME-3`, unchanged).
+and `node` both render `vf-f-r-node` → rejected. Two 70-character names that
+truncate to one 63-character Deployment name → rejected. Flow `f`, run `r`, node
+`det` renders Deployment `vf-f-r-det`, ConfigMap `vf-f-r-det-env`, Job
+`vf-f-r-provision`; the stream stays `vf-f-r-det` (`NAME-3`, unchanged).
 
 ## Compatibility
 
@@ -708,7 +766,7 @@ Job `vf-f-r-provision`; the stream stays `vf-f-r-det` (`NAME-3`, unchanged).
   | New worker, old control plane (legacy streams without metadata, `max_ack_pending = 8`, cap `retries + 1`) | yes | The worker binds durables by name; read-back yields the `effective` configuration; the ledger budget is bounded by the broker cap; the new rows are absent ⇒ pre-RFC behaviour throughout; teardown by exact-name membership. |
   | Mixed SDK versions in one flow (vendor components) | yes, degraded where noted | New producers' `{node}:{epoch}:{n}` ids and `tw-…-{hash}` ids are opaque downstream. Terminator `seq` is ignored by old receivers. Blobs: new publisher + old reader — the old reader finds no `vf-blobrc-` counter, never deletes, the obligation set retains the blob until TTL (`BLOB-7`): safe, leak-until-TTL. Old publisher + new reader — counter semantics via the `BLOB-14` fallback. |
   | Legacy streams without metadata, same run id reused | yes, conservatively | Teardown attributes them by their subject tokens (`subject_owner`), never by name prefix; an unattributable stream is left standing; anything owned whose delete failed is `remaining`, and the CLI exits `3`. Provisioning onto them: read-back; a retention mismatch, or labels naming another run, is rejected (`IncompatibleProfile`). |
-  | nats-server < 2.10 | switch off: yes; switch on: rejected | The server drops `metadata`; the read-back reports it as not carried. With the switch off that is a warning and teardown attributes streams by subject tokens; with it on, provisioning raises `IncompatibleProfile` (remedy: upgrade the server, or run without `VF_RFC0006`). |
+  | nats-server < 2.10 | rejected | The server drops `metadata`; the read-back reports it as not carried and provisioning raises `IncompatibleProfile` (remedy: upgrade the server). Teardown still attributes pre-RFC streams by subject tokens. |
   | DLQ readers and tooling | yes | Stream and subject names unchanged. New `VF_POISON_DECODE` entries carry bodies that may not be envelopes; `videoflow dlq show` MUST tolerate an undecodable body (headers plus a hex dump). |
   | Third-party `BlobStore` subclasses (RFC 0002) | yes | The `BlobStore` base class is unchanged; obligations are a separate `PayloadStore` ABC. A store registered for a scheme keeps count semantics. |
   | Manifests rendered by an older CLI | yes | No new row is present ⇒ every default above. |
@@ -742,7 +800,9 @@ New conformance-map rows, each validated by the catalogue cases in
 | `BLOB-13`…`BLOB-15` | PAY-002, PAY-003, PAY-004, PAY-005, PAY-007, PAY-008, PAY-012, PAY-013, PAY-014, PAY-018, PAY-021 | `test_pay_access.py`, `test_pay_obligations.py`, `test_pay_orphans.py`, `test_pay_retention.py`, `test_pay_routing.py` |
 | `ENV-10`…`ENV-18` | env emission and parsing: `tests/test_local_engine.py`, `tests/test_compiler_manifests.py`, `tests/test_backends_core.py` | — |
 | `CTRL-4` | RUN-001, RUN-002, RUN-003, RUN-013, RUN-022, RUN-023, MSG-018 | `test_run_joins.py`, `test_run_commit.py`, `test_run_partitions.py`, `test_msg_retention.py` |
-| run-scoped names, `--single-run` | RUN-047 | `test_run_rollout.py`; goldens `tests/golden/rfc0006/manifests/` |
+| run-scoped names, `--single-run` | RUN-047 | `test_run_rollout.py`; goldens `tests/golden/manifests/` |
+| partition lease (§9, RUN-018/019 at bind time) | RUN-018, RUN-019 | `test_run_scaling.py`; unit `tests/test_flow_runtime.py` |
+| runtime obligation ledger (`BLOB-14` step 4) | PAY-006, PAY-012, MSG-018 (`ledger` variants) | `test_pay_obligations.py`, `test_pay_orphans.py`, `test_msg_retention.py`; unit `tests/test_obligation_ledger.py` |
 | identity collisions | MSG-019 | `test_msg_capabilities.py`; unit `tests/test_backends_core.py` |
 
 Golden vectors: `spec/vectors/message_id/vectors.json` gains entries for the three
@@ -752,9 +812,9 @@ members → id including the rounding and the digest (the example in §4 is one
 entry); `envelope/manifest.json`'s EOS entry gets the `EOS-7` description. Every
 existing `.bin` MUST remain byte-identical — an identity check, not a green suite.
 
-Goldens: `tests/golden/rfc0006/{manifests,broker}` are recorded with the switch on
-during Phases 2–4; the base goldens do not change until the flip, at which point the
-`rfc0006` set becomes the base.
+Goldens: `tests/golden/rfc0006/{manifests,broker}` were recorded with the switch on
+during Phases 2–4; at the flip `tests/golden/` was re-recorded once and the
+`rfc0006` set removed.
 
 Existing tests that change **deliberately** at acceptance, with the reason in the
 commit: `tests/integration/broker/test_delivery_ladder.py::test_an_undecodable_payload_is_terminated_not_retried_forever`
@@ -944,8 +1004,8 @@ check the classification.
   byte. Requirements travel as a separate document beside the specs and as
   environment rows emitted only when set.
 - **A permanent feature flag / dual path** (decision D1). Rejected: `VF_RFC0006`
-  exists so each refactor step stays byte-identical on the default path while the
-  suite exercises the new semantics; the off-path is deleted at acceptance.
+  existed so each refactor step stayed byte-identical on the default path while the
+  suite exercised the new semantics; the off-path was deleted at acceptance.
 - **Keep TERM-only for undecodable bytes.** Rejected: an unrecorded TERM under
   `reliable_work` is silent loss (MSG-010); the DLQ already exists and its record
   is what makes the disposition explicit.
@@ -963,7 +1023,10 @@ check the classification.
   unobservable or non-durable guarantee is not an available one; the planner
   rejects and says why.
 
-## Open questions
+## Open questions — settled at acceptance
+
+Each question the proposal left open is recorded here with the decision that
+was taken when the RFC was accepted; none stays open.
 
 - **Retry identity after a definite refusal on clustered JetStream.** A clustered
   stream registers a `Nats-Msg-Id` in its deduplication map when the message is
@@ -971,43 +1034,45 @@ check the classification.
   a quorum outage) leaves the id behind for the duplicate window: the retry that
   should land after space is freed is answered `duplicate` with sequence 0 until
   the window passes (observed on the three-server fixture; a single server does
-  not do this). The adapter reports such an acknowledgement as
-  `PublicationUnknown` (never a receipt), and the messenger's retry loop keeps
-  the identity and lands the message once the window lapses — correct, but a
-  two-minute stall under sustained backpressure. Whether the SDK may re-publish
-  under a derived header id (`{id}:a{n}`) once a refusal is *definite* — the
-  envelope's own identity unchanged, so downstream dedup still holds — is for
-  Phase 5 to decide with a measurement (MSG-023 capacity half).
+  not do this). **Settled:** the adapter reports such an acknowledgement as
+  `PublicationUnknown` (never a receipt) and the messenger's retry loop keeps the
+  identity and lands the message once the window lapses. The identity is never
+  re-minted under a derived header id: a two-minute stall under sustained
+  backpressure is the price of `MSGID-2` holding on a clustered broker, and the
+  MSG-023 capacity measurement recorded it rather than working around it.
 
-1. **`window_id` for time-mode groups.** `group_identity` accepts a window
-   namespace; this RFC fixes it to `None` for v1. If a per-node or per-policy
-   namespace is wanted (RUN-016 A3 speaks of a "source/epoch/window namespace"),
-   it must be settled before Phase 6 records `join/group_identity.json`, because
-   it changes every id.
-2. **Epoch form.** A random 12-hex token is specified; a CAS-incremented decimal
-   from the runtime store would make epochs *ordered*, letting a receiver reject a
-   pre-restart terminator by comparison, at the cost of a store dependency in the
-   producer. Decide before the vectors are recorded.
-3. **`VF_PARENT_REPLICAS` encoding.** Positional integers aligned with
-   `VF_PARENT_NAMES` (as `ENV-3`) versus self-describing `name=count` pairs.
-4. **Received-set growth.** The `EOS-7` barrier keeps one entry per distinct
-   delivered id per `(parent, durable)` until the barrier closes. A BATCH run of
-   millions of frames needs a compaction rule (fold committed, ack-confirmed ids
-   into a count) that this RFC does not yet give.
-5. **`derived_names()` and run-scoped names.** `identity.derived_names` enumerates
-   the flow-scoped Kubernetes names; once `--run-scoped-names` is the default it
-   must enumerate the run-scoped ones, or the collision check covers the wrong
-   corpus.
-6. **`STREAM-9`.** `STREAM-8` cites it ("MUST NOT be deleted by run teardown
-   (`STREAM-9`)") but it is not defined anywhere. This RFC leaves the number
-   unassigned; the `PROTOCOL.md` edit that lands with it should either define
-   `STREAM-9` as that rule or drop the reference. Similarly `ABORT-1` cites
-   `NAME-5` for the `_eos` subject where `NAME-4` is meant.
-7. **Distinct codes for `Missing` and `Corrupt` payloads.** Both dead-letter under
-   `VF_POISON_DECODE` with the distinction in `VF-Error`. Codes are permanent
-   (`ERR-3`), so if dashboards need to separate "the blob expired" from "the bytes
-   were wrong", new codes should be minted now rather than later.
-8. **Fault schedules in production.** `ENV-16` is honoured whenever present. An
-   explicit opt-in (a second variable, or refusing schedules unless
-   `VF_FAULT_MARKER_DIR` is under a test-owned path) would make an accidental
-   leak of a harness environment into a deployment inert.
+1. **`window_id` for time-mode groups.** **Settled:** `None` for protocol v1
+   (`join/group_identity.json` is recorded with an empty window namespace, hash
+   input `|…`). A future namespace is a new requirement id, never a silent change
+   of every id.
+2. **Epoch form.** **Settled:** the random 12-hex token (`uuid4().hex[:12]`). An
+   ordered epoch would put a store dependency into every live producer; a receiver
+   that must reject a pre-restart terminator does so through the ledger's
+   per-`(parent, replica, kind)` records (`EOS-7`), not by comparing epochs.
+3. **`VF_PARENT_REPLICAS` encoding.** **Settled:** positional integers aligned
+   with `VF_PARENT_NAMES`, as `ENV-3` orders every per-parent list; a count that
+   does not match the parent count fails fast (`ENV-11`).
+4. **Received-set growth.** **Settled for v1:** one entry per distinct delivered
+   id per `(parent, durable)` until the barrier closes; no compaction. The barrier
+   is evaluated only under a durable shared store, and a BATCH run is bounded by
+   its stream's `max_msgs` (`STREAM-1`), which bounds the set the same way.
+   Compaction (folding ack-confirmed ids into a count) is a future, separately
+   versioned change.
+5. **`derived_names()` and run-scoped names.** **Settled:** `identity.derived_names`
+   enumerates the run-scoped Kubernetes names (`vf-<flow>-<run>-…`) and the
+   flow-scoped NetworkPolicy; the collision check covers exactly what is rendered.
+6. **`STREAM-9`.** **Settled:** `STREAM-9` is defined in `PROTOCOL.md` as the rule
+   `STREAM-8` cited — the DLQ stream is flow-scoped and MUST NOT be deleted by a
+   run's teardown. `ABORT-1`'s reference to `NAME-5` is corrected to `NAME-4`.
+7. **Distinct codes for `Missing` and `Corrupt` payloads.** **Settled:** one code,
+   `VF_POISON_DECODE`, with the distinction in `VF-Error` (`missing` / `corrupt`
+   naming the ref). Codes are permanent (`ERR-3`); a dashboard that must separate
+   the two keys on `VF-Error`, and minting two more permanent codes for one
+   disposition was judged not worth the surface.
+8. **Fault schedules in production.** **Settled:** `ENV-16` is honoured whenever
+   present, as the reference worker has done since Phase 2; the control planes
+   never emit it, and the harness that sets it owns the environment. An opt-in
+   guard would protect against a leaked harness environment at the cost of a
+   second variable to get wrong; the conformance suite's own `record_faults`
+   check (a scheduled barrier that never fired is `INVALID_TEST`) is the guard
+   that exists.

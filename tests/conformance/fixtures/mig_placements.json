@@ -1,0 +1,52 @@
+{
+  "provenance": {
+    "vendor_table": "NVIDIA Multi-Instance GPU User Guide, 'Supported MIG profiles' and 'GPU instance profile placements' (https://docs.nvidia.com/datacenter/tesla/mig-user-guide/); widths and start positions are on the card's memory-slice grid, exactly what `nvidia-smi mig -lgipp` prints as `{starts}:width`.",
+    "live_capture": {
+      "family": "RTX-PRO-6000-Blackwell",
+      "host": "lnmcltappgke02 GPU 2 / lnmcltappgke01 GPU 0, driver 595.71.05, 2026-09-14",
+      "command": "nvidia-smi mig -lgipp",
+      "lines": [
+        "GPU  2 Profile ID 14 Placements: {0,3,6,9}:3",
+        "GPU  2 Profile ID  5 Placements: {0,6}:6",
+        "GPU  2 Profile ID  0 Placement : {0}:12"
+      ]
+    },
+    "independence": "This file is the conformance oracle for ALLOC-002 and is deliberately a second copy of the data videoflow/deploy/mig.py carries: the test compares the two, and on hardware compares both to the live query."
+  },
+  "families": {
+    "A30": {"product_substrings": ["A30"], "grid": 4, "compute_slices": 4, "memory_gib": 24,
+            "profiles": {"1g.6gb": {"id": 14, "width": 1, "starts": [0, 1, 2, 3], "max": 4, "compute_slices": 1, "memory_gib": 6},
+                         "2g.12gb": {"id": 5, "width": 2, "starts": [0, 2], "max": 2, "compute_slices": 2, "memory_gib": 12},
+                         "4g.24gb": {"id": 0, "width": 4, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 24}}},
+    "A100-40GB": {"product_substrings": ["A100", "40GB"], "grid": 8, "compute_slices": 7, "memory_gib": 40,
+                  "profiles": {"1g.5gb": {"id": 19, "width": 1, "starts": [0, 1, 2, 3, 4, 5, 6], "max": 7, "compute_slices": 1, "memory_gib": 5},
+                               "2g.10gb": {"id": 14, "width": 2, "starts": [0, 2, 4], "max": 3, "compute_slices": 2, "memory_gib": 10},
+                               "3g.20gb": {"id": 9, "width": 4, "starts": [0, 4], "max": 2, "compute_slices": 3, "memory_gib": 20},
+                               "4g.20gb": {"id": 5, "width": 4, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 20},
+                               "7g.40gb": {"id": 0, "width": 8, "starts": [0], "max": 1, "compute_slices": 7, "memory_gib": 40}}},
+    "A100-80GB": {"product_substrings": ["A100", "80GB"], "grid": 8, "compute_slices": 7, "memory_gib": 80,
+                  "profiles": {"1g.10gb": {"id": 19, "width": 1, "starts": [0, 1, 2, 3, 4, 5, 6], "max": 7, "compute_slices": 1, "memory_gib": 10},
+                               "2g.20gb": {"id": 14, "width": 2, "starts": [0, 2, 4], "max": 3, "compute_slices": 2, "memory_gib": 20},
+                               "3g.40gb": {"id": 9, "width": 4, "starts": [0, 4], "max": 2, "compute_slices": 3, "memory_gib": 40},
+                               "4g.40gb": {"id": 5, "width": 4, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 40},
+                               "7g.80gb": {"id": 0, "width": 8, "starts": [0], "max": 1, "compute_slices": 7, "memory_gib": 80}}},
+    "H100-80GB": {"product_substrings": ["H100", "80GB"], "grid": 8, "compute_slices": 7, "memory_gib": 80,
+                  "profiles": {"1g.10gb": {"id": 19, "width": 1, "starts": [0, 1, 2, 3, 4, 5, 6], "max": 7, "compute_slices": 1, "memory_gib": 10},
+                               "1g.20gb": {"id": 15, "width": 2, "starts": [0, 2, 4, 6], "max": 4, "compute_slices": 1, "memory_gib": 20},
+                               "2g.20gb": {"id": 14, "width": 2, "starts": [0, 2, 4], "max": 3, "compute_slices": 2, "memory_gib": 20},
+                               "3g.40gb": {"id": 9, "width": 4, "starts": [0, 4], "max": 2, "compute_slices": 3, "memory_gib": 40},
+                               "4g.40gb": {"id": 5, "width": 4, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 40},
+                               "7g.80gb": {"id": 0, "width": 8, "starts": [0], "max": 1, "compute_slices": 7, "memory_gib": 80}}},
+    "H100-94GB": {"product_substrings": ["H100", "94GB"], "grid": 8, "compute_slices": 7, "memory_gib": 94,
+                  "profiles": {"1g.12gb": {"id": 19, "width": 1, "starts": [0, 1, 2, 3, 4, 5, 6], "max": 7, "compute_slices": 1, "memory_gib": 12},
+                               "1g.24gb": {"id": 15, "width": 2, "starts": [0, 2, 4, 6], "max": 4, "compute_slices": 1, "memory_gib": 24},
+                               "2g.24gb": {"id": 14, "width": 2, "starts": [0, 2, 4], "max": 3, "compute_slices": 2, "memory_gib": 24},
+                               "3g.47gb": {"id": 9, "width": 4, "starts": [0, 4], "max": 2, "compute_slices": 3, "memory_gib": 47},
+                               "4g.47gb": {"id": 5, "width": 4, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 47},
+                               "7g.94gb": {"id": 0, "width": 8, "starts": [0], "max": 1, "compute_slices": 7, "memory_gib": 94}}},
+    "RTX-PRO-6000-Blackwell": {"product_substrings": ["RTX-PRO-6000", "Blackwell"], "grid": 12, "compute_slices": 4, "memory_gib": 96,
+                               "profiles": {"1g.24gb": {"id": 14, "width": 3, "starts": [0, 3, 6, 9], "max": 4, "compute_slices": 1, "memory_gib": 24},
+                                            "2g.48gb": {"id": 5, "width": 6, "starts": [0, 6], "max": 2, "compute_slices": 2, "memory_gib": 48},
+                                            "4g.96gb": {"id": 0, "width": 12, "starts": [0], "max": 1, "compute_slices": 4, "memory_gib": 96}}}
+  }
+}

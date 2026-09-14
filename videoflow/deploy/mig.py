@@ -11,19 +11,24 @@ The strategy (``deploy/gpu.py``) owns fetching the inventory and applying the
 result; ``deploy/cluster.py`` owns reading the inventory off GPU Feature
 Discovery labels.
 
-The card model is deliberately simpler than real MIG placement rules: a card
-holds any multiset of profiles whose slice total fits its capacity, subject to
-each profile's per-card maximum. NVIDIA's placement constraints are slightly
-stricter for some mixed geometries; ``nvidia-mig-parted`` remains the authority
-and will reject a combination it cannot place, with the generated config in hand
-for the operator to adjust. The table errs on the side of profiles that are
-valid everywhere.
+A card holds a multiset of profiles only when it can *place* it: each profile
+occupies a fixed width on the card's memory-slice grid and may start only at
+the positions NVIDIA's placement table allows (``nvidia-smi mig -lgipp``; the MIG
+user guide's "GPU instance profile placements"), so compute slices, memory and
+legal start positions are three separate budgets. Two ``3g.20gb`` on an A100
+fill the whole grid (widths 4 at starts 0 and 4) and leave no room for a
+``1g.5gb`` although the compute slices (3 + 3 + 1 = 7) would fit — a layout the
+totals accept and ``nvidia-mig-parted`` would refuse after the operator has
+already been told it is feasible (ALLOC-002). A profile without placement data
+(a third-party table) is checked by totals only. ``nvidia-mig-parted`` remains
+the executor: it chooses the instance positions; the solver only promises that a
+legal assignment exists.
 '''
 from __future__ import absolute_import, division, print_function
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Sequence
 
 from ..core.compiler import NodeSpec
 
@@ -37,12 +42,24 @@ class LayoutError(ValueError):
 
 @dataclass
 class MigProfile:
-    '''One MIG profile a card family supports: ``1g.10gb`` needs 1 of the card's
-    compute slices and yields a 10 GiB instance, at most ``max_per_gpu`` per card.'''
+    '''
+    One MIG profile a card family supports: ``1g.10gb`` needs 1 of the card's
+    compute slices and yields a 10 GiB instance, at most ``max_per_gpu`` per card.
+
+    - Arguments:
+        - width: how many positions of the card's memory-slice grid an instance \
+            occupies (``nvidia-smi mig -lgipp`` prints ``{starts}:width``); 0 when \
+            the table carries no placement data and the profile is checked by \
+            totals only.
+        - placements: the grid positions an instance may start at, from the same \
+            query — a ``3g.20gb`` on an A100 starts at 0 or 4, never at 2.
+    '''
     name : str
     memory_gib : float
     slices : int
     max_per_gpu : int
+    width : int = 0
+    placements : tuple[int, ...] = ()
 
     @property
     def resource(self) -> str:
@@ -52,15 +69,24 @@ class MigProfile:
 
 @dataclass
 class MigTable:
-    '''The MIG geometry of one GPU family: how to recognize it from the GFD
-    product label, how many compute slices a card has, and the profiles it offers.'''
+    '''
+    The MIG geometry of one GPU family: how to recognize it from the GFD product
+    label, how many compute slices a card has, the profiles it offers, and the
+    size of the memory-slice grid the profiles' placements refer to (``grid``; 0
+    when the table carries no placement data).
+    '''
     family : str                      # registry key, e.g. 'A100-80GB'
     match_substrings : List[str]      # all must appear in nvidia.com/gpu.product
     total_slices : int
     profiles : List[MigProfile]
+    grid : int = 0
 
     def matches(self, product : str) -> bool:
         return all(s in product for s in self.match_substrings)
+
+    def placement_checked(self) -> bool:
+        '''Whether every profile carries placement data, so ``place`` is a real check.'''
+        return self.grid > 0 and all(p.width > 0 and p.placements for p in self.profiles)
 
     def smallest_profile_for(self, memory_gib : float) -> Optional[MigProfile]:
         fitting = [p for p in self.profiles if p.memory_gib >= memory_gib]
@@ -88,49 +114,89 @@ def mig_table_for_product(product : str) -> Optional[MigTable]:
     return None
 
 
-# Profiles that are valid in any geometry, per NVIDIA's supported-profile tables.
+# Profiles that are valid in any geometry, per NVIDIA's supported-profile tables;
+# widths and start positions per the MIG user guide's placement tables
+# (https://docs.nvidia.com/datacenter/tesla/mig-user-guide/, "GPU instance
+# profile placements"), the same data ``nvidia-smi mig -lgipp`` prints per card.
+# A100/H100 cards have 8 memory slices for 7 compute slices, which is why a
+# ``3g`` profile is 4 wide and two of them fill the card.
+_ANY_OF_7 = tuple(range(7))
 register_mig_table(MigTable('A30', ['A30'], 4, [
-    MigProfile('1g.6gb', 6, 1, 4),
-    MigProfile('2g.12gb', 12, 2, 2),
-    MigProfile('4g.24gb', 24, 4, 1),
-]))
+    MigProfile('1g.6gb', 6, 1, 4, 1, (0, 1, 2, 3)),
+    MigProfile('2g.12gb', 12, 2, 2, 2, (0, 2)),
+    MigProfile('4g.24gb', 24, 4, 1, 4, (0,)),
+], grid = 4))
 register_mig_table(MigTable('A100-40GB', ['A100', '40GB'], 7, [
-    MigProfile('1g.5gb', 5, 1, 7),
-    MigProfile('2g.10gb', 10, 2, 3),
-    MigProfile('3g.20gb', 20, 3, 2),
-    MigProfile('4g.20gb', 20, 4, 1),
-    MigProfile('7g.40gb', 40, 7, 1),
-]))
+    MigProfile('1g.5gb', 5, 1, 7, 1, _ANY_OF_7),
+    MigProfile('2g.10gb', 10, 2, 3, 2, (0, 2, 4)),
+    MigProfile('3g.20gb', 20, 3, 2, 4, (0, 4)),
+    MigProfile('4g.20gb', 20, 4, 1, 4, (0,)),
+    MigProfile('7g.40gb', 40, 7, 1, 8, (0,)),
+], grid = 8))
 register_mig_table(MigTable('A100-80GB', ['A100', '80GB'], 7, [
-    MigProfile('1g.10gb', 10, 1, 7),
-    MigProfile('2g.20gb', 20, 2, 3),
-    MigProfile('3g.40gb', 40, 3, 2),
-    MigProfile('4g.40gb', 40, 4, 1),
-    MigProfile('7g.80gb', 80, 7, 1),
-]))
+    MigProfile('1g.10gb', 10, 1, 7, 1, _ANY_OF_7),
+    MigProfile('2g.20gb', 20, 2, 3, 2, (0, 2, 4)),
+    MigProfile('3g.40gb', 40, 3, 2, 4, (0, 4)),
+    MigProfile('4g.40gb', 40, 4, 1, 4, (0,)),
+    MigProfile('7g.80gb', 80, 7, 1, 8, (0,)),
+], grid = 8))
 register_mig_table(MigTable('H100-80GB', ['H100', '80GB'], 7, [
-    MigProfile('1g.10gb', 10, 1, 7),
-    MigProfile('1g.20gb', 20, 1, 4),
-    MigProfile('2g.20gb', 20, 2, 3),
-    MigProfile('3g.40gb', 40, 3, 2),
-    MigProfile('4g.40gb', 40, 4, 1),
-    MigProfile('7g.80gb', 80, 7, 1),
-]))
-# RTX PRO 6000 Blackwell Server Edition (96 GiB): four equal partitions — profiles as
-# reported by `nvidia-smi mig -lgip` on the target cluster (driver 595.71, Sep 2026).
+    MigProfile('1g.10gb', 10, 1, 7, 1, _ANY_OF_7),
+    MigProfile('1g.20gb', 20, 1, 4, 2, (0, 2, 4, 6)),
+    MigProfile('2g.20gb', 20, 2, 3, 2, (0, 2, 4)),
+    MigProfile('3g.40gb', 40, 3, 2, 4, (0, 4)),
+    MigProfile('4g.40gb', 40, 4, 1, 4, (0,)),
+    MigProfile('7g.80gb', 80, 7, 1, 8, (0,)),
+], grid = 8))
+# RTX PRO 6000 Blackwell Server Edition (96 GiB): four equal partitions on a
+# 12-position grid — profiles and placements as reported by `nvidia-smi mig
+# -lgip` / `-lgipp` on the target cluster (driver 595.71, Sep 2026).
 register_mig_table(MigTable('RTX-PRO-6000-Blackwell', ['RTX-PRO-6000', 'Blackwell'], 4, [
-    MigProfile('1g.24gb', 24, 1, 4),
-    MigProfile('2g.48gb', 48, 2, 2),
-    MigProfile('4g.96gb', 96, 4, 1),
-]))
+    MigProfile('1g.24gb', 24, 1, 4, 3, (0, 3, 6, 9)),
+    MigProfile('2g.48gb', 48, 2, 2, 6, (0, 6)),
+    MigProfile('4g.96gb', 96, 4, 1, 12, (0,)),
+], grid = 12))
 register_mig_table(MigTable('H100-94GB', ['H100', '94GB'], 7, [
-    MigProfile('1g.12gb', 12, 1, 7),
-    MigProfile('1g.24gb', 24, 1, 4),
-    MigProfile('2g.24gb', 24, 2, 3),
-    MigProfile('3g.47gb', 47, 3, 2),
-    MigProfile('4g.47gb', 47, 4, 1),
-    MigProfile('7g.94gb', 94, 7, 1),
-]))
+    MigProfile('1g.12gb', 12, 1, 7, 1, _ANY_OF_7),
+    MigProfile('1g.24gb', 24, 1, 4, 2, (0, 2, 4, 6)),
+    MigProfile('2g.24gb', 24, 2, 3, 2, (0, 2, 4)),
+    MigProfile('3g.47gb', 47, 3, 2, 4, (0, 4)),
+    MigProfile('4g.47gb', 47, 4, 1, 4, (0,)),
+    MigProfile('7g.94gb', 94, 7, 1, 8, (0,)),
+], grid = 8))
+
+
+def place(profiles : Sequence[MigProfile], grid : int) -> Optional[List[int]]:
+    '''
+    A legal, non-overlapping start position per profile on a ``grid``-position
+    memory-slice grid, or None when the multiset cannot be placed. Exhaustive
+    (a card has at most eight positions and seven instances) and order-free:
+    the caller's profile order never decides feasibility, only which of the
+    equivalent assignments is returned. Widest profiles are tried first so the
+    search prunes early; the result is reported in the caller's order.
+    '''
+    order = sorted(range(len(profiles)), key = lambda i: (-profiles[i].width, profiles[i].name))
+    starts : List[int] = [-1] * len(profiles)
+    occupied = [False] * grid
+
+    def search(k : int) -> bool:
+        if k == len(order):
+            return True
+        profile = profiles[order[k]]
+        for start in profile.placements:
+            end = start + profile.width
+            if end > grid or any(occupied[start:end]):
+                continue
+            for pos in range(start, end):
+                occupied[pos] = True
+            starts[order[k]] = start
+            if search(k + 1):
+                return True
+            for pos in range(start, end):
+                occupied[pos] = False
+        return False
+
+    return starts if search(0) else None
 
 
 @dataclass
@@ -233,7 +299,17 @@ class _Card:
         # slice count (4 of 7) but not by memory with three 1g.10gb beside them.
         if self.memory_gib > 0 and self.memory_used + profile.memory_gib > self.memory_gib:
             return False
-        return self.mig_counts.get(profile.name, 0) < profile.max_per_gpu
+        if self.mig_counts.get(profile.name, 0) >= profile.max_per_gpu:
+            return False
+        # And the placement grid is a third: the multiset with this instance added
+        # must still have a legal assignment of start positions (ALLOC-002).
+        return not self.table.placement_checked() or place(self.profiles() + [profile], self.table.grid) is not None
+
+    def profiles(self) -> List[MigProfile]:
+        '''The profile objects on the card, one entry per instance, in name order.'''
+        assert self.table is not None
+        by_name = {p.name: p for p in self.table.profiles}
+        return [by_name[name] for name in sorted(self.mig_counts) for _ in range(self.mig_counts[name])]
 
     def add(self, profile : MigProfile) -> None:
         self.mig_counts[profile.name] = self.mig_counts.get(profile.name, 0) + 1

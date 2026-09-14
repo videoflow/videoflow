@@ -159,6 +159,20 @@ class SubscriptionObservation:
     generation : str | None = None
 
 @dataclass(frozen = True)
+class ChannelObservation:
+    '''
+    What a channel retains right now: the first and last stream sequences it
+    holds and how many messages — the eviction facts a reconciler needs
+    (``BLOB-14`` step 4: a publication below ``first_seq`` was evicted and its
+    readers will never take it).
+    '''
+    first_seq : int
+    last_seq : int
+    messages : int
+    retention : str
+    observed_at : float
+
+@dataclass(frozen = True)
 class VerifiedChannel:
     spec : ChannelSpec
     effective : Mapping[str, Any]
@@ -231,6 +245,22 @@ class MessagingBackend(abc.ABC):
     @abc.abstractmethod
     def observe_subscription(self, subscription : SubscriptionId) -> Observation[SubscriptionObservation]:
         ...
+
+    def observe_channel(self, channel : ChannelId) -> Observation[ChannelObservation]:
+        '''The channel's retained range (``ChannelObservation``); Unknown when the adapter cannot read it.'''
+        from .outcomes import unknown
+        return unknown('unsupported', f'{type(self).__name__} does not observe channels')
+
+    def observe_ack_floor(self, subscription : SubscriptionId) -> Observation[int]:
+        '''
+        The stream sequence up to which ``subscription`` has settled everything
+        (its ack floor), for any subscription of the run — bound by this process
+        or not: a reconciler evaluates other readers' progress through it.
+        Unknown when the adapter cannot read it, which a reconciler treats as
+        "still required", never as settled.
+        '''
+        from .outcomes import unknown
+        return unknown('unsupported', f'{type(self).__name__} does not observe ack floors')
 
     def receive_any(self, subscriptions : Sequence[SubscriptionId], item_credit : int, byte_credit : int,
                     deadline : float) -> list[tuple[SubscriptionId, Delivery]]:

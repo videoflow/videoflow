@@ -316,3 +316,25 @@ def unpinned_dead_letter(monkeypatch : pytest.MonkeyPatch) -> None:
     def acquire(self : MemoryPayloadStore, ref : Any, obligation_id : str, deadline : float) -> DurableReceipt:
         return DurableReceipt(ref, obligation_id, deadline)
     monkeypatch.setattr(MemoryPayloadStore, 'acquire_obligation', acquire)
+
+
+# -- PAY-017: forwarding declared, copies written ---------------------------------------------------
+
+def false_reference_forwarding(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''A store that advertises ``reference_forwarding`` while every hop still writes its own copy.'''
+    import dataclasses
+
+    from videoflow.backends.memory.payload import MemoryPayloadStore
+    real = MemoryPayloadStore.capabilities
+
+    def caps(self : Any) -> Any:
+        return dataclasses.replace(real(self), reference_forwarding = True)
+    monkeypatch.setattr(MemoryPayloadStore, 'capabilities', caps)
+
+
+# -- PAY-022: discarded frames read as delivered ------------------------------------------------------
+
+def discards_as_throughput(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''The reviewed accounting: throughput was the offered rate; frames the live channel evicted counted as served.'''
+    import test_pay_benchmark
+    monkeypatch.setattr(test_pay_benchmark, '_drop_ratio', lambda offered, received: 0.0)

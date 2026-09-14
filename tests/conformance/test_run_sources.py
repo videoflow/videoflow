@@ -44,7 +44,6 @@ from _runs2 import (
 
 from videoflow.backends import faults
 from videoflow.backends.runtime import FlowRuntime
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 
 pytestmark = pytest.mark.timeout(180)
@@ -135,7 +134,6 @@ def test_run_014_live_source_restarts_create_new_epochs_without_colliding(tmp_pa
     Acceptance: No genuinely new post-restart frame is suppressed because its local counter
     matches a pre-restart frame.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(_specs())
@@ -175,7 +173,6 @@ def _run_live_source_worker(rig : Any, root : Any, label : str, node : LiveSourc
 def test_run_014_a_replacement_worker_process_mints_its_own_epoch(nats_url, tmp_path, evidence_dir, record_faults,
                                                                   monkeypatch) -> None:
     '''Real worker processes on the compose broker: the second process is a genuinely new epoch.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs(), ack_wait = 5)
     schedule = faults.FaultSchedule({'source.publish.after': faults.Nth(FRAMES, faults.Crash(137)),
@@ -211,7 +208,6 @@ def test_run_014_a_replacement_worker_process_mints_its_own_epoch(nats_url, tmp_
 
 @pytest.mark.negative_control(of = 'RUN-014')
 def test_run_014_detects_a_source_that_counts_without_an_epoch(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.epochless_source(monkeypatch)
     rig = memory_rig(_specs())
@@ -326,7 +322,6 @@ def test_run_015_replayable_sources_preserve_stable_offset_identities(tmp_path, 
     Acceptance: Recovered offsets map one-to-one to original logical identities; new-analysis
     identities follow the declared namespace and no offset is silently lost.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(_specs())
@@ -342,7 +337,6 @@ def test_run_015_replayable_sources_preserve_stable_offset_identities(tmp_path, 
 
 @pytest.mark.negative_control(of = 'RUN-015')
 def test_run_015_detects_a_checkpoint_that_advances_on_the_send(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.checkpoint_on_send(monkeypatch)
     rig = memory_rig(_specs())
@@ -355,7 +349,6 @@ def test_run_015_detects_a_checkpoint_that_advances_on_the_send(tmp_path, monkey
 
 @pytest.mark.negative_control(of = 'RUN-015')
 def test_run_015_detects_a_new_analysis_without_a_namespace(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.versionless_analysis(monkeypatch)
     rig = memory_rig(_specs())

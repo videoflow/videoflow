@@ -270,6 +270,14 @@ class FlowStalled(VideoflowEnvironmentError):
     code = 'VF_FLOW_STALLED'
     exit_code = EXIT_FLOW_STALLED
 
+class ActiveRunConflict(VideoflowEnvironmentError):
+    '''
+    Under ``--single-run``, another run of the same flow already holds workloads
+    in the namespace (RFC 0006 §10, RUN-047). Refused before anything of the
+    new run is created, so the active run is never reconfigured or overwritten.
+    '''
+    code = 'VF_ACTIVE_RUN'
+
 # -- run time: a message was in flight ----------------------------------------
 
 class VideoflowRuntimeError(VideoflowError):

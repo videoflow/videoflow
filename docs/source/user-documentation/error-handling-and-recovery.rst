@@ -71,8 +71,11 @@ says who is at fault:
     │   │                           on this host (required_assets())
     │   ├── UnobservableState       VF_STATE_UNKNOWN: a read the decision needed
     │   │                           could not be made, and unknown is not zero
-    │   └── OwnershipConflict       VF_OWNERSHIP_CONFLICT: a compare-and-swap on
-    │                               shared cluster state lost to another writer
+    │   ├── OwnershipConflict       VF_OWNERSHIP_CONFLICT: a compare-and-swap on
+    │   │                           shared cluster state lost to another writer,
+    │   │                           or a partition lease another live process holds
+    │   └── ActiveRunConflict       VF_ACTIVE_RUN: --single-run found another run
+    │                               of the flow active in the namespace
     └── VideoflowRuntimeError       something failed mid-stream
         ├── PoisonMessage           the DATA is bad
         ├── TransientFailure        the WORLD blipped
@@ -280,10 +283,9 @@ opposite, and are most wanted right after a run that failed and was torn down.
 from, with a fresh message id (reusing the original would land inside the stream's
 de-duplication window and be silently discarded), a ``VF-Replay`` header naming
 the run it came from, and a ``VF-Replay-Target`` header naming the node that failed.
-That subject is the parent's, which every child of the parent reads: with
-``VF_RFC0006=1`` the other children acknowledge and skip a replay addressed to a
-sibling before fetching its payload, so a node-scoped replay reprocesses nothing
-elsewhere; without the switch every child sees it, as before.
+That subject is the parent's, which every child of the parent reads: the other
+children acknowledge and skip a replay addressed to a sibling before fetching its
+payload, so a node-scoped replay reprocesses nothing elsewhere.
 
 Routing a dead letter needs only its envelope metadata, so ``--dry-run`` prints the
 target subject of every entry — inline or offloaded — while the payload store is
@@ -303,30 +305,45 @@ transport layer: no node ever sees them, so no node can classify them. A payload
 store that was merely *unreachable* is not that case: the fetch is retried with
 the transient ladder, never terminated, because the bytes may well exist.
 
-A delivery is only ever terminated against a durable record of why. With
-``VF_RFC0006=1`` an undecodable message follows the poison ladder exactly as a
-node that raised ``PoisonMessage`` would: its raw bytes are dead-lettered under
+A delivery is only ever terminated against a durable record of why. An
+undecodable message follows the poison ladder exactly as a node that raised
+``PoisonMessage`` would: its raw bytes are dead-lettered under
 ``VF_POISON_DECODE`` (``dlq show`` prints the headers and the byte length), and
 the delivery is terminated only once the broker accepted that dead letter — a
 dead-letter publish that failed keeps the delivery for a later attempt. The same
 holds for any dead letter whose payload lives in the store: the worker pins the
 payload for the DLQ retention first (``dlq/<flow>`` obligation), and a pin that
 could not be taken also keeps the delivery, because a dead letter whose bytes may
-vanish before anyone inspects it is not a record. Without the switch the
-delivery is terminated against the node's terminal log, as it always was. A dead letter that was sampled out (``dlq: sampled``) or switched off
-(``dlq: off``) also leaves a terminal-log entry, so a message never disappears with
-its own disappearance as the only trace.
+vanish before anyone inspects it is not a record. A dead letter that was sampled
+out (``dlq: sampled``) or switched off (``dlq: off``) leaves a terminal-log entry
+instead, so a message never disappears with its own disappearance as the only
+trace.
 
 The delivery count the retry ladder consults is the broker's — unless the run has
 a **durable, shared ledger** (``VF_RUNTIME_STORE_URL`` pointing at a ``file://``
 directory on one host or a Redis that reads back with persistence on and
-``noeviction``) and ``VF_RFC0006=1``. Then at-least-once durables are provisioned
+``noeviction``). Then at-least-once durables are provisioned
 with an unbounded broker cap (``max_deliver = -1``: the broker never strands a
 message) and the budget of ``VF_MAX_RETRIES + 1`` attempts is counted in the
 ledger, where a ``worker_fatal`` failure never increments it: a wedged worker's
 redeliveries cost the message nothing. A memory-only ledger never qualifies —
 attempt counts would reset with the process and a crashing worker would redeliver
 a poison message forever — so the broker cap stays.
+
+The same ledger leases a node's partition to the one process that holds it. A
+second replica of a singleton — a join, a ``partition_by`` node at one replica —
+started by scaling its workload by hand finds a live lease and stops with
+``VF_OWNERSHIP_CONFLICT`` (exit 3) instead of splitting the work; the remedy is
+to redeploy at the replica count the node should own its keys at. A crashed
+holder stops renewing and its replacement takes over once the lease lapses
+(``VF_PARTITION_LEASE_SECONDS``, default 10 — a graceful stop releases at once).
+The same lease hands out replica identities where the platform gives none: a
+competing node's Deployment pods have no ordinal, so each claims the lowest
+free replica slot through the ledger at start — a replacement resumes the slot
+(and the ledger records) of the pod it replaces, and a pod that finds every
+slot held is one replica too many and stops with ``VF_OWNERSHIP_CONFLICT``.
+A BATCH node with several replicas renders as an Indexed Job instead, whose
+completion index is the replica id.
 
 Two more records live in that ledger. A dead letter the broker did not accept is
 kept as a *pending handoff* and re-published under its original id by the next
@@ -351,8 +368,8 @@ Teardown and incomplete cleanup
 
 ``videoflow teardown`` (and both engines, from their ``finally``) deletes a run's
 streams by **exact ownership**, never by name prefix: a stream is this run's if the
-owner labels in its JetStream metadata say so (``VF_RFC0006=1``), or — for a stream
-created without labels — if its dot-delimited data subject names this flow and run
+owner labels in its JetStream metadata say so, or — for a stream created before
+the labels existed — if its dot-delimited data subject names this flow and run
 token for token. Tearing down run ``r`` cannot touch run ``r-x``, and the flow's
 dead-letter stream is never a candidate.
 
@@ -401,7 +418,7 @@ parsing stderr:
 Which class an error belongs to decides the code, so the newer codes fall where
 their branch of the taxonomy puts them: ``VF_INCOMPATIBLE_PROFILE`` and
 ``VF_IDENTITY_COLLISION`` are ``2`` (change the flow or the request),
-``VF_STATE_UNKNOWN`` and ``VF_OWNERSHIP_CONFLICT`` are ``3`` (restore the read, or
+``VF_STATE_UNKNOWN``, ``VF_OWNERSHIP_CONFLICT`` and ``VF_ACTIVE_RUN`` are ``3`` (restore the read, or
 redeploy against the current state), and a stall the watchdog thread found is
 ``5`` with the reason in the termination log.
 

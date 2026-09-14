@@ -220,8 +220,6 @@ def test_an_undecodable_payload_is_dead_lettered_before_termination_under_rfc000
     ``VF_POISON_DECODE`` *before* the delivery is terminated, so its only trace is
     no longer its own disappearance. The good message behind it still arrives.
     '''
-    from videoflow.core import constants
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow_id, run_id = ids()
     _flow(flow_id, run_id, BATCH)
     m = _messenger(flow_id, run_id, BATCH)

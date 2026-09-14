@@ -15,10 +15,10 @@ Ownership is a separate question from naming, and this module answers it too.
 Names are hyphen-joined and hyphens are legal inside every part, so a stream
 name alone cannot say where the run ends and the node begins: ``vf-f-r-x-n`` is
 node ``x-n`` of run ``r`` *and* node ``n`` of run ``r-x``. Two things make
-ownership exact anyway. Under RFC 0006 (``VF_RFC0006=1``) every stream and
-durable is created with owner labels in its JetStream ``metadata``
-(``videoflow.io/flow-id``, ``run-id``, ``node``, ``kind``, ``generation``) that
-teardown compares verbatim. For streams that predate the labels, the stream's own
+ownership exact anyway. Every stream and durable is created with owner labels
+in its JetStream ``metadata`` (``videoflow.io/flow-id``, ``run-id``, ``node``,
+``kind``, ``generation``; RFC 0006 ``STREAM-14``) that teardown compares
+verbatim. For streams that predate the labels, the stream's own
 data subject is the authority: subjects are dot-delimited and ``sanitize`` never
 lets a dot through, so ``vf.f.r.x-n`` and ``vf.f.r-x.n`` are distinct strings —
 teardown reads the run out of the subject token, never out of a name prefix.
@@ -34,7 +34,7 @@ import logging
 import re
 from dataclasses import asdict, dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional, Sequence
+from typing import Any, Awaitable, Callable, Iterable, Mapping, NoReturn, Optional, Sequence
 
 import nats
 import nats.errors
@@ -55,10 +55,6 @@ from nats.js.errors import NotFoundError
 from ..backends.capabilities import LIVE_LATEST, RELIABLE_WORK, ProfileRequest
 from ..backends.identity import LABEL_NODE, flow_labels, has_owner_labels, owner_labels, owns
 from ..backends.outcomes import CleanupObservation, Unknown, unknown
-
-# The module, not the symbol: ``constants.RFC0006`` is read at call time, so a test
-# can flip the switch with monkeypatch instead of re-importing this module.
-from ..core import constants
 from ..core.compiler import NodeSpec
 from ..core.constants import REALTIME
 from ..core.errors import BrokerUnavailable, IncompatibleProfile, UnobservableState
@@ -188,10 +184,12 @@ DLQ_RETENTION_SECONDS = 7 * 24 * 3600
 DEFAULT_PREFETCH = 4
 #: Inputs one replica holds in processing at a time.
 DEFAULT_ITEM_CREDIT = 1
-#: The broker-side ``max_ack_pending`` provisioning used before RFC 0006 (``STREAM-15``).
+#: The broker-side ``max_ack_pending`` provisioning used before RFC 0006 (``STREAM-15``
+#: replaced it with ``consumer_credit``); kept as the reviewed value the conformance
+#: negative controls reproduce.
 DEFAULT_MAX_ACK_PENDING = 8
 #: The ``max_ack_pending`` a worker bound its durable with before RFC 0006 (its
-#: local queue depth plus two).
+#: local queue depth plus two); kept for the same reason.
 LEGACY_BIND_CREDIT = DEFAULT_PREFETCH + 2
 
 def join_item_credit(parents : Sequence[str], join_policy : dict | None, flow_type : str) -> int:
@@ -246,8 +244,6 @@ def _labels(flow_id : str, run_id : str, node : str, kind : str,
     ``nats/js/api.py`` ``Base.as_dict`` skips None fields), which is what keeps
     the default path byte-identical to the pre-RFC configs.
     '''
-    if not constants.RFC0006:
-        return None
     return owner_labels(flow_id, run_id, node = node, kind = kind, generation = generation)
 
 def stream_config_for(flow_id : str, run_id : str, node_name : str, flow_type : str,
@@ -297,7 +293,7 @@ def dlq_stream_config(flow_id : str, replicas : int = 1) -> StreamConfig:
         retention = RetentionPolicy.LIMITS,
         discard = DiscardPolicy.OLD,
         max_age = DLQ_RETENTION_SECONDS,  # keep dead-lettered messages for a week
-        metadata = flow_labels(flow_id, 'dlq') if constants.RFC0006 else None,
+        metadata = flow_labels(flow_id, 'dlq'),
         num_replicas = replicas if replicas > 1 else None,
     )
 
@@ -465,39 +461,31 @@ def _report_mismatches(kind : str, name : str, mismatches : tuple[str, ...]) -> 
     A read-back that differs from the request means the broker did not give the
     flow what it asked for: an existing stream whose retention/storage/replicas an
     update cannot change, a value clamped to an account limit, or a server too old
-    to carry metadata. Under RFC 0006 that is an ``IncompatibleProfile`` — the
-    alternative is a REALTIME stream silently running with BATCH retention. With
-    the switch off it is a warning, and provisioning proceeds as it always has.
+    to carry metadata. That is an ``IncompatibleProfile`` (RFC 0006 ``STREAM-14``)
+    — the alternative is a REALTIME stream silently running with BATCH retention.
     '''
     if not mismatches:
         return
     detail = '; '.join(mismatches)
-    if constants.RFC0006:
-        raise IncompatibleProfile(
-            f'{kind} {name} exists with a configuration the broker did not change to the requested one: {detail}.',
-            remedy = ('Tear the run down (`videoflow teardown --flow-id <flow> --run-id <run> --nats <url>`) '
-                      'or provision under a fresh run id so the resource is created rather than updated. '
-                      'A value the broker clamped needs its JetStream account limit raised or the request '
-                      'lowered; missing metadata means the server predates JetStream metadata (nats-server '
-                      '2.10) — upgrade it, or run without VF_RFC0006.'),
-            resource = name, mismatches = list(mismatches))
-    logger.warning(f'{kind} {name}: broker configuration differs from the requested one ({detail}); '
-                   'the flow may not get the semantics it asked for')
+    raise IncompatibleProfile(
+        f'{kind} {name} exists with a configuration the broker did not change to the requested one: {detail}.',
+        remedy = ('Tear the run down (`videoflow teardown --flow-id <flow> --run-id <run> --nats <url>`) '
+                  'or provision under a fresh run id so the resource is created rather than updated. '
+                  'A value the broker clamped needs its JetStream account limit raised or the request '
+                  'lowered; missing metadata means the server predates JetStream metadata (nats-server '
+                  '2.10) — upgrade it.'),
+        resource = name, mismatches = list(mismatches))
 
-def _unverifiable(kind : str, name : str, error : Exception) -> tuple[str, ...]:
+def _unverifiable(kind : str, name : str, error : Exception) -> NoReturn:
     '''
     The resource could be neither created/updated nor read back, so nothing can
-    be said about what the broker holds. Under RFC 0006 that is an error in its
-    own right (``BrokerUnavailable``: an unobserved config is not a verified one);
-    with the switch off it is the debug line provisioning has always emitted.
+    be said about what the broker holds: an error in its own right
+    (``BrokerUnavailable`` — an unobserved configuration is not a verified one).
     '''
-    if constants.RFC0006:
-        raise BrokerUnavailable(
-            f'{kind} {name} could not be provisioned or read back: {error}',
-            remedy = 'Check that the broker is reachable and that the parent stream exists, then re-run provisioning.',
-            resource = name) from error
-    logger.debug(f'{kind} {name} could not be read back after provisioning: {error}')
-    return (f'read-back failed: {error!r}',)
+    raise BrokerUnavailable(
+        f'{kind} {name} could not be provisioned or read back: {error}',
+        remedy = 'Check that the broker is reachable and that the parent stream exists, then re-run provisioning.',
+        resource = name) from error
 
 def _stream_exists(error : Exception) -> bool:
     # nats-py 2.15.0 raises ``nats.js.errors.BadRequestError`` for a create that
@@ -594,9 +582,9 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
     - Arguments:
         - nc: a connected ``nats`` client.
         - specs: list of ``videoflow.core.compiler.NodeSpec``.
-        - max_ack_pending: broker-side credit per durable. None derives it: under \
-            RFC 0006 from the consuming node's replica count (``consumer_credit``, \
-            STREAM-15), otherwise the fixed ``DEFAULT_MAX_ACK_PENDING`` it always was.
+        - max_ack_pending: broker-side credit per durable. None derives it from \
+            the consuming node's replica count and join working set \
+            (``consumer_credit``, STREAM-15).
         - generation: provisioning generation recorded in the owner labels \
             (RFC 0006), so ``delete_run_streams`` can be asked to remove only what \
             this provisioning created. None leaves that label out.
@@ -637,11 +625,9 @@ async def provision_flow(nc : Client, specs : list[NodeSpec], flow_id : str, run
         partitioned = bool(partition_by and nb_tasks > 1)
         if max_ack_pending is not None:
             credit = max_ack_pending
-        elif constants.RFC0006:
+        else:
             credit = consumer_credit(nb_tasks, partitioned,
                                      item_credit = join_item_credit(spec.parents, spec.join_policy, flow_type))
-        else:
-            credit = DEFAULT_MAX_ACK_PENDING
         for parent_name in spec.parents:
             if parent_name not in by_name:
                 continue

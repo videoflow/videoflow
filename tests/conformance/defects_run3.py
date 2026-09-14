@@ -7,10 +7,12 @@ is a behaviour anyone should be able to switch on.
 '''
 from __future__ import absolute_import, division, print_function
 
+import dataclasses
 from typing import Any
 
 import pytest
 
+from videoflow.backends import capabilities
 from videoflow.backends.memory.messaging import MemoryMessagingBackend
 from videoflow.deploy import manifests
 from videoflow.messaging import topology
@@ -107,3 +109,16 @@ def flag_only_quiesce(monkeypatch : pytest.MonkeyPatch) -> None:
     leased on a process that no longer existed, until ``ack_wait`` lapsed.
     '''
     monkeypatch.setattr(NATSMessenger, 'quiesce', lambda self: self._termination_event.set())
+
+
+# -- RUN-035 / RUN-036: a planner that never looks at the declared execution shapes -----------------
+
+def shape_blind_planner(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''Before the declarations existed the planner had nothing to refuse: a fused group or a
+    batching contract deployed as ordinary nodes, silently. Reproduced by planning without them.'''
+    real = capabilities.plan_composition
+
+    def blind(requirements : Any, messaging : Any, **kwargs : Any) -> Any:
+        stripped = dataclasses.replace(requirements, execution_groups = {}, batching = {})
+        return real(stripped, messaging, **kwargs)
+    monkeypatch.setattr(capabilities, 'plan_composition', blind)

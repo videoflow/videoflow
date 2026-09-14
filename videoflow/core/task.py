@@ -363,7 +363,11 @@ class ProducerTask(NodeTask):
             except KeyboardInterrupt:
                 logger.info('Interrupt signal received. Sending signal to stop flow.')
                 break
-        if self._has_children:
+        # The source ended, or the flow is stopping (CTRL-2): close the stream. A
+        # process that lost its partition to a replacement, or is being stopped
+        # so a replacement can continue, must not — its successor carries on the
+        # very stream an EOS here would end for every child (RUN-030).
+        if self._has_children and self._messenger.stop_reason() in (None, Messenger.STOP_CONTROL):
             self._messenger.publish_stop_signal()
 
 class ProcessorTask(NodeTask):
@@ -413,7 +417,12 @@ class ProcessorTask(NodeTask):
                     entries = [inputs_d[name] for name in self._parent_names]
                     raise_if_aborted(entries, self._messenger, self._has_children)
                     if any(e['is_stop_signal'] for e in entries):
-                        if self._has_children:
+                        # Every parent ended: relay the end of stream. A hard stop
+                        # (CTRL-3: the flow is stopping, this process is being
+                        # replaced, or it lost its partition) is not an end of
+                        # stream — a replacement continues it, and a child that
+                        # recorded an EOS here would complete without the rest.
+                        if self._has_children and not any(e.get('is_hard_stop') for e in entries):
                             self._messenger.publish_stop_signal()
                         break
 

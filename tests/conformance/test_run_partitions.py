@@ -55,7 +55,6 @@ from _status import unsupported
 from videoflow.backends import faults
 from videoflow.backends.capabilities import RuntimeCapabilities
 from videoflow.backends.runtime import RuntimeStore
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import StaleAuthority
 from videoflow.core.policies import LATE_MARK, ORDER_SEQUENCE, OrderingPolicy
@@ -259,7 +258,6 @@ def test_run_020_missing_and_malformed_partition_keys_follow_an_explicit(tmp_pat
     Acceptance: Every invalid-key fixture follows its declared policy and no implicit all-
     invalid hotspot is accepted as normal distribution.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = memory_rig([spec('src', [], 'producer', True),
                       spec('stage', ['src'], 'processor', False, nb_tasks = REPLICAS_020, partition_by = 'camera_id')])
@@ -273,7 +271,6 @@ def test_run_020_missing_and_malformed_partition_keys_follow_an_explicit(tmp_pat
 
 @pytest.mark.negative_control(of = 'RUN-020')
 def test_run_020_detects_keys_hashed_as_their_str(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run2.hash_str_of_anything(monkeypatch)
     rig = memory_rig([spec('src', [], 'producer', True),
                       spec('stage', ['src'], 'processor', False, nb_tasks = REPLICAS_020, partition_by = 'camera_id')])
@@ -468,7 +465,6 @@ def test_run_021_camera_state_follows_declared_ordering_under_delayed_and(tmp_pa
     Acceptance: Final state and late/drop outcomes match the declared reference policy for every
     delivery permutation.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(_tracker_specs(2))
@@ -484,7 +480,6 @@ def test_run_021_camera_state_follows_declared_ordering_under_delayed_and(tmp_pa
 
 @pytest.mark.negative_control(of = 'RUN-021')
 def test_run_021_detects_a_tracker_that_applies_in_arrival_order(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.arrival_order_buffer(monkeypatch)
     rig = memory_rig(_tracker_specs(2))
@@ -671,7 +666,6 @@ def test_run_023_state_handoff_fences_old_owners_during_scale_and_network(tmp_pa
     truthfully: no runtime store advertises ``elastic_state``, so a checkpoint
     transfer between partitions is not a capability this composition claims.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     store = ledger(tmp_path)
@@ -695,7 +689,6 @@ def test_run_023_state_handoff_fences_old_owners_during_scale_and_network(tmp_pa
 
 @pytest.mark.negative_control(of = 'RUN-023')
 def test_run_023_detects_an_unfenced_commit(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.unfenced_commit(monkeypatch)
     rig = memory_rig([spec('src', [], 'producer', True), spec('acc', ['src'], 'processor', True),
@@ -818,7 +811,6 @@ def test_run_034_nonowner_replicas_route_from_metadata_without_downloading(nats_
     Acceptance: With no retries and one intended processing reader, each frame has one hydration
     regardless of replica count; duplicate full-body fetches by nonowners fail.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)     # every frame offloads
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs_034(4), redis_url = redis_url, ack_wait = 30)
@@ -833,7 +825,6 @@ def test_run_034_nonowner_replicas_route_from_metadata_without_downloading(nats_
 @pytest.mark.level('broker')
 @pytest.mark.variant('memory')
 def test_run_034_memory_backends_route_from_metadata(evidence_dir, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(_specs_034(4), ack_wait = 30)
@@ -847,7 +838,6 @@ def test_run_034_memory_backends_route_from_metadata(evidence_dir, monkeypatch) 
 
 @pytest.mark.negative_control(of = 'RUN-034')
 def test_run_034_detects_a_replica_that_hydrates_before_deciding_ownership(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     defects_run2.hydrate_before_ownership(monkeypatch)
     rig = memory_rig(_specs_034(4), ack_wait = 30)

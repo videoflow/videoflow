@@ -103,6 +103,23 @@ class Messenger:
         '''
         pass
 
+    #: Why ``check_for_termination`` is true: the flow-wide control stop (the
+    #: flow is ending — a producer still closes its stream with EOS, CTRL-2), a
+    #: quiesce (this process is being stopped; a replacement continues the
+    #: stream, so no EOS), or the loss of this process's authority over its
+    #: partition to a replacement that already continues it (no EOS either).
+    STOP_CONTROL = 'control'
+    STOP_QUIESCE = 'quiesce'
+    STOP_AUTHORITY_LOST = 'authority-lost'
+
+    def stop_reason(self) -> Optional[str]:
+        '''
+        Which stop ``check_for_termination`` reports, one of the ``STOP_*``
+        constants, or None while the flow runs. Default: the control stop
+        whenever a termination was signalled — the only kind a bare messenger has.
+        '''
+        return self.STOP_CONTROL if self.check_for_termination() else None
+
     def checkpoint(self, state : bytes) -> None:
         '''
         Record the node's state together with the identity of the input group

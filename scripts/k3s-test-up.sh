@@ -160,18 +160,48 @@ VF_K8S_IMAGE_REGISTRY="$VF_K8S_IMAGE_REGISTRY" ./scripts/push-images.sh $images
 # Pre-creating it also means each deploy's ensure_infra finds the Services
 # already there, reports nothing created and owns nothing — so no test tears the
 # broker out from under the next one.
+# A broker this script installed earlier is kept; a Redis whose arguments no
+# longer match the profile (an older videoflow rendered the dev store as an
+# evictable cache) is replaced, since a BATCH deploy against it is refused; and
+# the profile record every deploy reads (videoflow.io/profile on the Service) is
+# stamped onto infra created before the record existed. Only this script's own
+# namespaces — a deploy never does any of this.
 install_broker() {   # namespace profile
     echo "==> broker in $1 ($2 profile, priorityClassName $VF_K8S_PRIORITY_CLASS)"
     uv run python - "$1" "$2" "$VF_K8S_PRIORITY_CLASS" <<'PY'
+import json
+import subprocess
 import sys
 from videoflow.deploy.broker_profiles import broker_profiles
-from videoflow.deploy.infra import ensure_infra, infra_urls, wait_infra_ready
+from videoflow.deploy.infra import (
+    LABEL_PROFILE, LABEL_REPLICAS, ensure_infra, infra_urls, redis_manifests, reused_infra, wait_infra_ready,
+)
 
 namespace, name, priority = sys.argv[1:4]
 profile, redis_profile = broker_profiles(name, priority_class = priority)
+
+def kubectl(*args):
+    return subprocess.run(['kubectl', *args], capture_output = True, text = True, check = False)
+
+reuse = reused_infra('kubectl', namespace, need_redis = True)
+if reuse.redis is not None:
+    wanted = redis_manifests(namespace, redis_profile)
+    args = next(m for m in wanted if m['kind'] == 'Deployment')['spec']['template']['spec']['containers'][0]['args']
+    live = kubectl('get', 'deployment', 'redis', '-n', namespace,
+                   '-o', 'jsonpath={.spec.template.spec.containers[0].args}')
+    if live.returncode != 0 or json.loads(live.stdout or '[]') != args:
+        print(f'   replacing the redis in {namespace}: its arguments {live.stdout.strip() or "(unreadable)"} '
+              f'are not the {name} profile\'s {json.dumps(args)}')
+        kubectl('delete', '-n', namespace, 'deployment,service', '-l', 'videoflow.io/infra=redis', '--wait=true')
+        reuse = reused_infra('kubectl', namespace, need_redis = True)
 urls, created = ensure_infra('kubectl', namespace, need_redis = True,
                              profile = profile, redis_profile = redis_profile)
 wait_infra_ready('kubectl', namespace, created, timeout_secs = 300, profile = profile)
+for component, labels, record in (('nats', reuse.nats, {LABEL_PROFILE: profile.name, LABEL_REPLICAS: str(profile.replicas)}),
+                                  ('redis', reuse.redis, {LABEL_PROFILE: redis_profile.name})):
+    if labels is not None and component not in created and LABEL_PROFILE not in labels:
+        kubectl('label', '--overwrite', 'svc', component, '-n', namespace, *(f'{k}={v}' for k, v in record.items()))
+        print(f'   recorded the {record[LABEL_PROFILE]} profile on the pre-existing {component} Service')
 print('   created:', ', '.join(created) if created else '(already present)')
 print('   in-cluster URLs:', infra_urls(namespace))
 PY

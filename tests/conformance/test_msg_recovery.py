@@ -35,7 +35,6 @@ from videoflow.backends import faults
 from videoflow.backends.capabilities import RELIABLE_WORK, RETENTION_INTEREST
 from videoflow.backends.messaging import ChannelId, Completed, Retry, Terminal
 from videoflow.backends.outcomes import Known, SettleConfirmed, SettleStale, Unknown
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import DeviceError, SchemaError, TransientFailure
 from videoflow.v1 import envelope_pb2
@@ -133,7 +132,6 @@ def test_msg_008_worker_fatal_failure_remains_recoverable_at_the_broker(nats_url
     worker alike (decision D11); the separated transport budget with a ledger-kept
     attempt count is the pending ``ledger`` variant.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg008')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}
@@ -148,7 +146,6 @@ def test_msg_008_worker_fatal_failure_remains_recoverable_at_the_broker(nats_url
 @pytest.mark.level('model')
 @pytest.mark.variant('memory')
 def test_msg_008_memory_worker_fatal_is_naked_and_completed_by_the_replacement(evidence_dir, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     driver = MemoryDriver('f', 'r')
     record : Dict[str, Any] = {}
     try:
@@ -171,7 +168,6 @@ def test_msg_008_ledger_budget_survives_the_final_broker_delivery(nats_url, evid
     replacement and completes, while a transient failure that does exhaust the
     ledger's budget is dead-lettered by the ledger, not stranded by the broker.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg008l')
     driver = JetStreamDriver(nats_url, flow, run)
     root = str(tmp_path / 'ledger')
@@ -242,7 +238,6 @@ def test_msg_008_ledger_budget_survives_the_final_broker_delivery(nats_url, evid
 @pytest.mark.negative_control(of = 'MSG-008')
 def test_msg_008_detects_a_ladder_that_blames_the_message(monkeypatch) -> None:
     '''A worker-fatal failure treated as transient dead-letters A at the cap: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects.blaming_ladder(monkeypatch)
     driver = MemoryDriver('f', 'r')
     try:
@@ -325,7 +320,6 @@ def test_msg_009_dlq_outage_at_final_delivery_cannot_strand_an_input(nats_url, e
     two; the handoff at the *last* allowed attempt needs the ``pending_handoff``
     ledger record and is the pending ``ledger`` variant.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg009')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}
@@ -341,7 +335,6 @@ def test_msg_009_dlq_outage_at_final_delivery_cannot_strand_an_input(nats_url, e
 @pytest.mark.variant('memory')
 def test_msg_009_memory_dlq_outage_keeps_the_input_until_the_record_exists(evidence_dir, monkeypatch,
                                                                             record_faults) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     driver = MemoryDriver('f', 'r')
     record : Dict[str, Any] = {}
     try:
@@ -364,7 +357,6 @@ def test_msg_009_pending_handoff_record_survives_the_worker_restart(nats_url, ev
     receives anything — and recovery never depends on a NAK past a broker cap
     (``max_deliver = -1``). Exactly one dead letter identifies A.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg009l')
     driver = JetStreamDriver(nats_url, flow, run)
     root = str(tmp_path / 'ledger')
@@ -429,7 +421,6 @@ def test_msg_009_pending_handoff_record_survives_the_worker_restart(nats_url, ev
 @pytest.mark.negative_control(of = 'MSG-009')
 def test_msg_009_detects_a_terminated_handoff(monkeypatch) -> None:
     '''A ladder that terminates the delivery when the dead-letter publish failed strands A: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects.terminating_dlq_failure(monkeypatch)
     driver = MemoryDriver('f', 'r')
     try:
@@ -550,7 +541,6 @@ def test_msg_010_poison_wire_data_has_an_explicit_terminal_disposition(nats_url,
     configured poison handling deadline, and sentinel completes; no transient infrastructure
     error is classified as malformed bytes.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg010')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}
@@ -566,7 +556,6 @@ def test_msg_010_poison_wire_data_has_an_explicit_terminal_disposition(nats_url,
 @pytest.mark.variant('memory')
 def test_msg_010_memory_poison_bytes_are_dead_lettered_and_transient_reads_retried(evidence_dir, monkeypatch,
                                                                                     record_faults) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     driver = MemoryDriver('f', 'r')
     record : Dict[str, Any] = {}
     try:
@@ -579,16 +568,21 @@ def test_msg_010_memory_poison_bytes_are_dead_lettered_and_transient_reads_retri
 @pytest.mark.case('MSG-010')
 @pytest.mark.level('model')
 @pytest.mark.variant('memory-terminal-log')
-def test_msg_010_memory_without_the_switch_terminates_against_the_terminal_log(evidence_dir, monkeypatch) -> None:
+def test_msg_010_undecodable_bytes_under_a_sampled_out_dlq_hit_the_terminal_log(evidence_dir, monkeypatch) -> None:
     '''
-    With RFC 0006 off, undecodable bytes are terminated against the node's terminal
-    log instead of a dead letter — still a record, never a bare TERM (DELIV-15).
+    DELIV-15's other branch: under best-effort delivery the ERR-6 sampler decides
+    whether a specimen is dead-lettered; when it admits none, undecodable bytes are
+    terminated against the node's terminal log instead — still a durable record,
+    never a bare TERM.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', False)
     driver = MemoryDriver('f', 'r')
     try:
+        # A retained (BATCH) channel so the poison is not evicted before delivery,
+        # with the child declared best-effort so the ERR-6 sampler decides.
         driver.provision([spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)], BATCH)
-        w = driver.messenger('child', ['parent'], BATCH, max_retries = 3, ack_wait = 2)
+        w = driver.messenger('child', ['parent'], BATCH, max_retries = 3, ack_wait = 2,
+                             delivery = {'delivery': 'best-effort'})
+        monkeypatch.setattr(w, '_dlq_sampler', _NeverSample())
         driver.publish_bytes('parent', b'\x80\x81 not an envelope', 'poison-1')
         driver.publish_parent('parent', 's1', 1, {'sentinel': 1})
         group = driver.receive_group(w, timeout = 30)
@@ -596,7 +590,7 @@ def test_msg_010_memory_without_the_switch_terminates_against_the_terminal_log(e
         w.ack_inputs()
         assert driver.dlq('child') == []
         entries = w.terminal_entries()
-        assert len(entries) == 1 and entries[0]['reason'] == 'undecodable', entries
+        assert len(entries) == 1 and entries[0]['reason'] == 'sampled-out', entries
         assert entries[0]['code'] == 'VF_POISON_DECODE'
         _write(evidence_dir, 'terminal_log.json', {'entries': entries})
         w.close()
@@ -604,10 +598,15 @@ def test_msg_010_memory_without_the_switch_terminates_against_the_terminal_log(e
         driver.close()
 
 
+class _NeverSample:
+    '''A dead-letter sampler that admits no specimen (``dlq: off``, or every sample slot used).'''
+    def admit(self, code : str, node : str) -> bool:
+        return False
+
+
 @pytest.mark.negative_control(of = 'MSG-010')
 def test_msg_010_detects_a_catch_all_decode_terminator(monkeypatch) -> None:
     '''A handler that TERMs every decode-path exception without a record — and calls a store outage poison — must fail the oracle.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects.catch_all_decode_terminator(monkeypatch)
     driver = MemoryDriver('f', 'r')
     try:
@@ -765,7 +764,6 @@ def test_msg_012_status_distinguishes_empty_unavailable_and_stranded_work(nats_u
     only the receiver that saw it holds; a stranded record that survives a worker
     restart is the pending ``ledger`` variant.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg012')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}
@@ -804,7 +802,6 @@ def test_msg_012_stranded_work_is_durable_across_worker_restarts(nats_url, evide
     node's terminal log (a delivery ended against the ledger, ``dlq: off``) is
     read back by a new process too.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg012l')
     driver = JetStreamDriver(nats_url, flow, run)
     root = str(tmp_path / 'ledger')

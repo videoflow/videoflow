@@ -25,6 +25,13 @@ and importing two into one interpreter collides (see CLAUDE.md). Absolute stagin
 paths are normalised to ``<ROOT>`` so the goldens are machine-independent.
 
 Record or refresh the goldens deliberately with ``VF_UPDATE_GOLDENS=1``.
+
+History: the set was recorded on the pre-RFC-0006 base commit and re-recorded
+once, in the commit that accepted RFC 0006 — run-scoped Kubernetes names
+(``vf-<flow>-<run>-<node>``, selectors including the run label), owner metadata
+on every stream and consumer, credit-derived ``max_ack_pending``, the
+``VF_RUNTIME_STORE_URL`` / ``VF_PARENT_REPLICAS`` / ``VF_BLOB_READER_IDS`` rows,
+one KEDA trigger per parent. That diff *is* the RFC's observable footprint.
 '''
 from __future__ import absolute_import, division, print_function
 

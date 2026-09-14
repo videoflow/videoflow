@@ -5,6 +5,7 @@ label-scoped teardown selector.
 
 Pure/unit: subprocess is monkeypatched — no cluster.
 '''
+import json
 import subprocess
 
 from videoflow.deploy import infra
@@ -27,11 +28,25 @@ def test_manifest_shapes_and_labels():
         assert m['metadata']['namespace'] == 'ns1'
         assert m['metadata']['labels'][infra.LABEL_INFRA] in ('nats', 'redis')
         assert m['metadata']['labels'][LABEL_MANAGED_BY] == 'videoflow'
-    # Redis runs as a cache/transport: persistence explicitly off, memory capped
-    # with volatile-lru so a long run evicts TTL'd blobs instead of OOMing the node.
-    container = redis[('Deployment', 'redis')]['spec']['template']['spec']['containers'][0]
-    assert container['args'] == ['--save', '', '--appendonly', 'no',
-                                 '--maxmemory', '4gb', '--maxmemory-policy', 'volatile-lru']
+    # The dev Redis has the dev NATS's standing: an append-only file on an
+    # emptyDir (a container restart replays it, a pod loss loses it) and
+    # noeviction, so a blob is never dropped while a reader holds it — what
+    # reliable_work requires — with memory capped so a stuck run hits a refused
+    # write before the node OOMs.
+    pod = redis[('Deployment', 'redis')]['spec']['template']['spec']
+    container = pod['containers'][0]
+    assert container['args'] == ['--save', '', '--appendonly', 'yes',
+                                 '--maxmemory', '4gb', '--maxmemory-policy', 'noeviction', '--dir', '/data']
+    assert pod['volumes'] == [{'name': 'data', 'emptyDir': {}}]
+    assert container['volumeMounts'] == [{'name': 'data', 'mountPath': '/data'}]
+    assert 'strategy' not in redis[('Deployment', 'redis')]['spec']
+    # The transport-only cache is still renderable, for an operator who asks for it.
+    cache = {(m['kind'], m['metadata']['name']): m
+             for m in infra.redis_manifests('ns1', RedisProfile(persistence = 'none', eviction = 'volatile-lru'))}
+    cache_pod = cache[('Deployment', 'redis')]['spec']['template']['spec']
+    assert cache_pod['containers'][0]['args'] == ['--save', '', '--appendonly', 'no',
+                                                  '--maxmemory', '4gb', '--maxmemory-policy', 'volatile-lru']
+    assert 'volumes' not in cache_pod
     # The container limit sits above maxmemory (fragmentation headroom); without a
     # limit there is no cgroup boundary and the *node* absorbs any overrun.
     assert container['resources']['limits']['memory'] == '5Gi'
@@ -74,6 +89,71 @@ def test_ensure_infra_skips_redis_when_not_needed(monkeypatch):
     urls, created = infra.ensure_infra('kubectl', 'ns1', need_redis = False)
     assert created == ['nats']
     assert urls['redis'] is None
+
+
+def _service_json(labels : dict) -> bytes:
+    return json.dumps({'kind': 'Service', 'metadata': {'name': 'x', 'labels': labels}}).encode()
+
+
+def test_services_record_the_profile_that_rendered_them():
+    # Only the client Service carries the record (the reuse rule keys on it);
+    # the workloads keep the ownership labels alone.
+    nats = {(m['kind'], m['metadata']['name']): m for m in infra.nats_manifests('ns1')}
+    assert nats[('Service', 'nats')]['metadata']['labels'][infra.LABEL_PROFILE] == 'dev'
+    assert nats[('Service', 'nats')]['metadata']['labels'][infra.LABEL_REPLICAS] == '1'
+    assert infra.LABEL_PROFILE not in nats[('Deployment', 'nats')]['metadata']['labels']
+    durable = {(m['kind'], m['metadata']['name']): m
+               for m in infra.nats_manifests('ns1', BrokerProfile.durable(replicas = 5))}
+    assert durable[('Service', 'nats')]['metadata']['labels'][infra.LABEL_PROFILE] == 'durable'
+    assert durable[('Service', 'nats')]['metadata']['labels'][infra.LABEL_REPLICAS] == '5'
+    redis = {(m['kind'], m['metadata']['name']): m for m in infra.redis_manifests('ns1')}
+    assert redis[('Service', 'redis')]['metadata']['labels'][infra.LABEL_PROFILE] == 'dev'
+    assert infra.LABEL_REPLICAS not in redis[('Service', 'redis')]['metadata']['labels']
+    cache = {(m['kind'], m['metadata']['name']): m
+             for m in infra.redis_manifests('ns1', RedisProfile(persistence = 'none', eviction = 'volatile-lru'))}
+    assert cache[('Service', 'redis')]['metadata']['labels'][infra.LABEL_PROFILE] == 'cache'
+    assert RedisProfile.durable().name == 'durable' and BrokerProfile.durable().name == 'durable'
+
+
+def test_reused_infra_reads_the_services_records(monkeypatch):
+    def run(cmd, **kwargs):
+        if cmd[:3] == ['kubectl', 'get', 'svc'] and cmd[3] == 'nats':
+            return _Proc(stdout = _service_json({infra.LABEL_PROFILE: 'durable', infra.LABEL_REPLICAS: '3'}))
+        if cmd[:3] == ['kubectl', 'get', 'svc'] and cmd[3] == 'redis':
+            return _Proc(returncode = 1, stderr = b'NotFound')
+        raise AssertionError(f'unexpected call: {cmd}')
+    monkeypatch.setattr(subprocess, 'run', run)
+    reuse = infra.reused_infra('kubectl', 'ns1', need_redis = True)
+    assert reuse.nats == {infra.LABEL_PROFILE: 'durable', infra.LABEL_REPLICAS: '3'} and reuse.redis is None
+    assert reuse.components() == ['nats']
+    # Not needed → not looked up, never reported as reused.
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw: _Proc(stdout = _service_json({})))
+    assert infra.reused_infra('kubectl', 'ns1', need_redis = False).redis is None
+
+
+def test_adopt_profiles_judges_reused_components_by_their_record():
+    dev_nats, dev_redis = BrokerProfile.dev(), RedisProfile.dev()
+    nothing = infra.ReusedInfra(nats = None, redis = None)
+    # Creating both: judged by what the deploy renders.
+    assert infra.adopt_profiles(nothing, None, dev_nats, dev_redis, 'ns1') == (dev_nats, dev_redis)
+    # Reusing a recorded durable pair with no profile named: adopted as it is,
+    # replicas included (stream copies follow the real broker).
+    reuse = infra.ReusedInfra(nats = {infra.LABEL_PROFILE: 'durable', infra.LABEL_REPLICAS: '3'},
+                              redis = {infra.LABEL_PROFILE: 'durable'})
+    broker, redis = infra.adopt_profiles(reuse, None, dev_nats, dev_redis, 'ns1')
+    assert broker == BrokerProfile.durable(replicas = 3) and redis == RedisProfile.durable()
+    # Naming the profile that is there is fine; naming the other one is refused.
+    assert infra.adopt_profiles(reuse, 'durable', dev_nats, dev_redis, 'ns1')[0] == BrokerProfile.durable(replicas = 3)
+    with pytest.raises(ConfigError, match = 'already runs the durable broker profile') as info:
+        infra.adopt_profiles(reuse, 'dev', dev_nats, dev_redis, 'ns1')
+    assert 'teardown --infra --namespace ns1 --broker-profile durable' in info.value.remedy
+    # A reused component with no record is unread (None) — for the planner to rule on, never assumed.
+    unlabelled = infra.ReusedInfra(nats = {'app': 'nats'}, redis = None)
+    assert infra.adopt_profiles(unlabelled, 'dev', dev_nats, dev_redis, 'ns1') == (None, dev_redis)
+    # The old transport-only cache is recognised for what it is.
+    cache = infra.ReusedInfra(nats = None, redis = {infra.LABEL_PROFILE: 'cache'})
+    _broker, redis = infra.adopt_profiles(cache, None, dev_nats, dev_redis, 'ns1')
+    assert redis is not None and not redis.persistent and redis.eviction == 'volatile-lru'
 
 
 def test_teardown_scoped_to_created_components(monkeypatch):

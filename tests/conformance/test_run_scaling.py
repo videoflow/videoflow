@@ -6,9 +6,15 @@ the docstring quotes the case's title and acceptance rule so the oracle stays ne
 the code that decides it. A ``pending`` marker means the case is a skeleton reporting
 NOT_RUN until its implementation phase lands.
 
-The kubernetes-level primaries of RUN-018, RUN-019, RUN-026 and RUN-027 need a
-cluster with KEDA and stay pending; RUN-028 and RUN-029 run on the shared k3s
-cluster's GPU pool (``VF_K8S_GPU_NODES``) with inert holders of the base image, as
+The kubernetes-level primaries of RUN-018 and RUN-019 deploy a real flow on the
+shared k3s cluster (the durable broker namespace, whose Redis persists — the
+run ledger's condition) and steer the split-half schedule by scaling the
+singleton's workload by hand, the way a scaler would: the extra replica must
+fail explicitly at bind time (the partition lease, ``VF_OWNERSHIP_CONFLICT``)
+while the owner completes every group. RUN-026 observes the overload signal a
+deployed live pipeline exports and, with KEDA installed, the scaler's decision;
+RUN-027's primary needs KEDA. RUN-028 and RUN-029 run on the GPU pool
+(``VF_K8S_GPU_NODES``) with inert holders of the base image, as
 ``test_alloc_capacity.py`` does.
 What can be decided without a cluster is decided here as ``model`` variants:
 the admission rules a scaler must obey (``runtime.scaling.scaling_rejections`` and
@@ -20,8 +26,10 @@ the renderer's half in ``deploy.manifests``), throughput-based demand
 from __future__ import absolute_import, division, print_function
 
 import json
+import os
 import random
 import subprocess
+import time
 from typing import Any, Dict, List
 
 import defects
@@ -44,7 +52,7 @@ from videoflow.backends.memory.clock import FakeClock
 from videoflow.backends.messaging import ChannelId, SubscriptionObservation
 from videoflow.backends.outcomes import Known, known, unknown
 from videoflow.consumers import CommandlineConsumer
-from videoflow.core import Flow, constants
+from videoflow.core import Flow
 from videoflow.core.compiler import NODE_KIND_PROCESSOR, NODE_KIND_PRODUCER, compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import CapabilityError, GraphError
@@ -60,10 +68,140 @@ NATS_URL = 'nats://nats.videoflow-test.svc:4222'
 IMAGE = 'videoflow-base:py3.12'
 
 
+def _scaled_singleton_on_cluster(k3s : Dict[str, str], evidence_dir : Any, label : str, build_flow : Any,
+                                 node : str, replicas : int, expected_items : int, item_key : Any) -> Dict[str, Any]:
+    '''
+    Deploy ``build_flow(work)`` in the test namespace (its dev Redis persists and
+    never evicts, so the workers' run ledger — the partition lease — is durable
+    and shared there), start ``replicas - 1`` extra pods of ``node`` from its
+    Job's own template once its owner is running — a Job cannot be scaled (its
+    parallelism is bounded by its completions), so the extra pods are started
+    by hand, which is exactly what a scaled-out Deployment's extra pod amounts
+    to — and read back: the extra pods' termination messages (an explicit
+    ``VF_OWNERSHIP_CONFLICT``, never a bind), the sink's lines (every item
+    exactly once, all handled by one process), and the run's completion.
+    '''
+    import shutil
+
+    from _brokers import unique_ids
+    from _k8s import (
+        cluster_support,
+        delete_run_streams_from_host,
+        image_present,
+        kubectl_json,
+        pods_of,
+        read_lines,
+        termination_messages,
+    )
+
+    from videoflow.core.compiler import compile_flow
+    from videoflow.deploy.infra import infra_urls
+    from videoflow.deploy.manifests import run_name
+    from videoflow.engines.kubernetes import KubernetesExecutionEngine
+    support = cluster_support()
+    missing = image_present(support.FIXTURE_IMAGE)
+    if missing:
+        pytest.skip(f'not_run: {missing}')
+    root = support.work_root()
+    if root is None:
+        pytest.skip('not_run: the work claim is not Bound — run scripts/k3s-test-up.sh')
+    namespace = k3s['VF_K8S_NAMESPACE']
+    flow_id, run_id = unique_ids(label)
+    work = root / f'conf-{run_id}'
+    work.mkdir(parents = True)
+    out = work / 'seen.txt'
+    flow = build_flow(str(out), flow_id)
+    specs = compile_flow(flow)
+    urls = infra_urls(namespace)
+    engine = KubernetesExecutionEngine(nats_url = urls['nats'], namespace = namespace, default_image = support.FIXTURE_IMAGE,
+                                       specs = specs, mounts = support.work_mounts(str(work)),
+                                       blob_redis_url = urls['redis'], supervision = SupervisionPolicy(),
+                                       image_pull_policy = 'Always', priority_class = support.PRIORITY_CLASS or None)
+    record : Dict[str, Any] = {'flow_id': flow_id, 'run_id': run_id, 'namespace': namespace, 'node': node,
+                               'scaled_to': replicas}
+    job = run_name(flow_id, run_id, node)
+    extra_pods : List[str] = []
+    try:
+        engine.allocate_and_run_tasks(None, flow_id, BATCH, run_id)
+        deadline = time.monotonic() + 300
+        owner = None
+        while time.monotonic() < deadline and owner is None:
+            running = [p for p in pods_of(namespace, flow_id, node) if (p.get('status') or {}).get('phase') == 'Running']
+            if running and read_lines(out):
+                owner = running[0]['metadata']['name']
+            time.sleep(2)
+        assert owner is not None, f'{node} never started processing'
+        record['owner_pod'] = owner
+        # The split-half schedule: an operator (or a scaler) starts more pods of
+        # the singleton — bare pods from the Job's own template, same env, same
+        # labels, so they are what a second replica of the node would be.
+        template = kubectl_json('get', 'job', job, '-n', namespace)['spec']['template']
+        # videoflow's labels only: with the Job controller's own (job-name,
+        # controller-uid) the controller would adopt the pod as surplus and
+        # SIGTERM it before it ever reached the lease.
+        labels = {k: v for k, v in (template['metadata'].get('labels') or {}).items()
+                  if not k.startswith('batch.kubernetes.io/') and k not in ('job-name', 'controller-uid')}
+        for i in range(1, replicas):
+            extra_spec = dict(template['spec'])
+            extra_spec['restartPolicy'] = 'Never'
+            # A letter, not a digit: a trailing ordinal in the pod name is a
+            # StatefulSet replica id to the worker (ENV-5 step 2), and an extra
+            # pod named ``-1`` would simply *be* replica 1 rather than a second
+            # replica 0 — the very expansion the case is about.
+            pod = {'apiVersion': 'v1', 'kind': 'Pod',
+                   'metadata': {'name': f'{job}-extra-{chr(ord("a") + i)}', 'namespace': namespace, 'labels': labels},
+                   'spec': extra_spec}
+            extra_pods.append(pod['metadata']['name'])
+            subprocess.run(['kubectl', 'apply', '-f', '-'], input = json.dumps(pod), capture_output = True,
+                           text = True, check = True)
+        record['extra_pods_started'] = list(extra_pods)
+        t_scale = time.time()
+        extra_seen : Dict[str, List[str]] = {}
+        deadline = time.monotonic() + 240
+        while time.monotonic() < deadline:
+            pods = pods_of(namespace, flow_id, node)
+            for name, messages in termination_messages(pods).items():
+                if name != owner and messages:
+                    extra_seen[name] = messages
+            if extra_seen:
+                break
+            time.sleep(2)
+        record['extra_pods'] = extra_seen
+        record['scale_to_refusal_s'] = time.time() - t_scale
+        assert extra_seen, 'no extra pod reported a termination reason'
+        for name, messages in extra_seen.items():
+            assert any('VF_OWNERSHIP_CONFLICT' in m for m in messages), (name, messages)
+        assert engine.wait_for_completion() == []
+        lines = read_lines(out)
+        items = [item_key(line) for line in lines]
+        handlers = {h for h, _ in items}
+        keys = [k for _, k in items]
+        record['completed'] = {'lines': len(lines), 'distinct': len(set(keys)), 'handlers': sorted(handlers)}
+        assert sorted(set(keys)) == sorted(keys), 'an item was handled twice'
+        assert len(set(keys)) == expected_items, record['completed']
+        assert len(handlers) == 1, f'the items were split among {handlers}'
+        record['job_status'] = kubectl_json('get', 'job', job, '-n', namespace).get('status')
+        return record
+    finally:
+        if extra_pods:
+            subprocess.run(['kubectl', 'delete', 'pod', '-n', namespace, *extra_pods, '--ignore-not-found', '--wait=false'],
+                           capture_output = True, text = True, check = False)
+        engine.teardown()
+        delete_run_streams_from_host(os.environ.get('VF_K8S_NATS_URL', 'nats://127.0.0.1:30422'), flow_id, run_id)
+        shutil.rmtree(work, ignore_errors = True)
+        (evidence_dir / 'scaled_singleton.json').write_text(json.dumps(record, indent = 2, default = str))
+
+
+def _handled(line : str) -> tuple:
+    '''``(handler, item)`` from a TaggingProcessor line the sink wrote.'''
+    import ast
+    parsed = ast.literal_eval(line)
+    return parsed['handler'], repr(parsed['item'])
+
+
 @pytest.mark.case('RUN-018')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 5')
-def test_run_018_singleton_joins_cannot_become_competing_multiworker_joins() -> None:
+def test_run_018_singleton_joins_cannot_become_competing_multiworker_joins(k3s, evidence_dir) -> None:
     '''
     RUN-018 (P0, deployment, kubernetes): Singleton joins cannot become competing multiworker
     joins through autoscaling.
@@ -71,10 +209,34 @@ def test_run_018_singleton_joins_cannot_become_competing_multiworker_joins() -> 
     Acceptance: The split-half schedule either cannot be admitted or completes every group under
     a verified ownership protocol; waiting forever is failure.
 
-    Pending phase 5: the in-cluster half (a KEDA scale request against a deployed join,
-    the split-half delivery schedule) needs the cluster scaling runs; the admission
-    is decided in the ``admission`` variant below.
+    On the cluster: a trace join (one source fanned out into two branches and
+    joined) runs as a singleton; a second pod of it is started while it works —
+    what a scaler expanding the node would do (a Job's parallelism is bounded
+    by its completions, so the pod is started by hand from the Job's template).
+    The second pod cannot bind: the partition lease refuses it with
+    ``VF_OWNERSHIP_CONFLICT`` in its termination message, the owner completes
+    every group exactly once, and the run finishes. The admission that refuses
+    the scaler in the first place is the ``admission`` variant.
     '''
+    from _k8s import fixture_nodes
+    nodes = fixture_nodes()
+    # Slow enough that the owner is still at work when the second pod arrives
+    # (a minute of inputs; scheduling and pulling the extra pod takes ~15 s).
+    inputs = 40
+
+    def build(out : str, flow_id : str) -> Flow:
+        src = IntProducer(0, inputs - 1, 1.5, name = 'src')
+        left = IdentityProcessor(name = 'left')(src)
+        right = IdentityProcessor(name = 'right')(src)
+        joined = nodes.PairProcessor(name = 'joined')(left, right)
+        tagged = nodes.TaggingProcessor(name = 'tagged')(joined)
+        return Flow([nodes.LineWriterConsumer(out, name = 'sink')(tagged)], flow_type = BATCH, flow_id = flow_id)
+    monkey = pytest.MonkeyPatch()
+    try:
+        record = _scaled_singleton_on_cluster(k3s, evidence_dir, 'run018k', build, 'joined', 2, inputs, _handled)
+    finally:
+        monkey.undo()
+    assert record['completed']['distinct'] == inputs
 
 
 @pytest.mark.case('RUN-018')
@@ -82,7 +244,6 @@ def test_run_018_singleton_joins_cannot_become_competing_multiworker_joins() -> 
 @pytest.mark.variant('admission')
 def test_run_018_admission_refuses_to_scale_a_singleton_join(evidence_dir, monkeypatch) -> None:
     '''A join at one replica keeps its declared scale: refused by the rule and by the renderer, for trace and time joins; ``nb_tasks`` cannot bypass the graph or messenger checks.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     _oracle_run_018(evidence)
     (evidence_dir / 'join_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
@@ -90,15 +251,13 @@ def test_run_018_admission_refuses_to_scale_a_singleton_join(evidence_dir, monke
 
 @pytest.mark.negative_control(of = 'RUN-018')
 def test_run_018_detects_an_eligibility_read_off_the_replica_count(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run3.replica_count_only_eligibility(monkeypatch)
     assert defects.detects(_oracle_run_018, {})
 
 
 @pytest.mark.case('RUN-019')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 5')
-def test_run_019_partition_intent_survives_a_singleton_to_multiple_worker() -> None:
+def test_run_019_partition_intent_survives_a_singleton_to_multiple_worker(k3s, evidence_dir) -> None:
     '''
     RUN-019 (P0, deployment, kubernetes): Partition intent survives a singleton-to-multiple-
     worker scale request.
@@ -106,11 +265,35 @@ def test_run_019_partition_intent_survives_a_singleton_to_multiple_worker() -> N
     Acceptance: One camera history is never split among independent unfenced states; unsupported
     singleton expansion fails explicitly.
 
-    Pending phase 5: the in-cluster half (a KEDA scale request 1→3 against a deployed
-    tracker, the per-camera state revisions) needs the cluster scaling runs; the
-    admission and the compiled-intent-versus-runtime-membership half is the
-    ``admission`` variant below.
+    On the cluster: a tracker declaring ``partition_by = 'camera_id'`` at one
+    replica consumes two cameras' frames; two more pods of it are started
+    mid-stream (by hand, from its Job's template — what a scaler expanding it
+    1→3 would do). The extra pods are refused at bind time
+    (``VF_OWNERSHIP_CONFLICT``), every camera's history stays with the one
+    owner in order, and the run completes. The compiled intent and the scaler's
+    refusal are the ``admission`` variant.
     '''
+    import ast
+
+    from _k8s import fixture_nodes
+    nodes = fixture_nodes()
+    cameras, frames = 2, 24
+
+    def build(out : str, flow_id : str) -> Flow:
+        # A minute of frames, so the owner is still at work when the extra pods arrive.
+        cam = nodes.CameraFrameProducer(cameras = cameras, frames = frames, delay_seconds = 1.25, name = 'cam')
+        tracker = nodes.TaggingProcessor(name = 'tracker', partition_by = 'camera_id')(cam)
+        return Flow([nodes.LineWriterConsumer(out, name = 'sink')(tracker)], flow_type = BATCH, flow_id = flow_id)
+
+    def handled(line : str) -> tuple:
+        parsed = ast.literal_eval(line)
+        return parsed['handler'], (parsed['item']['camera_id'], parsed['item']['n'])
+    monkey = pytest.MonkeyPatch()
+    try:
+        record = _scaled_singleton_on_cluster(k3s, evidence_dir, 'run019k', build, 'tracker', 3, cameras * frames, handled)
+    finally:
+        monkey.undo()
+    assert record['completed']['distinct'] == cameras * frames
 
 
 @pytest.mark.case('RUN-019')
@@ -118,7 +301,6 @@ def test_run_019_partition_intent_survives_a_singleton_to_multiple_worker() -> N
 @pytest.mark.variant('admission')
 def test_run_019_admission_keeps_partition_intent_at_one_replica(evidence_dir, monkeypatch) -> None:
     '''``partition_by`` at ``nb_tasks = 1`` is kept in the compiled intent and blocks a scaler; the runtime binds a competing durable at one replica and per-replica durables at three.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     _oracle_run_019(evidence)
     (evidence_dir / 'partition_admission.json').write_text(json.dumps(evidence, indent = 2, default = str))
@@ -126,15 +308,26 @@ def test_run_019_admission_keeps_partition_intent_at_one_replica(evidence_dir, m
 
 @pytest.mark.negative_control(of = 'RUN-019')
 def test_run_019_detects_partition_intent_erased_by_the_replica_count(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run3.replica_count_only_eligibility(monkeypatch)
     assert defects.detects(_oracle_run_019, {})
 
 
+def _scrape(address : str) -> Dict[str, int]:
+    '''The three throughput counters of a worker's ``/metrics`` (summed over drop reasons).'''
+    import urllib.request
+    with urllib.request.urlopen(f'http://{address}/metrics', timeout = 10) as response:
+        text = response.read().decode('utf-8')
+    counters = {'offered': 0, 'processed': 0, 'dropped': 0}
+    for line in text.splitlines():
+        for name in counters:
+            if line.startswith(f'videoflow_messages_{name}_total'):
+                counters[name] += int(float(line.rsplit(' ', 1)[-1]))
+    return counters
+
+
 @pytest.mark.case('RUN-026')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 5')
-def test_run_026_live_video_autoscaling_observes_overload_that_lossy() -> None:
+def test_run_026_live_video_autoscaling_observes_overload_that_lossy(k3s, evidence_dir) -> None:
     '''
     RUN-026 (P1, deployment, kubernetes): Live-video autoscaling observes overload that lossy
     retention conceals.
@@ -142,10 +335,112 @@ def test_run_026_live_video_autoscaling_observes_overload_that_lossy() -> None:
     Acceptance: The configured objective breach is detected within its declared control window
     despite a shallow queue; no arbitrary FPS target is imposed by this test.
 
-    Pending phase 5: driving a deployed live source above one worker's capacity and
-    watching a KEDA scaler act on the throughput metric needs the cluster scaling
-    runs; the demand observation itself is the ``metrics`` variant below.
+    On the cluster: a live source ten times faster than one ``SleepProcessor``
+    replica behind a one-slot channel. The queue depth the broker reports never
+    exceeds one; the worker's own counters (``/metrics``, scraped over one
+    control window) and the channel's eviction count give ``observe_rate_demand``
+    the breach within that window. With KEDA installed the rendered scaler's
+    decision is read back too; without it that half is recorded as not run.
     '''
+    import shutil
+
+    from _brokers import stream_state, unique_ids
+    from _k8s import (
+        cluster_support,
+        delete_run_streams_from_host,
+        fixture_nodes,
+        image_present,
+        kubectl_json,
+        pods_of,
+        port_forward,
+    )
+
+    from videoflow.consumers import CommandlineConsumer
+    from videoflow.core.compiler import compile_flow
+    from videoflow.deploy.infra import infra_urls
+    from videoflow.engines.kubernetes import KubernetesExecutionEngine
+    from videoflow.messaging.topology import stream_name_for
+    support = cluster_support()
+    missing = image_present(support.FIXTURE_IMAGE)
+    if missing:
+        pytest.skip(f'not_run: {missing}')
+    root = support.work_root()
+    if root is None:
+        pytest.skip('not_run: the work claim is not Bound — run scripts/k3s-test-up.sh')
+    nodes = fixture_nodes()
+    namespace = k3s['VF_K8S_NAMESPACE']
+    nats_url = os.environ.get('VF_K8S_NATS_URL', 'nats://127.0.0.1:30422')
+    flow_id, run_id = unique_ids('run026k')
+    work = root / f'conf-{run_id}'
+    work.mkdir(parents = True)
+    objective = scaling.RateObjective(min_delivered_fraction = 0.9, control_window_seconds = 10.0,
+                                      stabilization_seconds = 30.0)
+    cam = IntProducer(0, 200000, 0.005, name = 'cam')                       # ~200/s, long enough to never end here
+    slow = nodes.SleepProcessor(seconds = 0.05, name = 'slow')(cam)         # ~20/s capacity
+    flow = Flow([CommandlineConsumer(name = 'sink')(slow)], flow_type = REALTIME, flow_id = flow_id)
+    specs = compile_flow(flow)
+    keda = _keda_installed()
+    engine = KubernetesExecutionEngine(nats_url = infra_urls(namespace)['nats'], namespace = namespace,
+                                       default_image = support.FIXTURE_IMAGE, specs = specs,
+                                       mounts = support.work_mounts(str(work)), supervision = SupervisionPolicy(),
+                                       image_pull_policy = 'Always', priority_class = support.PRIORITY_CLASS or None,
+                                       autoscaling = keda, max_replicas = 3)
+    record : Dict[str, Any] = {'flow_id': flow_id, 'run_id': run_id, 'objective': objective.__dict__, 'keda': keda}
+    stream = stream_name_for(flow_id, run_id, 'cam')
+    try:
+        engine.allocate_and_run_tasks(None, flow_id, REALTIME, run_id)
+        deadline = time.monotonic() + 300
+        pod = None
+        while time.monotonic() < deadline and pod is None:
+            running = [p for p in pods_of(namespace, flow_id, 'slow') if (p.get('status') or {}).get('phase') == 'Running'
+                       and all(c.get('ready') for c in (p.get('status') or {}).get('containerStatuses', []))]
+            pod = running[0]['metadata']['name'] if running else None
+            time.sleep(2)
+        assert pod is not None, 'the slow worker never became ready'
+        time.sleep(5)                                                       # let the overload build
+        with port_forward(namespace, f'pod/{pod}', 8080) as address:
+            before = _scrape(address)
+            state_before = stream_state(nats_url, stream)
+            t0 = time.monotonic()
+            depths = []
+            while time.monotonic() - t0 < objective.control_window_seconds:
+                depths.append(int(stream_state(nats_url, stream).messages))
+                time.sleep(1)
+            after = _scrape(address)
+            state_after = stream_state(nats_url, stream)
+            window = time.monotonic() - t0
+        published = int(state_after.last_seq) - int(state_before.last_seq)
+        handed = after['offered'] - before['offered']
+        evicted = max(0, published - handed)
+        sample = scaling.throughput_sample(before['offered'], after['offered'], before['processed'], after['processed'],
+                                           before['dropped'], after['dropped'], 0, evicted, window)
+        decision = scaling.observe_rate_demand(known(sample), objective, current_replicas = 1, max_replicas = 3)
+        record.update({'pod': pod, 'counters_before': before, 'counters_after': after, 'published_in_window': published,
+                       'evicted_in_window': evicted, 'queue_depth_samples': depths, 'sample': sample.__dict__,
+                       'decision': decision.__dict__})
+        assert max(depths) <= 1, f'the queue was not shallow: {depths}'                # the concealment
+        assert sample.offered > sample.processed * 2, sample                         # a real overload
+        assert decision.diagnosis == scaling.DEMAND_BREACH, decision                  # detected within one window
+        assert decision.replicas is not None and 1 < decision.replicas <= 3, decision
+        if keda:
+            scaled = kubectl_json('get', 'scaledobjects', '-n', namespace, '-l', f'videoflow.io/flow-id={flow_id}')
+            record['scaled_objects'] = [o['metadata']['name'] for o in scaled.get('items', [])]
+            assert any('slow' in name for name in record['scaled_objects']), record['scaled_objects']
+            deadline = time.monotonic() + objective.stabilization_seconds + 120
+            replicas = 1
+            while time.monotonic() < deadline and replicas < 2:
+                deploy = kubectl_json('get', 'deployment', f'vf-{flow_id}-slow', '-n', namespace)
+                replicas = int((deploy.get('status') or {}).get('replicas') or 0)
+                time.sleep(5)
+            record['scaler_replicas'] = replicas
+            assert replicas >= 2, 'the scaler never acted on the breach'
+        else:
+            record['scaler'] = 'not run: KEDA (scaledobjects.keda.sh) is not installed; the detection half decides the case'
+    finally:
+        engine.teardown()
+        delete_run_streams_from_host(nats_url, flow_id, run_id)
+        shutil.rmtree(work, ignore_errors = True)
+        (evidence_dir / 'overload_detection.json').write_text(json.dumps(record, indent = 2, default = str))
 
 
 @pytest.mark.case('RUN-026')
@@ -166,7 +461,7 @@ def test_run_026_detects_a_lag_only_observer(monkeypatch) -> None:
 
 @pytest.mark.case('RUN-027')
 @pytest.mark.level('kubernetes')
-def test_run_027_batch_scaling_targets_a_supported_workload_controller(k3s) -> None:
+def test_run_027_batch_scaling_targets_a_supported_workload_controller(k3s, evidence_dir) -> None:
     '''
     RUN-027 (P1, deployment, kubernetes): Batch scaling targets a supported workload controller.
 
@@ -175,7 +470,65 @@ def test_run_027_batch_scaling_targets_a_supported_workload_controller(k3s) -> N
     '''
     if not _keda_installed():
         not_run('KEDA (scaledobjects.keda.sh) is not installed on the cluster; the operator decides whether to add it')
-    pytest.fail('KEDA is present but the in-cluster half of RUN-027 lands with the Phase-5 cluster runs')
+    import shutil
+
+    from _brokers import unique_ids
+    from _k8s import cluster_support, delete_run_streams_from_host, fixture_nodes, image_present, kubectl_json, pods_of
+
+    from videoflow.core.compiler import compile_flow
+    from videoflow.deploy.infra import infra_urls
+    from videoflow.engines.kubernetes import KubernetesExecutionEngine
+    support = cluster_support()
+    missing = image_present(support.FIXTURE_IMAGE)
+    if missing:
+        pytest.skip(f'not_run: {missing}')
+    root = support.work_root()
+    if root is None:
+        pytest.skip('not_run: the work claim is not Bound — run scripts/k3s-test-up.sh')
+    nodes = fixture_nodes()
+    namespace = k3s['VF_K8S_NAMESPACE']
+    nats_url = os.environ.get('VF_K8S_NATS_URL', 'nats://127.0.0.1:30422')
+    flow_id, run_id = unique_ids('run027k')
+    work = root / f'conf-{run_id}'
+    work.mkdir(parents = True)
+    out = work / 'seen.txt'
+    inputs, concurrency = 30, 2
+    src = IntProducer(0, inputs - 1, 0.02, name = 'src')
+    stage = nodes.SleepProcessor(seconds = 0.2, name = 'stage', nb_tasks = concurrency)(src)
+    flow = Flow([nodes.LineWriterConsumer(str(out), name = 'sink')(stage)], flow_type = BATCH, flow_id = flow_id)
+    specs = compile_flow(flow)
+    engine = KubernetesExecutionEngine(nats_url = infra_urls(namespace)['nats'], namespace = namespace,
+                                       default_image = support.FIXTURE_IMAGE, specs = specs,
+                                       mounts = support.work_mounts(str(work)), supervision = SupervisionPolicy(),
+                                       image_pull_policy = 'Always', priority_class = support.PRIORITY_CLASS or None,
+                                       autoscaling = True, max_replicas = 4)
+    record : Dict[str, Any] = {'flow_id': flow_id, 'run_id': run_id, 'requested_concurrency': concurrency}
+    try:
+        engine.allocate_and_run_tasks(None, flow_id, BATCH, run_id)
+        # No scaler may target a Job: the supported plan is the Job's own parallelism.
+        scaled = kubectl_json('get', 'scaledobjects', '-n', namespace, '-l', f'videoflow.io/flow-id={flow_id}')
+        record['scaled_objects'] = [(o['metadata']['name'], o['spec']['scaleTargetRef']) for o in scaled.get('items', [])]
+        assert not any('stage' in name for name, _ in record['scaled_objects']), record['scaled_objects']
+        deadline = time.monotonic() + 300
+        peak = 0
+        while time.monotonic() < deadline:
+            running = [p for p in pods_of(namespace, flow_id, 'stage') if (p.get('status') or {}).get('phase') == 'Running']
+            peak = max(peak, len(running))
+            if peak >= concurrency:
+                break
+            time.sleep(2)
+        record['peak_running_stage_pods'] = peak
+        assert peak == concurrency, f'batch concurrency was {peak}, not the planned {concurrency}'
+        assert engine.wait_for_completion() == []
+        from _k8s import read_lines
+        lines = read_lines(out)
+        record['completed'] = len(lines)
+        assert len(lines) == inputs
+    finally:
+        engine.teardown()
+        delete_run_streams_from_host(nats_url, flow_id, run_id)
+        shutil.rmtree(work, ignore_errors = True)
+        (evidence_dir / 'batch_scaling.json').write_text(json.dumps(record, indent = 2, default = str))
 
 
 @pytest.mark.case('RUN-027')
@@ -308,7 +661,7 @@ def _oracle_run_029_model(evidence : Dict[str, Any]) -> None:
                    for spec_ in specs]
         drain = next(m for m in render_manifests(specs_n, 'r029', 'realtime', 'nats://x:4222', 'r', default_image = 'img:1',
                                                  rollout_policy = 'drain') if m['kind'] == 'Deployment'
-                     and m['metadata']['name'] == 'vf-r029-infer')
+                     and m['metadata']['name'] == 'vf-r029-r-infer')
         assert drain['spec']['strategy'] == {'type': 'Recreate'} and drain['spec']['replicas'] == replicas
         surge_refused = rollout_problems('surge', specs_n, REALTIME, known(0))
         assert surge_refused and 'spare' in surge_refused[0]
@@ -513,10 +866,10 @@ def _oracle_run_018(evidence : Dict[str, Any]) -> None:
         manifests = _render(_join_flow(policy))
         scaled = _scaled(manifests)
         workloads = _workloads(manifests)
-        assert 'vf-run018-worker' in scaled, sorted(scaled)
-        assert 'vf-run018-joined' not in scaled, f'{name} join rendered a scaler: {sorted(scaled)}'
-        assert workloads['vf-run018-joined']['spec']['replicas'] == 1
-        evidence[f'{name}_join'] = {'scaled': sorted(scaled), 'joined_replicas': workloads['vf-run018-joined']['spec']['replicas']}
+        assert 'vf-run018-run0-worker' in scaled, sorted(scaled)
+        assert 'vf-run018-run0-joined' not in scaled, f'{name} join rendered a scaler: {sorted(scaled)}'
+        assert workloads['vf-run018-run0-joined']['spec']['replicas'] == 1
+        evidence[f'{name}_join'] = {'scaled': sorted(scaled), 'joined_replicas': workloads['vf-run018-run0-joined']['spec']['replicas']}
     # A static nb_tasks cannot bypass the eligibility checks: an unpartitioned
     # replicated join is refused by the graph, a replicated time join by the
     # messenger before it binds anything.
@@ -555,15 +908,15 @@ def _oracle_run_019(evidence : Dict[str, Any]) -> None:
     # The renderer: no ScaledObject for the tracker at one replica; the stateless sibling gets one.
     manifests = _render(_tracker_flow(1))
     scaled = _scaled(manifests)
-    assert 'vf-run019-stateless' in scaled and 'vf-run019-tracker' not in scaled, sorted(scaled)
-    evidence['one_replica'] = {'scaled': sorted(scaled), 'tracker_kind': _workloads(manifests)['vf-run019-tracker']['kind']}
+    assert 'vf-run019-run0-stateless' in scaled and 'vf-run019-run0-tracker' not in scaled, sorted(scaled)
+    evidence['one_replica'] = {'scaled': sorted(scaled), 'tracker_kind': _workloads(manifests)['vf-run019-run0-tracker']['kind']}
     # The supported expansion is a redeploy at the owning replica count: three
     # fenced owners as a StatefulSet with per-replica durables, still no scaler.
     manifests = _render(_tracker_flow(3))
     scaled = _scaled(manifests)
-    tracker = _workloads(manifests)['vf-run019-tracker']
+    tracker = _workloads(manifests)['vf-run019-run0-tracker']
     assert tracker['kind'] == 'StatefulSet' and tracker['spec']['replicas'] == 3, tracker['kind']
-    assert 'vf-run019-tracker' not in scaled
+    assert 'vf-run019-run0-tracker' not in scaled
     evidence['three_replicas'] = {'scaled': sorted(scaled), 'tracker_kind': tracker['kind'], 'replicas': 3}
     # Runtime membership versus compiled intent: at one replica the tracker binds
     # the *competing* durable — the reason a scale request from 1 must be blocked

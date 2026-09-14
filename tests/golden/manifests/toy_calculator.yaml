@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-broker
+  name: vf-golden-toy-calculator-run0-broker
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -10,6 +10,7 @@ metadata:
 data:
   VF_NATS_URL: nats://nats.videoflow-test.svc:4222
   VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+  VF_RUNTIME_STORE_URL: redis://redis.videoflow-test.svc:6379/0
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,7 +36,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-specs
+  name: vf-golden-toy-calculator-run0-specs
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -120,7 +121,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-provision
+  name: vf-golden-toy-calculator-run0-provision
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -144,7 +145,7 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         env:
         - name: VF_FLOW_ID
           value: golden-toy_calculator
@@ -161,12 +162,12 @@ spec:
       volumes:
       - name: specs
         configMap:
-          name: vf-golden-toy-calculator-specs
+          name: vf-golden-toy-calculator-run0-specs
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-delay-env
+  name: vf-golden-toy-calculator-run0-delay-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -189,11 +190,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: pair
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-delay
+  name: vf-golden-toy-calculator-run0-delay
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -212,9 +215,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-delay-env
+            name: vf-golden-toy-calculator-run0-delay-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -234,7 +237,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-numbers-env
+  name: vf-golden-toy-calculator-run0-numbers-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -256,11 +259,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.producers.basic.IntProducer
   VF_BLOB_READERS: '2'
+  VF_BLOB_READER_IDS: delay,square
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-numbers
+  name: vf-golden-toy-calculator-run0-numbers
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -279,9 +283,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-numbers-env
+            name: vf-golden-toy-calculator-run0-numbers-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -301,7 +305,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-pair-env
+  name: vf-golden-toy-calculator-run0-pair-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -328,11 +332,13 @@ data:
   VF_JOIN_POLICY_JSON: '{"timeout_seconds": null, "missing": "wait", "max_pending":
     100000, "mode": "trace", "tolerance_ms": null, "quorum": null, "collect": {}}'
   VF_BLOB_READERS: '3'
+  VF_BLOB_READER_IDS: pairs-log,report,stats
+  VF_PARENT_REPLICAS: 1,2
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-pair
+  name: vf-golden-toy-calculator-run0-pair
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -351,9 +357,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-pair-env
+            name: vf-golden-toy-calculator-run0-pair-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -373,7 +379,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-pairs-log-env
+  name: vf-golden-toy-calculator-run0-pairs-log-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -395,11 +401,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.consumers.basic.FileAppenderConsumer
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-pairs-log
+  name: vf-golden-toy-calculator-run0-pairs-log
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -418,9 +425,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-pairs-log-env
+            name: vf-golden-toy-calculator-run0-pairs-log-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -440,7 +447,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-printer-env
+  name: vf-golden-toy-calculator-run0-printer-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -463,11 +470,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.consumers.basic.CommandlineConsumer
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-printer
+  name: vf-golden-toy-calculator-run0-printer
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -486,9 +494,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-printer-env
+            name: vf-golden-toy-calculator-run0-printer-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -508,7 +516,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-proctimes-env
+  name: vf-golden-toy-calculator-run0-proctimes-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -530,11 +538,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_calculator_nodes.ProcTimeMonitor
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '2'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-proctimes
+  name: vf-golden-toy-calculator-run0-proctimes
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -553,9 +562,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-proctimes-env
+            name: vf-golden-toy-calculator-run0-proctimes-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -575,7 +584,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-report-env
+  name: vf-golden-toy-calculator-run0-report-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -599,11 +608,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_calculator_nodes.ReportWriter
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: 1,1
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-report
+  name: vf-golden-toy-calculator-run0-report
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -622,9 +632,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-report-env
+            name: vf-golden-toy-calculator-run0-report-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -644,7 +654,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-square-env
+  name: vf-golden-toy-calculator-run0-square-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -667,11 +677,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_calculator_nodes.SquareProcessor
   VF_BLOB_READERS: '2'
+  VF_BLOB_READER_IDS: pair,proctimes
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-square
+  name: vf-golden-toy-calculator-run0-square
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -690,9 +702,14 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-square-env
+            name: vf-golden-toy-calculator-run0-square-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
+        env:
+        - name: VF_REPLICA_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
         ports:
         - containerPort: 8080
           name: health
@@ -708,13 +725,14 @@ spec:
       restartPolicy: Never
   ttlSecondsAfterFinished: 600
   activeDeadlineSeconds: 86400
+  completionMode: Indexed
   completions: 2
   parallelism: 2
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: vf-golden-toy-calculator-square-pdb
+  name: vf-golden-toy-calculator-run0-square-pdb
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -727,11 +745,12 @@ spec:
     matchLabels:
       videoflow.io/node: square
       videoflow.io/flow-id: golden-toy-calculator
+      videoflow.io/run-id: run0
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-calculator-stats-env
+  name: vf-golden-toy-calculator-run0-stats-env
   labels:
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -754,11 +773,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_calculator_nodes.RunningStats
   VF_BLOB_READERS: '2'
+  VF_BLOB_READER_IDS: printer,report
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-calculator-stats
+  name: vf-golden-toy-calculator-run0-stats
   labels: &id001
     videoflow.io/flow-id: golden-toy-calculator
     app.kubernetes.io/managed-by: videoflow
@@ -777,9 +798,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-calculator-stats-env
+            name: vf-golden-toy-calculator-run0-stats-env
         - configMapRef:
-            name: vf-golden-toy-calculator-broker
+            name: vf-golden-toy-calculator-run0-broker
         ports:
         - containerPort: 8080
           name: health

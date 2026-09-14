@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-recovery-broker
+  name: vf-golden-toy-recovery-run0-broker
   labels:
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -10,6 +10,7 @@ metadata:
 data:
   VF_NATS_URL: nats://nats.videoflow-test.svc:4222
   VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+  VF_RUNTIME_STORE_URL: redis://redis.videoflow-test.svc:6379/0
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,7 +36,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-recovery-specs
+  name: vf-golden-toy-recovery-run0-specs
   labels:
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -72,7 +73,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-recovery-provision
+  name: vf-golden-toy-recovery-run0-provision
   labels: &id001
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -96,7 +97,7 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-recovery-broker
+            name: vf-golden-toy-recovery-run0-broker
         env:
         - name: VF_FLOW_ID
           value: golden-toy_recovery
@@ -113,12 +114,12 @@ spec:
       volumes:
       - name: specs
         configMap:
-          name: vf-golden-toy-recovery-specs
+          name: vf-golden-toy-recovery-run0-specs
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-recovery-events-env
+  name: vf-golden-toy-recovery-run0-events-env
   labels:
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -140,11 +141,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_recovery_nodes.EventProducer
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: fragile
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-recovery-events
+  name: vf-golden-toy-recovery-run0-events
   labels: &id001
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -163,9 +165,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-recovery-events-env
+            name: vf-golden-toy-recovery-run0-events-env
         - configMapRef:
-            name: vf-golden-toy-recovery-broker
+            name: vf-golden-toy-recovery-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -185,7 +187,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-recovery-fragile-env
+  name: vf-golden-toy-recovery-run0-fragile-env
   labels:
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -209,11 +211,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_recovery_nodes.FragileProcessor
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: ledger
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-recovery-fragile
+  name: vf-golden-toy-recovery-run0-fragile
   labels: &id001
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -232,9 +236,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-recovery-fragile-env
+            name: vf-golden-toy-recovery-run0-fragile-env
         - configMapRef:
-            name: vf-golden-toy-recovery-broker
+            name: vf-golden-toy-recovery-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -254,7 +258,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-recovery-ledger-env
+  name: vf-golden-toy-recovery-run0-ledger-env
   labels:
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -279,11 +283,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_recovery_nodes.RecoveryLedger
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-recovery-ledger
+  name: vf-golden-toy-recovery-run0-ledger
   labels: &id001
     videoflow.io/flow-id: golden-toy-recovery
     app.kubernetes.io/managed-by: videoflow
@@ -302,9 +307,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-recovery-ledger-env
+            name: vf-golden-toy-recovery-run0-ledger-env
         - configMapRef:
-            name: vf-golden-toy-recovery-broker
+            name: vf-golden-toy-recovery-run0-broker
         ports:
         - containerPort: 8080
           name: health

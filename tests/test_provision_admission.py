@@ -24,7 +24,7 @@ from videoflow.backends.capabilities import (
 )
 from videoflow.backends.outcomes import unknown
 from videoflow.consumers import CommandlineConsumer
-from videoflow.core import Flow, constants
+from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import (
@@ -53,7 +53,6 @@ def _specs(flow_type = BATCH):
 @pytest.fixture
 def env(monkeypatch):
     '''The provision Job's environment for a BATCH flow, without explicit requests.'''
-    monkeypatch.setattr(constants, 'RFC0006', False)
     monkeypatch.setenv('VF_FLOW_SPECS_JSON', json.dumps([s.to_dict() for s in _specs()]))
     monkeypatch.setenv('VF_FLOW_ID', 'prov')
     monkeypatch.setenv('VF_RUN_ID', 'r1')
@@ -111,16 +110,20 @@ def _explicit(env, *requests):
 
 # -- the provision entrypoint ------------------------------------------------------------------
 
-def test_without_requests_and_without_the_switch_nothing_is_read_back(stubs):
+def test_without_requests_the_composition_is_still_admitted_before_provisioning(stubs):
+    # RFC 0006 accepted: the live broker and store are always read back and the
+    # flow-type presets admitted before a stream exists; the explicit read-back of
+    # requested channels still happens only for explicit requests.
     provision.provision()
-    assert stubs['probes'] == [] and stubs['read_back'] == []
+    assert [p[:2] for p in stubs['probes']] == [('nats', 'nats://broker:4222'), ('redis', 'redis://store:6379/0')]
+    assert stubs['read_back'] == []
     assert stubs['provisioned'] == [('nats://broker:4222', ['src', 'work', 'sink'], 'prov', 'r1', BATCH,
                                      {'max_retries': 3, 'replicas': 1, 'ledger_budget': False})]
 
 
 def test_a_rejection_before_provisioning_creates_nothing(stubs, env, capsys):
     _explicit(env, ProfileRequest('work', RELIABLE_WORK))
-    stubs['store'] = admission.redis_payload_capabilities(RedisProfile.dev())        # evictable
+    stubs['store'] = admission.redis_payload_capabilities(RedisProfile(persistence = 'none', eviction = 'volatile-lru'))
     with pytest.raises(IncompatibleProfile, match = 'evictable'):
         provision.provision()
     assert stubs['provisioned'] == [] and stubs['read_back'] == []
@@ -140,7 +143,6 @@ def test_a_rejection_before_provisioning_creates_nothing(stubs, env, capsys):
 
 def test_an_unobserved_store_binds_only_with_explicit_requests(stubs, env, capsys):
     stubs['store'] = admission.redis_payload_capabilities(None)                      # the probe could not read it
-    env.setattr(constants, 'RFC0006', True)
     provision.provision()                                                            # a warning under the switch alone
     assert len(stubs['provisioned']) == 1 and stubs['read_back'] == []
     assert 'WARNING: provision' in capsys.readouterr().err

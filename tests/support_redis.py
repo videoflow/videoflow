@@ -98,8 +98,9 @@ class FakeRedis:
     '''
     - Arguments:
         - cluster_enabled: what ``INFO cluster`` reports and whether ``CLUSTER KEYSLOT`` answers.
-        - config: the ``CONFIG GET`` table; defaults to the dev compose server's shape \
-            (no persistence, ``volatile-lru``).
+        - config: the ``CONFIG GET`` table; defaults to a transport-only cache (no \
+            persistence, ``volatile-lru`` — the pre-RFC-0006 dev server), the shape \
+            the capability cases must recognise as *not* durable.
         - deny_config: make ``CONFIG GET`` raise ``NoPermissionError``.
         - now: the fake clock's start (epoch seconds).
     '''

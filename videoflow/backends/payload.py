@@ -143,10 +143,21 @@ class ObligationLedger(abc.ABC):
     '''
     What the runtime knows about obligations, for reconciliation: which readers
     are still required for which refs. A store reconciles its objects against it.
+
+    A ledger speaks for the obligation families it is *authoritative* for and no
+    other: the runtime ledger knows its flow's readers and publishers'
+    intents, not an archive's or a dead-letter pin's (``BLOB-13`` families
+    ``archive/*``, ``dlq/*``), so a store cancels an obligation the ledger does
+    not require only when the ledger is authoritative for it. The default —
+    everything — is the whole-truth ledger a flow-wide reconciler or a test builds.
     '''
     @abc.abstractmethod
     def required_obligations(self) -> Mapping[str, tuple[str, ...]]:
         '''ref key -> obligation ids still required.'''
+
+    def authoritative(self, obligation_id : str) -> bool:
+        '''Whether this ledger may cancel ``obligation_id`` when it does not require it.'''
+        return True
 
 class PayloadStore(abc.ABC):
     @abc.abstractmethod

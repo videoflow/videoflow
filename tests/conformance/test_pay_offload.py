@@ -32,7 +32,6 @@ from videoflow.backends.memory.clock import FakeClock
 from videoflow.backends.memory.payload import MemoryPayloadStore
 from videoflow.backends.outcomes import Known
 from videoflow.backends.payload import RetentionContract
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import ConfigError, ResourceUnavailable
 from videoflow.messaging import nats_messenger
@@ -218,7 +217,6 @@ def test_pay_001_one_megabyte_frames_offload_safely_and_enforce_envelope(evidenc
     Acceptance: Payload bytes match exactly; transmitted envelope fits negotiated broker limits.
     Absent store produces explicit failure and zero falsely accepted publications.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = _MemoryRigWithBareStore(BATCH, max_payload_bytes = BROKER_MAX_PAYLOAD)
     try:
@@ -235,7 +233,6 @@ def test_pay_001_one_megabyte_frames_offload_safely_and_enforce_envelope(evidenc
 def test_pay_001_the_broker_limit_is_read_back_and_honoured(nats_url, redis_url, evidence_dir, record_faults,
                                                            monkeypatch) -> None:
     '''The same specimens against a JetStream server's own ``max_payload`` and a Redis store.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     specs = [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)]
     rig = _JetStreamRigWithBareStore(nats_url, BATCH, specs, redis_url = redis_url)
@@ -253,7 +250,6 @@ def test_pay_001_the_broker_limit_is_read_back_and_honoured(nats_url, redis_url,
 
 @pytest.mark.negative_control(of = 'PAY-001')
 def test_pay_001_detects_an_unnegotiated_inline_threshold(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.unnegotiated_threshold(monkeypatch)
     rig = _MemoryRigWithBareStore(BATCH, max_payload_bytes = BROKER_MAX_PAYLOAD)
     try:

@@ -54,6 +54,7 @@ from ..messaging import (
     SUBSCRIPTION_DATA,
     SUBSCRIPTION_EOS,
     ChannelId,
+    ChannelObservation,
     ChannelSpec,
     Completed,
     Delivery,
@@ -615,6 +616,34 @@ class MemoryMessagingBackend(MessagingBackend):
             return None
 
     # -- introspection for tests ----------------------------------------------------------------------
+
+    def observe_channel(self, channel_id : ChannelId) -> Observation[ChannelObservation]:
+        with self._lock:
+            channel = self._channels.get(channel_id)
+            if channel is None:
+                return unknown('unreachable', 'no such channel')
+            now = self._clock.now()
+            self._sweep(channel, now)
+            data = [m for m in channel.messages if m.subject_key == KIND_DATA]
+            first = data[0].sequence if data else channel.next_sequence
+            last = data[-1].sequence if data else channel.next_sequence - 1
+            return known(ChannelObservation(first, last, len(data), channel.spec.retention, now))
+
+    def observe_ack_floor(self, subscription : SubscriptionId) -> Observation[int]:
+        '''The highest stream sequence below which every visible message is settled for ``subscription``.'''
+        with self._lock:
+            channel = self._channels.get(subscription.channel)
+            if channel is None or subscription not in channel.subscriptions:
+                return unknown('unreachable', 'no such subscription')
+            floor = channel.subscriptions[subscription].cursor - 1
+            for stored in channel.messages:
+                if not _visible(subscription, stored.subject_key):
+                    continue
+                view = stored.views.get(subscription)
+                if view is None or view.settled is None:
+                    return known(min(floor, stored.sequence - 1))
+                floor = max(floor, stored.sequence)
+            return known(floor)
 
     def stored(self, channel_id : ChannelId) -> list[Envelope]:
         with self._lock:

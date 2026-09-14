@@ -43,7 +43,7 @@ def broker_durability_planner() -> Callable[..., Any]:
         payload = kwargs.get('payload')
         if payload is not None and isinstance(messaging.persistent_storage, known(True).__class__) \
                 and messaging.persistent_storage.value:
-            kwargs['payload'] = dataclasses.replace(payload, durable = known(True))
+            kwargs['payload'] = dataclasses.replace(payload, durable = known(True), persistent_storage = known(True))
         return real(requirements, messaging, **kwargs)
     return planner
 
@@ -59,3 +59,28 @@ def accepting_on_timeout(outcome : Any) -> Any:
     if isinstance(outcome, PublicationUnknown):
         return Accepted(outcome.publication_id, None, False, 'stream')
     return outcome
+
+
+def flow_scoped_names(monkeypatch : Any) -> None:
+    '''
+    The reviewed defect behind RUN-047: every run of a flow rendered the same
+    resource names (``vf-<flow>-<node>``, ``vf-<flow>-specs``, ...), so a second
+    concurrent run ``kubectl apply``ed over the first. Reproduced by dropping the
+    run id from ``manifests.run_name`` and the run-id term from the selectors.
+    '''
+    from videoflow.deploy import manifests
+
+    monkeypatch.setattr(manifests, 'run_name', lambda flow_id, run_id, *parts: manifests.k8s_name('vf', flow_id, *parts))
+    monkeypatch.setattr(manifests, '_selector', lambda flow_id, run_id, node: {
+        manifests.LABEL_FLOW_ID: manifests.k8s_name(flow_id), 'videoflow.io/node': manifests.k8s_name(node)})
+
+
+def free_namespace_on_unread(monkeypatch : Any) -> None:
+    '''
+    The companion defect: a failed listing of the namespace read as "no other
+    run", so ``--single-run`` started beside a run it could not see.
+    '''
+    from videoflow.backends.outcomes import known
+    from videoflow.deploy import cluster
+
+    monkeypatch.setattr(cluster, 'active_runs_observed', lambda kubectl, namespace, flow_id: known(set()))

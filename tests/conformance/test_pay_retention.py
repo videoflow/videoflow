@@ -54,7 +54,6 @@ from videoflow.backends.payload import (
 )
 from videoflow.backends.payload import TransientFailure as TransientRead
 from videoflow.backends.payload_bridge import PayloadStoreBlobBridge
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import DecodeError, IncompatibleProfile, ResourceUnavailable, SchemaError
 from videoflow.core.errors import TransientFailure as TransientError
@@ -396,7 +395,6 @@ def test_pay_014_dead_letters_retain_images_for_the_complete_forensic_and(nats_u
     H is 9 real seconds here (the DLQ retention the worker pins for), the
     ordinary payload TTL 2 s; the store is the compose Redis, time is real.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'DLQ_RETENTION_SECONDS', 9)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs_pay_014(), redis_url = redis_url)
@@ -413,7 +411,6 @@ def test_pay_014_dead_letters_retain_images_for_the_complete_forensic_and(nats_u
 @pytest.mark.variant('memory')
 def test_pay_014_memory_backends_pin_the_dead_letters_payload_for_h(evidence_dir, record_faults, monkeypatch) -> None:
     '''The model under a wall-aligned fake clock (the worker stamps pin deadlines in wall time): H = 100 s.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'DLQ_RETENTION_SECONDS', 100)
     evidence : Dict[str, Any] = {}
     clock = FakeClock(start = time.time())
@@ -476,7 +473,6 @@ def test_pay_014_a_failed_dead_letter_pin_keeps_the_source_input_redeliverable(e
     kept for a later attempt — not terminated against a dead letter whose bytes
     are only TTL-protected.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'DLQ_RETENTION_SECONDS', 100)
     clock = FakeClock(start = time.time())
     rig = MemoryRig(BATCH, clock = clock, specs = _specs_pay_014())
@@ -505,7 +501,6 @@ def test_pay_014_a_failed_dead_letter_pin_keeps_the_source_input_redeliverable(e
 
 @pytest.mark.negative_control(of = 'PAY-014')
 def test_pay_014_detects_a_dead_letter_that_never_pins_its_payload(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'DLQ_RETENTION_SECONDS', 100)
     defects_pay.unpinned_dead_letter(monkeypatch)
     clock = FakeClock(start = time.time())

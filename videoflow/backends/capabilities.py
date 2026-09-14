@@ -45,7 +45,7 @@ from ..core.compiler import NodeSpec
 from ..core.constants import BATCH, REALTIME
 from ..core.errors import SEVERITY_ERROR, ConfigError, Diagnostic, IncompatibleProfile, UnobservableState
 from ..core.policies import AT_LEAST_ONCE, BEST_EFFORT, DeliveryPolicy
-from .outcomes import Observation, Unknown
+from .outcomes import Known, Observation, Unknown, known, unknown
 
 # -- messaging profiles --------------------------------------------------------------
 
@@ -106,15 +106,74 @@ class MessagingCapabilities:
     durable_control : bool = False
     archive : bool = False
     mixed_retention_per_channel : bool = False
+    #: The largest graph the adapter supports, as streams and consumers (MSG-026):
+    #: the broker account's limits read back (``-1`` = unlimited) capped by the
+    #: operator's declared supported size (``VF_MAX_STREAMS`` / ``VF_MAX_CONSUMERS``,
+    #: ``graph_limits_from_env``); ``None`` when the adapter declares nothing.
+    max_streams : Observation[int] | None = None
+    max_consumers : Observation[int] | None = None
+
+#: Operator-declared supported graph size for the JetStream adapter: the measured
+#: limit a benchmark (MSG-026) established on the deployment's hardware, so a graph
+#: beyond it is refused at admission instead of partially provisioned.
+MAX_STREAMS_ENV = 'VF_MAX_STREAMS'
+MAX_CONSUMERS_ENV = 'VF_MAX_CONSUMERS'
+
+def graph_limits_from_env(environ : Mapping[str, str]) -> tuple[int | None, int | None]:
+    '''``(max_streams, max_consumers)`` declared in the environment, or None each; a non-integer is a ConfigError.'''
+    out : list[int | None] = []
+    for name in (MAX_STREAMS_ENV, MAX_CONSUMERS_ENV):
+        raw = environ.get(name, '').strip()
+        if not raw:
+            out.append(None)
+            continue
+        try:
+            value = int(raw)
+        except ValueError as e:
+            raise ConfigError(f'{name}={raw!r} is not an integer.',
+                              remedy = f'Set {name} to the supported count (a positive integer) or unset it.') from e
+        if value < 1:
+            raise ConfigError(f'{name}={value} admits no graph at all.',
+                              remedy = f'Set {name} to a positive count or unset it.')
+        out.append(value)
+    return out[0], out[1]
+
+def combined_limit(account : Observation[int] | None, declared : int | None) -> Observation[int] | None:
+    '''The tighter of an account limit (``-1`` unlimited) and a declared cap; None when neither says anything.'''
+    if declared is None:
+        return account
+    if account is None or isinstance(account, Unknown) or account.value < 0:
+        return known(declared)
+    return known(min(account.value, declared))
 
 @dataclass(frozen = True)
 class PayloadCapabilities:
+    '''
+    ``durable``: an accepted object outlives a *restart* of the store's process
+    (persistence on) and is never dropped while a reader holds it
+    (``noeviction``) — what ``reliable_work`` asks. ``persistent_storage``: the
+    data lives on a volume that outlives the store's *pod* — what surviving a
+    pod loss (``tolerated_failures``) additionally asks; a dev Redis writes its
+    append-only file to an emptyDir and is durable without being that. The
+    wire cannot tell the two apart (``CONFIG GET dir`` names a path, not what
+    backs it), so a read-back leaves it ``Unknown`` and the profile record on
+    the Service (or the operator) declares it.
+
+    ``reference_forwarding``: a stage that republishes an unchanged payload
+    shares the canonical object instead of writing a copy per hop (PAY-017).
+    Neither shipped store declares it; every hop writes its own copy, which the
+    benchmark measures as a copy amplification of one object per frame-bearing
+    stage — declared, never hidden.
+    '''
     adapter : str
     durable : Observation[bool]
     evictable : Observation[bool]
     atomic_multikey : Observation[bool]
     max_object_bytes : int | None
     reader_identities : bool
+    reference_forwarding : bool = False
+    persistent_storage : Observation[bool] = field(default_factory = lambda: unknown(
+        'unread', 'whether the store keeps its data on a volume that outlives its pod was neither declared nor observed'))
 
 @dataclass(frozen = True)
 class RuntimeCapabilities:
@@ -143,11 +202,31 @@ class AllocationCapabilities:
 
 @dataclass(frozen = True)
 class ExecutionCapabilities:
+    '''
+    What an execution engine advertises. ``execution_groups`` (fused groups whose
+    internal edges never touch the broker, RUN-035) and ``dynamic_batching`` (a
+    runtime batching contract distinct from transport fetch batching, RUN-036)
+    are declared False by both shipped engines: a flow that declares either is
+    refused at admission rather than run as ordinary nodes.
+    '''
     engine : str
     restart_supervision : bool
     readiness_states : tuple[str, ...]
     pvc_mounts : bool
     autoscaling_controllers : tuple[str, ...] = ()
+    execution_groups : bool = False
+    dynamic_batching : bool = False
+
+READINESS_STATES = ('requested', 'allocated', 'prepared', 'ready')
+
+def local_execution_capabilities() -> ExecutionCapabilities:
+    '''The local engine: subprocess supervision, no claims, no controllers, no fusion or batching.'''
+    return ExecutionCapabilities('local', True, READINESS_STATES, False)
+
+def kubernetes_execution_capabilities(autoscaling : bool = False) -> ExecutionCapabilities:
+    '''The Kubernetes engine: kubelet restarts, PVC mounts, KEDA when asked for; no fusion or batching.'''
+    return ExecutionCapabilities('kubernetes', True, READINESS_STATES, True,
+                                 autoscaling_controllers = ('keda',) if autoscaling else ())
 
 # -- what a flow requires ---------------------------------------------------------------
 
@@ -196,12 +275,20 @@ class FlowRequirements:
     #: marker that expires inside the replay horizon cannot certify exactly-once.
     effect_retention_seconds : float | None = None
     replay_horizon_seconds : float | None = None
+    #: Fused execution groups the nodes declare (``Node.execution_group``): group
+    #: name -> member nodes. Admitted only against an engine advertising
+    #: ``execution_groups`` (RUN-035); none does today.
+    execution_groups : Mapping[str, tuple[str, ...]] = field(default_factory = dict)
+    #: Dynamic-batching contracts the nodes declare (``Node.batching_policy``):
+    #: node -> policy. Admitted only against ``dynamic_batching`` (RUN-036).
+    batching : Mapping[str, Mapping[str, Any]] = field(default_factory = dict)
 
     def is_empty(self) -> bool:
         return (not self.profiles and not self.restart_safe and not self.exactly_once_effects
                 and not self.resources and self.priority_class is None and self.rollout_policy is None
                 and not self.tolerated_failures and not self.sink_guarantees
-                and self.effect_retention_seconds is None and self.replay_horizon_seconds is None)
+                and self.effect_retention_seconds is None and self.replay_horizon_seconds is None
+                and not self.execution_groups and not self.batching)
 
     def to_dict(self) -> dict[str, Any]:
         d = {
@@ -221,6 +308,10 @@ class FlowRequirements:
             d['effect_retention_seconds'] = self.effect_retention_seconds
         if self.replay_horizon_seconds is not None:
             d['replay_horizon_seconds'] = self.replay_horizon_seconds
+        if self.execution_groups:
+            d['execution_groups'] = {name: list(members) for name, members in self.execution_groups.items()}
+        if self.batching:
+            d['batching'] = {node: dict(policy) for node, policy in self.batching.items()}
         return d
 
     @staticmethod
@@ -238,6 +329,8 @@ class FlowRequirements:
             sink_guarantees = {str(k): str(v) for k, v in (d.get('sink_guarantees') or {}).items()},
             effect_retention_seconds = d.get('effect_retention_seconds'),
             replay_horizon_seconds = d.get('replay_horizon_seconds'),
+            execution_groups = {str(k): tuple(str(m) for m in v) for k, v in (d.get('execution_groups') or {}).items()},
+            batching = {str(k): dict(v) for k, v in (d.get('batching') or {}).items()},
         )
 
 def profile_for_edge(flow_type : str, delivery : Mapping[str, Any] | None) -> str:
@@ -382,16 +475,21 @@ def plan_composition(requirements : FlowRequirements, messaging : MessagingCapab
                        'Request a global latest slot, or use an adapter that implements per-key retention.')
                 continue
         elif profile == DURABLE_CONTROL:
-            if not messaging.durable_control:
-                reject(channel, profile, f'{messaging.adapter} keeps control state in transient notifications only',
-                       'Enable the durable control store (RFC 0006 run-state bucket).')
+            # Durable control state is the run ledger's (CTRL-4): a durable, shared
+            # runtime store keeps epochs, terminators and completions whatever the
+            # transport does with its notifications — an adapter's own control
+            # store (``durable_control``) is a convenience, never the qualification.
+            if runtime is not None and isinstance(runtime.durable, Unknown):
+                cannot_observe(channel, profile, 'runtime store durability', runtime.durable)
                 continue
-            if runtime is None or isinstance(runtime.durable, Unknown) or not runtime.durable.value:
-                if runtime is not None and isinstance(runtime.durable, Unknown):
-                    cannot_observe(channel, profile, 'runtime store durability', runtime.durable)
-                else:
-                    reject(channel, profile, 'no durable runtime store is composed',
-                           'Set VF_RUNTIME_STORE_URL to a durable store (redis:// with persistence).')
+            ledger = runtime is not None and isinstance(runtime.durable, Known) and bool(runtime.durable.value) \
+                and runtime.shared_across_processes
+            if not ledger:
+                reject(channel, profile, 'no durable, shared run ledger is composed'
+                       + ('' if messaging.durable_control else f' and {messaging.adapter} keeps control state in '
+                                                               f'transient notifications only'),
+                       'Set VF_RUNTIME_STORE_URL to a durable store shared across processes (redis:// with '
+                       'persistence and noeviction), which keeps the run-state ledger (RFC 0006 section 9).')
                 continue
         elif profile == REPLAY_ARCHIVE:
             if not messaging.archive:
@@ -438,6 +536,12 @@ def plan_composition(requirements : FlowRequirements, messaging : MessagingCapab
                 reject('*', what, f'the {payload.adapter} payload store is not durable: broker survival does '
                        'not substitute for independent payload durability',
                        'Use a durable payload store (Redis with appendonly and noeviction on a volume).')
+            elif isinstance(payload.persistent_storage, Unknown):
+                cannot_observe('*', what, 'payload-store storage persistence', payload.persistent_storage)
+            elif not payload.persistent_storage.value:
+                reject('*', what, f'the {payload.adapter} payload store keeps its data on ephemeral storage, so '
+                       'a pod loss loses the blobs however durably they were written',
+                       'Put the payload store on a persistent volume (--broker-profile durable claims one).')
 
     for sink in requirements.exactly_once_effects:
         guarantee = requirements.sink_guarantees.get(sink, EFFECT_AT_LEAST_ONCE)
@@ -454,6 +558,25 @@ def plan_composition(requirements : FlowRequirements, messaging : MessagingCapab
                    f'effect markers are kept {kept:.0f}s but a replay may reach {horizon:.0f}s back, so a '
                    'replayed input past the marker would apply its effect again',
                    f'Keep effect markers for at least {horizon:.0f}s (the replay horizon), or shorten the horizon.')
+
+    for group, members in sorted(requirements.execution_groups.items()):
+        if execution is None or not execution.execution_groups:
+            engine = execution.engine if execution is not None else 'no'
+            reject(group, 'execution_group',
+                   f'nodes {", ".join(members)} declare fused execution group {group!r}, and the {engine} '
+                   f'engine runs one node per worker: their internal edges would be serialized through '
+                   f'the broker, which is not the declared contract',
+                   'Drop the execution_group declaration and deploy the stages as ordinary nodes, or '
+                   'compose an engine that advertises execution_groups.')
+    for node, policy in sorted(requirements.batching.items()):
+        if execution is None or not execution.dynamic_batching:
+            engine = execution.engine if execution is not None else 'no'
+            reject(node, 'batching_policy',
+                   f'node {node!r} declares a dynamic-batching contract {dict(policy)!r}, and the {engine} '
+                   f'runtime delivers one input group at a time: transport fetch batching is not a '
+                   f'batching contract (max wait, identity per item, fairness)',
+                   'Drop the batching_policy declaration (batch inside the node explicitly), or compose '
+                   'a runtime that advertises dynamic_batching.')
 
     if definite:
         raise IncompatibleProfile(

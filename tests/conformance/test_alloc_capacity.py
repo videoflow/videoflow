@@ -67,7 +67,7 @@ def _flow(replicas : int = 1, gpu_count : int = 1) -> Flow:
 
 
 def _deployment(manifests : List[dict], node : str) -> dict:
-    return next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == f'vf-cap-{node}')
+    return next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == f'vf-cap-r-{node}')
 
 
 def _pick_node(nodes : List[str]) -> tuple[str, int]:

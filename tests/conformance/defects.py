@@ -590,3 +590,11 @@ def core_claims_backlog(monkeypatch : pytest.MonkeyPatch) -> None:
     def caps(self : MemoryMessagingBackend) -> Any:
         return dataclasses.replace(real(self), retained_backlog = True, recoverable_delivery = True)
     monkeypatch.setattr(MemoryMessagingBackend, 'capabilities', caps)
+
+
+# -- MSG-026: no supported graph size at all -----------------------------------------------------------------
+
+def no_graph_limit(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''Before the limit existed every graph was provisioned until the account refused a stream mid-way.'''
+    from videoflow.deploy import admission
+    monkeypatch.setattr(admission, 'verify_graph_size', lambda specs, flow_id, run_id, messaging: None)

@@ -30,7 +30,6 @@ from videoflow.backends.capabilities import RELIABLE_WORK, RETENTION_INTEREST, R
 from videoflow.backends.identity import owner_labels
 from videoflow.backends.messaging import Completed, SubscriptionId, SubscriptionSpec
 from videoflow.backends.outcomes import Accepted
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import IncompatibleProfile, ResourceUnavailable, VideoflowError
 from videoflow.messaging import topology
@@ -270,7 +269,6 @@ def test_msg_005_provisioning_failures_prevent_producers_from_publishing(nats_re
     timed-out request plus a permissions-violation callback), while the plain URL
     on the same server has full permissions for the retry.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     plain_url = _plain_url(nats_restricted_url)
     flow, run = unique_ids('msg005')
     prov = _JetStreamProvisioning(plain_url, nats_restricted_url, flow, run)
@@ -325,7 +323,6 @@ def test_msg_005_detects_a_swallowing_subscription_provisioner(monkeypatch) -> N
 @pytest.mark.timeout(NATS_TIMEOUT)
 def test_msg_005_detects_the_swallowing_consumer_provisioner_on_the_broker(nats_restricted_url, monkeypatch) -> None:
     '''The reviewed ``_ensure_consumer`` (debug log, no read-back) against the real denial.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects.swallowing_consumer_provisioner(monkeypatch)
     plain_url = _plain_url(nats_restricted_url)
     flow, run = unique_ids('msg005nc')
@@ -529,7 +526,6 @@ def test_msg_006_reconciliation_detects_incompatible_existing_broker(nats_url, e
     Acceptance: Producer starts only when the read-back effective configuration satisfies every
     mandatory field. Each denied incompatible update fails validation.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('msg006')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}

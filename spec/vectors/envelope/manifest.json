@@ -190,7 +190,8 @@
     },
     "payload": {
       "none": true
-    }
+    },
+    "description": "replica 0 published 9 DATA messages (EOS-7: seq is the per-replica final count)"
   },
   {
     "name": "abort",

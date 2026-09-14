@@ -19,8 +19,10 @@ from videoflow.backends.capabilities import (
     ProfileRequest,
     plan_composition,
 )
-from videoflow.backends.outcomes import known, unknown
+from videoflow.backends.outcomes import Unknown, known, unknown
 from videoflow.core.errors import IncompatibleProfile, UnobservableState
+from videoflow.deploy.admission import redis_payload_capabilities
+from videoflow.deploy.broker_profiles import RedisProfile
 
 
 def _caps(replicas = 3, persistent = True):
@@ -65,8 +67,22 @@ def test_broker_survival_does_not_substitute_for_payload_durability():
     with pytest.raises(IncompatibleProfile) as e:
         plan_composition(_req(1), _caps(3, True), payload = evictable, payload_refs_in_use = True)
     assert 'broker survival does not substitute' in str(e.value)
+    # Durably written is not enough either: the dev Redis writes its append-only
+    # file to an emptyDir, which the pod takes with it; a read-back cannot tell
+    # (the wire names a path, not what backs it), and unread is not a pass.
     durable = dataclasses.replace(evictable, durable = known(True))
-    assert plan_composition(_req(1), _caps(3, True), payload = durable, payload_refs_in_use = True)
+    with pytest.raises(UnobservableState) as unread:
+        plan_composition(_req(1), _caps(3, True), payload = durable, payload_refs_in_use = True)
+    assert 'storage persistence' in str(unread.value)
+    with pytest.raises(IncompatibleProfile, match = 'ephemeral storage'):
+        plan_composition(_req(1), _caps(3, True), payload_refs_in_use = True,
+                         payload = dataclasses.replace(durable, persistent_storage = known(False)))
+    on_a_claim = dataclasses.replace(durable, persistent_storage = known(True))
+    assert plan_composition(_req(1), _caps(3, True), payload = on_a_claim, payload_refs_in_use = True)
+    # The shipped profiles say which they are; a bring-your-own store cannot.
+    assert redis_payload_capabilities(RedisProfile.dev()).persistent_storage.value is False
+    assert redis_payload_capabilities(RedisProfile.durable()).persistent_storage.value is True
+    assert isinstance(redis_payload_capabilities(None).persistent_storage, Unknown)
 
 
 def test_the_field_round_trips_and_is_absent_when_unset():

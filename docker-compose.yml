@@ -52,12 +52,15 @@ services:
 
   redis:
     image: redis:7
-    # Same settings the CLI provisioners use: persistence off (the blob store is
-    # transport, not storage) and a memory cap with volatile-lru eviction — every
-    # videoflow key carries a TTL, so under pressure Redis drops the oldest blobs
-    # instead of growing unbounded (redis default: unlimited + noeviction).
-    command: ["redis-server", "--save", "", "--appendonly", "no",
-              "--maxmemory", "4gb", "--maxmemory-policy", "volatile-lru"]
+    # Same settings the CLI provisioners use (RedisProfile.dev()): an append-only
+    # file and noeviction, so a blob is never dropped while a reader still holds
+    # it — what reliable_work (every BATCH channel) requires of a payload store —
+    # with a 4gb memory cap so a stuck run hits a refused write instead of growing
+    # unbounded (redis default: unlimited). Every videoflow key carries a TTL and
+    # the reconciler reclaims orphans; that, not eviction, bounds memory. The
+    # `redis-small` profile below is the evictable cache the eviction cases use.
+    command: ["redis-server", "--save", "", "--appendonly", "yes",
+              "--maxmemory", "4gb", "--maxmemory-policy", "noeviction"]
     ports:
       - "6379:6379"
 

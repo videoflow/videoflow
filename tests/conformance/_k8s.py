@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import os
+import pathlib
 import re
 import subprocess
 import time
@@ -306,3 +307,85 @@ def free_gpus_on(node : str, settle : float = 120.0) -> int:
         for c in (pod.get('spec') or {}).get('containers', []):
             held += int(((c.get('resources') or {}).get('limits') or {}).get('nvidia.com/gpu', 0))
     return allocatable - held
+
+
+# -- deploying a real flow on the shared cluster (the engine path) ----------------------------
+
+K8S_INTEGRATION = pathlib.Path(__file__).resolve().parents[1] / 'integration' / 'k8s'
+
+
+def cluster_support() -> Any:
+    '''``tests/integration/k8s/support_k8s`` — the fixtures image, the work claim and the engine glue.'''
+    import sys
+    if str(K8S_INTEGRATION) not in sys.path:
+        sys.path.insert(0, str(K8S_INTEGRATION))
+    import support_k8s
+    return support_k8s
+
+
+def fixture_nodes() -> Any:
+    '''The cluster fixture nodes module (``tests/integration/k8s/fixture_nodes``), importable in the fixtures image.'''
+    import sys
+    if str(K8S_INTEGRATION) not in sys.path:
+        sys.path.insert(0, str(K8S_INTEGRATION))
+    import fixture_nodes
+    return fixture_nodes
+
+
+def image_present(ref : str) -> Optional[str]:
+    '''The reason ``ref`` cannot be pulled by the nodes (registry read-back through crane), or None.'''
+    from shutil import which
+    if which('crane') is None:
+        return 'crane is not installed (scripts/push-images.sh names the install)'
+    proc = subprocess.run(['crane', 'manifest', '--insecure', ref], capture_output = True, text = True, check = False,
+                          timeout = 60)
+    return None if proc.returncode == 0 else f'image {ref} is not in the registry — run scripts/k3s-test-up.sh'
+
+
+def pods_of(namespace : str, flow_id : str, node : str) -> List[Dict[str, Any]]:
+    '''Every pod of one node of a flow (any phase), by the labels the manifests render.'''
+    from videoflow.deploy.manifests import k8s_name
+    return kubectl_json('get', 'pods', '-n', namespace, '-l',
+                        f'videoflow.io/flow-id={k8s_name(flow_id)},videoflow.io/node={k8s_name(node)}').get('items', [])
+
+
+def termination_messages(pods : List[Dict[str, Any]]) -> Dict[str, List[str]]:
+    '''``pod name -> [termination messages]`` of every terminated container state (current and last).'''
+    out : Dict[str, List[str]] = {}
+    for pod in pods:
+        messages = []
+        for status in (pod.get('status') or {}).get('containerStatuses', []) or []:
+            for state in (status.get('state') or {}, status.get('lastState') or {}):
+                terminated = state.get('terminated') or {}
+                if terminated.get('message'):
+                    messages.append(str(terminated['message']))
+        out[pod['metadata']['name']] = messages
+    return out
+
+
+def delete_run_streams_from_host(nats_url : str, flow_id : str, run_id : str) -> None:
+    '''The engine's broker teardown targets the in-cluster URL; from the host the NodePort reaches the same server.'''
+    import nats
+
+    from videoflow.messaging import topology
+
+    async def _go() -> None:
+        nc = await nats.connect(nats_url, connect_timeout = 5, max_reconnect_attempts = 0)
+        try:
+            await topology.delete_run_streams(nc, flow_id, run_id)
+        finally:
+            await nc.close()
+    try:
+        asyncio.run(_go())
+    except Exception as e:      # noqa: BLE001 — best effort; the streams are run-scoped and harmless
+        print(f'run streams of {flow_id}/{run_id} left on the broker: {e}')
+
+
+def read_lines(path : pathlib.Path) -> List[str]:
+    '''Complete lines of a sink's output file over NFS: only newline-terminated lines count.'''
+    if not path.exists():
+        return []
+    data = path.read_bytes()
+    text = data.decode('utf-8', 'replace')
+    lines = text.split('\n')
+    return [line for line in lines[:-1] if line] if not text.endswith('\n') else [line for line in lines if line]

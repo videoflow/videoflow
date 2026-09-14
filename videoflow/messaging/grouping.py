@@ -40,7 +40,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from ..backends.runtime import group_identity
-from ..core import constants
 from ..core.policies import JOIN_TIME, MISSING_ERROR, JoinPolicy
 
 logger = logging.getLogger(__package__)
@@ -487,14 +486,12 @@ class TimeGroupAssembler(GroupAssembler):
         # Identity of the group is its event time: stable across redelivery (the
         # same members regroup to the same min ts), so downstream dedup holds.
         seq = int(round(group.ts * 1e6))
-        if constants.RFC0006:
-            # JOIN-23: distinct groups whose event times round to the same
-            # microsecond get distinct ids — the digest is over the sync members'
-            # logical ids, so the same members still regroup to the same id.
-            members = {parent: (entry.producer_name, entry.trace_id, entry.seq)
-                       for parent, entry in entries.items() if isinstance(entry, EnvelopeEntry)}
-            return ReadyGroup(group_identity(members, None, seq), seq, group.ts, entries, handles)
-        return ReadyGroup(f'tw-{seq}', seq, group.ts, entries, handles)
+        # JOIN-23: distinct groups whose event times round to the same
+        # microsecond get distinct ids — the digest is over the sync members'
+        # logical ids, so the same members still regroup to the same id.
+        members = {parent: (entry.producer_name, entry.trace_id, entry.seq)
+                   for parent, entry in entries.items() if isinstance(entry, EnvelopeEntry)}
+        return ReadyGroup(group_identity(members, None, seq), seq, group.ts, entries, handles)
 
     def has_pending_from(self, parent_name : str) -> bool:
         # Groups staged by sweep but not yet handed to the task still hold this

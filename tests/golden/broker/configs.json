@@ -9,6 +9,12 @@
     "inactive_threshold": 0,
     "max_ack_pending": 8,
     "max_deliver": 4,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "durable",
+      "videoflow.io/node": "child",
+      "videoflow.io/run-id": "r"
+    },
     "replay_policy": "instant"
   },
   "dlq_stream": {
@@ -21,6 +27,10 @@
     "max_age": 604800000000000,
     "max_msg_size": -1,
     "max_msgs_per_subject": -1,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "dlq"
+    },
     "name": "vf-f-dlq",
     "no_ack": false,
     "retention": "limits",
@@ -37,6 +47,12 @@
     "filter_subject": "vf.f.r.n._eos",
     "idle_heartbeat": 0,
     "inactive_threshold": 0,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "eos_anchor",
+      "videoflow.io/node": "n",
+      "videoflow.io/run-id": "r"
+    },
     "replay_policy": "instant"
   },
   "eos_consumer": {
@@ -47,6 +63,12 @@
     "filter_subject": "vf.f.r.parent._eos",
     "idle_heartbeat": 0,
     "inactive_threshold": 3600000000000,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "eos_durable",
+      "videoflow.io/node": "child",
+      "videoflow.io/run-id": "r"
+    },
     "replay_policy": "instant"
   },
   "max_deliver/batch/at-least-once": 4,
@@ -66,6 +88,12 @@
     "max_msg_size": -1,
     "max_msgs": 10000,
     "max_msgs_per_subject": -1,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "stream",
+      "videoflow.io/node": "n",
+      "videoflow.io/run-id": "r"
+    },
     "name": "vf-f-r-n",
     "no_ack": false,
     "retention": "interest",
@@ -86,6 +114,12 @@
     "max_msg_size": -1,
     "max_msgs": 1,
     "max_msgs_per_subject": -1,
+    "metadata": {
+      "videoflow.io/flow-id": "f",
+      "videoflow.io/kind": "stream",
+      "videoflow.io/node": "n",
+      "videoflow.io/run-id": "r"
+    },
     "name": "vf-f-r-n",
     "no_ack": false,
     "retention": "limits",

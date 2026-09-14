@@ -57,7 +57,6 @@ from videoflow.backends.runtime import (
     COMPLETION_UNKNOWN,
     FlowRuntime,
 )
-from videoflow.core import constants
 from videoflow.core.errors import StaleAuthority, UpstreamAborted
 from videoflow.core.task import raise_if_aborted
 
@@ -175,7 +174,6 @@ def test_run_007_completion_waits_for_every_expected_replica_and_its_final(nats_
     schedule pauses its final publish (``publish.send.before``) until the test
     releases it through the shared marker directory.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     store_dir = str(tmp_path / 'ledger')
     sink_path = str(tmp_path / 'sink.jsonl')
     schedule = faults.FaultSchedule({'publish.send.before': faults.Nth(N1, faults.Pause('final', 120.0))},
@@ -242,7 +240,6 @@ def test_run_007_completion_waits_for_every_expected_replica_and_its_final(nats_
 @pytest.mark.level('process')
 @pytest.mark.variant('memory')
 def test_run_007_memory_child_waits_for_the_delayed_replica(tmp_path, evidence_dir, record_faults, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     schedule = faults.FaultSchedule({'publish.send.before': faults.Nth(1, faults.Pause('final', 60.0))})
     rig = ModelRig(auto_advance = 0.0)
     record : Dict[str, Any] = {}
@@ -258,7 +255,6 @@ def test_run_007_memory_child_waits_for_the_delayed_replica(tmp_path, evidence_d
 @pytest.mark.negative_control(of = 'RUN-007')
 def test_run_007_detects_completion_on_the_first_terminator(tmp_path, monkeypatch) -> None:
     '''The historical drain completes on one replica's EOS plus 500 ms of quiet: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.quiescence_completion(monkeypatch)
     schedule = faults.FaultSchedule({'publish.send.before': faults.Nth(1, faults.Pause('final', 60.0))})
     rig = ModelRig(auto_advance = 0.0)
@@ -358,7 +354,6 @@ def test_run_008_duplicate_and_stale_epoch_eos_cannot_finish_a_replacement(tmp_p
     (the terminator recorded, not acked), the replacement takes the partition
     under epoch 2 over the same file ledger.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     schedule = faults.FaultSchedule({'eos.record.after': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the child died after recording the terminator')))})
     rig = ModelRig(auto_advance = 0.0)
@@ -375,7 +370,6 @@ def test_run_008_duplicate_and_stale_epoch_eos_cannot_finish_a_replacement(tmp_p
 @pytest.mark.negative_control(of = 'RUN-008')
 def test_run_008_detects_terminators_collapsed_onto_the_first(tmp_path, monkeypatch) -> None:
     '''A receiver that ends the parent on its first marker finishes the replacement on the redelivered old EOS: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.collapsing_terminators(monkeypatch)
     schedule = faults.FaultSchedule({'eos.record.after': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the child died after recording the terminator')))})
@@ -472,7 +466,6 @@ def test_run_009_unknown_delivery_state_cannot_satisfy_a_completion_barrier(nats
     ``observe.subscription.before`` barrier (timeouts and authorization errors,
     alternating) while a delivery is still held.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     rig = BrokerRig(nats_url, 'run009')
     record : Dict[str, Any] = {'flow': rig.flow_id, 'run': rig.run_id}
     schedule = None
@@ -492,7 +485,6 @@ def test_run_009_unknown_delivery_state_cannot_satisfy_a_completion_barrier(nats
 @pytest.mark.variant('memory')
 def test_run_009_memory_unknown_observation_never_reads_as_empty(tmp_path, evidence_dir, record_faults,
                                                                  monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     rig = ModelRig(auto_advance = 0.0)
     record : Dict[str, Any] = {}
     schedule = None
@@ -510,7 +502,6 @@ def test_run_009_memory_unknown_observation_never_reads_as_empty(tmp_path, evide
 @pytest.mark.negative_control(of = 'RUN-009')
 def test_run_009_detects_a_failed_query_read_as_zero(tmp_path, monkeypatch) -> None:
     '''``(0, 0)`` for a failed ``consumer_info`` completes the drain over a held delivery: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.zero_on_failure_pending(monkeypatch)
     rig = ModelRig(auto_advance = 0.0)
     try:
@@ -693,7 +684,6 @@ def test_run_010_abort_remains_distinct_from_normal_end_of_stream_across(nats_ur
     ``eos.record.before`` before it is), then real replica workers where the
     failing one publishes its own ABORT.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     schedules : Dict[str, faults.FaultSchedule] = {}
     try:
@@ -725,7 +715,6 @@ def test_run_010_abort_remains_distinct_from_normal_end_of_stream_across(nats_ur
 @pytest.mark.variant('memory')
 def test_run_010_memory_abort_survives_ordering_repeats_and_a_restart(tmp_path, evidence_dir, record_faults,
                                                                       monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     schedules = []
     rig = ModelRig(auto_advance = 0.0)
@@ -746,7 +735,6 @@ def test_run_010_memory_abort_survives_ordering_repeats_and_a_restart(tmp_path, 
 @pytest.mark.negative_control(of = 'RUN-010')
 def test_run_010_detects_an_abort_acked_away_behind_an_eos(tmp_path, monkeypatch) -> None:
     '''A receiver that acks the ABORT that followed an EOS, keeping it only in memory, restarts into a clean finish: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.acked_extra_terminators(monkeypatch)
     schedule = faults.FaultSchedule({'eos.record.after': faults.Nth(2, faults.RaiseError(
         lambda: SimulatedCrash('the child died before reporting terminal status')))})

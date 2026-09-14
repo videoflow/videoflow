@@ -249,6 +249,23 @@ def sink_guarantees(flow : Any) -> Dict[str, str]:
             out[node.name] = node.effect_guarantee
     return out
 
+def execution_groups(flow : Any) -> Dict[str, tuple[str, ...]]:
+    '''
+    The fused execution groups a flow's nodes declare (``Node.execution_group``,
+    RUN-035): group name -> member node names, sorted. Empty for a flow that
+    declares none, so the compiled document is unchanged.
+    '''
+    groups : Dict[str, List[str]] = {}
+    for node, _parents, _is_last in flow.tasks_data():
+        if node.execution_group:
+            groups.setdefault(str(node.execution_group), []).append(node.name)
+    return {name: tuple(sorted(members)) for name, members in sorted(groups.items())}
+
+def batching_policies(flow : Any) -> Dict[str, Dict[str, Any]]:
+    '''The dynamic-batching contracts a flow's nodes declare (``Node.batching_policy``, RUN-036): node -> policy.'''
+    return {node.name: dict(node.batching_policy) for node, _parents, _is_last in flow.tasks_data()
+            if node.batching_policy}
+
 def parent_replicas(spec : NodeSpec, specs : List[NodeSpec]) -> List[int]:
     '''
     ``VF_PARENT_REPLICAS`` (RFC 0006 ENV-11): each parent's ``nb_tasks``, in

@@ -35,7 +35,6 @@ from _payloads import (
 
 from videoflow.backends import faults
 from videoflow.backends.payload import ImmutablePayloadRef
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.messaging import nats_messenger
 from videoflow.wire.serialization import serialized_payload_size
@@ -155,7 +154,6 @@ def test_pay_018_partition_ownership_is_checked_before_loading_large_image(nats_
     Acceptance: For no-failure single-owner fixture, nonowner frame GET count is zero and useful
     frame fetch bytes are approximately N*S plus declared transport overhead, not replicas*N*S.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)     # every frame offloads
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, ack_wait = 30)
@@ -171,7 +169,6 @@ def test_pay_018_partition_ownership_is_checked_before_loading_large_image(nats_
 @pytest.mark.level('broker')
 @pytest.mark.variant('memory')
 def test_pay_018_memory_backends_route_before_hydrating(evidence_dir, record_faults, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH, specs = _specs())
@@ -186,7 +183,6 @@ def test_pay_018_memory_backends_route_before_hydrating(evidence_dir, record_fau
 
 @pytest.mark.negative_control(of = 'PAY-018')
 def test_pay_018_detects_a_replica_that_hydrates_before_deciding_ownership(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     defects_pay.hydrate_before_ownership(monkeypatch)
     rig = MemoryRig(BATCH, specs = _specs())

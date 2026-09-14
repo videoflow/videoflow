@@ -32,12 +32,24 @@ import msgpack
 import numpy as np
 
 from videoflow import serialization as s
+from videoflow.backends.runtime import group_identity, replayable_trace_id, source_epoch_trace_id
 from videoflow.v1 import envelope_pb2
 
 VECTORS_DIR = os.path.dirname(os.path.abspath(__file__))
 ENVELOPE_DIR = os.path.join(VECTORS_DIR, 'envelope')
 REJECT_DIR = os.path.join(VECTORS_DIR, 'reject')
 MSGID_DIR = os.path.join(VECTORS_DIR, 'message_id')
+JOIN_DIR = os.path.join(VECTORS_DIR, 'join')
+
+#: JOIN-23 examples: the RFC 0006 section 4 pair (same rounded time, one member
+#: differs by one seq), plus a collect-free single-parent group and a Unicode one.
+GROUP_CASES = [
+    ({'cam': ('cam', 'cam:3f9c1a2b7d4e:5', 5), 'imu': ('imu', 'imu:77e1b2c3d4f5:11', 11)}, 1700000000.5),
+    ({'cam': ('cam', 'cam:3f9c1a2b7d4e:6', 6), 'imu': ('imu', 'imu:77e1b2c3d4f5:11', 11)}, 1700000000.5),
+    ({'cam': ('cam', 'cam:3f9c1a2b7d4e:1', 1)}, 0.0000005),
+    ({'caméra-Ω': ('caméra-Ω', 'caméra-Ω:v2:42', 42), 'lidar': ('lidar', 'lidar:a01b7c2d9e3f:7', 7)}, 1700000001.25),
+]
+GROUP_EXAMPLE_ID = group_identity(GROUP_CASES[0][0], None, int(round(GROUP_CASES[0][1] * 1e6)))
 
 def tensor_desc(arr : np.ndarray) -> dict:
     arr = np.ascontiguousarray(arr)
@@ -113,11 +125,14 @@ def build_cases() -> list:
             'payload': (7, frame), 'payload_desc': {'value': typed((7, frame))},
         },
         {
+            # EOS-7 (RFC 0006): a terminator's seq is the number of distinct DATA
+            # messages its replica published — replica 0 of cam published 9.
             'name': 'eos',
             'fields': {'producer_name': 'cam', 'flow_id': 'flow-A', 'run_id': 'run-1',
                     'trace_id': 'eos-r0', 'seq': 9, 'msg_type': s.MSG_TYPE_EOS,
                     'metadata': None, 'event_ts': None, 'replica_id': 0},
             'payload': None, 'payload_desc': {'none': True},
+            'description': 'replica 0 published 9 DATA messages (EOS-7: seq is the per-replica final count)',
         },
         {
             # RFC 0005: an abnormal terminator. Rides the same _eos subject as a
@@ -211,8 +226,14 @@ def main() -> None:
             event_ts = f['event_ts'], version = 4, error = case.get('error'),
         )
         fname = case['name'] + '.bin'
-        with open(os.path.join(ENVELOPE_DIR, fname), 'wb') as fh:
-            fh.write(buf)
+        path = os.path.join(ENVELOPE_DIR, fname)
+        # A checked-in vector is the vector: its bytes are the contract other SDKs
+        # replay, and protobuf serializes map entries in an unspecified order, so a
+        # regenerated file can differ in bytes while meaning the same thing. Only a
+        # vector that does not exist yet is written; to change one, delete it first.
+        if not os.path.exists(path):
+            with open(path, 'wb') as fh:
+                fh.write(buf)
         manifest.append({
             'name': case['name'],
             'file': fname,
@@ -230,6 +251,8 @@ def main() -> None:
         })
         if case.get('error') is not None:
             manifest[-1]['error'] = case['error']
+        if case.get('description') is not None:
+            manifest[-1]['description'] = case['description']
     with open(os.path.join(ENVELOPE_DIR, 'manifest.json'), 'w') as fh:
         json.dump(manifest, fh, indent = 2, ensure_ascii = False)
         fh.write('\n')
@@ -244,6 +267,14 @@ def main() -> None:
         ('flow-A', 'run-1', 'detector', 'abort-r2', 11, s.MSG_TYPE_ABORT),
         ('f', 'r', 'proc', 'tw-1700000000500000', 1700000000500000, s.MSG_TYPE_DATA),
         ('flujo', 'ejecución', 'caméra-Ω', 'caméra-Ω:1', 9_000_000_000, s.MSG_TYPE_DATA),
+        # RFC 0006: the three trace-id forms a source mints — a live source's
+        # per-process epoch (MSGID-5), a replayable source's offset and a declared
+        # analysis version over it (MSGID-6) — and a member-hashed time-group id
+        # (JOIN-23) carried forward by a downstream node.
+        ('flow-A', 'run-1', 'cam', source_epoch_trace_id('cam', '3f9c1a2b7d4e', 1), 1, s.MSG_TYPE_DATA),
+        ('flow-A', 'run-1', 'file', replayable_trace_id('file', 42), 42, s.MSG_TYPE_DATA),
+        ('flow-A', 'run-1', 'file', replayable_trace_id('file', 42, 'v2'), 42, s.MSG_TYPE_DATA),
+        ('f', 'r', 'proc', GROUP_EXAMPLE_ID, 1700000000500000, s.MSG_TYPE_DATA),
     ]:
         msgid.append({
             'flow_id': args[0], 'run_id': args[1], 'producer_name': args[2],
@@ -254,10 +285,23 @@ def main() -> None:
         json.dump(msgid, fh, indent = 2, ensure_ascii = False)
         fh.write('\n')
 
+    # JOIN-23 group identities: members -> id, the rounding and the digest pinned.
+    os.makedirs(JOIN_DIR, exist_ok = True)
+    join = []
+    for members, ts in GROUP_CASES:
+        rounded = int(round(ts * 1e6))
+        canonical = '|'.join(f'{parent}={producer}:{trace}:{seq}' for parent, (producer, trace, seq) in sorted(members.items()))
+        join.append({'members': {p: {'producer_name': m[0], 'trace_id': m[1], 'seq': m[2]} for p, m in members.items()},
+                     'group_ts': ts, 'window_id': None, 'rounded_micros': rounded, 'hash_input': '|' + canonical,
+                     'expected_trace_id': group_identity(members, None, rounded)})
+    with open(os.path.join(JOIN_DIR, 'group_identity.json'), 'w') as fh:
+        json.dump(join, fh, indent = 2, ensure_ascii = False)
+        fh.write('\n')
+
     reject = write_reject_vectors()
 
     print(f'Wrote {len(manifest)} envelope vectors, {len(reject)} reject vectors, '
-          f'and {len(msgid)} message-id vectors.')
+          f'{len(msgid)} message-id vectors and {len(join)} group-identity vectors.')
 
 if __name__ == '__main__':
     main()

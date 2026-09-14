@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-broker
+  name: vf-golden-demo-run0-broker
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -34,7 +34,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-specs
+  name: vf-golden-demo-run0-specs
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -92,7 +92,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-provision
+  name: vf-golden-demo-run0-provision
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -116,7 +116,7 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         env:
         - name: VF_FLOW_ID
           value: golden-demo
@@ -133,12 +133,12 @@ spec:
       volumes:
       - name: specs
         configMap:
-          name: vf-golden-demo-specs
+          name: vf-golden-demo-run0-specs
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-gpu-sharer-env
+  name: vf-golden-demo-run0-gpu-sharer-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -161,12 +161,14 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: joined
+  VF_PARENT_REPLICAS: '1'
   VF_GPU_COUNT: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-gpu-sharer
+  name: vf-golden-demo-run0-gpu-sharer
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -185,9 +187,14 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-gpu-sharer-env
+            name: vf-golden-demo-run0-gpu-sharer-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
+        env:
+        - name: VF_REPLICA_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.annotations['batch.kubernetes.io/job-completion-index']
         resources:
           limits:
             nvidia.com/gpu: 1
@@ -205,13 +212,14 @@ spec:
       restartPolicy: Never
   ttlSecondsAfterFinished: 600
   activeDeadlineSeconds: 86400
+  completionMode: Indexed
   completions: 2
   parallelism: 2
 ---
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: vf-golden-demo-gpu-sharer-pdb
+  name: vf-golden-demo-run0-gpu-sharer-pdb
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -224,11 +232,12 @@ spec:
     matchLabels:
       videoflow.io/node: gpu-sharer
       videoflow.io/flow-id: golden-demo
+      videoflow.io/run-id: run0
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-gpu-two-env
+  name: vf-golden-demo-run0-gpu-two-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -251,12 +260,14 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '3'
+  VF_BLOB_READER_IDS: part/p0,part/p1,part/p2
+  VF_PARENT_REPLICAS: '1'
   VF_GPU_COUNT: '2'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-gpu-two
+  name: vf-golden-demo-run0-gpu-two
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -275,9 +286,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-gpu-two-env
+            name: vf-golden-demo-run0-gpu-two-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         resources:
           limits:
             nvidia.com/gpu: 2
@@ -299,7 +310,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-joined-env
+  name: vf-golden-demo-run0-joined-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -322,11 +333,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: printer
+  VF_PARENT_REPLICAS: 3,2
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-joined
+  name: vf-golden-demo-run0-joined
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -345,9 +358,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-joined-env
+            name: vf-golden-demo-run0-joined-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -359,7 +372,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-numbers-env
+  name: vf-golden-demo-run0-numbers-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -381,11 +394,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.producers.basic.IntProducer
   VF_BLOB_READERS: '2'
+  VF_BLOB_READER_IDS: gpu-sharer,gpu-two
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-numbers
+  name: vf-golden-demo-run0-numbers
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -404,9 +418,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-numbers-env
+            name: vf-golden-demo-run0-numbers-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -418,7 +432,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-part-env
+  name: vf-golden-demo-run0-part-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -442,11 +456,13 @@ data:
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_PARTITION_BY: trace_id
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: joined
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: vf-golden-demo-part-hl
+  name: vf-golden-demo-run0-part-hl
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -458,6 +474,7 @@ spec:
   selector:
     videoflow.io/node: part
     videoflow.io/flow-id: golden-demo
+    videoflow.io/run-id: run0
   ports:
   - port: 8080
     name: health
@@ -465,7 +482,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-part
+  name: vf-golden-demo-run0-part
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -484,9 +501,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-part-env
+            name: vf-golden-demo-run0-part-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         env:
         - name: VF_REPLICA_ID
           valueFrom:
@@ -506,7 +523,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: vf-golden-demo-part-pdb
+  name: vf-golden-demo-run0-part-pdb
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -519,11 +536,12 @@ spec:
     matchLabels:
       videoflow.io/node: part
       videoflow.io/flow-id: golden-demo
+      videoflow.io/run-id: run0
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-demo-printer-env
+  name: vf-golden-demo-run0-printer-env
   labels:
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -546,11 +564,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: videoflow.consumers.basic.CommandlineConsumer
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-demo-printer
+  name: vf-golden-demo-run0-printer
   labels: &id001
     videoflow.io/flow-id: golden-demo
     app.kubernetes.io/managed-by: videoflow
@@ -569,9 +588,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-demo-printer-env
+            name: vf-golden-demo-run0-printer-env
         - configMapRef:
-            name: vf-golden-demo-broker
+            name: vf-golden-demo-run0-broker
         ports:
         - containerPort: 8080
           name: health

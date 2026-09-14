@@ -1,7 +1,7 @@
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-broker
+  name: vf-golden-toy-router-run0-broker
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -10,6 +10,7 @@ metadata:
 data:
   VF_NATS_URL: nats://nats.videoflow-test.svc:4222
   VF_BLOB_REDIS_URL: redis://redis.videoflow-test.svc:6379/0
+  VF_RUNTIME_STORE_URL: redis://redis.videoflow-test.svc:6379/0
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -35,7 +36,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-specs
+  name: vf-golden-toy-router-run0-specs
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -79,7 +80,7 @@ data:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-router-provision
+  name: vf-golden-toy-router-run0-provision
   labels: &id001
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -103,7 +104,7 @@ spec:
         terminationMessagePolicy: FallbackToLogsOnError
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-router-broker
+            name: vf-golden-toy-router-run0-broker
         env:
         - name: VF_FLOW_ID
           value: golden-toy_router
@@ -120,12 +121,12 @@ spec:
       volumes:
       - name: specs
         configMap:
-          name: vf-golden-toy-router-specs
+          name: vf-golden-toy-router-run0-specs
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-count-env
+  name: vf-golden-toy-router-run0-count-env
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -149,11 +150,13 @@ data:
   VF_NODE_CLASS: toy_router_nodes.KeyedCounter
   VF_PARTITION_BY: _partition_key
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: ledger
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: vf-golden-toy-router-count-hl
+  name: vf-golden-toy-router-run0-count-hl
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -165,6 +168,7 @@ spec:
   selector:
     videoflow.io/node: count
     videoflow.io/flow-id: golden-toy-router
+    videoflow.io/run-id: run0
   ports:
   - port: 8080
     name: health
@@ -172,7 +176,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-router-count
+  name: vf-golden-toy-router-run0-count
   labels: &id001
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -191,9 +195,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-router-count-env
+            name: vf-golden-toy-router-run0-count-env
         - configMapRef:
-            name: vf-golden-toy-router-broker
+            name: vf-golden-toy-router-run0-broker
         env:
         - name: VF_REPLICA_ID
           valueFrom:
@@ -221,7 +225,7 @@ spec:
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
-  name: vf-golden-toy-router-count-pdb
+  name: vf-golden-toy-router-run0-count-pdb
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -234,11 +238,12 @@ spec:
     matchLabels:
       videoflow.io/node: count
       videoflow.io/flow-id: golden-toy-router
+      videoflow.io/run-id: run0
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-enrich-env
+  name: vf-golden-toy-router-run0-enrich-env
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -261,11 +266,13 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_router_nodes.AsyncEnricher
   VF_BLOB_READERS: '3'
+  VF_BLOB_READER_IDS: count/p0,count/p1,count/p2
+  VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-router-enrich
+  name: vf-golden-toy-router-run0-enrich
   labels: &id001
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -284,9 +291,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-router-enrich-env
+            name: vf-golden-toy-router-run0-enrich-env
         - configMapRef:
-            name: vf-golden-toy-router-broker
+            name: vf-golden-toy-router-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -306,7 +313,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-events-env
+  name: vf-golden-toy-router-run0-events-env
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -328,11 +335,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_router_nodes.EventProducer
   VF_BLOB_READERS: '1'
+  VF_BLOB_READER_IDS: enrich
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-router-events
+  name: vf-golden-toy-router-run0-events
   labels: &id001
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -351,9 +359,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-router-events-env
+            name: vf-golden-toy-router-run0-events-env
         - configMapRef:
-            name: vf-golden-toy-router-broker
+            name: vf-golden-toy-router-run0-broker
         ports:
         - containerPort: 8080
           name: health
@@ -373,7 +381,7 @@ spec:
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: vf-golden-toy-router-ledger-env
+  name: vf-golden-toy-router-run0-ledger-env
   labels:
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -397,11 +405,12 @@ data:
   VF_ENVELOPE_VERSION: '4'
   VF_NODE_CLASS: toy_router_nodes.LedgerWriter
   VF_BLOB_READERS: '0'
+  VF_PARENT_REPLICAS: '3'
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: vf-golden-toy-router-ledger
+  name: vf-golden-toy-router-run0-ledger
   labels: &id001
     videoflow.io/flow-id: golden-toy-router
     app.kubernetes.io/managed-by: videoflow
@@ -420,9 +429,9 @@ spec:
         imagePullPolicy: IfNotPresent
         envFrom:
         - configMapRef:
-            name: vf-golden-toy-router-ledger-env
+            name: vf-golden-toy-router-run0-ledger-env
         - configMapRef:
-            name: vf-golden-toy-router-broker
+            name: vf-golden-toy-router-run0-broker
         ports:
         - containerPort: 8080
           name: health

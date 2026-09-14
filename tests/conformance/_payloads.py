@@ -288,6 +288,18 @@ def ledger(required : Dict[str, Sequence[str]]) -> StaticLedger:
 
 # -- rigs --------------------------------------------------------------------------------
 
+def _declare_dead(messengers : Sequence[NATSMessenger], node : str, replica_id : int = 0) -> None:
+    '''
+    A replacement for ``node``'s replica is being built: earlier messengers of
+    that identity forfeit their partition lease (a crashed process's lapses; the
+    wait is skipped) so the replacement binds instead of being refused as a
+    scaled-out singleton (RUN-018/019).
+    '''
+    for previous in messengers:
+        if previous._node.name == node and previous._replica_id == replica_id:
+            previous._stop_lease_renewal(release = True)
+
+
 class SubjectFilteringMemoryBackend(MemoryMessagingBackend):
     '''
     The memory model delivers every envelope of a channel to every subscription;
@@ -377,6 +389,7 @@ class MemoryRig:
 
     def messenger(self, name : str, parents : Sequence[str], run_id : Optional[str] = None,
                   store : Optional[PayloadStore] = None, **kwargs : Any) -> NATSMessenger:
+        _declare_dead(self._messengers, name, int(kwargs.get('replica_id', 0)))
         m = NATSMessenger(StubNode(name), list(parents), self.nats_url, self.flow_id, self.flow_type,  # type: ignore[arg-type]
                           run_id or self.run_id, backend = self.backend,
                           payload_store = self.store if store is None else store, **kwargs)
@@ -544,6 +557,7 @@ class JetStreamRig:
                   **kwargs : Any) -> NATSMessenger:
         kwargs.setdefault('ack_wait', self.ack_wait)
         kwargs.setdefault('max_retries', self.max_retries)
+        _declare_dead(self._messengers, name, int(kwargs.get('replica_id', 0)))
         m = NATSMessenger(StubNode(name), list(parents), nats_url or self.nats_url, self.flow_id,  # type: ignore[arg-type]
                           self.flow_type, run_id or self.run_id,
                           payload_store = self._recording if store is None else store, **kwargs)

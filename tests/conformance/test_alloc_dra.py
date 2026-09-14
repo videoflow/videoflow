@@ -309,7 +309,7 @@ def _oracle_alloc_019_render(evidence : Dict[str, Any]) -> None:
                                  gpu_mode = 'dra')
     templates = [m for m in manifests if m['kind'] == 'ResourceClaimTemplate']
     claims = [m for m in manifests if m['kind'] == 'ResourceClaim']
-    stage = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-a019-stage')
+    stage = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-a019-r-stage')
     pod = stage['spec']['template']['spec']
     assert stage['spec']['replicas'] == 3 and len(templates) == 1 and claims == []
     assert pod['resourceClaims'] == [{'name': 'vf-gpu-stage', 'resourceClaimTemplateName': 'vf-gpu-stage-template'}]

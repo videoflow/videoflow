@@ -41,7 +41,6 @@ from videoflow.backends.memory.clock import FakeClock
 from videoflow.backends.memory.payload import MemoryPayloadStore
 from videoflow.backends.outcomes import Known
 from videoflow.backends.payload import ImmutablePayloadRef, PayloadBytes, PayloadStore, RetentionContract
-from videoflow.core import constants
 from videoflow.core.compiler import blob_reader_ids
 from videoflow.core.constants import BATCH
 from videoflow.wire.serialization import peek_envelope
@@ -211,7 +210,6 @@ def test_pay_004_lost_broker_ack_cannot_reclaim_payload_needed_for(nats_url, red
     Acceptance: No redeliverable accepted envelope points to unavailable bytes; replacement
     completes successfully and reclamation occurs only after the certified release condition.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     toxiproxy = Toxiproxy(toxiproxy_url)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs()[:2], redis_url = redis_url, max_retries = 3, ack_wait = 3)
@@ -230,7 +228,6 @@ def test_pay_004_lost_broker_ack_cannot_reclaim_payload_needed_for(nats_url, red
 def test_pay_004_memory_backends_keep_the_obligation_until_the_settlement_is_certified(evidence_dir, record_faults,
                                                                                        monkeypatch) -> None:
     '''The model: a dropped confirmation, then a settlement that never reaches the broker and a lapsed lease.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH)
     sever = _ModelSever(rig, ack_wait = 30)
@@ -245,7 +242,6 @@ def test_pay_004_memory_backends_keep_the_obligation_until_the_settlement_is_cer
 
 @pytest.mark.negative_control(of = 'PAY-004')
 def test_pay_004_detects_a_release_on_an_unconfirmed_settlement(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.release_on_any_settlement(monkeypatch)
     rig = MemoryRig(BATCH)
     try:
@@ -359,9 +355,16 @@ _CHILD_SCRIPT = textwrap.dedent('''
         def open(self): pass
         def close(self): pass
 
+    runtime = None
+    if os.environ.get('PAY_STORE_URL'):
+        from videoflow.backends.runtime import FlowRuntime, partition_lease_from_env
+        from videoflow.runtime.runtime_stores import make_runtime_store
+        runtime = FlowRuntime(make_runtime_store(os.environ['PAY_STORE_URL']), os.environ['PAY_FLOW'], os.environ['PAY_RUN'],
+                              'child', lease_seconds = partition_lease_from_env(os.environ.get('VF_PARTITION_LEASE_SECONDS')))
     m = NATSMessenger(Node(), ['parent'], os.environ['PAY_NATS_URL'], os.environ['PAY_FLOW'], 'batch',
                       os.environ['PAY_RUN'], payload_store = RedisPayloadStore(os.environ['PAY_REDIS_URL']),
-                      ack_wait = int(os.environ['PAY_ACK_WAIT']), max_retries = int(os.environ['PAY_MAX_RETRIES']))
+                      ack_wait = int(os.environ['PAY_ACK_WAIT']), max_retries = int(os.environ['PAY_MAX_RETRIES']),
+                      runtime = runtime)
     for _ in range(int(os.environ['PAY_EXPECTED'])):
         inputs = m.receive_message()
         if all(v.get('is_stop_signal') for v in inputs.values()):
@@ -372,14 +375,16 @@ _CHILD_SCRIPT = textwrap.dedent('''
 ''')
 
 
-def _subprocess_child(rig : JetStreamRig, redis_url : str, schedule : faults.FaultSchedule) -> Callable[[int], Dict[str, Any]]:
+def _subprocess_child(rig : JetStreamRig, redis_url : str, schedule : faults.FaultSchedule,
+                      store_url : Optional[str] = None) -> Callable[[int], Dict[str, Any]]:
     '''A real worker process hosting the child's messenger; it dies by ``os._exit`` at the barrier.'''
     def run(expected : int) -> Dict[str, Any]:
         env = dict(os.environ)
         env.update(schedule.to_env())
-        env.update({'VF_RFC0006': '1', 'PAY_NATS_URL': rig.nats_url, 'PAY_REDIS_URL': redis_url,
+        env.update({'PAY_NATS_URL': rig.nats_url, 'PAY_REDIS_URL': redis_url,
                     'PAY_FLOW': rig.flow_id, 'PAY_RUN': rig.run_id, 'PAY_ACK_WAIT': str(rig.ack_wait),
-                    'PAY_MAX_RETRIES': str(rig.max_retries), 'PAY_EXPECTED': str(expected)})
+                    'PAY_MAX_RETRIES': str(rig.max_retries), 'PAY_EXPECTED': str(expected),
+                    'PAY_STORE_URL': store_url or '', 'VF_PARTITION_LEASE_SECONDS': '2'})
         started = time.monotonic()
         proc = subprocess.run([sys.executable, '-c', _CHILD_SCRIPT], env = env, capture_output = True, text = True,
                               timeout = 90, cwd = os.getcwd())
@@ -499,7 +504,6 @@ def test_pay_006_crash_after_confirmed_settlement_does_not_leak_a_payload(nats_u
     the broker's ack floors and retained messages (what the Phase-3 runtime
     ledger will derive on its own; see the ``ledger`` variant).
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
                                     marker_dir = str(evidence_dir / 'markers'))
@@ -518,7 +522,6 @@ def test_pay_006_crash_after_confirmed_settlement_does_not_leak_a_payload(nats_u
 @pytest.mark.variant('memory')
 def test_pay_006_memory_backends_reconcile_a_settled_readers_leak(evidence_dir, record_faults, monkeypatch) -> None:
     '''The model: the settlement is confirmed, the process raises at the barrier and never releases.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the worker died after its ack was confirmed')))})
@@ -535,19 +538,73 @@ def test_pay_006_memory_backends_reconcile_a_settled_readers_leak(evidence_dir, 
 @pytest.mark.case('PAY-006')
 @pytest.mark.level('process')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_pay_006_the_runtime_ledger_reconciles_on_worker_start() -> None:
+def test_pay_006_the_runtime_ledger_reconciles_on_worker_start(nats_url, redis_url, evidence_dir, record_faults,
+                                                               monkeypatch, tmp_path) -> None:
     '''
-    The Phase-3 sub-assertion: a restarted worker's ``FlowRuntime`` builds the
-    ``ObligationLedger`` from the broker's ack floors and its own durable records
-    and runs ``reconcile`` at start, with no test-built ledger. Pending the
-    runtime ledger (RFC 0006 §9 / plan §C step 3).
+    The runtime's own ledger (``messaging.obligations.RuntimeObligationLedger``,
+    BLOB-14 step 4): the parent publishes through a durable run ledger (its
+    outbox keeps the refs, the readers and the accepted sequences), a real child
+    process dies after its confirmed ack and before its release, and the
+    *replacement child* — its messenger over the same ledger — reconciles at
+    start on its own: the final reader's leaked object is reclaimed, the object
+    another reader and an archive pin still hold stays readable. No test-built
+    ledger anywhere.
     '''
+    from videoflow.backends.memory.runtime_store import FileRuntimeStore
+    from videoflow.backends.runtime import FlowRuntime
+    evidence : Dict[str, Any] = {}
+    root = str(tmp_path / 'ledger')
+    schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
+                                    marker_dir = str(evidence_dir / 'markers'))
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 30)
+
+    def runtime(node : str) -> FlowRuntime:
+        return FlowRuntime(FileRuntimeStore(root), rig.flow_id, rig.run_id, node, lease_seconds = 2)
+    try:
+        parent = rig.messenger('parent', [], blob_reader_ids = ['child', 'other'], runtime = runtime('parent'))
+        other = rig.messenger('other', ['parent'], runtime = runtime('other'))
+        parent.publish_message(FRAME)
+        key_a = _last_key(rig, 'parent')
+        parent.publish_message(frame_array((1000, 1000), seed = 6))
+        key_b = _last_key(rig, 'parent')
+        archive = f'archive/{rig.flow_id}'
+        rig.store.acquire_obligation(rig.store.ref_for_key(key_b), archive, time.time() + 3600)
+        assert np.array_equal(other.receive_message()['parent']['message'], FRAME)
+        other.ack_inputs()
+        other.receive_message()                                  # other holds B, unsettled
+        outcome = _subprocess_child(rig, redis_url, schedule, store_url = f'file://{root}')(expected = 2)
+        evidence['child'] = outcome
+        assert outcome['exit_code'] == 137, outcome
+        assert rig.ack_floor('child', 'parent') >= 1
+        assert obligations_of(rig.store, key_a) == {'child'} and object_exists(rig.store, key_a), 'no leak to reconcile'
+        evidence['after_crash'] = {'a': sorted(obligations_of(rig.store, key_a)), 'b': sorted(obligations_of(rig.store, key_b))}
+        # The replacement: its messenger reconciles at start, from the ledger and the broker alone.
+        started = time.monotonic()
+        restarted = rig.messenger('child', ['parent'], runtime = runtime('child'))
+        took = time.monotonic() - started
+        evidence['recovery'] = {'took_s': took, 'a_exists': object_exists(rig.store, key_a),
+                                'b_obligations': sorted(obligations_of(rig.store, key_b)),
+                                'outbox': [{k: v for k, v in doc.items() if k in ('publication_id', 'outcome', 'seq', 'readers')}
+                                           for doc in runtime('child').outbox_of('parent')]}
+        assert not object_exists(rig.store, key_a), 'the final reader\'s leaked object survived the restart'
+        assert took < G_SECONDS
+        assert obligations_of(rig.store, key_b) == {'child', 'other', archive}, 'a live reader or the archive pin was touched'
+        assert isinstance(rig.store.read(rig.store.ref_for_key(key_b)), PayloadBytes)
+        inputs = restarted.receive_message()
+        assert isinstance(inputs['parent']['message'], np.ndarray)
+        restarted.ack_inputs()
+        assert obligations_of(rig.store, key_b) == {'other', archive}
+        other.ack_inputs()
+        assert obligations_of(rig.store, key_b) == {archive}
+    finally:
+        rig.close()
+        evidence['faults'] = schedule.fired()
+        write_evidence(evidence_dir, 'runtime_ledger.json', evidence)
+    record_faults(schedule)
 
 
 @pytest.mark.negative_control(of = 'PAY-006')
 def test_pay_006_detects_a_store_without_reconciliation(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.leaking_reconciler(monkeypatch)
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the worker died after its ack was confirmed')))})

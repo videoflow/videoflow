@@ -466,6 +466,9 @@ class InstrumentedMessenger(Messenger):
         self._state.beat()
         return self._inner.check_for_termination()
 
+    def stop_reason(self) -> Optional[str]:
+        return self._inner.stop_reason()
+
     def receive_message(self) -> dict:
         self._state.mark_ready()
         self._state.beat()

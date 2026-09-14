@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import AbstractSet, Callable, Dict, Iterable, List, Mapping, Optional
 
 from ..backends.outcomes import Observation, Unknown, is_known, known, unknown, value_or
+from ..core.errors import ActiveRunConflict, UnobservableState
 from .gpu import GPU_OWNER_LABEL, GPU_POOL_LABEL, get_gpu_mode
 from .mig import NodeInventory
 
@@ -57,6 +58,50 @@ def _kubectl_observed(kubectl : str, *args : str) -> Observation[str]:
         detail = (proc.stderr or proc.stdout).strip().splitlines()
         return unknown('failed', (detail[-1] if detail else f'{kubectl} exited {proc.returncode}')[:300])
     return known(proc.stdout.strip())
+
+def active_runs_observed(kubectl : str, namespace : str, flow_id : str) -> Observation[set[str]]:
+    '''
+    The run ids of every workload of ``flow_id`` in ``namespace`` (the
+    ``videoflow.io/run-id`` label of its Deployments, StatefulSets and Jobs), or
+    Unknown when the listing failed — a failed read is never "no other run".
+    '''
+    # Deferred: manifests imports the optional `yaml` extra at module scope.
+    from .manifests import LABEL_FLOW_ID, k8s_name
+    observed = _kubectl_observed(kubectl, 'get', 'deployments,statefulsets,jobs', '-n', namespace,
+                                 '-l', f'{LABEL_FLOW_ID}={k8s_name(flow_id)}', '-o',
+                                 'jsonpath={range .items[*]}{.metadata.labels.videoflow\\.io/run-id}{"\\n"}{end}')
+    if isinstance(observed, Unknown):
+        return observed
+    return known({line.strip() for line in observed.value.splitlines() if line.strip()},
+                 observed.generation)
+
+
+def refuse_concurrent_run(kubectl : str, namespace : str, flow_id : str, run_id : str) -> None:
+    '''
+    The ``--single-run`` policy (RFC 0006 §10, RUN-047): refuse to start
+    ``run_id`` while another run of the flow holds workloads in the namespace.
+    Decided before any resource is created.
+
+    - Raises:
+        - ActiveRunConflict: another run is active.
+        - UnobservableState: the listing failed; an unverifiable namespace is not \
+            a free one.
+    '''
+    from .manifests import k8s_name
+    active = active_runs_observed(kubectl, namespace, flow_id)
+    if isinstance(active, Unknown):
+        raise UnobservableState(
+            f'--single-run: the workloads of flow {flow_id!r} in namespace {namespace!r} could not be listed '
+            f'({active.reason}: {active.detail}); whether another run is active is unknown.',
+            remedy = 'Restore API access to the namespace and re-run, or deploy without --single-run.')
+    others = sorted(active.value - {k8s_name(run_id)})
+    if others:
+        raise ActiveRunConflict(
+            f'--single-run: run(s) {", ".join(others)} of flow {flow_id!r} are active in namespace {namespace!r}; '
+            f'run {run_id!r} was not started and nothing was created.',
+            remedy = f'Tear the active run down first (videoflow teardown --flow-id {flow_id} --run-id <run> '
+                     f'--namespace {namespace}), or deploy without --single-run to run them side by side.')
+
 
 def current_context(kubectl : str = 'kubectl') -> str:
     return _kubectl_out(kubectl, 'config', 'current-context')

@@ -10,8 +10,8 @@ listings come back as ``StreamsListIterator`` pages with the server's ``total``.
 No broker.
 
 The naming and config functions are pinned by tests/test_topology_naming.py,
-which this file leaves alone: with ``RFC0006`` off every config here must be
-what it was before ownership metadata existed.
+which this file leaves alone; the owner labels every config carries since RFC
+0006 was accepted are the only difference from the pre-RFC configs.
 '''
 from __future__ import absolute_import, division, print_function
 
@@ -20,7 +20,7 @@ import json
 import logging
 
 import pytest
-from nats.js.api import ConsumerConfig, ConsumerInfo, RetentionPolicy, StreamConfig, StreamInfo, StreamsListIterator
+from nats.js.api import ConsumerConfig, ConsumerInfo, StreamConfig, StreamInfo, StreamsListIterator
 from nats.js.errors import NotFoundError
 
 from videoflow.backends.identity import (
@@ -33,7 +33,6 @@ from videoflow.backends.identity import (
     owner_labels,
 )
 from videoflow.backends.outcomes import CleanupObservation
-from videoflow.core import constants
 from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import BrokerUnavailable, IncompatibleProfile
@@ -311,22 +310,13 @@ def test_short_page_before_the_total_is_a_listing_failure():
 
 # -- owner metadata ---------------------------------------------------------------
 
-def test_metadata_is_written_only_under_rfc0006(monkeypatch):
-    # Off (the default): byte-for-byte today's configs — nothing carries metadata,
-    # and the wire form has no ``metadata`` key at all.
-    off = {ft: topology.stream_config_for('f', 'r', 'n', ft) for ft in (REALTIME, BATCH)}
-    assert all(cfg.metadata is None and 'metadata' not in cfg.as_dict() for cfg in off.values())
-    assert topology.dlq_stream_config('f').metadata is None
-    assert topology.consumer_config_for('f', 'r', 'c', 'p').metadata is None
-    assert topology.eos_consumer_config('f', 'r', 'c', 'p', 'i1').metadata is None
-    assert topology.eos_anchor_config('f', 'r', 'n').metadata is None
-    assert 'metadata' not in topology.consumer_config_for('f', 'r', 'c', 'p').as_dict()
-
-    monkeypatch.setattr(constants, 'RFC0006', True)
-    for ft, before in off.items():
+def test_metadata_carries_the_owner_labels(monkeypatch):
+    # STREAM-14: every stream and consumer carries its owner labels, and the
+    # labels are the only difference from the pre-RFC configs.
+    for ft in (REALTIME, BATCH):
         on = topology.stream_config_for('f', 'r', 'n', ft)
         assert on.metadata == owner_labels('f', 'r', node = 'n', kind = 'stream')
-        assert on.evolve(metadata = None) == before          # the labels are the only difference
+        assert 'metadata' in on.as_dict()
     assert topology.stream_config_for('f', 'r', 'n', REALTIME, generation = 'g1').metadata[LABEL_GENERATION] == 'g1'
     assert topology.dlq_stream_config('f').metadata == flow_labels('f', 'dlq')
     assert LABEL_RUN not in topology.dlq_stream_config('f').metadata
@@ -346,14 +336,7 @@ _SPECS = [_spec('producer', [], True),
           _spec('router', ['producer'], True, nb_tasks = 2, partition_by = 'key'),
           _spec('sink', ['router'], False)]
 
-def test_provision_flow_labels_every_resource_under_rfc0006_only(monkeypatch):
-    js = FakeJetStream()
-    _run(topology.provision_flow(FakeClient(js), _SPECS, 'f', 'r', BATCH))
-    assert set(js.streams) == {'vf-f-r-producer', 'vf-f-r-router', 'vf-f-r-sink', 'vf-f-dlq'}
-    assert all(cfg.metadata is None for cfg in js.streams.values())
-    assert all(cfg.metadata is None for cfg in js.consumers.values())
-
-    monkeypatch.setattr(constants, 'RFC0006', True)
+def test_provision_flow_labels_every_resource(monkeypatch):
     js = FakeJetStream()
     _run(topology.provision_flow(FakeClient(js), _SPECS, 'f', 'r', BATCH, generation = 'g7'))
     for node in ('producer', 'router', 'sink'):
@@ -404,19 +387,17 @@ def test_provisioning_twice_is_idempotent_and_quiet(caplog):
     assert len(js.streams) == 4 and len(js.consumers) == 5
 
 def test_server_added_metadata_keys_are_not_mismatches(monkeypatch):
-    monkeypatch.setattr(constants, 'RFC0006', True)
     js = FakeJetStream()
     js.server_metadata = {'_nats.req.level': '1', '_nats.ver': '2.11.0'}
     v = _run(topology._ensure_stream(js, topology.stream_config_for('f', 'r', 'n', BATCH)))
     assert v.mismatches == () and v.effective.metadata[LABEL_RUN] == 'r'
 
-def test_metadata_dropped_by_the_broker_is_a_mismatch_under_rfc0006(monkeypatch):
-    monkeypatch.setattr(constants, 'RFC0006', True)
+def test_metadata_dropped_by_the_broker_is_a_mismatch(monkeypatch):
     js = FakeJetStream()
     js.create_overrides = {'metadata': None}          # a server that predates JetStream metadata
     with pytest.raises(IncompatibleProfile) as info:
         _run(topology._ensure_stream(js, topology.stream_config_for('f', 'r', 'n', BATCH)))
-    assert 'metadata' in info.value.message and 'VF_RFC0006' in info.value.remedy
+    assert 'metadata' in info.value.message and 'upgrade' in info.value.remedy
 
 def _broker_holding_a_realtime_stream():
     js = FakeJetStream()
@@ -427,38 +408,24 @@ def _broker_holding_a_realtime_stream():
                                        "update can not change retention policy'")
     return js
 
-def test_immutable_field_mismatch_raises_under_rfc0006_and_warns_otherwise(monkeypatch, caplog):
+def test_immutable_field_mismatch_is_an_incompatible_profile(monkeypatch, caplog):
     wanted = topology.stream_config_for('f', 'r', 'n', BATCH)
-
-    js = _broker_holding_a_realtime_stream()
-    with caplog.at_level(logging.WARNING, logger = _LOGGER):
-        v = _run(topology._ensure_stream(js, wanted))
-    assert v.effective.retention == RetentionPolicy.LIMITS
-    assert any(m.startswith('retention: ') for m in v.mismatches)
-    assert any(m.startswith('discard: ') for m in v.mismatches)
-    assert 'vf-f-r-n' in caplog.text and 'retention' in caplog.text
-    assert [c[0] for c in js.calls] == ['add_stream', 'update_stream', 'stream_info']
-
-    monkeypatch.setattr(constants, 'RFC0006', True)
     js = _broker_holding_a_realtime_stream()
     with pytest.raises(IncompatibleProfile) as info:
         _run(topology._ensure_stream(js, wanted))
     assert info.value.code == 'VF_INCOMPATIBLE_PROFILE'
     assert 'retention' in info.value.message and 'videoflow teardown' in info.value.remedy
     assert info.value.context['resource'] == 'vf-f-r-n'
+    assert any(m.startswith('retention: ') for m in info.value.context['mismatches'])
+    assert [c[0] for c in js.calls] == ['add_stream', 'update_stream', 'stream_info']
 
 def test_stream_that_can_be_neither_updated_nor_read_back(monkeypatch, caplog):
     js = _broker_holding_a_realtime_stream()
     del js.streams['vf-f-r-n']                       # stream_info now fails too
     wanted = topology.stream_config_for('f', 'r', 'n', BATCH)
-    with caplog.at_level(logging.WARNING, logger = _LOGGER):
-        v = _run(topology._ensure_stream(js, wanted))
-    assert v.effective is None and v.mismatches[0].startswith('read-back failed')
-    assert caplog.text == ''                          # today's behaviour: a debug line, nothing louder
-    monkeypatch.setattr(constants, 'RFC0006', True)
     with pytest.raises(BrokerUnavailable) as info:
         _run(topology._ensure_stream(js, wanted))
-    assert info.value.remedy
+    assert info.value.remedy                          # an unobserved configuration is not a verified one
 
 def test_non_conflict_create_errors_still_propagate():
     js = FakeJetStream()
@@ -469,8 +436,9 @@ def test_non_conflict_create_errors_still_propagate():
 def test_clamped_value_on_create_is_reported():
     js = FakeJetStream()
     js.create_overrides = {'max_msgs': 100}           # an account limit clamping the request
-    v = _run(topology._ensure_stream(js, topology.stream_config_for('f', 'r', 'n', BATCH)))
-    assert v.mismatches == ('max_msgs: requested 10000, effective 100',)
+    with pytest.raises(IncompatibleProfile) as info:
+        _run(topology._ensure_stream(js, topology.stream_config_for('f', 'r', 'n', BATCH)))
+    assert info.value.context['mismatches'] == ['max_msgs: requested 10000, effective 100']
 
 def test_consumer_mismatch_and_unverifiable_consumer(monkeypatch, caplog):
     existing = _applied_consumer(topology.consumer_config_for('f', 'r', 'c', 'p', ack_wait = 30))
@@ -478,19 +446,11 @@ def test_consumer_mismatch_and_unverifiable_consumer(monkeypatch, caplog):
     js = FakeJetStream()
     js.put_consumer('vf-f-r-p', existing)
     js.add_consumer_error = Exception("nats: BadRequestError: code=400 description='consumer already exists'")
-    with caplog.at_level(logging.WARNING, logger = _LOGGER):
-        v = _run(topology._ensure_consumer(js, 'vf-f-r-p', wanted))
-    assert v.mismatches == ('ack_wait: requested 60, effective 30.0',)
-    assert 'vf-f-r-p/c--from--p' in caplog.text
-    # Nothing to read back at all: a debug line today, an error under RFC 0006.
-    js.consumers.clear()
-    v = _run(topology._ensure_consumer(js, 'vf-f-r-p', wanted))
-    assert v.effective is None and v.mismatches[0].startswith('read-back failed')
-
-    monkeypatch.setattr(constants, 'RFC0006', True)
-    js.put_consumer('vf-f-r-p', existing)
-    with pytest.raises(IncompatibleProfile):
+    with pytest.raises(IncompatibleProfile) as info:
         _run(topology._ensure_consumer(js, 'vf-f-r-p', wanted))
+    assert info.value.context['mismatches'] == ['ack_wait: requested 60, effective 30.0']
+    assert info.value.context['resource'] == 'vf-f-r-p/c--from--p'
+    # Nothing to read back at all: an unobserved configuration is not a verified one.
     js.consumers.clear()
     with pytest.raises(BrokerUnavailable):
         _run(topology._ensure_consumer(js, 'vf-f-r-p', wanted))

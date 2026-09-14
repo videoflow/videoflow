@@ -14,7 +14,7 @@ import pytest
 from videoflow.backends import allocation as allocation_contract
 from videoflow.backends.memory.allocation import MemoryAllocationBackend
 from videoflow.backends.outcomes import Unknown, known
-from videoflow.deploy import allocation_dra, allocation_kubernetes, allocation_local, gpu, manifests
+from videoflow.deploy import allocation_dra, allocation_kubernetes, allocation_local, gpu, manifests, mig
 from videoflow.runtime import assetcheck, gpucheck
 from videoflow.utils import system
 
@@ -303,3 +303,30 @@ def client_side_claim(monkeypatch : pytest.MonkeyPatch) -> None:
                              f'{gpu.GPU_OWNER_LABEL}={owner}', f'{gpu.GPU_OWNER_EPOCH_LABEL}={epoch}')
         return epoch
     monkeypatch.setattr(gpu.MixGpu, '_stamp_node_owners', stamp)
+
+
+# -- ALLOC-002: a card packed by slice totals alone ------------------------------------------------
+
+def totals_only_card(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''The reviewed ``_Card.fits``: compute-slice total and per-card maximum, no memory
+    budget and no placement grid — two ``3g.20gb`` plus a ``1g.5gb`` "fit" an A100.'''
+    def fits(self : Any, profile : Any) -> bool:
+        if self.whole_owner is not None or self.table is None:
+            return False
+        if self.slices_used + profile.slices > self.table.total_slices:
+            return False
+        return self.mig_counts.get(profile.name, 0) < profile.max_per_gpu
+    monkeypatch.setattr(mig._Card, 'fits', fits)
+
+
+# -- ALLOC-032: the smallest memory fit deemed adequate --------------------------------------------
+
+def memory_only_qualification(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''``smallest_profile_for`` (mig.py L65-67) as the qualification: a profile whose memory fits is adequate.'''
+    import test_alloc_benchmark
+
+    def qualify(profile : str, workload : Any, thresholds : Any) -> dict:
+        return {'memory_fits': {'value': workload['peak_memory_bytes'],
+                                'holds': workload['peak_memory_bytes'] <= int(thresholds['max_peak_memory_bytes']),
+                                'threshold': thresholds['max_peak_memory_bytes']}}
+    monkeypatch.setattr(test_alloc_benchmark, '_qualify', qualify)

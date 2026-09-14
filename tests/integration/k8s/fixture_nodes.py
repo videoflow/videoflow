@@ -19,7 +19,7 @@ import os
 from typing import Any
 
 from videoflow.core.errors import DeviceError
-from videoflow.core.node import ConsumerNode, ProcessorNode
+from videoflow.core.node import ConsumerNode, ProcessorNode, ProducerNode
 
 
 class BoomProcessor(ProcessorNode):
@@ -110,3 +110,64 @@ class AssetLineWriterConsumer(LineWriterConsumer):
         with open(self._asset_path, 'rb') as f:
             head = f.read(8)
         super(AssetLineWriterConsumer, self).consume(f'{item}:{head.hex()}')
+
+
+class CameraFrameProducer(ProducerNode):
+    '''
+    ``frames`` items per camera, round-robin over ``cameras`` cameras, each a
+    ``{'camera_id': 'cam<i>', 'n': <k>}`` dict — a partitionable stream for the
+    scaling cases (conformance RUN-019): a tracker declaring
+    ``partition_by = 'camera_id'`` keys on it.
+    '''
+    def __init__(self, cameras : int = 2, frames : int = 20, delay_seconds : float = 0.05, **kwargs : Any) -> None:
+        self._cameras = cameras
+        self._frames = frames
+        self._delay_seconds = delay_seconds
+        self._emitted = 0
+        super(CameraFrameProducer, self).__init__(**kwargs)
+
+    def next(self) -> Any:
+        import time
+        if self._emitted >= self._cameras * self._frames:
+            raise StopIteration()
+        camera, n = self._emitted % self._cameras, self._emitted // self._cameras
+        self._emitted += 1
+        time.sleep(self._delay_seconds)
+        return {'camera_id': f'cam{camera}', 'n': n}
+
+
+class PairProcessor(ProcessorNode):
+    '''A two-parent processor: the trace join's output as a ``(left, right)`` tuple (conformance RUN-018).'''
+    def __init__(self, **kwargs : Any) -> None:
+        super(PairProcessor, self).__init__(**kwargs)
+
+    def process(self, left : Any, right : Any) -> Any:      # type: ignore[override]
+        return (left, right)
+
+
+class TaggingProcessor(ProcessorNode):
+    '''
+    Stamps each item with the process that handled it (``handler``: hostname and
+    pid) and a per-process running count — the membership trace a scaling case
+    reads back from the sink's lines (conformance RUN-018/019).
+    '''
+    def __init__(self, **kwargs : Any) -> None:
+        self._count = 0
+        super(TaggingProcessor, self).__init__(**kwargs)
+
+    def process(self, item : Any) -> Any:      # type: ignore[override]
+        import socket
+        self._count += 1
+        return {'item': item, 'handler': f'{socket.gethostname()}:{os.getpid()}', 'count': self._count}
+
+
+class SleepProcessor(ProcessorNode):
+    '''Takes ``seconds`` per item and passes it through — a node whose capacity a source can exceed (conformance RUN-026).'''
+    def __init__(self, seconds : float = 0.05, **kwargs : Any) -> None:
+        self._seconds = seconds
+        super(SleepProcessor, self).__init__(**kwargs)
+
+    def process(self, item : Any) -> Any:      # type: ignore[override]
+        import time
+        time.sleep(self._seconds)
+        return item

@@ -28,6 +28,7 @@ from ..core.errors import (
     ResourceUnavailable,
 )
 from ..core.supervision import SupervisionPolicy
+from ..deploy.cluster import refuse_concurrent_run
 from ..deploy.images import DEFAULT_IMAGE_PULL_POLICY
 from ..deploy.manifests import (
     LABEL_NODE,
@@ -39,6 +40,7 @@ from ..deploy.manifests import (
     dump_manifests,
     k8s_name,
     render_manifests,
+    run_name,
     split_provision_manifests,
 )
 
@@ -190,7 +192,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
                 stream_replicas : int = 1,
                 rollout_policy : str | None = None,
                 gpu_nodes : list[str] | None = None,
-                resources : dict[str, dict[str, str]] | None = None) -> None:
+                resources : dict[str, dict[str, str]] | None = None,
+                single_run : bool = False) -> None:
         self._nats_url = nats_url
         self._namespace = namespace
         self._default_image = default_image
@@ -216,6 +219,8 @@ class KubernetesExecutionEngine(ExecutionEngine):
         self._profile_requests = dict(profile_requests or {})
         # Stream copies the provision Job asks for (a replicated broker profile).
         self._stream_replicas = stream_replicas
+        # --single-run: refuse to start beside another run of the flow (RFC 0006 §10).
+        self._single_run = single_run
         self._nats_monitoring_endpoint = nats_monitoring_endpoint
         self._mounts = mounts
         self._gpu_runtime_class = gpu_runtime_class
@@ -263,10 +268,14 @@ class KubernetesExecutionEngine(ExecutionEngine):
             stream_replicas = self._stream_replicas,
             **self._render_options,
         )
+        if self._single_run:
+            # Before the first apply: another active run of this flow refuses this
+            # one outright (RUN-047), and an unreadable namespace is not a free one.
+            refuse_concurrent_run(self._kubectl, self._namespace, flow_id, run_id)
         # Two-phase apply: provision the broker (streams, durables, EOS anchors) and
         # wait for it to finish before starting workers, so a fast finite producer
         # can't publish end-of-stream before its consumers' interest exists.
-        phases = split_provision_manifests(manifests, flow_id)
+        phases = split_provision_manifests(manifests, flow_id, run_id)
         self._kubectl_apply(dump_manifests(phases.provision))
         self._wait_provision(flow_id)
         self._kubectl_apply(dump_manifests(phases.worker))
@@ -322,6 +331,11 @@ class KubernetesExecutionEngine(ExecutionEngine):
 
     def _run_selector(self) -> str:
         return f'{LABEL_RUN_ID}={k8s_name(self._run_id)}'
+
+    def _provision_name(self) -> str:
+        '''The run's provision Job name (the ids are set before anything is applied).'''
+        assert self._flow_id is not None and self._run_id is not None
+        return run_name(self._flow_id, self._run_id, 'provision')
 
     def _pod_states(self, selector : str) -> List[tuple]:
         '''
@@ -417,7 +431,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
     def _wait_provision(self, flow_id : str, timeout_secs : int = 180) -> None:
         '''Blocks until the provision Job completes; raises if it fails, cannot be
         scheduled, or times out.'''
-        name = k8s_name('vf', flow_id, 'provision')
+        name = self._provision_name()
         deadline = time.time() + timeout_secs
         unschedulable_since = None
         while time.time() < deadline:
@@ -464,7 +478,7 @@ class KubernetesExecutionEngine(ExecutionEngine):
         forever. The grace period tolerates scheduling churn, and the abort is
         skipped while a cluster-autoscaler scale-up is in flight.
         '''
-        provision = k8s_name('vf', self._flow_id, 'provision')
+        provision = self._provision_name()
         unschedulable_since : dict = {}
         while True:
             pending, failed = [], []

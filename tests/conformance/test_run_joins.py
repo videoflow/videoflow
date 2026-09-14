@@ -44,7 +44,6 @@ from videoflow.backends import faults
 from videoflow.backends.memory.runtime_store import FileRuntimeStore
 from videoflow.backends.outcomes import Known
 from videoflow.backends.runtime import FlowRuntime, group_identity
-from videoflow.core import constants
 from videoflow.core.errors import VideoflowUserError
 from videoflow.core.policies import JoinPolicy
 from videoflow.messaging import grouping
@@ -186,7 +185,6 @@ def test_run_001_superseding_a_buffered_join_delivery_does_not_terminate(nats_ur
     redelivery; the replacement dies at ``settle.before`` in-process (the
     broker-level crash model), its connection dropped without a hand-back.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     schedule = faults.FaultSchedule({'settle.before': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the replacement died before its first settlement')))})
     rig = BrokerRig(nats_url, 'run001')
@@ -207,7 +205,6 @@ def test_run_001_superseding_a_buffered_join_delivery_does_not_terminate(nats_ur
 @pytest.mark.variant('memory')
 def test_run_001_memory_supersede_keeps_a_for_the_replacement(tmp_path, evidence_dir, record_faults,
                                                               monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     schedule = faults.FaultSchedule({'settle.before': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the replacement died before its first settlement')))})
     rig = ModelRig()
@@ -226,7 +223,6 @@ def test_run_001_memory_supersede_keeps_a_for_the_replacement(tmp_path, evidence
 @pytest.mark.negative_control(of = 'RUN-001')
 def test_run_001_detects_a_supersede_that_terminates_the_input(tmp_path, monkeypatch) -> None:
     '''The reviewed grouping TERMed the stale handle — and the transport applied it to the message: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.term_on_supersede(monkeypatch)
     schedule = faults.FaultSchedule({'settle.before': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the replacement died before its first settlement')))})
@@ -362,7 +358,6 @@ def test_run_002_join_commit_survives_every_partial_input_acknowledgment(nats_ur
     schedule from its environment and ``os._exit``s at the barrier; a second
     worker with the same logical run recovers. The boundaries run concurrently.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     schedules : Dict[str, faults.FaultSchedule] = {}
     errors : Dict[str, BaseException] = {}
@@ -403,7 +398,6 @@ def test_run_002_join_commit_survives_every_partial_input_acknowledgment(nats_ur
 def test_run_002_memory_every_boundary_recovers_to_one_result(tmp_path, evidence_dir, record_faults,
                                                               monkeypatch) -> None:
     '''The model: a barrier raises the crash in-process; a second messenger over the same file ledger recovers.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     schedules = []
     try:
@@ -427,7 +421,6 @@ def test_run_002_memory_every_boundary_recovers_to_one_result(tmp_path, evidence
 @pytest.mark.negative_control(of = 'RUN-002')
 def test_run_002_detects_a_join_without_a_group_ledger(tmp_path, monkeypatch) -> None:
     '''Without the persisted group decision the replacement waits forever for the already reclaimed A: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.no_group_ledger(monkeypatch)
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.RaiseError(
         lambda: SimulatedCrash('the join process died after acking A')))})
@@ -512,7 +505,6 @@ def test_run_005_adversarial_parent_ordering_cannot_deadlock_join_credits(nats_u
     the declared working set (must complete), then twelve traces under a credit
     of five that cannot (must be rejected before execution, or complete).
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     outcomes : Dict[str, str] = {}
     try:
@@ -536,7 +528,6 @@ def test_run_005_adversarial_parent_ordering_cannot_deadlock_join_credits(nats_u
 @pytest.mark.level('model')
 @pytest.mark.variant('memory')
 def test_run_005_memory_small_credits_reject_or_complete(tmp_path, evidence_dir, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     outcomes : Dict[str, str] = {}
     try:
@@ -559,7 +550,6 @@ def test_run_005_memory_small_credits_reject_or_complete(tmp_path, evidence_dir,
 @pytest.mark.negative_control(of = 'RUN-005')
 def test_run_005_detects_a_fixed_credit_that_deadlocks(tmp_path, monkeypatch) -> None:
     '''A runtime that computes no working set (credit fixed at bind, wait forever) deadlocks: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.fixed_join_credit(monkeypatch)
     rig = ModelRig()
     try:
@@ -694,7 +684,6 @@ def test_run_006_a_permanently_missing_join_branch_follows_a_declared(tmp_path, 
     module's ``time`` is the rig's fake clock, so the join deadline is crossed by
     the test's hand, not by waiting.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     rig = ModelRig(auto_advance = 0.0)
     monkeypatch.setattr(grouping, 'time', _ClockShim(rig))
     record : Dict[str, Any] = {}
@@ -708,7 +697,6 @@ def test_run_006_a_permanently_missing_join_branch_follows_a_declared(tmp_path, 
 @pytest.mark.negative_control(of = 'RUN-006')
 def test_run_006_detects_an_unobservable_wait(tmp_path, monkeypatch) -> None:
     '''A join whose indefinite wait reports nothing (no pending groups, no age) reads as healthy: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.unobservable_wait(monkeypatch)
     rig = ModelRig(auto_advance = 0.0)
     monkeypatch.setattr(grouping, 'time', _ClockShim(rig))
@@ -804,7 +792,6 @@ def test_run_016_distinct_time_aligned_groups_cannot_collide_after(evidence_dir,
     Acceptance: No collision occurs for the adversarial member sets, and replay of an identical
     set is identity-stable.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     record : Dict[str, Any] = {}
     try:
         _oracle_run_016(record)
@@ -815,6 +802,5 @@ def test_run_016_distinct_time_aligned_groups_cannot_collide_after(evidence_dir,
 @pytest.mark.negative_control(of = 'RUN-016')
 def test_run_016_detects_timestamp_only_group_ids(monkeypatch) -> None:
     '''``tw-{µs}`` alone collides two groups at one rounded time: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run1.timestamp_only_group_identity(monkeypatch)
     assert defects.detects(_oracle_run_016, {})

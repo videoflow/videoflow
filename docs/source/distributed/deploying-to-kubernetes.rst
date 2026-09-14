@@ -92,13 +92,20 @@ What ``videoflow deploy`` does, step by step
    - checks that the broker and payload store it is about to use can provide
      what every channel asks for — ``reliable_work`` for a BATCH flow,
      ``live_latest`` for REALTIME, or whatever ``--require-profile
-     CHANNEL=PROFILE`` names. An auto-provisioned broker or store is judged by
-     its declared profile; a bring-your-own ``--nats`` / ``--blob-redis-url`` is
-     read back live (a short probe, before any infrastructure exists), and what
-     the probe cannot read is reported as unknown, never assumed. A composition
-     that cannot provide a guarantee is named, never quietly downgraded: a
-     warning unless the operator named a profile explicitly, in which case
-     deploy stops before applying anything.
+     CHANNEL=PROFILE`` names. A broker or store this deploy provisions is judged
+     by the profile it renders; one the namespace already runs (an earlier
+     ``--keep-infra``, a shared dev cluster) by the profile recorded on its
+     Service (``videoflow.io/profile``), and the provision Job reads it back
+     in-cluster before creating a stream; a bring-your-own ``--nats`` /
+     ``--blob-redis-url`` is read back live here (a short probe, before any
+     infrastructure exists), and what the probe cannot read is reported as
+     unknown, never assumed. A composition that definitely cannot provide a
+     guarantee — an evictable cache brought as the store of a BATCH flow, a
+     server without JetStream — stops the deploy before anything is applied
+     (exit 2); an *unobserved* guarantee is a warning unless the operator named
+     the profile with ``--require-profile``, when it is refused too (exit 3).
+     Nothing is quietly downgraded. Both shipped profiles admit BATCH and
+     REALTIME flows: the dev Redis persists and never evicts (see step 7).
 
 7. **Broker infra** — with no ``--nats``, deploy creates the namespace if
    needed and applies a dev NATS JetStream (and, when ``--blob-redis-url`` is
@@ -107,12 +114,21 @@ What ``videoflow deploy`` does, step by step
    (``nats://nats.<ns>.svc:4222``, ``redis://redis.<ns>.svc:6379/0``). A
    pre-existing ``nats``/``redis`` Service in the namespace is **reused and
    never owned**; only components deploy itself created are labeled
-   ``videoflow.io/infra`` and torn down later. The dev profile is one emptyDir
-   server each; ``--broker-profile durable`` renders a NATS StatefulSet with
-   cluster routes and a PersistentVolumeClaim per pod plus an append-only,
-   never-evicting Redis, sized with ``--broker-replicas N`` (odd, default 3) and
-   ``--broker-storage-class NAME`` (default ``local-path``); its claims are kept
-   at teardown. ``--priority-class NAME`` puts every pod the deploy creates —
+   ``videoflow.io/infra`` and torn down later. Each Service records the profile
+   that rendered it (``videoflow.io/profile``); a deploy that reuses it adopts
+   that profile — its stream copies follow the real broker — and a
+   ``--broker-profile`` that contradicts the record is refused rather than
+   silently served the other shape. The dev profile is one emptyDir server
+   each: the NATS file store and the Redis append-only file both live for the
+   pod (a container restart replays them, a pod loss does not), and the Redis
+   runs ``noeviction`` — a blob is never dropped while a reader still holds it,
+   which is what a BATCH flow's ``reliable_work`` channels require; a full store
+   refuses a write instead (every key still carries a TTL, and the reconciler
+   reclaims orphans, so that is what bounds memory). ``--broker-profile
+   durable`` renders a NATS StatefulSet with cluster routes and a
+   PersistentVolumeClaim per pod plus the same Redis on a claim, sized with
+   ``--broker-replicas N`` (odd, default 3) and ``--broker-storage-class NAME``
+   (default ``local-path``); its claims are kept at teardown. ``--priority-class NAME`` puts every pod the deploy creates —
    workers, provision Job and this broker — in that PriorityClass. For
    production, bring your own broker (the official NATS Helm chart) and pass
    ``--nats``.
@@ -237,16 +253,20 @@ Option reference
 
 ``--broker-profile {dev,durable}`` / ``--broker-replicas N`` / ``--broker-storage-class NAME``
     Shape of the auto-provisioned NATS/Redis when ``--nats`` is omitted (step 7).
-    ``teardown --infra`` takes the same ``--broker-profile`` so it deletes the
-    right workload kinds.
+    Omitted, the deploy renders ``dev`` for what is missing and adopts whatever
+    the namespace already runs. ``teardown --infra`` reads the profile from the
+    record on the ``nats`` Service, or takes the same ``--broker-profile``, so it
+    deletes the right workload kinds.
 
 ``--require-profile CHANNEL=PROFILE``
     Require a messaging profile (``live_latest``, ``reliable_work``,
     ``durable_control``, ``replay_archive``) on the named channel — the output of
-    that node — and make the composition check binding: a broker or store that
-    cannot provide it is rejected before anything is applied, as is a profile
-    the flow type's own streams cannot carry (``reliable_work`` on a REALTIME
-    channel). Repeatable; also on ``run-local``, against the dev containers. The
+    that node. The composition check is always binding for a definite
+    incompatibility; naming a profile additionally refuses an *unobserved*
+    guarantee (a bring-your-own store whose configuration could not be read
+    back), and refuses a profile the flow type's own streams cannot carry
+    (``reliable_work`` on a REALTIME channel) before anything is applied.
+    Repeatable; also on ``run-local``, against the dev containers. The
     requests reach the provision Job and the workers as
     ``VF_PROFILE_REQUESTS_JSON``: the Job admits the composition against the
     live broker before creating any stream and verifies the streams it created
@@ -255,14 +275,24 @@ Option reference
     an unreadable stream with exit 3. ``VF_ADMISSION_TIMEOUT_SECONDS`` (default
     60) bounds those read-backs.
 
-    With ``VF_RFC0006=1`` the render also carries the run ledger: the
-    ``VF_NATS_URL`` ConfigMap gains ``VF_RUNTIME_STORE_URL`` (the blob Redis) and
-    every node's ConfigMap gains ``VF_PARENT_REPLICAS``. The provision Job reads
-    the ledger's persistence back like the store's: only a Redis with
-    ``appendonly yes`` and ``noeviction`` (``--broker-profile durable``) makes the
-    ledger durable, and only then are at-least-once durables provisioned with an
-    unbounded broker cap and their retry budget kept in the ledger; on the dev
-    profile the broker cap stays and the ledger is process-local.
+    The render also carries the run ledger: the ``VF_NATS_URL`` ConfigMap
+    carries ``VF_RUNTIME_STORE_URL`` (the blob Redis) and every node's ConfigMap
+    ``VF_PARENT_REPLICAS``. The provision Job reads the ledger's persistence back
+    like the store's: only a Redis with ``appendonly yes`` and ``noeviction``
+    (both shipped profiles; not an evictable cache brought as
+    ``--blob-redis-url``) makes the ledger durable, and only then are
+    at-least-once durables provisioned with an unbounded broker cap and their
+    retry budget kept in the ledger, a singleton node's partition leased to the
+    one pod that holds it (a second pod started by hand is refused at bind time
+    instead of splitting the work), and payload obligations reconciled from the
+    ledger at start and periodically; against a cache the broker cap stays and
+    the ledger is process-local.
+
+    Every object of a run is named for it — ``vf-<flow>-<run>-<node>`` and the
+    run-wide ``-broker`` / ``-specs`` / ``-provision`` ConfigMaps and Job, with
+    selectors carrying the ``videoflow.io/run-id`` label — so two runs of one
+    flow coexist in a namespace without applying over each other; only the
+    NetworkPolicy is shared by the flow's runs.
 
 ``--nats`` / ``--blob-redis-url``
     Bring-your-own broker / blob store; omitting them auto-provisions dev
@@ -288,15 +318,21 @@ Option reference
     parallelism is fixed at creation, so ``--autoscaling`` on a BATCH flow is
     refused at render time (a ``CapabilityError``) instead of emitting a scaler
     that would dangle on a Deployment that never exists. Partitioned and, without
-    ``--gpu-autoscaling``, GPU nodes keep their fixed scale. A scaler watches the
-    node's first declared parent; with ``VF_RFC0006=1`` it carries one trigger per
-    parent and KEDA scales on the highest, so a join whose second input backs up
-    is scaled too. Under that switch a multi-parent join at one replica and a
+    ``--gpu-autoscaling``, GPU nodes keep their fixed scale. A scaler carries one
+    trigger per parent and KEDA scales on the highest, so a join whose second
+    input backs up is scaled too. A multi-parent join at one replica and a
     node that declares ``partition_by`` at ``nb_tasks = 1`` also keep their
     declared scale: scaled by KEDA, the first would split every group's halves
     across competing replicas and the second would split one key's history
     across replicas bound to the same competing durable. Redeploy such a node at
     the replica count it should own its keys at instead.
+
+``--single-run``
+    Refuse to start this run while another run of the same flow holds workloads
+    in the namespace — decided before anything of the new run is created, so the
+    active run is never reconfigured (exit 3, ``VF_ACTIVE_RUN``; a namespace
+    that cannot be listed is not a free one). Without it runs of one flow
+    coexist under their run-scoped names.
 
 ``--rollout-policy {drain,surge}``
     How a node's Deployment replaces its pods on an update. ``drain`` renders
@@ -369,7 +405,9 @@ How graph concepts map onto Kubernetes
 | ``flow_type=BATCH``                   | at-least-once, loss-free delivery (interest retention +     |
 |                                       | backpressure); failures retry then dead-letter to a DLQ     |
 +---------------------------------------+-------------------------------------------------------------+
-| ``ProcessorNode(nb_tasks=N)``         | N Deployment replicas (competing consumers)                 |
+| ``ProcessorNode(nb_tasks=N)``         | N Deployment replicas (competing consumers), each claiming  |
+|                                       | a replica slot through the run ledger at start; in a BATCH  |
+|                                       | flow an Indexed Job of N completions (index = replica id)   |
 +---------------------------------------+-------------------------------------------------------------+
 | ``ProcessorNode(..., partition_by=)`` | N StatefulSet replicas, partitioned by key (scales joins);  |
 |                                       | not autoscaled                                              |

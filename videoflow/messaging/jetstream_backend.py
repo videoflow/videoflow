@@ -83,6 +83,7 @@ from ..backends.messaging import (
     SUBSCRIPTION_DATA,
     SUBSCRIPTION_EOS,
     ChannelId,
+    ChannelObservation,
     ChannelSpec,
     Completed,
     Delivery,
@@ -939,6 +940,38 @@ class JetStreamMessagingBackend(MessagingBackend):
             available = int(info.num_pending), leased = int(info.num_ack_pending), unresolved = exhausted,
             dropped = dropped, rejected_publications = rejected, observed_at = time.monotonic(),
             generation = generation), generation)
+
+    def observe_channel(self, channel : ChannelId) -> Observation[ChannelObservation]:
+        '''``stream_info().state`` of the channel's stream: first/last sequence, message count, retention.'''
+        stream = topology.stream_name_for(channel.flow_id, channel.run_id, channel.node)
+
+        async def _go() -> Any:
+            return await self._js.stream_info(stream)
+        try:
+            info = self._run(_go(), timeout = 5)
+        except Exception as e:  # noqa: BLE001 — reported, never coerced
+            return unknown('api', f'{type(e).__name__}: {e}')
+        state = info.state
+        retention = RETENTION_INTEREST if info.config.retention == RetentionPolicy.INTEREST else RETENTION_LIMITS
+        return known(ChannelObservation(int(state.first_seq), int(state.last_seq), int(state.messages), retention,
+                                        time.monotonic()))
+
+    def observe_ack_floor(self, subscription : SubscriptionId) -> Observation[int]:
+        '''``consumer_info().ack_floor.stream_seq`` of any data durable of the run, bound here or not.'''
+        channel = subscription.channel
+        stream = topology.stream_name_for(channel.flow_id, channel.run_id, channel.node)
+        if subscription.partition is None:
+            durable = topology.durable_name_for(subscription.consumer_node, channel.node)
+        else:
+            durable = topology.partitioned_durable_name_for(subscription.consumer_node, channel.node, subscription.partition)
+
+        async def _go() -> Any:
+            return await self._js.consumer_info(stream, durable)
+        try:
+            info = self._run(_go(), timeout = 5)
+        except Exception as e:  # noqa: BLE001
+            return unknown('api', f'{type(e).__name__}: {e}')
+        return known(int(info.ack_floor.stream_seq) if info.ack_floor is not None else 0)
 
     def _still_retained(self, stream : str, seqs : Sequence[int]) -> list[int]:
         '''

@@ -48,7 +48,6 @@ from videoflow.backends.messaging import KIND_DATA, ChannelId, Envelope
 from videoflow.backends.outcomes import Accepted, PublicationUnknown
 from videoflow.backends.payload import PayloadBytes
 from videoflow.backends.payload_bridge import PayloadStoreBlobBridge
-from videoflow.core import constants
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import EXIT_ENVIRONMENT, SchemaError, VideoflowError
 from videoflow.messaging import topology
@@ -135,7 +134,7 @@ def _cli_runner(nats_url : str, flow_id : str, source_run : str, target_run : st
         if dry_run:
             command.append('--dry-run')
         proc = subprocess.run(command, capture_output = True, text = True, timeout = 90,
-                              env = dict(os.environ, VF_RFC0006 = '1'), cwd = os.getcwd())
+                              env = dict(os.environ), cwd = os.getcwd())
         return proc.returncode, proc.stdout, proc.stderr
     return run
 
@@ -175,7 +174,6 @@ def test_pay_015_large_payload_dlq_routing_inspects_metadata_without(nats_url, r
     from _brokers import sweep_refs
 
     from videoflow.wire.redis_payload_store import RedisPayloadStore
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     specs = [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)]
     store = RedisPayloadStore(redis_url)
@@ -333,7 +331,6 @@ def test_pay_016_replay_has_fresh_ownership_and_intentional_recipient_scope(nats
     '''
     from videoflow.deploy import cli
     from videoflow.messaging.jetstream_backend import JetStreamMessagingBackend
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs_pay_016(), redis_url = redis_url, max_retries = 0)
     schedules : List[Dict[str, int]] = []
@@ -384,7 +381,6 @@ class _Fired:
 @pytest.mark.level('broker')
 @pytest.mark.variant('memory')
 def test_pay_016_memory_backends_scope_the_replay_to_its_target(evidence_dir, record_faults, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH, specs = _specs_pay_016(), max_retries = 0)
     fired : List[Dict[str, int]] = []
@@ -405,7 +401,6 @@ def test_pay_016_memory_backends_scope_the_replay_to_its_target(evidence_dir, re
 
 @pytest.mark.negative_control(of = 'PAY-016')
 def test_pay_016_detects_a_replay_that_fans_out_to_every_child(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     rig = MemoryRig(BATCH, specs = _specs_pay_016(), max_retries = 0)
 
     def unscoped(target_run : str, letter : DeadLetter, source_run : str, drop_receipt : bool) -> Dict[str, Any]:

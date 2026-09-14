@@ -34,7 +34,7 @@ def _render(**options):
 
 
 def _workload(manifests, node, kind = 'Deployment'):
-    return next(m for m in manifests if m['kind'] == kind and m['metadata']['name'] == f'vf-demo-{node}')
+    return next(m for m in manifests if m['kind'] == kind and m['metadata']['name'] == f'vf-demo-run1-{node}')
 
 
 def test_rollout_policy_renders_the_deployment_strategy():

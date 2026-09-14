@@ -220,7 +220,17 @@ def test_worker_env_sets_gpu_grant_and_cuda_visible_devices():
 
 
 def test_engine_partitions_gpus_across_workers(monkeypatch):
-    monkeypatch.setattr('videoflow.engines.local.visible_physical_gpus', lambda: [0, 1])
+    # The allocation backend grants by UUID; the fake host has two idle cards.
+    from videoflow.backends.allocation import DeviceIdentity
+    from videoflow.backends.outcomes import known
+    from videoflow.deploy import allocation_local
+    real_backend = allocation_local.LocalAllocationBackend
+
+    def fake_backend(policy):
+        return real_backend(policy, host_reader = lambda: known(
+            [DeviceIdentity(None, i, f'GPU-{i:04x}', None, 'Fake', 96 << 30) for i in range(2)]),
+            used_reader = lambda: known({}), inherit_mask = False)
+    monkeypatch.setattr('videoflow.engines.local.LocalAllocationBackend', fake_backend)
     envs = []
     def fake_popen(cmd, env = None, **kwargs):
         envs.append(env or {})
@@ -236,7 +246,8 @@ def test_engine_partitions_gpus_across_workers(monkeypatch):
     flow = Flow([out], flow_type = BATCH, flow_id = 'demo')
     engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
     by_node = {e['VF_NODE_NAME']: e for e in envs}
-    assert by_node['work']['CUDA_VISIBLE_DEVICES'] == '0,1'
+    assert by_node['work']['CUDA_VISIBLE_DEVICES'] == 'GPU-0000,GPU-0001'
+    assert by_node['work']['VF_GPU_COUNT'] == '2'
     assert 'CUDA_VISIBLE_DEVICES' not in by_node['producer']
 
 

@@ -473,7 +473,7 @@ def test_inventory_completes_refs_from_metadata_and_is_unknown_when_it_cannot_re
 # -- capabilities ---------------------------------------------------------------------------------
 
 @pytest.mark.parametrize('appendonly, save, policy, durable, evictable', [
-    ('no', '', 'volatile-lru', False, True),          # the dev compose server: a cache
+    ('no', '', 'volatile-lru', False, True),          # a transport-only cache (the pre-RFC dev server)
     ('no', '', 'noeviction', False, False),            # nothing evicts, nothing survives a restart
     ('yes', '', 'noeviction', True, False),
     ('no', '3600 1 300 100', 'noeviction', True, False),

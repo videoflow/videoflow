@@ -49,7 +49,6 @@ from videoflow.backends.payload import (
     RetentionContract,
 )
 from videoflow.backends.payload_bridge import PayloadStoreBlobBridge
-from videoflow.core import constants
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import PoisonMessage, TransientFailure
 from videoflow.messaging import nats_messenger
@@ -161,7 +160,6 @@ def test_pay_002_transient_payload_access_failures_retry_without_terminal(nats_u
     Acceptance: A completes within R after payload-store recovery with byte-identical data; no
     terminal settlement occurs solely because of transient GET failure.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     caplog.set_level(logging.WARNING, logger = 'videoflow.messaging')
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 5, ack_wait = 30)
@@ -378,7 +376,6 @@ def test_pay_003_permanent_missing_or_corrupt_payloads_are_explicitly(nats_url, 
     its configured handling deadline; none is recorded as successful processing.
     '''
     from _brokers import sweep_refs
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     for flow_type in (BATCH, REALTIME):
         rig = JetStreamRig(nats_url, flow_type, _specs(), redis_url = redis_url, max_retries = 2, ack_wait = 30)
@@ -411,7 +408,6 @@ def _memory_rig_pay_003(flow_type : str) -> MemoryRig:
 def test_pay_003_memory_backends_account_for_every_broken_reference(evidence_dir, record_faults,
                                                                     monkeypatch) -> None:
     '''The same flow on the in-memory backends: reliable and live, deterministic.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     for flow_type in (BATCH, REALTIME):
         rig = _memory_rig_pay_003(flow_type)
@@ -426,7 +422,6 @@ def test_pay_003_memory_backends_account_for_every_broken_reference(evidence_dir
 
 @pytest.mark.negative_control(of = 'PAY-003')
 def test_pay_003_detects_a_silent_terminal_discard(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.silent_terminal_discard(monkeypatch)
     rig = _memory_rig_pay_003(BATCH)
     try:
@@ -516,7 +511,6 @@ def test_pay_019_slow_payload_reads_cannot_block_broker_heartbeats_or(nats_url, 
     receiving thread must leave the loop thread free to renew leases and to
     answer status and control traffic.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)     # every specimen offloads
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 2)
@@ -537,7 +531,6 @@ def test_pay_019_memory_backends_keep_reads_off_the_transport_path(evidence_dir,
     on the receiving thread only, that status calls answer while a read is
     blocked, and that every input keeps its (fake-clock) lease.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH)
@@ -552,7 +545,6 @@ def test_pay_019_memory_backends_keep_reads_off_the_transport_path(evidence_dir,
 @pytest.mark.negative_control(of = 'PAY-019')
 def test_pay_019_detects_a_payload_fetched_on_the_broker_loop(nats_url, redis_url, monkeypatch) -> None:
     '''A GET inside the admission filter blocks the loop: leases lapse and status calls stall.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     defects_pay.hydrate_on_the_loop(monkeypatch)
     rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 2)

@@ -23,8 +23,7 @@ Driven by environment variables::
                         connect included (default 60). A service that has not
                         answered by then is Unknown, never assumed.
 
-Admission (RFC 0006 ENV-13). With explicit profile requests, or under the
-``VF_RFC0006`` switch, the composition is admitted **before** anything is
+Admission (RFC 0006 ENV-13). The composition is admitted **before** anything is
 created — the same admission ``videoflow deploy`` ran on the operator's machine
 (``deploy.admission``), so a Job and a deploy never disagree — except that here
 the broker and the store are always read back live
@@ -65,7 +64,6 @@ from ..backends.capabilities import (
     requests_from_env,
 )
 from ..backends.outcomes import Known
-from ..core import constants
 from ..core.compiler import NodeSpec
 from ..core.errors import VideoflowError
 from ..deploy.admission import (
@@ -77,6 +75,7 @@ from ..deploy.admission import (
     run_stream_names,
     runtime_capabilities_observed,
     unknown_admission,
+    verify_graph_size,
 )
 from ..messaging.topology import provision_flow_sync, read_back_streams, verify_channel_profiles
 
@@ -105,6 +104,7 @@ def admit_composition(nats_url : str, blob_redis_url : str | None, specs : Seque
                                                 stream_names = run_stream_names(flow_id, run_id, specs),
                                                 fail_fast = False)
     payload = redis_payload_capabilities_observed(blob_redis_url, timeout = timeout) if blob_redis_url else None
+    verify_graph_size(specs, flow_id, run_id, messaging)
     admit(requirements_for(flow_type, specs, explicit), messaging, payload,
           payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit),
           unknown_is_fatal = unknown_admission(explicit), where = 'provision',
@@ -153,12 +153,11 @@ def provision() -> None:
     blob_redis_url = os.environ.get('VF_BLOB_REDIS_URL') or None
     explicit = requests_from_env(os.environ.get(PROFILE_REQUESTS_ENV))
     timeout = admission_timeout_from_env(os.environ.get(ADMISSION_TIMEOUT_ENV))
-    if explicit or constants.RFC0006:
-        admit_composition(nats_url, blob_redis_url, specs, flow_id, run_id, flow_type, explicit, timeout)
+    admit_composition(nats_url, blob_redis_url, specs, flow_id, run_id, flow_type, explicit, timeout)
     # D11: at-least-once durables get an unbounded broker cap only when the
     # workers' ledger is durable and shared — read back from the same store URL
     # the workers get, so the cap provisioned and the cap bound agree.
-    ledger_budget = constants.RFC0006 and ledger_durable_shared(os.environ.get(RUNTIME_STORE_ENV))
+    ledger_budget = ledger_durable_shared(os.environ.get(RUNTIME_STORE_ENV))
     provision_flow_sync(nats_url, specs, flow_id, run_id, flow_type,
                         max_retries = max_retries, replicas = replicas, ledger_budget = ledger_budget)
     logger.info(f'Provisioned {len(specs)} node streams for flow {flow_id} run {run_id}')

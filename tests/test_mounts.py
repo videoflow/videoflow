@@ -64,10 +64,10 @@ def test_batch_jobs_get_hostpath_volumes_but_provision_does_not():
     mounts = parse_mounts(['/data:/data:ro'])
     _, by = _by_kind(BATCH, mounts)
     for node in ('producer', 'work', 'printer'):
-        volumes, vmounts = _volumes_and_mounts(by[('Job', f'vf-demo-{node}')])
+        volumes, vmounts = _volumes_and_mounts(by[('Job', f'vf-demo-run1-{node}')])
         assert volumes == [{'name': 'vf-mount-0', 'hostPath': {'path': '/data'}}]
         assert vmounts == [{'name': 'vf-mount-0', 'mountPath': '/data', 'readOnly': True}]
-    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-provision')])
+    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-provision')])
     # The provision Job keeps only its specs ConfigMap volume — no hostPath.
     assert all(v.get('hostPath') is None for v in volumes)
     assert all(m['mountPath'] != '/data' for m in vmounts)
@@ -76,7 +76,7 @@ def test_batch_jobs_get_hostpath_volumes_but_provision_does_not():
 def test_realtime_deployment_and_statefulset_get_volumes():
     mounts = parse_mounts(['/data'])
     _, by = _by_kind(REALTIME, mounts, partitioned = True)
-    for key in (('Deployment', 'vf-demo-printer'), ('StatefulSet', 'vf-demo-work')):
+    for key in (('Deployment', 'vf-demo-run1-printer'), ('StatefulSet', 'vf-demo-run1-work')):
         volumes, vmounts = _volumes_and_mounts(by[key])
         assert volumes[0]['hostPath'] == {'path': '/data'}
         assert vmounts[0] == {'name': 'vf-mount-0', 'mountPath': '/data', 'readOnly': False}
@@ -84,7 +84,7 @@ def test_realtime_deployment_and_statefulset_get_volumes():
 
 def test_no_mounts_leaves_manifests_unchanged():
     _, by = _by_kind(BATCH, None)
-    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-work')])
+    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-work')])
     assert volumes is None and vmounts is None
 
 
@@ -158,7 +158,7 @@ def test_claim_mounts_render_as_persistent_volume_claim_volumes():
     mounts = parse_pvc_mounts(['models:/models:ro', 'share:/share'])
     _, by = _by_kind(BATCH, mounts)
     for node in ('producer', 'work', 'printer'):
-        volumes, vmounts = _volumes_and_mounts(by[('Job', f'vf-demo-{node}')])
+        volumes, vmounts = _volumes_and_mounts(by[('Job', f'vf-demo-run1-{node}')])
         # kubectl explain pod.spec.volumes.persistentVolumeClaim: claimName is
         # required, readOnly optional and only emitted when set.
         assert volumes == [
@@ -168,11 +168,11 @@ def test_claim_mounts_render_as_persistent_volume_claim_volumes():
             {'name': 'vf-pvc-0', 'mountPath': '/models', 'readOnly': True},
             {'name': 'vf-pvc-1', 'mountPath': '/share', 'readOnly': False}]
     # The provision Job still gets only its specs ConfigMap.
-    volumes, _ = _volumes_and_mounts(by[('Job', 'vf-demo-provision')])
+    volumes, _ = _volumes_and_mounts(by[('Job', 'vf-demo-run1-provision')])
     assert all('persistentVolumeClaim' not in v for v in volumes)
     # REALTIME workloads too, Deployment and StatefulSet alike.
     _, by = _by_kind(REALTIME, mounts, partitioned = True)
-    for key in (('Deployment', 'vf-demo-printer'), ('StatefulSet', 'vf-demo-work')):
+    for key in (('Deployment', 'vf-demo-run1-printer'), ('StatefulSet', 'vf-demo-run1-work')):
         volumes, _ = _volumes_and_mounts(by[key])
         assert volumes[1] == {'name': 'vf-pvc-1', 'persistentVolumeClaim': {'claimName': 'share'}}
 
@@ -195,7 +195,7 @@ def test_hostpath_mounts_under_a_claim_path_are_dropped_from_the_pods():
     assert pod_mounts(plain) == plain
     # And that is exactly what the pods render.
     _, by = _by_kind(BATCH, mounts)
-    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-work')])
+    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-work')])
     assert volumes == [
         {'name': 'vf-mount-2', 'hostPath': {'path': '/share-2'}},
         {'name': 'vf-mount-3', 'hostPath': {'path': '/other'}},
@@ -245,7 +245,7 @@ def test_priority_class_lands_on_every_pod_and_defaults_to_none():
     # yield everywhere, or its provision pod is the one that cannot schedule.
     assert {kind for kind, _ in pods} == {'Job', 'Deployment', 'StatefulSet'}
     assert all(spec['priorityClassName'] == 'cluster-batch' for spec in pods.values()), pods
-    assert pods[('Job', 'vf-demo-provision')]['priorityClassName'] == 'cluster-batch'
+    assert pods[('Job', 'vf-demo-run1-provision')]['priorityClassName'] == 'cluster-batch'
     # Absent by default: kubectl explain pod.spec.priorityClassName — unset means
     # the cluster's default priority, and the goldens pin that nothing is emitted.
     manifests = render_manifests(compile_flow(_flow(REALTIME, partitioned = True)), 'demo', REALTIME,

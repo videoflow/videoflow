@@ -32,7 +32,6 @@ import nats  # also an import guard: fail fast if the broker client is missing
 # rule — the same trap, for the same reason).
 from ..backends.allocation import SHARING_COOPERATIVE, SHARING_EXCLUSIVE, DeliveredGrant, Infeasible, WorkloadRequest
 from ..backends.outcomes import Unknown
-from ..core import constants
 from ..core.compiler import (
     NodeSpec,
     blob_reader_ids,
@@ -53,7 +52,6 @@ from ..core.supervision import (
 )
 from ..deploy.allocation_local import GRANT_ENV, POLICY_SHARED, LocalAllocationBackend
 from ..messaging import topology
-from ..utils.system import visible_physical_gpus
 
 logger = logging.getLogger(__package__)
 
@@ -242,30 +240,23 @@ class LocalProcessEngine(ExecutionEngine):
                 nats_url = self._nats_url) from e
 
         # Only probe the host's GPUs (nvidia-smi) when the flow actually has GPU
-        # nodes — a CPU-only flow must not depend on the probe in any way. The
-        # default policy keeps today's ordinal walk byte-for-byte; ``strict``, or
-        # the RFC 0006 switch, goes through the allocation backend, which grants
-        # UUIDs and tells every worker what it really received (VF_GPU_GRANT_JSON).
-        gpu_assignment : dict[tuple[str, int], list[int]] = {}
+        # nodes — a CPU-only flow must not depend on the probe in any way. Every
+        # policy goes through the allocation backend, which grants UUIDs (the
+        # ``shared`` policy reproduces the ordinal walk of ``assign_local_gpus``)
+        # and tells every worker what it really received (VF_GPU_GRANT_JSON).
         gpu_env : dict[tuple[str, int], Mapping[str, str]] = {}
         if any(s.device_type == 'gpu' for s in specs):
-            if self._gpu_policy == POLICY_SHARED and not constants.RFC0006:
-                gpu_assignment = assign_local_gpus(specs, visible_physical_gpus())
-            else:
-                gpu_env = allocate_local_gpus(specs, flow_id, run_id, LocalAllocationBackend(self._gpu_policy))
+            gpu_env = allocate_local_gpus(specs, flow_id, run_id, LocalAllocationBackend(self._gpu_policy))
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
                                 self._blob_redis_url, replica_idx, envelope_version,
                                 self._python_path, blob_ttl_seconds = self._blob_ttl_seconds,
-                                gpu_devices = gpu_assignment.get((spec.name, replica_idx)),
                                 gpu_env = gpu_env.get((spec.name, replica_idx)),
                                 profile_requests = self._profile_requests,
-                                blob_reader_ids = (blob_reader_ids(spec, specs)
-                                                   if constants.RFC0006 else None),
-                                parent_replicas = (parent_replicas(spec, specs)
-                                                   if constants.RFC0006 else None),
-                                runtime_store_url = self._runtime_store_url() if constants.RFC0006 else None)
+                                blob_reader_ids = blob_reader_ids(spec, specs),
+                                parent_replicas = parent_replicas(spec, specs),
+                                runtime_store_url = self._runtime_store_url())
                 env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
                 # Kept so a restart relaunches the identical worker, and so the
                 # supervisor never has to re-derive an environment.

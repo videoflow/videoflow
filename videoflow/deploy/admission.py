@@ -20,21 +20,20 @@ its *declared* profile (``jetstream_capabilities`` / ``redis_payload_capabilitie
 the connection's payload limit, the JetStream account's storage allowance, the
 run's streams when they already exist; Redis' persistence and eviction
 settings), and whatever the probe could not read stays ``Unknown`` with the
-reason — never assumed. Until RFC 0006 is accepted the verdict is *advisory*
-for a flow that asked for nothing explicitly — a warning, today's behaviour
-otherwise — and binding as soon as the operator names a profile or the
-``VF_RFC0006`` switch is on (decision D1). Explicit requests also travel to the
-provision Job and the workers as ``VF_PROFILE_REQUESTS_JSON``, emitted only when
-there are any so the default environment is unchanged (D8); there they bind
-again, against the streams as provisioned (``runtime.provision``) and as bound
-(``runtime.worker``, before ``open()``), through
-``messaging.topology.verify_channel_profiles``.
+reason — never assumed. A definite incompatibility is binding (RFC 0006,
+accepted); an unobservable capability of a bring-your-own broker or store is a
+warning unless the operator named a profile explicitly. Explicit requests also
+travel to the provision Job and the workers as ``VF_PROFILE_REQUESTS_JSON``,
+emitted only when there are any (D8); there they bind again, against the
+streams as provisioned (``runtime.provision``) and as bound (``runtime.worker``,
+before ``open()``), through ``messaging.topology.verify_channel_profiles``.
 '''
 from __future__ import absolute_import, division, print_function
 
 import asyncio
 import dataclasses
 import logging
+import os
 import re
 import sys
 from typing import Callable, List, Optional, Sequence
@@ -45,18 +44,20 @@ from ..backends.capabilities import (
     MESSAGING_PROFILES,
     PROFILE_REQUESTS_ENV,
     CompositionPlan,
+    ExecutionCapabilities,
     FlowRequirements,
     MessagingCapabilities,
     PayloadCapabilities,
     ProfileRequest,
     RuntimeCapabilities,
+    combined_limit,
     default_requirements,
+    graph_limits_from_env,
     plan_composition,
     requests_env,
     requests_from_env,
 )
 from ..backends.outcomes import Observation, Unknown, known, unknown
-from ..core import constants
 from ..core.compiler import NodeSpec
 from ..core.errors import ConfigError, IncompatibleProfile, UnobservableState, VideoflowError
 from .broker_profiles import BrokerProfile, RedisProfile
@@ -71,53 +72,68 @@ JETSTREAM_DEDUP_WINDOW_SECONDS = 120
 REDIS_MAX_OBJECT_BYTES = 512 << 20
 
 
-def jetstream_capabilities(profile : Optional[BrokerProfile]) -> MessagingCapabilities:
+def jetstream_capabilities(profile : Optional[BrokerProfile],
+                           unread : str = 'the broker configuration was not read back (bring-your-own --nats)') \
+        -> MessagingCapabilities:
     '''
     What a JetStream broker offers, from its *declared* profile: retained,
     recoverable delivery always (INTEREST retention with redelivery is what the
     topology provisions); persistence and replication as the profile says.
-    With no profile (a bring-your-own ``--nats``) those two are ``Unknown`` —
-    the broker was not read back, and unknown is not "yes"; the CLI reads such
-    a broker back with ``jetstream_capabilities_observed`` instead.
+    With no profile (a bring-your-own ``--nats``, or a Service the namespace
+    already had with no profile record — ``unread`` says which) those two are
+    ``Unknown`` — the broker was not read back, and unknown is not "yes"; the
+    CLI reads a bring-your-own broker back with ``jetstream_capabilities_observed``
+    instead, and the provision Job reads a reused one back in-cluster.
     '''
     persistence : Observation[bool]
     replication : Observation[int]
     if profile is None:
-        persistence = unknown('unread', 'the broker configuration was not read back (bring-your-own --nats)')
-        replication = unknown('unread', 'the broker configuration was not read back (bring-your-own --nats)')
+        persistence = unknown('unread', unread)
+        replication = unknown('unread', unread)
     else:
         persistence = known(bool(profile.persistence))
         replication = known(int(profile.jetstream_replicas))
+    declared_streams, declared_consumers = graph_limits_from_env(os.environ)
     return MessagingCapabilities(
         adapter = 'jetstream', version = '2.10', retained_backlog = True, recoverable_delivery = True,
         latest_per_key = False, dedup_window_seconds = JETSTREAM_DEDUP_WINDOW_SECONDS,
         publication_ledger = 'window', replication_factor = replication, persistent_storage = persistence,
         max_payload_bytes = unknown('unread', 'nc.max_payload is read when the client connects'),
-        credit_resizable = True, control_shares_data_slot = True)
+        credit_resizable = True, control_shares_data_slot = True,
+        max_streams = combined_limit(None, declared_streams), max_consumers = combined_limit(None, declared_consumers))
 
 
-def redis_payload_capabilities(profile : Optional[RedisProfile]) -> PayloadCapabilities:
+def redis_payload_capabilities(profile : Optional[RedisProfile],
+                               unread : str = 'the store configuration was not read back (bring-your-own --blob-redis-url)') \
+        -> PayloadCapabilities:
     '''
     What a Redis payload store offers, from its declared profile: durable only
     with append-only persistence *and* ``noeviction`` (either alone lets an
-    accepted envelope outlive its bytes). No profile (bring-your-own
-    ``--blob-redis-url``): ``Unknown`` until read back, which the CLI does with
-    ``redis_payload_capabilities_observed``.
+    accepted envelope outlive its bytes); ``persistent_storage`` only on a
+    claim (the dev profile's emptyDir is durable across a container restart,
+    gone with the pod). No profile (bring-your-own
+    ``--blob-redis-url``, or a reused Service with no profile record — ``unread``
+    says which): ``Unknown`` until read back, which the CLI does with
+    ``redis_payload_capabilities_observed`` for a bring-your-own store and the
+    provision Job does in-cluster for a reused one.
     '''
     durable : Observation[bool]
     evictable : Observation[bool]
     atomic : Observation[bool]
+    storage : Observation[bool]
     if profile is None:
-        durable = unknown('unread', 'the store configuration was not read back (bring-your-own --blob-redis-url)')
-        evictable = unknown('unread', 'the store configuration was not read back (bring-your-own --blob-redis-url)')
+        durable = unknown('unread', unread)
+        evictable = unknown('unread', unread)
         atomic = unknown('unread', 'CLUSTER KEYSLOT of the obligation keys was not checked')
+        storage = unknown('unread', unread)
     else:
-        persistent = profile.persistence != 'none'
-        durable = known(persistent and profile.eviction == 'noeviction')
+        durable = known(profile.persistent and profile.eviction == 'noeviction')
         evictable = known(profile.eviction != 'noeviction')
         atomic = known(True)                     # one node: every key shares its slot
+        storage = known(profile.stateful)        # a claim outlives the pod; an emptyDir does not
     return PayloadCapabilities('redis', durable = durable, evictable = evictable, atomic_multikey = atomic,
-                               max_object_bytes = REDIS_MAX_OBJECT_BYTES, reader_identities = False)
+                               max_object_bytes = REDIS_MAX_OBJECT_BYTES, reader_identities = False,
+                               persistent_storage = storage)
 
 
 #: How long a deploy-time probe of a bring-your-own broker or store waits, connect
@@ -217,6 +233,8 @@ def jetstream_capabilities_observed(nats_url : str, timeout : float = PROBE_TIME
             version = _server_version(str(nc.connected_server_version))
             replication : Observation[int]
             persistence : Observation[bool]
+            account_streams : Observation[int] | None = None
+            account_consumers : Observation[int] | None = None
             try:
                 account = await js.account_info()
             except nats.js.errors.ServiceUnavailableError as e:
@@ -234,6 +252,11 @@ def jetstream_capabilities_observed(nats_url : str, timeout : float = PROBE_TIME
                 persistence = known(account.limits.max_storage != 0)
                 replication = unknown('unread', 'no stream of this run exists yet; the copies each stream keeps '
                                                 'are read back once it is provisioned')
+                # The account's stream and consumer allowances (``AccountLimits``,
+                # nats-py 2.15.0 ``api.py:720``; -1 = unlimited): the graph-size
+                # limit the adapter reports, MSG-026.
+                account_streams = known(int(account.limits.max_streams))
+                account_consumers = known(int(account.limits.max_consumers))
             file_backed : list[bool] = []
             copies : list[int] = []
             failed : Unknown | None = None
@@ -253,12 +276,15 @@ def jetstream_capabilities_observed(nats_url : str, timeout : float = PROBE_TIME
             elif file_backed:
                 persistence = known(all(file_backed))
                 replication = known(min(copies))
+            declared_streams, declared_consumers = graph_limits_from_env(os.environ)
             return MessagingCapabilities(
                 adapter = 'jetstream', version = version, retained_backlog = True, recoverable_delivery = True,
                 latest_per_key = False, dedup_window_seconds = JETSTREAM_DEDUP_WINDOW_SECONDS,
                 publication_ledger = LEDGER_WINDOW, replication_factor = replication,
                 persistent_storage = persistence, max_payload_bytes = max_payload,
-                credit_resizable = True, control_shares_data_slot = True)
+                credit_resizable = True, control_shares_data_slot = True,
+                max_streams = combined_limit(account_streams, declared_streams),
+                max_consumers = combined_limit(account_consumers, declared_consumers))
         finally:
             await nc.close()
 
@@ -310,6 +336,56 @@ def run_stream_names(flow_id : str, run_id : str, specs : Sequence[NodeSpec]) ->
     return [stream_name_for(flow_id, run_id, spec.name) for spec in specs]
 
 
+def graph_size(specs : Sequence[NodeSpec], flow_id : str, run_id : str) -> tuple[int, int]:
+    '''
+    ``(streams, consumers)`` one run of the flow provisions and binds: every node's
+    stream plus the flow's dead-letter stream; every data durable (one per
+    competing child, one per replica of a partitioned child), every EOS anchor,
+    and the per-process EOS durables each replica binds at start
+    (``identity.derived_names`` for what provisioning creates; the EOS durables
+    are ``nb_tasks`` per parent edge, minted by the workers).
+    '''
+    # Deferred: identity pulls topology (the optional nats extra) at call time.
+    from ..backends.identity import derived_names
+    names = derived_names(specs, flow_id, run_id)
+    kinds = [identity.kind for identities in names.values() for identity in identities]
+    streams = kinds.count('stream') + kinds.count('dlq_stream')
+    consumers = kinds.count('durable') + kinds.count('partitioned_durable') + kinds.count('eos_anchor')
+    by_name = {spec.name: spec for spec in specs}
+    consumers += sum(spec.nb_tasks for spec in specs for parent in spec.parents if parent in by_name)
+    return streams, consumers
+
+
+def verify_graph_size(specs : Sequence[NodeSpec], flow_id : str, run_id : str,
+                      messaging : MessagingCapabilities) -> None:
+    '''
+    Refuse a graph larger than the adapter supports before anything is provisioned
+    (MSG-026): a run that creates its first hundred streams and then fails on the
+    account limit is a partially provisioned, apparently healthy run. ``-1`` (an
+    unlimited account) and an undeclared limit admit everything; an ``Unknown``
+    limit is left to the read-back at provisioning.
+
+    - Raises:
+        - IncompatibleProfile: the run derives more streams or consumers than the \
+            adapter's declared or read-back limit.
+    '''
+    streams, consumers = graph_size(specs, flow_id, run_id)
+    findings = []
+    for what, count, limit in (('streams', streams, messaging.max_streams),
+                               ('consumers', consumers, messaging.max_consumers)):
+        if limit is None or isinstance(limit, Unknown) or limit.value < 0:
+            continue
+        if count > limit.value:
+            findings.append(f'one run of this flow provisions {count} {what}, and the {messaging.adapter} adapter '
+                            f'supports {limit.value} (the account limit, or the declared VF_MAX_{what.upper()})')
+    if findings:
+        raise IncompatibleProfile(
+            'The graph exceeds the supported size of the composed broker:\n' + '\n'.join(f'  - {f}' for f in findings),
+            remedy = 'Split the flow into smaller flows, reduce replicas or fan-out, raise the account limit, or '
+                     'declare a larger measured limit (VF_MAX_STREAMS / VF_MAX_CONSUMERS) once a benchmark backs it.',
+            channels = [])
+
+
 def verify_topology_shape(flow_type : str, flow_id : str, run_id : str,
                           explicit : Sequence[ProfileRequest]) -> None:
     '''
@@ -348,11 +424,11 @@ def verify_topology_shape(flow_type : str, flow_id : str, run_id : str,
 def local_dev_capabilities() -> tuple[MessagingCapabilities, PayloadCapabilities]:
     '''
     What ``videoflow run-local``'s docker dev containers offer
-    (``deploy.localinfra``): a JetStream server without a volume and a Redis
-    with ``volatile-lru`` eviction and no persistence.
+    (``deploy.localinfra``): a JetStream server without a volume and the Redis
+    ``RedisProfile.dev()`` describes — an append-only file, ``noeviction`` — which
+    ``localinfra`` starts with exactly those arguments.
     '''
-    return (jetstream_capabilities(BrokerProfile.dev()),
-            redis_payload_capabilities(RedisProfile(persistence = 'none', eviction = 'volatile-lru')))
+    return (jetstream_capabilities(BrokerProfile.dev()), redis_payload_capabilities(RedisProfile.dev()))
 
 
 def parse_profile_requests(values : Optional[Sequence[str]], specs : Sequence[NodeSpec]) -> List[ProfileRequest]:
@@ -389,18 +465,31 @@ def parse_profile_requests(values : Optional[Sequence[str]], specs : Sequence[No
 
 
 def requirements_for(flow_type : str, specs : Sequence[NodeSpec],
-                     explicit : Sequence[ProfileRequest] = ()) -> FlowRequirements:
-    '''The flow-type presets for every channel, with the operator's explicit requests replacing theirs.'''
+                     explicit : Sequence[ProfileRequest] = (),
+                     declared : FlowRequirements | None = None) -> FlowRequirements:
+    '''
+    The flow-type presets for every channel, with the operator's explicit
+    requests replacing theirs, plus what the nodes themselves declared
+    (``deploy.compile.declared_requirements``: sink guarantees, execution
+    groups, batching contracts) when the caller has the compiled document.
+    '''
     base = default_requirements(flow_type, specs)
     overridden = {r.channel: r for r in explicit}
     profiles = tuple(overridden.pop(r.channel, r) for r in base.profiles) + tuple(overridden.values())
-    return dataclasses.replace(base, profiles = profiles)
+    if declared is None:
+        return dataclasses.replace(base, profiles = profiles)
+    return dataclasses.replace(base, profiles = profiles, sink_guarantees = dict(declared.sink_guarantees),
+                               execution_groups = dict(declared.execution_groups), batching = dict(declared.batching),
+                               exactly_once_effects = tuple(declared.exactly_once_effects),
+                               effect_retention_seconds = declared.effect_retention_seconds,
+                               replay_horizon_seconds = declared.replay_horizon_seconds)
 
 
 def admit(requirements : FlowRequirements, messaging : MessagingCapabilities,
           payload : Optional[PayloadCapabilities], *, payload_refs_in_use : bool,
           enforce : bool, unknown_is_fatal : bool, where : str,
-          runtime : Optional[RuntimeCapabilities] = None) -> Optional[CompositionPlan]:
+          runtime : Optional[RuntimeCapabilities] = None,
+          execution : Optional[ExecutionCapabilities] = None) -> Optional[CompositionPlan]:
     '''
     Run the planner. A rejection that is not binding is printed as a warning and
     ``None`` returned — today's behaviour, with the reason on record; a binding
@@ -427,10 +516,12 @@ def admit(requirements : FlowRequirements, messaging : MessagingCapabilities,
         - runtime: the runtime store's read-back (``VF_RUNTIME_STORE_URL``), which \
             ``restart_safe`` and ``durable_control`` are admitted against; None \
             when no store is configured.
+        - execution: what the engine advertises (fused groups, batching); None \
+            when the caller is not deploying through an engine.
     '''
     try:
         return plan_composition(requirements, messaging, payload = payload, runtime = runtime,
-                                payload_refs_in_use = payload_refs_in_use)
+                                execution = execution, payload_refs_in_use = payload_refs_in_use)
     except IncompatibleProfile as e:
         if enforce:
             raise
@@ -453,8 +544,8 @@ def _warn(where : str, error : VideoflowError, standing : str) -> None:
 
 
 def enforce_admission(explicit : Sequence[ProfileRequest]) -> bool:
-    '''Whether a definite rejection is binding: an explicit request, or the RFC 0006 switch.'''
-    return bool(explicit) or bool(constants.RFC0006)
+    '''Whether a definite rejection is binding: always, since RFC 0006 was accepted (kept for its callers' symmetry).'''
+    return True
 
 
 def unknown_admission(explicit : Sequence[ProfileRequest]) -> bool:

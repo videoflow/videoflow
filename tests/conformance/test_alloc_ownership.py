@@ -448,15 +448,87 @@ def _oracle_alloc_008(monkeypatch : pytest.MonkeyPatch, evidence : Dict[str, Any
 
 @pytest.mark.case('ALLOC-008')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 5 (needs VF_K8S_GPU_NODES and the operator-applied pool label)')
-def test_alloc_008_use_identical_eligibility_scope_for_gpu_classification_and() -> None:
+def test_alloc_008_use_identical_eligibility_scope_for_gpu_classification_and(k3s, k3s_gpu_nodes, evidence_dir) -> None:
     '''
     ALLOC-008 (P1, allocation, kubernetes): Use identical eligibility scope for GPU
     classification and capacity.
 
     Acceptance: The valid pool request remains valid despite outside-pool sharing;
     selected-node mutations cannot be silently ignored.
+
+    On the shared cluster: every GPU node advertises the same ``nvidia.com/gpu``
+    resource, and only the operator-labelled pool nodes contribute evidence —
+    the snapshot names them by identity and resourceVersion, the classification
+    and a valid multi-GPU plan are decided on that snapshot alone, and the
+    out-of-scope nodes' labels (whatever they are) never enter. A selected
+    node's evidence then changes for real — an inert holder takes one of its
+    cards — and the refreshed snapshot carries a new generation: the plan made
+    on the old one is refused at reserve, never applied against stale evidence.
     '''
+    from _brokers import unique_ids
+    from _k8s import apply, delete_workload, gpu_holder_deployment, kubectl_json, wait_ready
+
+    from videoflow.backends.allocation import FeasiblePlan, WorkloadRequest
+    from videoflow.deploy.allocation_kubernetes import KubernetesAllocationBackend
+    from videoflow.deploy.cluster import classify_gpu_resource
+    evidence : Dict[str, Any] = {'pool': list(k3s_gpu_nodes)}
+    all_gpu_nodes = {n['metadata']['name']: {'resourceVersion': n['metadata']['resourceVersion'],
+                                             'labels': {k: v for k, v in n['metadata']['labels'].items()
+                                                        if k.startswith('nvidia.com/gpu.') or k.startswith('videoflow.io/')},
+                                             'allocatable': n['status']['allocatable'].get('nvidia.com/gpu')}
+                     for n in kubectl_json('get', 'nodes').get('items', [])
+                     if 'nvidia.com/gpu.count' in n['metadata']['labels']}
+    outside = sorted(n for n in all_gpu_nodes if n not in k3s_gpu_nodes)
+    evidence['all_gpu_nodes'] = all_gpu_nodes
+    evidence['outside_pool_advertising_the_same_resource'] = outside
+    assert outside, 'the case needs at least one GPU node outside the pool advertising nvidia.com/gpu'
+    backend = KubernetesAllocationBackend('exclusive')
+    snapshot = backend.inventory({})
+    assert isinstance(snapshot, Known), snapshot
+    contributing = sorted({d.node for d in snapshot.value.devices if d.node})
+    evidence['snapshot'] = {'generation': snapshot.value.generation, 'contributing_nodes': contributing,
+                            'sharing': dict(snapshot.value.sharing), 'occupancy': dict(snapshot.value.occupancy)}
+    assert contributing == sorted(k3s_gpu_nodes), (contributing, k3s_gpu_nodes)
+    assert not set(contributing) & set(outside)
+    evidence['classification'] = classify_gpu_resource()
+    node = k3s_gpu_nodes[0]
+    free = int(all_gpu_nodes[node]['allocatable'] or 0) - int(snapshot.value.occupancy.get(node, 0))
+    if free < 2:
+        pytest.skip(f'not_run: pool node {node} has {free} free GPU(s); the multi-GPU request needs 2')
+    request = WorkloadRequest(flow_id = 'conf-a008', run_id = 'r', workload_id = 'span', device_count = 2,
+                              sharing = 'exclusive', minimum_usable_memory_bytes = None, reserved_memory_bytes = None,
+                              hard_memory_limit_bytes = None, declared_peak_memory_bytes = None, features = frozenset(),
+                              constraints = (), elasticity = 'fixed', provenance = {})
+    plan = backend.plan([request], snapshot.value)
+    assert isinstance(plan, FeasiblePlan), plan
+    planned_nodes = sorted({d.node for d in plan.assignments['span'] if d.node})
+    evidence['plan'] = {'nodes': planned_nodes, 'generation': plan.snapshot_generation}
+    assert set(planned_nodes) <= set(k3s_gpu_nodes)
+    # Nothing outside the pool changed the decision: the same request against a
+    # fresh read of the same pool state plans identically.
+    again = backend.inventory({})
+    assert isinstance(again, Known) and again.value.generation == snapshot.value.generation
+    plan_again = backend.plan([request], again.value)
+    assert isinstance(plan_again, FeasiblePlan) and plan_again.assignments == plan.assignments
+    # A selected node's evidence changes: a holder takes one card on it.
+    namespace = k3s['VF_K8S_NAMESPACE']
+    holder = 'vf-conf-' + unique_ids('a008')[1][:8]
+    try:
+        apply(gpu_holder_deployment(holder, namespace, [node], 1))
+        wait_ready(namespace, f'app={holder}', 1, timeout = 300)
+        refreshed = backend.inventory({})
+        assert isinstance(refreshed, Known)
+        evidence['refreshed'] = {'generation': refreshed.value.generation, 'occupancy': dict(refreshed.value.occupancy)}
+        assert refreshed.value.generation != snapshot.value.generation, 'the snapshot generation ignored the selected node\'s change'
+        assert refreshed.value.occupancy.get(node, 0) == snapshot.value.occupancy.get(node, 0) + 1
+        with pytest.raises(OwnershipConflict) as e:
+            backend.reserve(plan, 'conf-a008:stale', expected_generation = refreshed.value.generation)
+        evidence['stale_plan_refused'] = str(e.value)[:200]
+        replanned = backend.plan([request], refreshed.value)
+        evidence['replanned'] = ('feasible' if isinstance(replanned, FeasiblePlan) else f'infeasible: {replanned.reasons}')
+    finally:
+        delete_workload(namespace, holder)
+        (evidence_dir / 'scope_decisions.json').write_text(json.dumps(evidence, indent = 2, default = str))
 
 
 @pytest.mark.case('ALLOC-008')

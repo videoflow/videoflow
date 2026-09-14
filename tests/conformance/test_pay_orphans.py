@@ -41,7 +41,6 @@ from videoflow.backends.memory.payload import MemoryPayloadStore
 from videoflow.backends.messaging import OVERFLOW_REJECT
 from videoflow.backends.outcomes import Known
 from videoflow.backends.payload import PayloadBytes, PayloadStore
-from videoflow.core import constants
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import BrokerUnavailable
 from videoflow.messaging import nats_messenger, topology
@@ -214,7 +213,6 @@ def test_pay_007_creation_crashes_and_partial_publication_produce_bounded(eviden
     live/replay/terminal reference is reclaimed within G. No counterless object persists beyond
     its bounded orphan policy.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH)
     # No reference forwarding: a retry must not quietly adopt the crashed put's object, as on Redis.
@@ -235,7 +233,6 @@ def test_pay_007_creation_crashes_and_partial_publication_produce_bounded(eviden
 def test_pay_007_redis_store_reconciles_orphans_past_the_grace(evidence_dir, record_faults, monkeypatch) -> None:
     '''The Redis store on the in-process fake: metadata dates the interrupted put, the grace spares it, then not.'''
     pytest.importorskip('redis')
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH)
     redis_store, fake = _fake_redis_store(clock = lambda: rig.clock.now())
@@ -258,7 +255,6 @@ def test_pay_007_redis_store_reconciles_orphans_past_the_grace(evidence_dir, rec
 @pytest.mark.negative_control(of = 'PAY-007')
 def test_pay_007_detects_a_publisher_without_an_intent(monkeypatch) -> None:
     '''No intent ties an object to its publication: an unpublished object is nobody's to reclaim.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.intent_less_bridge(monkeypatch)
     rig = MemoryRig(BATCH)
     store = KeyRecordingStore(MemoryPayloadStore(rig.clock, orphan_grace_seconds = ORPHAN_GRACE, forward_unchanged = False))
@@ -357,7 +353,6 @@ def test_pay_012_dropped_and_disconnected_reader_frames_have_a_bounded(evidence_
     allowance; after stop, all unpinned objects are reclaimed within G without deleting valid
     in-use frames.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig, store = _memory_rig_pay_012()
     try:
@@ -377,7 +372,6 @@ def test_pay_012_jetstream_eviction_is_reconciled_against_a_redis_store(nats_url
     from _brokers import redis_client
 
     from videoflow.wire.redis_payload_store import RedisPayloadStore
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     url = isolated_redis_db(redis_url, 7)
     specs = [spec('parent', [], 'producer', True), spec('fast', ['parent'], 'consumer', False),
@@ -400,19 +394,74 @@ def test_pay_012_jetstream_eviction_is_reconciled_against_a_redis_store(nats_url
 @pytest.mark.case('PAY-012')
 @pytest.mark.level('process')
 @pytest.mark.variant('ledger')
-@pytest.mark.pending('phase 3')
-def test_pay_012_the_runtime_ledger_cancels_evicted_messages_itself() -> None:
+def test_pay_012_the_runtime_ledger_cancels_evicted_messages_itself(nats_url, redis_url, evidence_dir, monkeypatch,
+                                                                     tmp_path) -> None:
     '''
-    The Phase-3 sub-assertion: the runtime's ``ObligationLedger`` lists the
-    broker-evicted messages (stream sequences below ``stream_info().state.first_seq``)
-    on its own and the worker reconciles periodically without a test-built ledger
-    (RFC 0006 ``BLOB-14`` step 4). Pending the runtime ledger.
+    The runtime's own ledger (``RuntimeObligationLedger``, BLOB-14 step 4) on a
+    real ``max_msgs = 1`` stream and a Redis database of its own: the publisher's
+    outbox records every frame's ref, readers and accepted sequence; the fast
+    reader's messenger reconciles *periodically on its own thread*
+    (``VF_RECONCILE_INTERVAL_SECONDS``), listing the evicted sequences from the
+    stream's ``first_seq`` — the slow reader's never-delivered frames are
+    reclaimed while the frame still in the fast reader's hands is kept. No
+    test-built ledger anywhere.
     '''
+    from _brokers import redis_client
+
+    from videoflow.backends.memory.runtime_store import FileRuntimeStore
+    from videoflow.backends.runtime import FlowRuntime
+    from videoflow.wire.redis_payload_store import RedisPayloadStore
+    monkeypatch.setenv('VF_RECONCILE_INTERVAL_SECONDS', '1')
+    evidence : Dict[str, Any] = {}
+    url = isolated_redis_db(redis_url, 8)
+    root = str(tmp_path / 'ledger')
+    specs = [spec('parent', [], 'producer', True), spec('fast', ['parent'], 'consumer', False),
+             spec('slow', ['parent'], 'consumer', False)]
+
+    def runtime(node : str) -> FlowRuntime:
+        return FlowRuntime(FileRuntimeStore(root), rig.flow_id, rig.run_id, node, lease_seconds = 2)
+    with redis_client(url) as client:
+        store = KeyRecordingStore(RedisPayloadStore(url))
+        rig = JetStreamRig(nats_url, REALTIME, specs, store = store, ack_wait = 30)
+        try:
+            publisher = rig.messenger('parent', [], store = store, blob_reader_ids = ['fast', 'slow'], runtime = runtime('parent'))
+            fast = rig.messenger('fast', ['parent'], runtime = runtime('fast'))
+            rig.messenger('slow', ['parent'], runtime = runtime('slow'))          # subscribed, never receives
+            frame = FRAME.copy()
+            frames = 60
+            samples : List[Dict[str, Any]] = []
+            for i in range(frames):
+                frame.flat[0] = i & 0xFF
+                publisher.publish_message(frame)
+                inputs = fast.receive_message()
+                assert inputs['parent']['message'].shape == FRAME.shape
+                if i < frames - 1:
+                    fast.ack_inputs()
+                if (i + 1) % 20 == 0:
+                    samples.append({'frames': i + 1, 'objects': sum(1 for k in store.keys if client.exists(k))})
+            # The periodic pass runs on the fast reader's lease thread; give it two intervals.
+            deadline = time.monotonic() + 8
+            while time.monotonic() < deadline:
+                alive = [k for k in store.keys if client.exists(k)]
+                if len(alive) <= 2:
+                    break
+                time.sleep(0.5)
+            held = store.keys[-1]
+            alive = [k for k in store.keys if client.exists(k)]
+            evidence.update({'frames': frames, 'samples': samples, 'alive_after_periodic': len(alive),
+                             'held_obligations': sorted(obligations_of(store, held)),
+                             'outbox_evicted': sum(1 for d in runtime('fast').outbox_of('parent')
+                                                   if d.get('seq') and d['seq'] < rig.stream_state('parent').first_seq)})
+            assert held in alive and 'fast' in obligations_of(store, held), 'the frame in use was reclaimed'
+            assert len(alive) <= 2, f'evicted frames were not reclaimed by the periodic reconciliation: {len(alive)} alive'
+            fast.ack_inputs()
+        finally:
+            rig.close()
+    write_evidence(evidence_dir, 'runtime_ledger.json', evidence)
 
 
 @pytest.mark.negative_control(of = 'PAY-012')
 def test_pay_012_detects_a_store_with_no_eviction_reconciliation(monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_pay.leaking_reconciler(monkeypatch)
     rig, store = _memory_rig_pay_012()
     try:
@@ -525,7 +574,6 @@ def test_pay_013_rejected_and_deduplicated_publications_do_not_accumulate(nats_u
     from _brokers import delete_run, redis_client, run_async
 
     from videoflow.wire.redis_payload_store import RedisPayloadStore
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 3)        # a full stream is final after 3 s here
     evidence : Dict[str, Any] = {}
     url = isolated_redis_db(redis_url, 8)
@@ -562,7 +610,6 @@ def test_pay_013_rejected_and_deduplicated_publications_do_not_accumulate(nats_u
 @pytest.mark.level('broker')
 @pytest.mark.variant('memory')
 def test_pay_013_memory_backends_reclaim_every_unreachable_object(evidence_dir, record_faults, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 2)
     evidence : Dict[str, Any] = {}
     rig, store, limit_channel, sever_channel = _memory_rig_pay_013()
@@ -581,7 +628,6 @@ def test_pay_013_detects_a_store_that_never_reclaims_a_rejected_publications_obj
     deduplicated send, and a reconciler that never reclaims what that leaves —
     either half alone is covered by the fixed other, so the control removes both.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 2)
     defects_pay.leaking_reconciler(monkeypatch)
     defects_pay.intent_only_resolution(monkeypatch)

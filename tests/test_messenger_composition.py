@@ -11,7 +11,6 @@ import pytest
 
 from videoflow.backends.messaging import ChannelId, Delivery, DeliveryToken, SubscriptionId
 from videoflow.backends.outcomes import known, unknown
-from videoflow.core import constants
 from videoflow.core.compiler import NodeSpec, blob_reader_ids
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import ConfigError
@@ -70,16 +69,11 @@ def test_threshold_is_untouched_by_a_roomy_or_unread_limit():
     assert m._inline_threshold == MAX_INLINE_PAYLOAD_BYTES
 
 
-def test_unsafe_threshold_without_a_store_is_a_config_error_under_the_switch(monkeypatch):
+def test_unsafe_threshold_without_a_store_is_a_config_error(monkeypatch):
     m = _bare()
-    monkeypatch.setattr(constants, 'RFC0006', True)
     with pytest.raises(ConfigError) as e:
         m._negotiate_inline_threshold(known(200_000))
     assert 'VIDEOFLOW_MAX_INLINE_PAYLOAD_BYTES' in e.value.remedy
-    # Off: lowered with a warning, so a publish is never refused after the fact.
-    monkeypatch.setattr(constants, 'RFC0006', False)
-    m._negotiate_inline_threshold(known(200_000))
-    assert m._inline_threshold == 200_000 - ENVELOPE_OVERHEAD_BYTES
 
 
 def test_encoder_honours_a_negotiated_threshold():
@@ -122,14 +116,12 @@ def test_partitioned_replicas_admit_only_what_they_own():
     assert _bare('trace_id', 2, 1 - owner)._admit_on_loop(_delivery(b'\x80\x81 garbage'))
 
 
-def test_replay_target_is_honoured_only_under_the_switch(monkeypatch):
+def test_replay_target_is_honoured(monkeypatch):
     buf = encode_envelope('p', 'f', 'r', 't1', 1, MSG_TYPE_DATA, None, {'v': 1})
     m = _bare()
-    monkeypatch.setattr(constants, 'RFC0006', True)
     assert m._admit_on_loop(_delivery(buf, {'VF-Replay-Target': 'sibling'})) is False
     assert m._admit_on_loop(_delivery(buf, {'VF-Replay-Target': 'child'})) is True
-    monkeypatch.setattr(constants, 'RFC0006', False)
-    assert m._admit_on_loop(_delivery(buf, {'VF-Replay-Target': 'sibling'})) is True
+    assert m._admit_on_loop(_delivery(buf, {})) is True                # absent: every child processes it
 
 
 class _Refcount:
@@ -157,7 +149,6 @@ def test_a_confirmed_skip_releases_the_share_but_a_scoped_replay_does_not(monkey
     assert peek_envelope(buf)['blob_ref'] == 'vf-blob-abc'
     m._on_skipped(_delivery(buf))
     assert store.released == ['vf-blob-abc']
-    monkeypatch.setattr(constants, 'RFC0006', True)
     m._on_skipped(_delivery(buf, {'VF-Replay-Target': 'sibling'}))
     assert store.released == ['vf-blob-abc']                    # nothing acquired, nothing released
 

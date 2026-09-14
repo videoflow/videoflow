@@ -31,7 +31,6 @@ from typing import List, Mapping, NamedTuple, Optional
 
 import yaml
 
-from ..core import constants
 from ..core.compiler import (
     NODE_KIND_PROCESSOR,
     NODE_KIND_PRODUCER,
@@ -98,6 +97,19 @@ def k8s_name(*parts : object) -> str:
     raw = '-'.join(str(p) for p in parts).lower()
     name = _DNS1123_RE.sub('-', raw).strip('-')
     return name[:63].strip('-')
+
+def run_name(flow_id : str, run_id : str, *parts : object) -> str:
+    '''
+    The name of one run's resource: ``vf-<flow>-<run>[-<node>][-<suffix>]``
+    (RFC 0006 §10, run-scoped names). Two runs of one flow therefore never
+    ``kubectl apply`` over each other's ConfigMaps or workloads; only the
+    flow-wide NetworkPolicy (``flow_name``) is shared between them.
+    '''
+    return k8s_name('vf', flow_id, run_id, *parts)
+
+def flow_name(flow_id : str, *parts : object) -> str:
+    '''The name of a flow-wide resource shared by every run of the flow (today: the NetworkPolicy).'''
+    return k8s_name('vf', flow_id, *parts)
 
 @dataclass(frozen = True)
 class Mount:
@@ -252,12 +264,18 @@ def _volume_for(mount : Mount) -> dict:
 def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
                envelope_version : int, profile_requests : Optional[dict] = None,
                blob_reader_ids : Optional[List[str]] = None,
-               parent_replicas : Optional[List[int]] = None) -> dict:
+               parent_replicas : Optional[List[int]] = None,
+               replica_slots : Optional[int] = None) -> dict:
     '''
     - Arguments:
         - profile_requests: the ``VF_PROFILE_REQUESTS_JSON`` entry from \
             ``deploy.admission`` when the operator asked for explicit channel \
             profiles; empty or None otherwise, so the default env is unchanged.
+        - replica_slots: ``VF_REPLICA_SLOTS`` — how many replica identities the \
+            node's pods may claim through the run ledger (ENV-5 step 3): the \
+            scaler's ceiling for an autoscaled Deployment, whose pods beyond \
+            ``nb_tasks`` are wanted, not extra. None (every fixed-scale node) \
+            emits nothing, and the worker claims among ``nb_tasks`` slots.
     '''
     env = {
         'VF_NODE_PARAMS_JSON': json.dumps(spec.params),
@@ -286,6 +304,8 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
             env['VF_PROTOCOL_VERSION'] = str(spec.protocol_version)
     if spec.partition_by:
         env['VF_PARTITION_BY'] = spec.partition_by
+    if replica_slots is not None and replica_slots > spec.nb_tasks:
+        env['VF_REPLICA_SLOTS'] = str(replica_slots)
     if spec.join_policy:
         env['VF_JOIN_POLICY_JSON'] = json.dumps(spec.join_policy)
     # Per-node failure handling. Absent (the usual case) ⇒ the worker takes the
@@ -340,15 +360,19 @@ def _keeps_declared_scale(spec : NodeSpec) -> bool:
     multi-worker joins (RUN-018), or a node that declares ``partition_by`` at
     ``nb_tasks = 1``, whose intent the replica count does not erase (RUN-019).
     ``scaling.scaling_rejections`` names the reasons; this is the renderer's
-    half of the same rule. With the switch off the scaler renders as it always did.
+    half of the same rule.
     '''
-    return constants.RFC0006 and (len(spec.parents) > 1 or bool(spec.partition_by))
+    return len(spec.parents) > 1 or bool(spec.partition_by)
 
 def _labels(flow_id : str, node_name : Optional[str] = None) -> dict:
     labels = {LABEL_FLOW_ID: k8s_name(flow_id), LABEL_MANAGED_BY: 'videoflow'}
     if node_name is not None:
         labels[LABEL_NODE] = k8s_name(node_name)
     return labels
+
+def _selector(flow_id : str, run_id : str, node_name : str) -> dict:
+    '''The pod selector of one run's node: flow, run *and* node, so a concurrent run's pods are never selected.'''
+    return {LABEL_NODE: k8s_name(node_name), LABEL_FLOW_ID: k8s_name(flow_id), LABEL_RUN_ID: k8s_name(run_id)}
 
 def gpu_demand(specs : List[NodeSpec],
                default_resource : Optional[str] = None) -> dict[str, int]:
@@ -467,7 +491,7 @@ def gpu_pod_claims(specs : List[NodeSpec],
         claims.setdefault(resource, []).extend([spec.gpu_count] * spec.nb_tasks)
     return claims
 
-def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
+def _pod_spec(spec : NodeSpec, flow_id : str, run_id : str, flow_type : str, image : str,
               nats_configmap : str, mounts : Optional[List[Mount]] = None,
               gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
               gpu_resource_name : Optional[str] = None,
@@ -480,7 +504,7 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         'image': image,
         'imagePullPolicy': image_pull_policy,
         'envFrom': [
-            {'configMapRef': {'name': k8s_name('vf', flow_id, spec.name, 'env')}},
+            {'configMapRef': {'name': run_name(flow_id, run_id, spec.name, 'env')}},
             {'configMapRef': {'name': nats_configmap}},
         ],
     }
@@ -488,24 +512,29 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     # vendor images with a videoflow entrypoint leave it to the image.
     if spec.command:
         container['command'] = list(spec.command)
-    if _is_partitioned(spec):
-        if flow_type == BATCH:
-            # Partitioned BATCH node runs as an Indexed Job; the completion index is
-            # the stable 0..N-1 replica id. Feed it straight into VF_REPLICA_ID (the
-            # worker reads that first) — an indexed-Job pod name has a random suffix,
-            # so the POD_NAME-ordinal path would not recover it.
-            container['env'] = [{
-                'name': 'VF_REPLICA_ID',
-                'valueFrom': {'fieldRef': {
-                    'fieldPath': "metadata.annotations['batch.kubernetes.io/job-completion-index']"}},
-            }]
-        else:
-            # Partitioned REALTIME node runs as a StatefulSet; the ordinal in the pod
-            # name is the replica id (the worker parses it off POD_NAME).
-            container['env'] = [{
-                'name': 'POD_NAME',
-                'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
-            }]
+    if flow_type == BATCH and spec.nb_tasks > 1:
+        # A BATCH node with more than one replica — partitioned or competing —
+        # runs as an Indexed Job; the completion index is the stable 0..N-1
+        # replica id. Feed it straight into VF_REPLICA_ID (the worker reads that
+        # first) — an indexed-Job pod name has a random suffix, so the
+        # POD_NAME-ordinal path would not recover it. Competing replicas need it
+        # as much as partitioned ones: the run ledger records terminators and
+        # leases per replica (EOS-7), and two pods both calling themselves
+        # replica 0 would leave one terminator where the barrier expects two.
+        container['env'] = [{
+            'name': 'VF_REPLICA_ID',
+            'valueFrom': {'fieldRef': {
+                'fieldPath': "metadata.annotations['batch.kubernetes.io/job-completion-index']"}},
+        }]
+    elif _is_partitioned(spec):
+        # Partitioned REALTIME node runs as a StatefulSet; the ordinal in the pod
+        # name is the replica id (the worker parses it off POD_NAME). A competing
+        # REALTIME node is a Deployment, whose pods have no ordinal: each claims
+        # a replica slot through the run ledger instead (ENV-5 step 3).
+        container['env'] = [{
+            'name': 'POD_NAME',
+            'valueFrom': {'fieldRef': {'fieldPath': 'metadata.name'}},
+        }]
 
     resources : dict = {}
     node_selector = None
@@ -641,27 +670,27 @@ def _pod_spec(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
 def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
                    envelope_version : int, profile_requests : Optional[dict] = None,
                    blob_reader_ids : Optional[List[str]] = None,
-                   parent_replicas : Optional[List[int]] = None) -> dict:
+                   parent_replicas : Optional[List[int]] = None,
+                   replica_slots : Optional[int] = None) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
         'metadata': {
-            'name': k8s_name('vf', flow_id, spec.name, 'env'),
+            'name': run_name(flow_id, run_id, spec.name, 'env'),
             'labels': _labels(flow_id, spec.name),
         },
         'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, profile_requests,
-                           blob_reader_ids, parent_replicas),
+                           blob_reader_ids, parent_replicas, replica_slots),
     }
 
-def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str] = None,
+def nats_configmap(flow_id : str, run_id : str, nats_url : str, blob_redis_url : Optional[str] = None,
                    blob_ttl_seconds : Optional[int] = None) -> dict:
     data = {'VF_NATS_URL': nats_url}
     if blob_redis_url:
         data['VF_BLOB_REDIS_URL'] = blob_redis_url
-        if constants.RFC0006:
-            # The run ledger (RFC 0006 ENV-10): the blob Redis, whose persistence
-            # the workers and the provision Job read back before relying on it.
-            data['VF_RUNTIME_STORE_URL'] = blob_redis_url
+        # The run ledger (ENV-10): the blob Redis, whose persistence the workers
+        # and the provision Job read back before relying on it.
+        data['VF_RUNTIME_STORE_URL'] = blob_redis_url
     if blob_ttl_seconds is not None:
         # Blob TTL override (PROTOCOL.md BLOB-7). Absent ⇒ workers use the
         # flow-type default (3600s realtime / 86400s batch).
@@ -670,13 +699,13 @@ def nats_configmap(flow_id : str, nats_url : str, blob_redis_url : Optional[str]
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
         'metadata': {
-            'name': k8s_name('vf', flow_id, 'broker'),
+            'name': run_name(flow_id, run_id, 'broker'),
             'labels': _labels(flow_id),
         },
         'data': data,
     }
 
-def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
+def workload(spec : NodeSpec, flow_id : str, run_id : str, flow_type : str, image : str,
              nats_cm_name : str, mounts : Optional[List[Mount]] = None,
              gpu_runtime_class : Optional[str] = None, gpu_mode : str = 'exclusive',
              gpu_resource_name : Optional[str] = None,
@@ -707,7 +736,7 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     labels = _labels(flow_id, spec.name)
     pod_template = {
         'metadata': {'labels': labels},
-        'spec': _pod_spec(spec, flow_id, flow_type, image, nats_cm_name, mounts = mounts,
+        'spec': _pod_spec(spec, flow_id, run_id, flow_type, image, nats_cm_name, mounts = mounts,
                           gpu_runtime_class = gpu_runtime_class, gpu_mode = gpu_mode,
                           gpu_resource_name = gpu_resource_name,
                           image_pull_policy = image_pull_policy,
@@ -716,7 +745,6 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     }
 
     batch = (flow_type == BATCH)
-    partitioned = _is_partitioned(spec)
     is_job = _renders_as_job(spec, flow_type)
     if is_job:
         # A completing worker pod should not be restarted on a clean exit. Retries
@@ -741,26 +769,25 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
             # that cannot fire if the worker is wedged badly enough. Generous, since
             # a legitimately long batch is not a failure.
             job_spec['activeDeadlineSeconds'] = _BATCH_JOB_DEADLINE_SECONDS
-            if partitioned:
+            if spec.nb_tasks > 1:
                 # N distinct, stable replica ids → Indexed Job (completion index is
-                # the replica id, see _pod_spec).
+                # the replica id, see _pod_spec) for partitioned and competing
+                # nodes alike. Competing consumers share one data durable and
+                # each keep their own EOS durable, so each independently sees EOS,
+                # records its terminator under its own id and exits 0; require
+                # all N to complete. A failed index is retried as the same
+                # replica, which is what lets the replacement resume its ledger.
                 job_spec['completionMode'] = 'Indexed'
-                job_spec['completions'] = spec.nb_tasks
-                job_spec['parallelism'] = spec.nb_tasks
-            elif spec.nb_tasks > 1:
-                # Competing consumers sharing one durable: N interchangeable pods,
-                # each with its own per-process EOS durable, so each independently
-                # sees EOS and exits 0. Require all N to complete.
                 job_spec['completions'] = spec.nb_tasks
                 job_spec['parallelism'] = spec.nb_tasks
         return {
             'apiVersion': 'batch/v1',
             'kind': 'Job',
-            'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
+            'metadata': {'name': run_name(flow_id, run_id, spec.name), 'labels': labels},
             'spec': job_spec,
         }
 
-    selector = {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}}
+    selector = {'matchLabels': _selector(flow_id, run_id, spec.name)}
 
     if _is_partitioned(spec):
         # Partitioned node → StatefulSet, so pod ordinals give stable replica ids
@@ -769,9 +796,9 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
         return {
             'apiVersion': 'apps/v1',
             'kind': 'StatefulSet',
-            'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
+            'metadata': {'name': run_name(flow_id, run_id, spec.name), 'labels': labels},
             'spec': {
-                'serviceName': k8s_name('vf', flow_id, spec.name, 'hl'),
+                'serviceName': run_name(flow_id, run_id, spec.name, 'hl'),
                 'replicas': spec.nb_tasks,
                 'selector': selector,
                 'template': pod_template,
@@ -788,7 +815,7 @@ def workload(spec : NodeSpec, flow_id : str, flow_type : str, image : str,
     return {
         'apiVersion': 'apps/v1',
         'kind': 'Deployment',
-        'metadata': {'name': k8s_name('vf', flow_id, spec.name), 'labels': labels},
+        'metadata': {'name': run_name(flow_id, run_id, spec.name), 'labels': labels},
         'spec': deployment_spec,
     }
 
@@ -824,30 +851,30 @@ def host_resources_for(spec : NodeSpec, resources : Optional[Mapping[str, Mappin
         out.update({str(k): str(v) for k, v in ((resources or {}).get(scope) or {}).items()})
     return out
 
-def headless_service(spec : NodeSpec, flow_id : str) -> dict:
+def headless_service(spec : NodeSpec, flow_id : str, run_id : str) -> dict:
     '''Headless Service backing a partitioned node's StatefulSet (required for stable pod network identity/ordinals).'''
     labels = _labels(flow_id, spec.name)
     return {
         'apiVersion': 'v1',
         'kind': 'Service',
-        'metadata': {'name': k8s_name('vf', flow_id, spec.name, 'hl'), 'labels': labels},
+        'metadata': {'name': run_name(flow_id, run_id, spec.name, 'hl'), 'labels': labels},
         'spec': {
             'clusterIP': 'None',
-            'selector': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)},
+            'selector': _selector(flow_id, run_id, spec.name),
             'ports': [{'port': 8080, 'name': 'health'}],
         },
     }
 
-def pod_disruption_budget(spec : NodeSpec, flow_id : str) -> dict:
+def pod_disruption_budget(spec : NodeSpec, flow_id : str, run_id : str) -> dict:
     '''Keeps at least one replica of a multi-replica node available during voluntary disruptions (node drains, upgrades).'''
     labels = _labels(flow_id, spec.name)
     return {
         'apiVersion': 'policy/v1',
         'kind': 'PodDisruptionBudget',
-        'metadata': {'name': k8s_name('vf', flow_id, spec.name, 'pdb'), 'labels': labels},
+        'metadata': {'name': run_name(flow_id, run_id, spec.name, 'pdb'), 'labels': labels},
         'spec': {
             'minAvailable': 1,
-            'selector': {'matchLabels': {LABEL_NODE: k8s_name(spec.name), LABEL_FLOW_ID: k8s_name(flow_id)}},
+            'selector': {'matchLabels': _selector(flow_id, run_id, spec.name)},
         },
     }
 
@@ -856,7 +883,7 @@ def flow_spec_configmap(specs : List[NodeSpec], flow_id : str, run_id : str) -> 
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
-        'metadata': {'name': k8s_name('vf', flow_id, 'specs'), 'labels': _labels(flow_id)},
+        'metadata': {'name': run_name(flow_id, run_id, 'specs'), 'labels': _labels(flow_id)},
         'data': {'specs.json': json.dumps([s.to_dict() for s in specs])},
     }
 
@@ -881,7 +908,7 @@ def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str
     one that cannot schedule.
     '''
     labels = _labels(flow_id)
-    spec_cm = k8s_name('vf', flow_id, 'specs')
+    spec_cm = run_name(flow_id, run_id, 'specs')
     container = {
         'name': 'provision',
         'image': image,
@@ -915,7 +942,7 @@ def provision_init_job(flow_id : str, run_id : str, flow_type : str, image : str
     return {
         'apiVersion': 'batch/v1',
         'kind': 'Job',
-        'metadata': {'name': k8s_name('vf', flow_id, 'provision'), 'labels': labels},
+        'metadata': {'name': run_name(flow_id, run_id, 'provision'), 'labels': labels},
         'spec': {
             'backoffLimit': 6,
             'template': {
@@ -952,9 +979,8 @@ def scaled_object(spec : NodeSpec, flow_id : str, run_id : str,
 
     # One trigger per parent under RFC 0006 — KEDA/HPA takes the highest replica
     # count across triggers (KEDA FAQ), so a backed-up second parent scales the
-    # node even while the first is drained (RUN-046). Until the RFC is accepted
-    # the scaler watches the first declared parent only, as it always did.
-    parents = sorted(spec.parents) if constants.RFC0006 else spec.parents[:1]
+    # node even while the first is drained (RUN-046).
+    parents = sorted(spec.parents)
     triggers = [{
         'type': 'nats-jetstream',
         'metadata': {
@@ -968,9 +994,9 @@ def scaled_object(spec : NodeSpec, flow_id : str, run_id : str,
     return {
         'apiVersion': 'keda.sh/v1alpha1',
         'kind': 'ScaledObject',
-        'metadata': {'name': k8s_name('vf', flow_id, spec.name, 'scaler'), 'labels': _labels(flow_id, spec.name)},
+        'metadata': {'name': run_name(flow_id, run_id, spec.name, 'scaler'), 'labels': _labels(flow_id, spec.name)},
         'spec': {
-            'scaleTargetRef': {'name': k8s_name('vf', flow_id, spec.name)},
+            'scaleTargetRef': {'name': run_name(flow_id, run_id, spec.name)},
             'minReplicaCount': spec.nb_tasks,
             'maxReplicaCount': max(max_replicas, spec.nb_tasks),
             'triggers': triggers,
@@ -986,7 +1012,7 @@ def network_policy(flow_id : str) -> dict:
     return {
         'apiVersion': 'networking.k8s.io/v1',
         'kind': 'NetworkPolicy',
-        'metadata': {'name': k8s_name('vf', flow_id, 'netpol'), 'labels': _labels(flow_id)},
+        'metadata': {'name': flow_name(flow_id, 'netpol'), 'labels': _labels(flow_id)},
         'spec': {
             'podSelector': {'matchLabels': {LABEL_FLOW_ID: k8s_name(flow_id)}},
             'policyTypes': ['Ingress'],
@@ -1105,7 +1131,7 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     # (correct only when that node is a Python worker — hence the override exists).
     init_image = provision_image or default_image or images_by_name[specs[0].name]
 
-    nats_cm = nats_configmap(flow_id, nats_url, blob_redis_url, blob_ttl_seconds = blob_ttl_seconds)
+    nats_cm = nats_configmap(flow_id, run_id, nats_url, blob_redis_url, blob_ttl_seconds = blob_ttl_seconds)
     nats_cm_name = nats_cm['metadata']['name']
 
     manifests = [nats_cm, network_policy(flow_id)]
@@ -1117,19 +1143,31 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                                         priority_class = priority_class,
                                         stream_replicas = stream_replicas,
                                         profile_requests = profile_requests))
+    # Which nodes a scaler drives (decided once; the same rule renders their
+    # ScaledObjects below): their pods claim replica identities up to the
+    # scaler's ceiling, not nb_tasks, so a scaled-out pod is a wanted replica.
+    scaled : set = set()
+    if autoscaling:
+        for spec in specs:
+            if not scaling.admit_autoscaling(spec.name, flow_type, spec.kind, _is_partitioned(spec),
+                                             _renders_as_job(spec, flow_type), has_parents = bool(spec.parents),
+                                             device_type = spec.device_type, gpu_autoscaling = gpu_autoscaling,
+                                             is_join = _keeps_declared_scale(spec) and len(spec.parents) > 1,
+                                             declares_partition = _keeps_declared_scale(spec) and bool(spec.partition_by)):
+                scaled.add(spec.name)
     for spec in specs:
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, profile_requests,
-                                        blob_reader_ids(spec, specs) if constants.RFC0006 else None,
-                                        parent_replicas(spec, specs) if constants.RFC0006 else None))
+                                        blob_reader_ids(spec, specs), parent_replicas(spec, specs),
+                                        replica_slots = max(max_replicas, spec.nb_tasks) if spec.name in scaled else None))
         if _is_partitioned(spec):
-            manifests.append(headless_service(spec, flow_id))
+            manifests.append(headless_service(spec, flow_id, run_id))
         if spec.device_type == 'gpu':
             # A DRA strategy's ResourceClaimTemplate; nothing for the others. The
             # renderer owns the labels, as for every other object of the flow.
             for claim in strategy.claim_manifests(spec, namespace, flow_id, run_id):
                 claim['metadata']['labels'] = {**_labels(flow_id, spec.name), **claim['metadata'].get('labels', {})}
                 manifests.append(claim)
-        manifests.append(workload(spec, flow_id, flow_type, images_by_name[spec.name], nats_cm_name,
+        manifests.append(workload(spec, flow_id, run_id, flow_type, images_by_name[spec.name], nats_cm_name,
                                   supervision = supervision,
                                   mounts = mounts, gpu_runtime_class = gpu_runtime_class,
                                   gpu_mode = gpu_mode, gpu_resource_name = gpu_resource_name,
@@ -1138,20 +1176,16 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
                                   rollout_policy = rollout_policy, gpu_nodes = gpu_nodes,
                                   host_resources = host_resources_for(spec, resources) or None))
         if spec.nb_tasks > 1:
-            manifests.append(pod_disruption_budget(spec, flow_id))
+            manifests.append(pod_disruption_budget(spec, flow_id, run_id))
 
     if autoscaling:
         endpoint = nats_monitoring_endpoint or f'nats.{namespace}.svc:8222'
+        # The fixed-scale rules (non-processors, partitioned nodes, GPU nodes
+        # without --gpu-autoscaling) keep the declared scale; a processor that
+        # renders as a Job raises — a scaler pointed at a Deployment that does
+        # not exist would be accepted by the API server and drive nothing.
         for spec in specs:
-            # The fixed-scale rules (non-processors, partitioned nodes, GPU nodes
-            # without --gpu-autoscaling) keep the declared scale; a processor that
-            # renders as a Job raises — a scaler pointed at a Deployment that does
-            # not exist would be accepted by the API server and drive nothing.
-            if scaling.admit_autoscaling(spec.name, flow_type, spec.kind, _is_partitioned(spec),
-                                         _renders_as_job(spec, flow_type), has_parents = bool(spec.parents),
-                                         device_type = spec.device_type, gpu_autoscaling = gpu_autoscaling,
-                                         is_join = _keeps_declared_scale(spec) and len(spec.parents) > 1,
-                                         declares_partition = _keeps_declared_scale(spec) and bool(spec.partition_by)):
+            if spec.name not in scaled:
                 continue
             so = scaled_object(spec, flow_id, run_id, endpoint, max_replicas)
             if so is not None:
@@ -1185,7 +1219,7 @@ class ProvisionSplit(NamedTuple):
     provision : List[dict]
     worker : List[dict]
 
-def split_provision_manifests(manifests : List[dict], flow_id : str) -> ProvisionSplit:
+def split_provision_manifests(manifests : List[dict], flow_id : str, run_id : str) -> ProvisionSplit:
     '''
     Partitions rendered manifests into a ``ProvisionSplit`` so the caller can apply
     provisioning first and wait for it before starting workers.
@@ -1197,16 +1231,16 @@ def split_provision_manifests(manifests : List[dict], flow_id : str) -> Provisio
 
     - Arguments:
         - manifests: the full rendered manifest list from ``render_manifests``.
-        - flow_id: the flow id the provision-phase resource names are derived from.
+        - flow_id, run_id: what the provision-phase resource names are derived from.
 
     - Returns:
         - a ``ProvisionSplit(provision, worker)``, each preserving input order.
     '''
     provision_names = {
-        k8s_name('vf', flow_id, 'broker'),
-        k8s_name('vf', flow_id, 'specs'),
-        k8s_name('vf', flow_id, 'netpol'),
-        k8s_name('vf', flow_id, 'provision'),
+        run_name(flow_id, run_id, 'broker'),
+        run_name(flow_id, run_id, 'specs'),
+        flow_name(flow_id, 'netpol'),
+        run_name(flow_id, run_id, 'provision'),
     }
     provision : List[dict] = []
     worker : List[dict] = []

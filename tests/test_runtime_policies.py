@@ -23,7 +23,6 @@ from videoflow.backends.capabilities import (
     plan_composition,
 )
 from videoflow.backends.outcomes import known, unknown
-from videoflow.core import constants
 from videoflow.core.compiler import compile_flow, parent_replicas, sink_guarantees
 from videoflow.core.errors import ConfigError, IncompatibleProfile, UnobservableState
 from videoflow.core.policies import (
@@ -230,11 +229,12 @@ def test_sink_guarantees_come_from_the_class_declaration():
     assert sink_guarantees(Flow([CommandlineConsumer(name = 'plain2')(other)])) == {}
 
 
-def test_ledger_rows_are_emitted_only_under_the_switch(monkeypatch, tmp_path):
+def test_ledger_rows_are_emitted_when_derived(monkeypatch, tmp_path):
     from videoflow.deploy.manifests import render_manifests
     from videoflow.engines.local import _worker_env
     specs = compile_flow(_flow())
     sink = [s for s in specs if s.name == 'sink'][0]
+    # The env builder emits a row only when its value is given (ENV-10/11).
     off = _worker_env(sink, 'nats://x:4222', 'demo', 'batch', 'run1', None, 0, 3)
     assert 'VF_PARENT_REPLICAS' not in off and 'VF_RUNTIME_STORE_URL' not in off
     on = _worker_env(sink, 'nats://x:4222', 'demo', 'batch', 'run1', None, 0, 3, parent_replicas = [2],
@@ -247,11 +247,10 @@ def test_ledger_rows_are_emitted_only_under_the_switch(monkeypatch, tmp_path):
 
     def nats_cm(manifests):
         return next(m['data'] for m in manifests if m['kind'] == 'ConfigMap' and 'VF_NATS_URL' in m.get('data', {}))
-    plain = render_manifests(specs, 'demo', 'batch', 'nats://x:4222', 'run1', default_image = 'img:1',
-                             blob_redis_url = 'redis://r:6379/0')
-    assert not any('VF_PARENT_REPLICAS' in d for d in node_cms(plain).values())
+    # The renderer derives both from the flow: the run ledger is the blob store,
+    # each node's parent replica counts come from the specs (no blob store: no ledger URL).
+    plain = render_manifests(specs, 'demo', 'batch', 'nats://x:4222', 'run1', default_image = 'img:1')
     assert 'VF_RUNTIME_STORE_URL' not in nats_cm(plain)
-    monkeypatch.setattr(constants, 'RFC0006', True)
     switched = render_manifests(specs, 'demo', 'batch', 'nats://x:4222', 'run1', default_image = 'img:1',
                                 blob_redis_url = 'redis://r:6379/0')
     assert node_cms(switched)['sink']['VF_PARENT_REPLICAS'] == '2'

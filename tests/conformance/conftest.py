@@ -329,6 +329,21 @@ def gpu(request : pytest.FixtureRequest) -> Dict[str, Any]:
         raise InvalidTest(f'test left compute processes on the GPUs: {leaked}')
 
 @pytest.fixture
+def bench(request : pytest.FixtureRequest) -> Dict[str, Any]:
+    '''
+    The operator's thresholds for the current benchmark case
+    (``VF_BENCH_THRESHOLDS_JSON``, see ``bench/thresholds.example.json``), or
+    NOT_RUN: a benchmark passes only against supplied SLOs, never invented ones.
+    '''
+    from _bench import thresholds_for
+    case_id = case_id_of(request.node)
+    assert case_id is not None, 'bench needs a @pytest.mark.case marker'
+    reason, thresholds = thresholds_for(case_id)
+    if reason is not None:
+        not_run(reason)
+    return thresholds
+
+@pytest.fixture
 def k3s_admin(k3s : Dict[str, str]) -> Dict[str, str]:
     '''``k3s`` plus the RBAC powers a test that impersonates a restricted user needs.'''
     for verb, resource in (('impersonate', 'users'), ('create', 'clusterroles'), ('create', 'clusterrolebindings')):

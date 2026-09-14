@@ -52,7 +52,6 @@ from _runs3 import messengers, read_sink_log, start_worker, stop_flow, worker_en
 from videoflow.backends import faults
 from videoflow.backends.messaging import ChannelId
 from videoflow.backends.outcomes import Known
-from videoflow.core import constants
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.messaging import topology
 
@@ -224,7 +223,6 @@ def test_run_030_gpu_scale_down_and_rollout_drain_outstanding_work_before(nats_u
     process has exited. The pod-level half with a real accelerator grant is the
     pending kubernetes primary.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     flow, run = unique_ids('run030')
     driver = JetStreamDriver(nats_url, flow, run)
     record : Dict[str, Any] = {'flow': flow, 'run': run}
@@ -322,6 +320,7 @@ def test_run_030_pod_deletion_releases_the_grant_only_after_the_drain(k3s, evide
     from videoflow.core.compiler import compile_flow
     from videoflow.core.supervision import SupervisionPolicy
     from videoflow.deploy.infra import infra_urls
+    from videoflow.deploy.manifests import run_name
     from videoflow.engines.kubernetes import KubernetesExecutionEngine
     from videoflow.producers import IntProducer
     support = _cluster_support()
@@ -380,7 +379,7 @@ def test_run_030_pod_deletion_releases_the_grant_only_after_the_drain(k3s, evide
         record['completed'] = {'distinct': seen, 'lines': len(lines)}
         assert seen == list(range(inputs)), seen                        # no admitted input disappears
         assert len(lines) - len(seen) <= 1, lines                       # at most the in-flight input twice
-        job = kubectl_json('get', 'job', f'vf-{flow_id}-sink', '-n', namespace)
+        job = kubectl_json('get', 'job', run_name(flow_id, run_id, 'sink'), '-n', namespace)
         record['job_status'] = job.get('status')
     finally:
         engine.teardown()
@@ -393,7 +392,6 @@ def test_run_030_pod_deletion_releases_the_grant_only_after_the_drain(k3s, evide
 @pytest.mark.negative_control(of = 'RUN-030')
 def test_run_030_detects_a_quiesce_that_only_raises_a_flag(nats_url, monkeypatch) -> None:
     '''A quiesce that hands nothing back leaves the parked inputs leased on a leaving process: the oracle must catch it.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     defects_run3.flag_only_quiesce(monkeypatch)
     flow, run = unique_ids('run030n')
     driver = JetStreamDriver(nats_url, flow, run)
@@ -422,7 +420,7 @@ def _oracle_run_031_model(evidence : Dict[str, Any]) -> None:
         'cpu': '2', 'memory': '6Gi', 'memory_limit': '8Gi'}
     manifests = render_manifests([producer, remote], 'r031', 'realtime', 'nats://x:4222', 'r', default_image = 'img:1',
                                  resources = {'*': {'cpu': '500m'}, 'model': {'memory': '6Gi', 'memory_limit': '8Gi'}})
-    model = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-r031-model')
+    model = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-r031-r-model')
     resources = model['spec']['template']['spec']['containers'][0]['resources']
     assert resources['requests'] == {'cpu': '500m', 'memory': '6Gi'}
     assert resources['limits'] == {'nvidia.com/gpu': 1, 'memory': '8Gi'}
@@ -551,7 +549,7 @@ def _oracle_run_032_model(evidence : Dict[str, Any]) -> None:
                 flow_type = REALTIME, flow_id = 'r032')
     manifests = render_manifests(compile_flow(flow), 'r032', 'realtime', 'nats://x:4222', 'r', default_image = 'img:1',
                                  gpu_nodes = ['gpu-h'])
-    pod = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-r032-vlm')['spec']['template']['spec']
+    pod = next(m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-r032-r-vlm')['spec']['template']['spec']
     terms = (pod.get('affinity') or {}).get('nodeAffinity', {}).get('requiredDuringSchedulingIgnoredDuringExecution', {}).get('nodeSelectorTerms')
     assert terms == [{'matchExpressions': [{'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': ['gpu-h']}]}]
     zone = backend.plan([WorkloadRequest('r032', 'r', 'vlm', 1, SHARING_EXCLUSIVE, constraints = (
@@ -688,7 +686,7 @@ def test_run_033_worker_relocation_preserves_model_and_input_asset_identity(k3s,
     from videoflow.core.compiler import compile_flow
     from videoflow.core.supervision import SupervisionPolicy
     from videoflow.deploy.infra import infra_urls
-    from videoflow.deploy.manifests import k8s_name, parse_mounts
+    from videoflow.deploy.manifests import parse_mounts, run_name
     from videoflow.engines.kubernetes import KubernetesExecutionEngine
     from videoflow.producers import IntProducer
     support = _cluster_support()
@@ -739,7 +737,7 @@ def test_run_033_worker_relocation_preserves_model_and_input_asset_identity(k3s,
                                            supervision = SupervisionPolicy(), image_pull_policy = 'Always',
                                            priority_class = support.PRIORITY_CLASS or None, rollout_policy = 'drain')
         record : Dict[str, Any] = {'asset': str(asset), 'digest': digest}
-        deployment = f'vf-{k8s_name(flow_id)}-sink'
+        deployment = run_name(flow_id, run_id, 'sink')
         try:
             engine.allocate_and_run_tasks(None, flow_id, REALTIME, run_id)
             # Pin the sink to this host first (the local file exists here), wait for it to process.
@@ -826,10 +824,112 @@ def test_run_033_detects_a_trusting_worker(tmp_path, monkeypatch) -> None:
     assert defects.detects(_oracle_run_033_model, tmp_path, {})
 
 
+def _run_objects(namespace : str, flow_id : str, run_id : str) -> Dict[tuple, Dict[str, Any]]:
+    '''
+    ``(kind, name) -> {generation, spec_digest, data_digest, selector, template_labels}``
+    of every object one run owns — what another run could overwrite. ``resourceVersion``
+    is deliberately not part of it: the controllers bump it on every status update
+    (a Job's pods completing), which is not a mutation of what the run configured.
+    '''
+    from _k8s import kubectl_json
+
+    from videoflow.deploy.manifests import k8s_name
+
+    def digest(value : Any) -> str:
+        return hashlib.sha256(json.dumps(value, sort_keys = True, default = str).encode()).hexdigest()[:12]
+
+    out : Dict[tuple, Dict[str, Any]] = {}
+    for kind in ('deployments', 'statefulsets', 'jobs', 'configmaps', 'services'):
+        listing = kubectl_json('get', kind, '-n', namespace, '-l',
+                               f'videoflow.io/flow-id={k8s_name(flow_id)},videoflow.io/run-id={k8s_name(run_id)}')
+        for item in listing.get('items', []):
+            meta = item['metadata']
+            spec = item.get('spec') or {}
+            template = ((spec.get('template') or {}).get('metadata') or {}).get('labels') or {}
+            out[(item['kind'], meta['name'])] = {'generation': meta.get('generation'),
+                                                'spec_digest': digest(spec),
+                                                'data_digest': digest(item.get('data', {})),
+                                                'selector': spec.get('selector'),
+                                                'template_labels': template}
+    return out
+
+
+def _oracle_run_047_render(evidence : Dict[str, Any]) -> None:
+    '''
+    Two runs of one flow render disjoint objects (only the flow-wide
+    NetworkPolicy is shared), every workload's selector and pod template name
+    their run, and ``--single-run`` refuses a third run beside an active one —
+    and refuses to decide at all when the namespace cannot be listed.
+    '''
+    from support_kubectl import fake_run
+
+    from videoflow.consumers import CommandlineConsumer
+    from videoflow.core import Flow
+    from videoflow.core.compiler import compile_flow
+    from videoflow.core.errors import ActiveRunConflict, UnobservableState
+    from videoflow.deploy import cluster
+    from videoflow.deploy.manifests import render_manifests
+    from videoflow.processors import IdentityProcessor
+    from videoflow.producers import IntProducer
+
+    def build() -> Any:
+        src = IntProducer(0, 9, name = 'src')
+        stage = IdentityProcessor(name = 'stage', nb_tasks = 2)(src)
+        return compile_flow(Flow([CommandlineConsumer(name = 'sink')(stage)], flow_type = REALTIME, flow_id = 'r047'))
+
+    rendered = {run: render_manifests(build(), 'r047', REALTIME, 'nats://x:4222', run, namespace = 'ns',
+                                      default_image = 'img') for run in ('run-a', 'run-b')}
+    names = {run: {(m['kind'], m['metadata']['name']) for m in ms} for run, ms in rendered.items()}
+    shared = names['run-a'] & names['run-b']
+    evidence['shared_objects'] = sorted(f'{k}/{n}' for k, n in shared)
+    assert shared == {('NetworkPolicy', 'vf-r047-netpol')}, shared
+    for run, ms in rendered.items():
+        for m in ms:
+            if m['kind'] in ('Deployment', 'StatefulSet', 'Job'):
+                template = m['spec']['template']['metadata']['labels']
+                assert template.get('videoflow.io/run-id') == run, (run, m['metadata']['name'], template)
+                if m['kind'] != 'Job':
+                    assert m['spec']['selector']['matchLabels'].get('videoflow.io/run-id') == run, (run, m['metadata']['name'])
+            if m['kind'] == 'ConfigMap':
+                assert run in m['metadata']['name'], (run, m['metadata']['name'])
+    # --single-run, decided before anything is created.
+    listing = fake_run({'deployments,statefulsets,jobs': 'run-a\n'})
+    with pytest.MonkeyPatch.context() as monkey:
+        monkey.setattr(cluster.subprocess, 'run', listing)
+        with pytest.raises(ActiveRunConflict) as refused:
+            cluster.refuse_concurrent_run('kubectl', 'ns', 'r047', 'run-c')
+        evidence['single_run_refusal'] = str(refused.value)[:200]
+        monkey.setattr(cluster.subprocess, 'run', fake_run({}, failing = ['deployments,statefulsets,jobs']))
+        with pytest.raises(UnobservableState):
+            cluster.refuse_concurrent_run('kubectl', 'ns', 'r047', 'run-c')
+        monkey.setattr(cluster.subprocess, 'run', fake_run({'deployments,statefulsets,jobs': ''}))
+        cluster.refuse_concurrent_run('kubectl', 'ns', 'r047', 'run-c')      # an empty namespace admits
+
+
+@pytest.mark.case('RUN-047')
+@pytest.mark.level('model')
+@pytest.mark.variant('render')
+def test_run_047_runs_render_disjoint_objects_and_single_run_refuses(evidence_dir) -> None:
+    evidence : Dict[str, Any] = {}
+    _oracle_run_047_render(evidence)
+    (evidence_dir / 'concurrent_runs_render.json').write_text(json.dumps(evidence, indent = 2, default = str))
+
+
+@pytest.mark.negative_control(of = 'RUN-047')
+def test_run_047_detects_flow_scoped_names_and_a_free_namespace_on_unread(monkeypatch) -> None:
+    import defects_k8s
+    with pytest.MonkeyPatch.context() as monkey:
+        defects_k8s.flow_scoped_names(monkey)
+        assert defects.detects(_oracle_run_047_render, {})
+    with pytest.MonkeyPatch.context() as monkey:
+        defects_k8s.free_namespace_on_unread(monkey)
+        assert defects.detects(_oracle_run_047_render, {})
+
+
 @pytest.mark.case('RUN-047')
 @pytest.mark.level('kubernetes')
-@pytest.mark.pending('phase 6')
-def test_run_047_concurrent_kubernetes_runs_cannot_overwrite_another_runs() -> None:
+@pytest.mark.parametrize('flow_type', [BATCH, REALTIME], ids = ['jobs', 'deployments'])
+def test_run_047_concurrent_kubernetes_runs_cannot_overwrite_another_runs(k3s, evidence_dir, flow_type) -> None:
     '''
     RUN-047 (P0, deployment, kubernetes): Concurrent Kubernetes runs cannot overwrite another
     runs configuration or workload.
@@ -838,6 +938,138 @@ def test_run_047_concurrent_kubernetes_runs_cannot_overwrite_another_runs() -> N
     creation/deletion, or runB is rejected before any mutation under an explicit single-run
     policy.
 
-    Pending phase 6: run-scoped Kubernetes names (RFC 0006 §10) and the
-    ``--single-run`` policy are the acceptance flip.
+    On the cluster, for the Job and the Deployment renderings: run A of a flow
+    processes identifiable inputs; run B of the *same flow and node names* with
+    a different configuration is applied beside it — every object of A keeps its
+    resourceVersion, generation and data, no selector of B matches A's pods; B is
+    deleted and A is untouched; an A pod is restarted and loads A's own
+    configuration (its own ConfigMap, its own run id); and a third run under
+    ``--single-run`` is refused before anything of it exists.
     '''
+    import shutil
+
+    from _k8s import (
+        cluster_support,
+        delete_pods,
+        delete_run_streams_from_host,
+        fixture_nodes,
+        image_present,
+        pods_of,
+        read_lines,
+    )
+
+    from videoflow.core import Flow
+    from videoflow.core.compiler import compile_flow
+    from videoflow.core.errors import ActiveRunConflict
+    from videoflow.core.supervision import SupervisionPolicy
+    from videoflow.deploy.infra import infra_urls
+    from videoflow.engines.kubernetes import KubernetesExecutionEngine
+    from videoflow.producers import IntProducer
+    support = cluster_support()
+    missing = image_present(support.FIXTURE_IMAGE)
+    if missing:
+        pytest.skip(f'not_run: {missing}')
+    root = support.work_root()
+    if root is None:
+        pytest.skip('not_run: the work claim is not Bound — run scripts/k3s-test-up.sh')
+    nodes = fixture_nodes()
+    namespace = k3s['VF_K8S_NAMESPACE']
+    nats_url = os.environ.get('VF_K8S_NATS_URL', 'nats://127.0.0.1:30422')
+    flow_id, _ = unique_ids('run047k')
+    runs = {label: unique_ids('r')[1] for label in ('a', 'b', 'c')}
+    work = root / f'conf-{runs["a"]}'
+    work.mkdir(parents = True)
+    # A BATCH run must still be active when its pod is restarted, after B has come
+    # and gone (a completed Job replaces nothing): four minutes of inputs.
+    inputs = 2400 if flow_type == BATCH else 100000
+
+    def build(label : str) -> Any:
+        src = IntProducer(0, inputs - 1, 0.1, name = 'src')
+        stage = nodes.TaggingProcessor(name = 'stage')(src)
+        sink = nodes.LineWriterConsumer(str(work / f'{label}.txt'), name = 'sink')(stage)
+        return compile_flow(Flow([sink], flow_type = flow_type, flow_id = flow_id))
+
+    def engine(label : str, single_run : bool = False) -> Any:
+        return KubernetesExecutionEngine(nats_url = infra_urls(namespace)['nats'], namespace = namespace,
+                                         default_image = support.FIXTURE_IMAGE, specs = build(label),
+                                         mounts = support.work_mounts(str(work)), supervision = SupervisionPolicy(),
+                                         image_pull_policy = 'Always', priority_class = support.PRIORITY_CLASS or None,
+                                         single_run = single_run)
+    record : Dict[str, Any] = {'flow_id': flow_id, 'runs': runs, 'flow_type': flow_type}
+    engines : Dict[str, Any] = {}
+    try:
+        engines['a'] = engine('a')
+        engines['a'].allocate_and_run_tasks(None, flow_id, flow_type, runs['a'])
+        deadline = time.monotonic() + 300
+        while time.monotonic() < deadline and len(read_lines(work / 'a.txt')) < 3:
+            time.sleep(2)
+        assert len(read_lines(work / 'a.txt')) >= 3, 'run A never started processing'
+        a_before = _run_objects(namespace, flow_id, runs['a'])
+        record['a_objects'] = sorted(f'{k[0]}/{k[1]}' for k in a_before)
+        assert a_before, 'run A owns no objects?'
+        # Run B beside it: same flow, same node names, a different configuration.
+        engines['b'] = engine('b')
+        engines['b'].allocate_and_run_tasks(None, flow_id, flow_type, runs['b'])
+        b_objects = _run_objects(namespace, flow_id, runs['b'])
+        record['b_objects'] = sorted(f'{k[0]}/{k[1]}' for k in b_objects)
+        assert not set(a_before) & set(b_objects), 'runs A and B share an object name'
+        a_during = _run_objects(namespace, flow_id, runs['a'])
+        changed = {k: (a_before[k], a_during.get(k)) for k in a_before if a_before[k] != a_during.get(k)}
+        record['a_changed_by_b'] = {f'{k[0]}/{k[1]}': v for k, v in changed.items()}
+        assert not changed, f'run B mutated run A: {changed}'
+        for (kind, name), obj in b_objects.items():
+            # A Job's selector is the controller's own uid (unique by construction);
+            # its pods carry the run in their template labels. A Deployment's and a
+            # Service's selectors name the run themselves.
+            selector = (obj.get('selector') or {}).get('matchLabels') or obj.get('selector') or {}
+            if kind == 'Job':
+                assert obj['template_labels'].get('videoflow.io/run-id') == runs['b'], (kind, name, obj['template_labels'])
+            elif selector:
+                assert selector.get('videoflow.io/run-id') == runs['b'], (kind, name, selector)
+        a_pods = {p['metadata']['name'] for p in pods_of(namespace, flow_id, 'stage')
+                  if p['metadata']['labels'].get('videoflow.io/run-id') == runs['a']}
+        b_pods = {p['metadata']['name'] for p in pods_of(namespace, flow_id, 'stage')
+                  if p['metadata']['labels'].get('videoflow.io/run-id') == runs['b']}
+        assert a_pods and b_pods and not a_pods & b_pods
+        # Delete B: A is untouched.
+        engines.pop('b').teardown()
+        delete_run_streams_from_host(nats_url, flow_id, runs['b'])
+        deadline = time.monotonic() + 120
+        while time.monotonic() < deadline and _run_objects(namespace, flow_id, runs['b']):
+            time.sleep(2)
+        assert not _run_objects(namespace, flow_id, runs['b'])
+        a_after = _run_objects(namespace, flow_id, runs['a'])
+        assert set(a_after) == set(a_before), (sorted(a_before), sorted(a_after))
+        # Restart an A pod: the replacement loads A's own configuration.
+        (victim,) = sorted(a_pods)[:1]
+        delete_pods(namespace, [victim])
+        deadline = time.monotonic() + 180
+        replacement = None
+        while time.monotonic() < deadline and replacement is None:
+            for pod in pods_of(namespace, flow_id, 'stage'):
+                if pod['metadata']['name'] != victim and pod['metadata']['labels'].get('videoflow.io/run-id') == runs['a'] \
+                        and (pod.get('status') or {}).get('phase') == 'Running':
+                    replacement = pod
+            time.sleep(2)
+        assert replacement is not None, 'no replacement pod for run A'
+        env_from = [ref.get('configMapRef', {}).get('name') for c in replacement['spec']['containers'] for ref in c.get('envFrom', [])]
+        record['replacement'] = {'pod': replacement['metadata']['name'], 'envFrom': env_from}
+        assert any(runs['a'] in name for name in env_from if name), env_from
+        assert not any(runs['b'] in name for name in env_from if name), env_from
+        # --single-run: a third run is refused before anything of it exists.
+        with pytest.raises(ActiveRunConflict) as e:
+            engine('c', single_run = True).allocate_and_run_tasks(None, flow_id, flow_type, runs['c'])
+        record['single_run_refusal'] = str(e.value)[:300]
+        assert not _run_objects(namespace, flow_id, runs['c'])
+        if flow_type == BATCH:
+            assert engines['a'].wait_for_completion() == []
+            lines = read_lines(work / 'a.txt')
+            record['a_completed'] = len(lines)
+            assert len(lines) == inputs
+    finally:
+        for eng in engines.values():
+            eng.teardown()
+        for run_id in runs.values():
+            delete_run_streams_from_host(nats_url, flow_id, run_id)
+        shutil.rmtree(work, ignore_errors = True)
+        (evidence_dir / f'concurrent_runs_{flow_type}.json').write_text(json.dumps(record, indent = 2, default = str))

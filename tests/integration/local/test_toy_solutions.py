@@ -55,8 +55,8 @@ from support_solutions import (
 NATS_URL = os.environ.get('VF_TEST_NATS_URL', 'nats://localhost:4222')
 REDIS_URL = os.environ.get('VF_TEST_REDIS_URL', 'redis://localhost:6379/0')
 #: The append-only, ``noeviction`` Redis of ``docker compose --profile redis-durable``.
-#: Under ``VF_RFC0006=1`` a BATCH flow with a payload store is admitted only against a
-#: store that cannot lose an accepted envelope's bytes, so the dev cache is refused —
+#: A BATCH flow with a payload store is admitted only against a store that cannot
+#: lose an accepted envelope's bytes (RFC 0006), so the dev cache is refused —
 #: truthfully — and this one is used instead when it answers.
 REDIS_DURABLE_URL = os.environ.get('VF_TEST_REDIS_DURABLE_URL', 'redis://localhost:6381/0')
 
@@ -66,14 +66,16 @@ RUN_TIMEOUT_SECONDS = 300
 
 def _store_url() -> str | None:
     '''
-    The Redis a run may be pointed at, or None to run without one: the dev cache
-    unless the RFC 0006 switch is on, when only the durable instance is admitted
-    for a BATCH flow (``VF_RFC0006`` is read from this process's environment, which
-    ``run-local`` inherits).
+    The Redis a run may be pointed at, or None to run without one. The compose
+    default is the dev profile's shape (append-only, never evicting), which a
+    BATCH flow's ``reliable_work`` channels are admitted on; the durable
+    profile's twin (``--profile redis-durable``) does as well. Either answers, or
+    the run goes without a store — the solution must pass both ways.
     '''
-    if os.environ.get('VF_RFC0006', '') == '1':                       # exactly how core.constants reads it
-        return REDIS_DURABLE_URL if _redis_available(REDIS_DURABLE_URL) else None
-    return REDIS_URL if _redis_available() else None
+    for url in (REDIS_URL, REDIS_DURABLE_URL):
+        if _redis_available(url):
+            return url
+    return None
 
 
 def _redis_available(url = REDIS_URL) -> bool:

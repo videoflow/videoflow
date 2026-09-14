@@ -68,7 +68,6 @@ from videoflow.backends.capabilities import (
 )
 from videoflow.backends.memory.runtime_store import MemoryRuntimeStore
 from videoflow.backends.runtime import OUTCOME_ACCEPTED, OUTCOME_DUPLICATE, OUTCOME_INTENT, OUTCOME_UNKNOWN
-from videoflow.core import constants
 from videoflow.core.compiler import sink_guarantees
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import IncompatibleProfile, StaleAuthority
@@ -221,7 +220,6 @@ def test_run_003_state_transition_and_ambiguous_output_publication_recover(tmp_p
     Acceptance: All committed state transitions have a corresponding eventually resolved output;
     replay introduces no duplicate logical state transition.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs())
@@ -256,7 +254,6 @@ def test_run_003_a_real_worker_recovers_its_outbox_on_the_broker(nats_url, tmp_p
     compose broker, ``os._exit`` at the barrier, a ``file://`` ledger, and a
     replacement process that reconciles the outbox before it receives anything.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, batch_specs(), ack_wait = 5)
     schedules = []
@@ -310,7 +307,6 @@ def test_run_003_a_real_worker_recovers_its_outbox_on_the_broker(nats_url, tmp_p
 
 @pytest.mark.negative_control(of = 'RUN-003')
 def test_run_003_detects_a_checkpoint_written_apart_from_its_output(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.eager_checkpoint(monkeypatch)
     rig = memory_rig(batch_specs())
@@ -487,7 +483,6 @@ def test_run_004_nondeterministic_inference_has_an_explicit_committed(tmp_path, 
     Acceptance: The committed payload hash is invariant across recovery; an unsupported replay
     guarantee fails admission without publishing data.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs('inf'))
@@ -504,7 +499,6 @@ def test_run_004_nondeterministic_inference_has_an_explicit_committed(tmp_path, 
 
 @pytest.mark.negative_control(of = 'RUN-004')
 def test_run_004_detects_a_recovery_that_recomputes_a_committed_result(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.recomputing_recovery(monkeypatch)
     rig = memory_rig(batch_specs('inf'))
@@ -626,7 +620,6 @@ def test_run_022_stateful_worker_restart_restores_a_consistent_checkpoint(tmp_pa
     Acceptance: Every crash boundary converges to the reference state or is rejected before
     execution as an unsupported recovery profile.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs())
@@ -647,7 +640,6 @@ def test_run_022_stateful_worker_restart_restores_a_consistent_checkpoint(tmp_pa
 def test_run_022_a_replacement_process_restores_the_checkpoint(nats_url, tmp_path, evidence_dir, record_faults,
                                                                monkeypatch) -> None:
     '''The stateless placement replacement: a new worker process on the broker, the same ``file://`` ledger.'''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     evidence : Dict[str, Any] = {}
     rig = JetStreamRig(nats_url, BATCH, batch_specs(), ack_wait = 5)
     schedules = []
@@ -695,7 +687,6 @@ def test_run_022_a_replacement_process_restores_the_checkpoint(nats_url, tmp_pat
 
 @pytest.mark.negative_control(of = 'RUN-022')
 def test_run_022_detects_a_checkpoint_that_does_not_carry_its_output(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.eager_checkpoint(monkeypatch)
     rig = memory_rig(batch_specs())
@@ -929,7 +920,6 @@ def test_run_017_sink_side_effects_and_idempotency_markers_survive_crash(tmp_pat
     Acceptance: Idempotent mode produces one external effect for all schedules; unsupported
     stronger guarantees are rejected rather than inferred from a local marker.
     '''
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs(processor = 'sink', processor_kind = 'consumer', sink = None))
@@ -952,7 +942,6 @@ def test_run_017_redis_markers_expire_under_the_same_rules(redis_url, tmp_path, 
                                                            monkeypatch) -> None:
     '''The legacy marker store: ``RedisIdempotencyStore`` with a real, accelerated TTL on the dev Redis.'''
     import redis  # optional dep (redis extra)
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     ttl = 2
@@ -984,7 +973,6 @@ def test_run_017_redis_markers_expire_under_the_same_rules(redis_url, tmp_path, 
 
 @pytest.mark.negative_control(of = 'RUN-017')
 def test_run_017_detects_a_marker_that_certifies_before_the_effect(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     allow_task_threads(monkeypatch)
     defects_run2.marker_before_effect(monkeypatch)
     rig = memory_rig(batch_specs(processor = 'sink', processor_kind = 'consumer', sink = None))
@@ -1108,7 +1096,6 @@ def test_run_013_timed_out_output_publication_has_one_authoritative_owner(nats_u
     caller's side while the bytes may still land later — the orphan.
     '''
     import contextlib
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 4)
     allow_task_threads(monkeypatch)
     toxiproxy = Toxiproxy(toxiproxy_url)
@@ -1137,7 +1124,6 @@ def test_run_013_timed_out_output_publication_has_one_authoritative_owner(nats_u
 @pytest.mark.variant('memory')
 def test_run_013_memory_backends_hold_the_send_until_the_stall_lifts(tmp_path, evidence_dir, record_faults,
                                                                      monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 1)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
@@ -1170,7 +1156,6 @@ def _paused_acceptance(rig : Any, channel : Any) -> Any:
 
 @pytest.mark.negative_control(of = 'RUN-013')
 def test_run_013_detects_a_retry_that_mints_a_new_identity(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(constants, 'RFC0006', True)
     monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 1)
     allow_task_threads(monkeypatch)
     defects_run2.fresh_identity_per_attempt(monkeypatch)
