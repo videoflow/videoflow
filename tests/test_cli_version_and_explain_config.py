@@ -40,7 +40,11 @@ _TEMPLATE = 'end_value: 5\nx-questions:\n  - {key: end_value, prompt: Last integ
 def graph(tmp_path, monkeypatch):
     (tmp_path / 'graph.py').write_text(_CONFIG_GRAPH)
     (tmp_path / 'config.template.yaml').write_text(_TEMPLATE)
-    monkeypatch.delenv(solution.CONFIG_ENV, raising = False)
+    # cli.main exports the resolved config into os.environ; set-then-delete makes
+    # monkeypatch restore the variable to absent afterwards (delenv alone records
+    # nothing for a variable that is not set), so later tests never see it.
+    monkeypatch.setenv(solution.CONFIG_ENV, 'reset-by-fixture')
+    monkeypatch.delenv(solution.CONFIG_ENV)
     return tmp_path
 
 
