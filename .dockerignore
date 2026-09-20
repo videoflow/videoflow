@@ -1,0 +1,14 @@
+# Kept out of every docker build context rooted here (the base images and the toy
+# solutions build from the repo root). Nothing a Dockerfile COPYs is listed.
+.git
+.venv*
+**/__pycache__/
+**/*.pyc
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+# Solution run artifacts: config answers, outputs, fetched clips and weights.
+**/out/
+**/config.yaml
+dist/
+docs/public/

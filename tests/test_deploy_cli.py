@@ -202,3 +202,53 @@ def test_the_detected_runtime_class_reaches_the_preflight(harness, monkeypatch):
     code = cli.main(['deploy', str(tmp_path / 'mygraph.py'), '--non-interactive', '--run-id', 'r1', '--no-build',
                      '--image', 'ghcr.io/acme/x:1', '--gpu-runtime-class', 'none'])
     assert code == 2 and preflight['gpu_runtime_class'] is None
+
+
+# -- <repo>://<name> solution references ---------------------------------------
+# The reference resolves to a cached checkout; its root is the build context
+# (solution Dockerfiles COPY sibling packages), unless --build-context says otherwise.
+
+def _stub_resolver(monkeypatch, tmp_path):
+    from videoflow.deploy import solution_refs
+
+    def resolve(arg, cache_root = None):
+        assert arg == 'videoflow://mygraph'
+        return solution_refs.ResolvedSolution(graph_path = str(tmp_path / 'mygraph.py'),
+                                              factory = None, build_context = '/clone/root')
+    monkeypatch.setattr(solution_refs, 'resolve_solution_ref', resolve)
+
+
+def test_solution_ref_builds_from_its_checkout_root(harness, monkeypatch):
+    tmp_path, seen = harness
+    _both_dockerfiles(tmp_path)
+    _stub_resolver(monkeypatch, tmp_path)
+    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run']) == 0
+    assert seen['build'] == [{'needs_gpu': False, 'context_override': '/clone/root'}]
+
+
+def test_explicit_build_context_wins_over_the_solution_ref(harness, monkeypatch):
+    tmp_path, seen = harness
+    _both_dockerfiles(tmp_path)
+    _stub_resolver(monkeypatch, tmp_path)
+    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run',
+                     '--build-context', str(tmp_path)]) == 0
+    assert seen['build'] == [{'needs_gpu': False, 'context_override': str(tmp_path)}]
+
+
+def test_explain_accepts_a_solution_ref(harness, monkeypatch, capsys):
+    tmp_path, seen = harness
+    _stub_resolver(monkeypatch, tmp_path)
+    assert cli.main(['explain', 'videoflow://mygraph']) == 0
+    assert 'numbers' in capsys.readouterr().out
+
+
+def test_unresolvable_solution_ref_is_a_clean_error(harness, monkeypatch, capsys):
+    tmp_path, seen = harness
+    from videoflow.core.errors import ResourceUnavailable
+    from videoflow.deploy import solution_refs
+
+    def resolve(arg, cache_root = None):
+        raise ResourceUnavailable('could not fetch videoflow at v9.9.9', remedy = 'clone by hand')
+    monkeypatch.setattr(solution_refs, 'resolve_solution_ref', resolve)
+    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run']) == 3
+    assert 'clone by hand' in capsys.readouterr().err

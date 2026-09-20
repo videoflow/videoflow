@@ -229,7 +229,7 @@ your dependencies and your node package on top of the shipped ``videoflow-base``
 image, and point the whole deploy at it::
 
     # Dockerfile (see docker/user-image.example.Dockerfile)
-    FROM videoflow-base:latest
+    FROM ghcr.io/videoflow/videoflow-base:1.0.2   # pin the version you installed
     RUN pip install torch my-libs        # your dependencies
     COPY . .
     RUN pip install .                    # your package (importable by module path)

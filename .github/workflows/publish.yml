@@ -1,5 +1,5 @@
-# Build videoflow, publish it to PyPI (https://pypi.org/project/videoflow/), and then release
-# videoflow-contrib at the same version.
+# Build videoflow, publish it to PyPI (https://pypi.org/project/videoflow/) and its base images
+# to ghcr.io, and then release videoflow-contrib at the same version.
 #
 # Releases are deliberate, not a side effect of merging: this workflow only runs when someone
 # presses "Run workflow" in the Actions tab (or `gh workflow run publish.yml --ref master`).
@@ -21,6 +21,17 @@
 # master still validates its descriptors and builds every sub-package against it. A core change
 # that breaks contrib blocks the release rather than shipping a core nothing can follow.
 #
+# Also before the upload, `base-images` builds docker/base/Dockerfile[.gpu] from this checkout
+# and pushes ghcr.io/videoflow/videoflow-base:<version> and :<version>-cuda. Those are what
+# `videoflow deploy` / `run-local` pull on a wheel install (videoflow/deploy/build.py), so they
+# must exist for every released version; putting the job before `publish` means a base image
+# that will not build or push blocks the release while nothing irreversible has happened, and a
+# re-run simply overwrites the GHCR tags. The images carry no `latest` tag: build.py pulls the
+# exact version, and user Dockerfiles should FROM a pinned one. One-time setup: the first push
+# creates the package private — flip it to Public under
+# https://github.com/orgs/videoflow/packages/container/videoflow-base/settings, or every wheel
+# install gets `denied` on pull.
+#
 # Auth is PyPI Trusted Publishing (OIDC), not an API token: pypi.org is configured to accept
 # uploads from this exact repo + workflow file + `pypi` environment, and GitHub mints a
 # short-lived identity token per run. There is no long-lived secret to leak or rotate; the
@@ -37,8 +48,9 @@
 # last, after the tag, and is fire-and-forget: watching the contrib run from here would pin a
 # runner for its whole duration, and its failures are already reported on that repo.
 #
-# `dry_run=true` runs `build` and `check-contrib` and stops; it also lifts the master-only and
-# already-released guards so the pipeline can be exercised from a branch at the current version.
+# `dry_run=true` runs `build`, `check-contrib` and `base-images` (built, not pushed) and stops; it
+# also lifts the master-only and already-released guards so the pipeline can be exercised from a
+# branch at the current version.
 name: Publish to PyPI
 
 on:
@@ -47,7 +59,7 @@ on:
     # chosen ref.
     inputs:
       dry_run:
-        description: "Build and check contrib only; do not publish, tag, or dispatch contrib"
+        description: "Build, check contrib and build the base images only; do not push, publish, tag, or dispatch contrib"
         type: boolean
         default: false
 
@@ -186,8 +198,64 @@ jobs:
             ( cd "$dir" && uv build --wheel )
           done
 
-  publish:
+  # The base images every solution builds on, published for wheel installs to pull. One runner
+  # per variant: the CUDA image is multi-GB and gets a disk of its own, and only the CPU build
+  # shares CI's warm layer cache (ci.yml primes the same scope) — CUDA layers would evict it.
+  base-images:
     needs: [build, check-contrib]
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: cpu
+            file: docker/base/Dockerfile
+            suffix: ""
+            # arm64 too, so Apple Silicon machines run the workers natively; the image is
+            # apt + pip only, which is fine under QEMU.
+            platforms: linux/amd64,linux/arm64
+            cache: type=gha,scope=videoflow-base
+          - variant: cuda
+            file: docker/base/Dockerfile.gpu
+            suffix: -cuda
+            platforms: linux/amd64
+            cache: ""
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to ghcr.io
+        if: ${{ !inputs.dry_run }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+
+      - name: Build and push videoflow-base:${{ needs.build.outputs.version }}${{ matrix.suffix }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.file }}
+          build-args: PYTHON_VERSION=3.12
+          platforms: ${{ matrix.platforms }}
+          push: ${{ !inputs.dry_run }}
+          tags: ghcr.io/videoflow/videoflow-base:${{ needs.build.outputs.version }}${{ matrix.suffix }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/videoflow/videoflow
+            org.opencontainers.image.version=${{ needs.build.outputs.version }}
+          cache-from: ${{ matrix.cache }}
+          cache-to: ${{ matrix.cache && format('{0},mode=max', matrix.cache) || '' }}
+
+  publish:
+    needs: [build, check-contrib, base-images]
     if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     # The environment name is part of the trusted-publisher registration on pypi.org; a
