@@ -29,8 +29,9 @@ What ``videoflow deploy`` does, step by step
    **git root** enclosing the graph (solution Dockerfiles COPY sibling packages
    from the repo root); override with ``--build-context``. If the Dockerfile is
    ``FROM`` a ``videoflow-base:*`` image that is not built locally, deploy
-   builds it first from the videoflow source checkout (this requires an
-   editable/source install — a wheel-only install gets an error with the exact
+   pulls ``ghcr.io/videoflow/videoflow-base:<version>[-cuda]`` first and tags
+   it under that name — or, on a source install, builds it from the checkout
+   (a development version with no published image gets an error with the exact
    manual commands). The image is built as ``videoflow-<solution-dir>:latest``
    and deployed under a **content-addressed tag** (``:<12 hex of its id>``),
    so a changed image is always a new tag. Docker's layer cache makes unchanged
@@ -177,10 +178,15 @@ Prerequisites
 
 - ``docker`` and ``kubectl`` on the operator machine, kubectl configured
   against the target cluster (deploy never switches contexts).
-- videoflow installed **from a source checkout** (``uv tool install --editable
-  './videoflow[all]'`` or ``pip install -e``, see :doc:`../first-steps/installing-videoflow`):
-  the ``videoflow-base`` image is built from it. The graph's own dependencies
+- videoflow installed (``pip install 'videoflow[all]'``, see
+  :doc:`../first-steps/installing-videoflow`). The graph's own dependencies
   are *not* required on the operator machine (see step 4).
+- The graph: a path (``path/to/graph.py[:factory]``), or a solution shipped in
+  a videoflow repository as ``<repo>://<name>`` — ``videoflow://toy_calculator``,
+  ``videoflow-contrib://human_tracking`` — which deploy fetches at your version
+  into ``~/.videoflow/solutions/<repo>@v<version>/`` (one shallow clone, reused
+  afterwards; its ``config.yaml`` and outputs live there, ``--config`` keeps
+  them elsewhere).
 - For GPU flows: cluster nodes with the NVIDIA device plugin and the
   ``videoflow.io/gpu-pool=true`` label (deploy tells you the exact commands if
   they are missing).
@@ -268,25 +274,27 @@ artifacts are nowhere to be found.
 Building the image manually
 ---------------------------
 
-Videoflow ships a single ``videoflow-base`` image (framework + broker client +
-the built-in nodes' dependencies: OpenCV, ffmpeg, Redis). Solution images build
-**on top of it**, adding your dependencies and your node package so the worker
-can import your node classes by their module path::
+Videoflow publishes one base image per release (framework + broker client +
+the built-in nodes' dependencies: OpenCV, ffmpeg, Redis):
+``ghcr.io/videoflow/videoflow-base:<version>`` and ``:<version>-cuda``.
+Solution images build **on top of it**, adding your dependencies and your node
+package so the worker can import your node classes by their module path::
 
     # Dockerfile (see docker/user-image.example.Dockerfile)
-    FROM videoflow-base:latest
+    FROM ghcr.io/videoflow/videoflow-base:1.0.2   # pin the version you installed
     RUN pip install torch my-libs        # your dependencies
     COPY . .
     RUN pip install .                    # your package
 
 ::
 
-    ./docker/build-images.sh ghcr.io/acme v1     # build+tag videoflow-base
-    docker push ghcr.io/acme/videoflow-base:v1
     docker build -t ghcr.io/acme/app:v1 .        # your image, FROM videoflow-base
     docker push ghcr.io/acme/app:v1
 
-A pure built-in flow can just deploy with ``--image videoflow-base:latest``.
+A pure built-in flow can just deploy with ``--image
+ghcr.io/videoflow/videoflow-base:1.0.2``. From a source checkout,
+``./docker/build-images.sh`` builds both bases locally (as
+``videoflow-base:py3.12`` and ``:py3.12-cuda``) from the code you are editing.
 
 Option reference
 ----------------

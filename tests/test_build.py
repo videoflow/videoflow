@@ -81,13 +81,86 @@ def test_autobuild_returns_none_without_dockerfile(tmp_path):
     assert build.autobuild(str(tmp_path), needs_gpu = False) is None
 
 
-def test_ensure_base_errors_for_wheel_installs(monkeypatch, tmp_path):
+def _wheel_install(monkeypatch, tmp_path, version = '1.0.2'):
+    '''Simulate a wheel install: point the package at a tree without docker/base/.'''
+    import videoflow
+    monkeypatch.setattr(videoflow, '__file__', str(tmp_path / 'site-packages' / 'videoflow' / '__init__.py'))
+    monkeypatch.setattr(videoflow, '__version__', version)
+
+
+def _recorder(monkeypatch, returncode = 0):
+    calls = []
+
+    def run(cmd, **kwargs):
+        calls.append(list(cmd))
+        return _Proc(returncode = returncode)
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    return calls
+
+
+def test_ensure_base_errors_for_wheel_installs_when_pull_fails(monkeypatch, tmp_path):
+    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
+    _wheel_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch, returncode = 1)
+    with pytest.raises(RuntimeError, match = 'build-images.sh') as e:
+        build.ensure_base_image('videoflow-base:py3.12')
+    assert 'ghcr.io/videoflow/videoflow-base:1.0.2' in str(e.value)
+    assert calls == [['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2']]
+
+
+def test_ensure_base_pulls_published_image_for_wheel_installs(monkeypatch, tmp_path):
+    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
+    _wheel_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch)
+    build.ensure_base_image('videoflow-base:py3.12-cuda')
+    assert calls == [
+        ['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2-cuda'],
+        ['docker', 'tag', 'ghcr.io/videoflow/videoflow-base:1.0.2-cuda', 'videoflow-base:py3.12-cuda'],
+    ]
+
+
+def test_ensure_base_builds_from_source_even_when_published(monkeypatch, tmp_path):
     monkeypatch.setattr(build, 'image_exists', lambda ref: False)
     import videoflow
-    # Simulate a wheel install: point the package at a tree without docker/base/.
+    (tmp_path / 'docker' / 'base').mkdir(parents = True)
+    (tmp_path / 'docker' / 'base' / 'Dockerfile').write_text('FROM x')
     monkeypatch.setattr(videoflow, '__file__', str(tmp_path / 'videoflow' / '__init__.py'))
-    with pytest.raises(RuntimeError, match = 'build-images.sh'):
+    monkeypatch.setattr(videoflow, '__version__', '1.0.2')
+    calls = _recorder(monkeypatch)
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert len(calls) == 1 and calls[0][:2] == ['docker', 'build']
+    assert calls[0][-1] == str(tmp_path)   # context is the checkout root, not docker/base
+    assert not any(c[:2] == ['docker', 'pull'] for c in calls)
+
+
+def test_base_registry_env_override(monkeypatch, tmp_path):
+    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
+    _wheel_install(monkeypatch, tmp_path)
+    monkeypatch.setenv(build.BASE_IMAGE_REGISTRY_ENV, 'localhost:5000/')
+    calls = _recorder(monkeypatch)
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert calls[0] == ['docker', 'pull', 'localhost:5000/videoflow-base:1.0.2']
+
+
+def test_pull_without_docker_is_a_runtime_error(monkeypatch, tmp_path):
+    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
+    _wheel_install(monkeypatch, tmp_path)
+
+    def run(cmd, **kwargs):
+        raise FileNotFoundError('docker')
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    with pytest.raises(RuntimeError, match = 'docker not found'):
         build.ensure_base_image('videoflow-base:py3.12')
+
+
+def test_build_context_without_git_falls_back_to_graph_dir(monkeypatch, tmp_path):
+    def run(cmd, **kwargs):
+        raise FileNotFoundError('git')
+
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert build.build_context_for(str(tmp_path)) == str(tmp_path)
 
 
 # -- run_in_image: the docker -v flags built from Mount records ---------------

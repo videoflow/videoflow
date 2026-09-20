@@ -53,30 +53,24 @@ container images.
 ## Installation
 
 Requires **Python 3.12+** and docker; a NATS JetStream server is needed at
-runtime, and `run-local` starts one for you (see below).
-
-Videoflow is not on PyPI yet (the `videoflow` published there is an older,
-unrelated generation), so install it **from a clone**. Put it next to
-[videoflow-contrib](https://github.com/videoflow/videoflow-contrib) if you want
-the ML solutions too — that is the layout the docs of both repos assume:
+runtime, and `run-local` starts one for you (see below). Videoflow is on
+[PyPI](https://pypi.org/project/videoflow/):
 
 ```bash
-git clone https://github.com/videoflow/videoflow
-git clone https://github.com/videoflow/videoflow-contrib      # optional, side by side
-
-uv tool install --editable './videoflow[all]'                # `videoflow` on your PATH, everywhere
-# or, into an environment of your own:
-python3 -m venv .venv && .venv/bin/pip install -e './videoflow[all]'
-# or, to work on videoflow itself (dev tools included):
-cd videoflow && uv sync && uv run videoflow --help
+pip install 'videoflow[all]'           # into an environment of your own
+# or, as a standalone command on your PATH:
+uv tool install 'videoflow[all]'
+videoflow --help
 ```
 
-`--editable` matters: `deploy` and `run-local` build the `videoflow-base` image
-from this checkout the first time they need it, and only a source install knows
-where the checkout is. The extras are the same for every form: `distributed`
-(broker client + wire format), `vision` / `video` (OpenCV, ffmpeg), `deploy`
-(Kubernetes manifests, component descriptors), `blob` (the Redis payload store),
-or `all`.
+The extras: `distributed` (broker client + wire format), `vision` / `video`
+(OpenCV, ffmpeg), `deploy` (Kubernetes manifests, component descriptors), `blob`
+(the Redis payload store), or `all`. That is the whole install: the
+`videoflow-base` container image that solutions build on is pulled from
+`ghcr.io/videoflow/videoflow-base:<your version>` the first time `deploy` or
+`run-local` needs it, and the shipped solutions are fetched on demand (see
+[Example solutions](#example-solutions)). Nothing is cloned or built by hand.
+To work on videoflow itself, see [Developing videoflow](#developing-videoflow).
 
 You do **not** need to start a broker by hand: `videoflow run-local` starts a dev
 NATS + Redis in Docker when none is already running, and stops them when the flow
@@ -162,9 +156,20 @@ teardown) actually work, and the best code to read after this README.
 | [toy_fusion](solutions/toy_fusion) | REALTIME | Independent producers fused by event time — tolerance, lateness timeout, quorum, collect windows — with unbounded live sources. |
 
 ```bash
-cd solutions/toy_calculator
-videoflow run-local toy_calculator.py     # or: videoflow deploy toy_calculator.py
+videoflow run-local videoflow://toy_calculator     # or: videoflow deploy videoflow://toy_calculator
 ```
+
+A `<repo>://<name>` argument is a solution shipped in one of the videoflow
+repositories: `solutions/<name>` of `github.com/videoflow/<repo>`, fetched at
+the tag matching your installed version — the repositories release in lockstep,
+so `v1.2.0` of `videoflow://` and `videoflow-contrib://` go with videoflow
+1.2.0. The first use makes one shallow clone into
+`~/.videoflow/solutions/<repo>@v<version>/`, reused afterwards (`rm -rf` it to
+refetch); the solution's `config.yaml` and its outputs live there, next to the
+graph, exactly as they would in a checkout, and the path is printed on every
+run. Pass `--config ./my.yaml` to keep the config (and the outputs its
+`work_dir` names) somewhere of your own. From a checkout, the path form does the
+same thing: `videoflow run-local solutions/toy_calculator/toy_calculator.py`.
 
 Each writes a self-checking artifact (`report.json`, `counts.json`,
 `recovery_report.json`, `fusion_summary.json`) saying whether the distributed
@@ -180,9 +185,8 @@ builds the solution image from its Dockerfile — the same image `deploy` uses �
 and runs the prepare hook and every worker inside it:
 
 ```bash
-cd ../videoflow-contrib/solutions/human_tracking
-videoflow run-local human_tracking.py     # builds the image (minutes, once); the workers are containers
-videoflow deploy human_tracking.py        # the same image, as pods
+videoflow run-local videoflow-contrib://human_tracking   # builds the image (minutes, once); the workers are containers
+videoflow deploy videoflow-contrib://human_tracking      # the same image, as pods
 ```
 
 ---
@@ -273,8 +277,7 @@ works:
 kubectl create namespace videoflow
 kubectl apply -n videoflow -f k8s/nats.yaml
 
-# 2. Build & push your image (your code + deps, FROM videoflow-base)
-./docker/build-images.sh ghcr.io/acme v1     # build videoflow-base
+# 2. Build & push your image (your code + deps, FROM ghcr.io/videoflow/videoflow-base:<version>)
 docker build -t ghcr.io/acme/app:v1 . && docker push ghcr.io/acme/app:v1
 
 # 3. Deploy against that broker and image
@@ -479,16 +482,13 @@ and needs `runtimeClassName: nvidia` patched onto its pod spec.
 
 **5. Build the node image on the CUDA base.** GPU scheduling only gets the device
 into the pod; the image still has to contain a CUDA-enabled stack. Videoflow ships
-a CUDA variant of its base image, and `deploy` prefers a `gpu.Dockerfile` next to
-your graph whenever the flow has GPU nodes:
-
-```bash
-./docker/build-images.sh          # builds videoflow-base + videoflow-base:py3.12-cuda
-```
+a CUDA variant of its base image (`ghcr.io/videoflow/videoflow-base:<version>-cuda`),
+and `deploy` prefers a `gpu.Dockerfile` next to your graph whenever the flow has
+GPU nodes:
 
 ```dockerfile
 # gpu.Dockerfile, next to my_flow.py
-FROM videoflow-base:py3.12-cuda
+FROM ghcr.io/videoflow/videoflow-base:1.0.2-cuda
 RUN pip install torch --index-url https://download.pytorch.org/whl/cu124
 COPY . .
 RUN pip install .
@@ -843,40 +843,46 @@ Nodes can also:
 
 ## Container images
 
-You bring the image. Videoflow ships one **base** image (framework + broker client +
-the built-in nodes' dependencies — OpenCV, ffmpeg, Redis); you build **your** image on
-top of it with your dependencies and your node package, then point the deploy at it:
+You bring the image. Videoflow publishes one **base** image per release
+(framework + broker client + the built-in nodes' dependencies — OpenCV, ffmpeg,
+Redis): `ghcr.io/videoflow/videoflow-base:<version>` (amd64 and arm64) and
+`:<version>-cuda` (CUDA 12.6 + cuDNN, for GPU nodes). You build **your** image
+on top of it with your dependencies and your node package, then point the
+deploy at it:
 
 ```dockerfile
 # Dockerfile (see docker/user-image.example.Dockerfile)
-FROM videoflow-base:latest
+FROM ghcr.io/videoflow/videoflow-base:1.0.2   # pin the version you installed
 RUN pip install torch my-libs        # your deps
 COPY . .
 RUN pip install .                    # your package, importable by its module path
 ```
 
 ```bash
-./docker/build-images.sh                 # build videoflow-base (local)
-./docker/build-images.sh ghcr.io/acme v1 # tagged for a registry
 docker build -t ghcr.io/me/app:v1 .      # your image, FROM videoflow-base
 
 videoflow deploy my_flow.py:build_flow --nats nats://... --image ghcr.io/me/app:v1
 ```
 
 A solution that ships its Dockerfile next to the graph does not need any of
-this: `deploy` and `run-local` build it (and `videoflow-base` first, from your
-checkout), deploy it under a content-addressed tag, and push it when a
-`--registry` is set. Two environment variables reach every docker command they
-run — `VF_DOCKER_BUILD_ARGS` for each `docker build` and `VF_DOCKER_RUN_ARGS`
-for each `docker run` (a corporate proxy as `--build-arg http_proxy=...`, say);
-the `docker` section of the cluster profile file sets them for a machine.
-Contrib components name their GPU variant `gpu.Dockerfile`.
+this: `deploy` and `run-local` build it, deploy it under a content-addressed
+tag, and push it when a `--registry` is set. Its Dockerfile is `FROM
+videoflow-base:py3.12` (or `-cuda`), the local name; when that image is
+missing, `deploy` pulls the published one for your version and tags it so — or,
+on a source install, builds it from your checkout, so local core changes reach
+the workers (see [Developing videoflow](#developing-videoflow)).
+`VF_BASE_IMAGE_REGISTRY` points the pull at a mirror instead of
+`ghcr.io/videoflow`. Two more environment variables reach every docker command
+they run — `VF_DOCKER_BUILD_ARGS` for each `docker build` and
+`VF_DOCKER_RUN_ARGS` for each `docker run` (a corporate proxy as `--build-arg
+http_proxy=...`, say); the `docker` section of the cluster profile file sets
+them for a machine. Contrib components name their GPU variant `gpu.Dockerfile`.
 
 `--image` is the default for every node. A node that needs a different environment
 declares its own image in the graph — `MyDetector(name='det', image='ghcr.io/me/gpu:v1')`
 — or is overridden at deploy time with `--image-override det=ghcr.io/me/gpu:v1`
 (override wins over the node's own image, which wins over `--image`). A pure built-in
-flow can just use `--image videoflow-base:latest`.
+flow can just use `--image ghcr.io/videoflow/videoflow-base:1.0.2`.
 
 ---
 
@@ -971,14 +977,50 @@ in September 2026 and normative in [`spec/PROTOCOL.md`](spec/PROTOCOL.md).
 
 ---
 
+## Developing videoflow
+
+Everything above is for *using* videoflow from PyPI. To work on the framework
+itself, install it from a clone instead — next to
+[videoflow-contrib](https://github.com/videoflow/videoflow-contrib), which is
+the layout the two repositories' docs and tooling assume:
+
+```bash
+git clone https://github.com/videoflow/videoflow
+git clone https://github.com/videoflow/videoflow-contrib      # side by side
+
+uv tool install --editable './videoflow[all]'                # `videoflow` on your PATH, from this checkout
+# or, into an environment of your own:
+python3 -m venv .venv && .venv/bin/pip install -e './videoflow[all]'
+# or, with the dev tools (pytest, ruff, mypy, pre-commit):
+cd videoflow && uv sync && uv run videoflow --help
+```
+
+A source install changes one thing: when `deploy` or `run-local` need a
+`videoflow-base` image that is not built, they **build it from this checkout**
+(`docker/base/Dockerfile[.gpu]`) instead of pulling the published one, so the
+code you are editing is what runs in the workers. `docker rmi
+videoflow-base:py3.12` after a core change forces that rebuild; the solution
+images on top of it are content-addressed and rebuild on their own.
+`./docker/build-images.sh` builds both bases by hand, and
+`./docker/build-images.sh ghcr.io/videoflow 1.2.0` produces exactly the tags the
+release publishes (the `Publish to PyPI` workflow does this for every release;
+this is the manual form). From a checkout, run the solutions by path —
+`videoflow run-local solutions/toy_calculator/toy_calculator.py` — or keep the
+`<repo>://` form with `VF_SOLUTION_REF=master` when your version has no release
+tag yet.
+
+The unit tests need nothing but the checkout (`uv run pytest
+--ignore=tests/integration -q`); the integration tiers, the kind cluster
+scripts and the pre-commit hooks are described in
+[How to contribute](docs/source/first-steps/how-to-contribute.rst).
+
 ## Contributing
 
 A tentative [roadmap](ROADMAP.md) of where we are headed, and the
-[contribution rules](CONTRIBUTING.md).
-
-New processors, producers or consumers that pull in additional third-party
-dependencies belong in the [videoflow-contrib](https://github.com/videoflow/videoflow-contrib)
-project — we keep the core framework lean.
+[contribution rules](CONTRIBUTING.md). New processors, producers or consumers
+that pull in additional third-party dependencies belong in the
+[videoflow-contrib](https://github.com/videoflow/videoflow-contrib) project — we
+keep the core framework lean.
 
 ## Citing Videoflow
 

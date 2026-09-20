@@ -53,8 +53,11 @@ from videoflow.core.policies import JoinPolicy
 
 def build_flow(cfg=None):
     if cfg is None:
-        # Module-dir-relative so `videoflow deploy` works from any cwd.
-        cfg = load_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml'))
+        # deploy / run-local / explain publish the config they resolved (--config, or the
+        # generated one) as VF_SOLUTION_CONFIG; otherwise the config.yaml beside this
+        # module, so the graph works from any cwd.
+        here = os.path.dirname(os.path.abspath(__file__))
+        cfg = load_config(os.environ.get('VF_SOLUTION_CONFIG') or os.path.join(here, 'config.yaml'))
 
     cameras = [
         SimCameraProducer(fps=cfg.camera_fps, phase_ms=i * cfg.phase_step_ms,

@@ -33,11 +33,35 @@ narrow use case, consider an add-on in
 Development setup
 -----------------
 
-Videoflow uses `uv <https://docs.astral.sh/uv/>`_ for packaging and environments::
+Users install videoflow from PyPI (:doc:`installing-videoflow`); to work on
+it you install it **from a clone**, next to
+`videoflow-contrib <https://github.com/videoflow/videoflow-contrib>`_ — the
+side-by-side layout both repositories' docs and tooling assume. Videoflow uses
+`uv <https://docs.astral.sh/uv/>`_ for packaging and environments::
 
     git clone https://github.com/videoflow/videoflow.git
+    git clone https://github.com/videoflow/videoflow-contrib.git   # side by side
     cd videoflow
     uv sync              # creates .venv with all dependencies, including dev tools
+
+To have the ``videoflow`` command on your PATH from this checkout in every
+directory (the way you would use it against the contrib solutions), install it
+editable instead of, or as well as, ``uv sync``::
+
+    uv tool install --editable './videoflow[all]'
+    # or: python3 -m venv .venv && .venv/bin/pip install -e './videoflow[all]'
+
+A source install changes one runtime behaviour: when ``deploy`` or
+``run-local`` need a ``videoflow-base`` image that is not built, they build it
+from this checkout (``docker/base/Dockerfile[.gpu]``) instead of pulling the
+published ``ghcr.io/videoflow/videoflow-base:<version>``, so the code you are
+editing is what runs in the workers. ``docker rmi videoflow-base:py3.12`` after
+a core change forces that rebuild. ``./docker/build-images.sh`` builds both
+bases by hand; ``./docker/build-images.sh ghcr.io/videoflow 1.2.0`` produces
+the exact tags a release publishes. Run the solutions by path from a checkout
+(``videoflow run-local solutions/toy_calculator/toy_calculator.py``), or keep
+the ``<repo>://`` form with ``VF_SOLUTION_REF=master`` when your version has
+no release tag yet.
 
 The unit tests need nothing but the checkout::
 

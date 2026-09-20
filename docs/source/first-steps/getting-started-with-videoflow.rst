@@ -112,7 +112,7 @@ Complete example solutions
 --------------------------
 
 The `solutions/ <https://github.com/videoflow/videoflow/tree/master/solutions>`_
-directory holds three complete, deployable applications built from core nodes
+directory holds four complete, deployable applications built from core nodes
 only — no models, no footage, no extra dependencies:
 
 ``toy_calculator``
@@ -124,15 +124,27 @@ only — no models, no footage, no extra dependencies:
     Partitioned parallelism — ``partition_by`` pinning each key to one replica,
     an ``async def process`` node, and an idempotent sink.
 
+``toy_recovery``
+    The error taxonomy at work: a poison message dead-lettered on first sight,
+    a crash restarted with its un-acked messages redelivered, and a
+    self-checking recovery report.
+
 ``toy_fusion``
     A REALTIME flow fusing independent producers by event time, with tolerance,
     lateness timeout, quorum and collect windows.
 
 Each runs in seconds and writes a self-checking artifact saying whether the
-distributed run computed the right answer::
+distributed run computed the right answer. Name it as ``videoflow://<name>``
+and videoflow fetches it at your version (one shallow clone into
+``~/.videoflow/solutions/``, reused afterwards)::
 
-    cd solutions/toy_calculator
-    videoflow run-local toy_calculator.py
+    videoflow run-local videoflow://toy_calculator
+
+The ML solutions live in `videoflow-contrib
+<https://github.com/videoflow/videoflow-contrib>`_ and run the same way —
+``videoflow run-local videoflow-contrib://human_tracking`` — with their stacks
+inside the solution image, never on your machine. From a checkout, the path
+form does the same: ``videoflow run-local solutions/toy_calculator/toy_calculator.py``.
 
 Next, read :doc:`../distributed/distributed-execution` to understand how the same
 graph runs locally versus on Kubernetes.

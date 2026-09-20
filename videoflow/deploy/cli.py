@@ -35,6 +35,7 @@ from typing import Any
 
 import numpy as np
 
+from .. import __version__
 from ..backends.capabilities import kubernetes_execution_capabilities, local_execution_capabilities
 from ..components.descriptor import load_descriptor
 from ..components.oci import inspect_component, pull_component, push_component
@@ -114,6 +115,10 @@ from .profiles import PROFILES_FILE_ENV, apply_docker_env, command_defaults, loa
 #: The commands a cluster profile feeds (see ``deploy.profiles``).
 PROFILE_COMMANDS = ('deploy', 'run-local', 'teardown')
 
+GRAPH_HELP = ('path/to/graph.py[:build_flow], or <repo>://<name> for a solution shipped in a '
+              'videoflow repository (e.g. videoflow-contrib://human_tracking), fetched at this '
+              'version into ~/.videoflow/solutions')
+
 
 def _load_flow(target : str) -> Flow:
     '''
@@ -125,6 +130,31 @@ def _load_flow(target : str) -> Flow:
         - a built ``Flow`` produced by calling the factory.
     '''
     return load_flow(target)
+
+def _graph_location(graph_arg : str) -> tuple[str, str, str, str | None]:
+    '''
+    Where the graph lives, for a ``path/to/graph.py[:factory]`` argument or a
+    ``<repo>://<name>[:factory]`` solution reference (fetched at this version
+    into the solutions cache, see ``solution_refs``).
+
+    - Returns:
+        - ``(graph_path, graph_dir, graph_target, build_context)``: the module \
+            path, its directory, the ``path[:factory]`` target ``load_flow`` takes, \
+            and the docker build context a reference implies (its checkout root; \
+            None for a plain path, which keeps the enclosing-git-root default).
+    '''
+    from .solution_refs import parse_solution_ref, resolve_solution_ref
+    build_context = None
+    if parse_solution_ref(graph_arg) is not None:
+        resolved = resolve_solution_ref(graph_arg)
+        graph_path, factory, build_context = resolved.graph_path, resolved.factory, resolved.build_context
+    else:
+        graph_path, factory = (graph_arg.rsplit(':', 1) if ':' in graph_arg else (graph_arg, None))
+    if not os.path.isfile(graph_path):
+        raise ConfigError(f'Graph module not found: {graph_path}')
+    graph_dir = os.path.dirname(os.path.abspath(graph_path))
+    graph_target = os.path.abspath(graph_path) + (f':{factory}' if factory else '')
+    return graph_path, graph_dir, graph_target, build_context
 
 def _probe_host_import(graph_target : str) -> ImportError | None:
     '''
@@ -351,12 +381,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             raise ConfigError(str(e)) from e
         overrides[name] = ref
 
-    graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
-    if not os.path.isfile(graph_path):
-        raise ConfigError(f'Graph module not found: {graph_path}')
-    graph_dir = os.path.dirname(os.path.abspath(graph_path))
-    graph_target = os.path.abspath(graph_path) + \
-        (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
+    graph_path, graph_dir, graph_target, ref_context = _graph_location(args.graph)
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists), collect its x-mounts, and read what
@@ -396,7 +421,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         storage_class = args.broker_storage_class, priority_class = args.priority_class)
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
-    # (base image auto-built from a source checkout when missing). Which of the
+    # (base image built from a source checkout when missing, or pulled from
+    # ghcr.io on a wheel install). Which of the
     # two is decided by the flow (x-gpu / device placement), never by whether
     # this machine's docker daemon happens to have the NVIDIA runtime — that
     # only decides whether the prepare/compile containers get --gpus.
@@ -407,7 +433,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         if note:
             print(f'NOTE: {note}', file = sys.stderr)
         try:
-            image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
+            image = autobuild(graph_dir, needs_gpu = needs_gpu,
+                              context_override = args.build_context or ref_context)
         except RuntimeError as e:
             raise ResourceUnavailable(str(e)) from e
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
@@ -952,12 +979,7 @@ def _install_sigterm_as_interrupt() -> Any:
 
 
 def _cmd_run_local(args : argparse.Namespace) -> None:
-    graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
-    if not os.path.isfile(graph_path):
-        raise ConfigError(f'Graph module not found: {graph_path}')
-    graph_dir = os.path.dirname(os.path.abspath(graph_path))
-    graph_target = os.path.abspath(graph_path) + \
-        (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
+    graph_path, graph_dir, graph_target, ref_context = _graph_location(args.graph)
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists) and collect its x-mounts — locally
@@ -1004,7 +1026,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
             if note:
                 print(f'NOTE: {note}', file = sys.stderr)
             try:
-                image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
+                image = autobuild(graph_dir, needs_gpu = needs_gpu,
+                              context_override = args.build_context or ref_context)
             except RuntimeError as e:
                 raise ResourceUnavailable(str(e)) from e
         if image is None:
@@ -1114,7 +1137,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         if note:
             print(f'NOTE: {note}', file = sys.stderr)
         try:
-            image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
+            image = autobuild(graph_dir, needs_gpu = needs_gpu,
+                              context_override = args.build_context or ref_context)
         except RuntimeError as e:
             raise ResourceUnavailable(str(e)) from e
     # Restart failed workers by default, exactly as the cluster would — with a
@@ -1196,11 +1220,28 @@ def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> 
         if read_only and not os.path.exists(path):
             print(f'WARNING: solution input {path} does not exist.', file = sys.stderr)
 
+def _load_solution_flow(args : argparse.Namespace) -> Flow:
+    '''
+    The flow for a command that only inspects the graph (``explain``,
+    ``provision``): the solution config convention applies exactly as in
+    ``deploy`` — ``--config``, else ``config.yaml`` next to the graph, else the
+    template's Q&A (or, non-interactively, a message listing the inputs) — so a
+    solution whose ``build_flow`` reads its config never fails with a bare
+    ``FileNotFoundError`` before the first deploy has written one.
+    '''
+    # optional dep: solution imports yaml at module scope
+    from .solution import ensure_config
+    graph_path, graph_dir, graph_target, _ = _graph_location(args.graph)
+    interactive = not args.non_interactive and sys.stdin.isatty()
+    config_path = ensure_config(graph_dir, args.config, interactive)
+    _export_solution_config(config_path)
+    return _load_flow(graph_target)
+
 def _cmd_explain(args : argparse.Namespace) -> None:
     # optional dep: topology imports nats at module scope
     from ..messaging.topology import dlq_stream_name, subject_for
 
-    flow = _load_flow(args.graph)
+    flow = _load_solution_flow(args)
     run_id = args.run_id or '<run-id>'
     # Describe the graph without enforcing wire compatibility (that is a deploy-time
     # concern; explain must work for any flow, including remote-on-default-wire).
@@ -1265,7 +1306,7 @@ def _cmd_provision(args : argparse.Namespace) -> None:
     # optional dep: topology imports nats at module scope
     from ..messaging.topology import provision_flow_sync
 
-    flow = _load_flow(args.graph)
+    flow = _load_solution_flow(args)
     run_id = args.run_id or uuid.uuid4().hex[:12]
     # Provisioning only needs stream/durable names (language-neutral); no wire check.
     specs = specs_from_tasks_data(flow.tasks_data())
@@ -1651,6 +1692,15 @@ def _add_profile_flags(command : argparse.ArgumentParser) -> None:
                          help = f'The clusters file (default: ${PROFILES_FILE_ENV}, else '
                                 '~/.config/videoflow/clusters.yaml). See the README, "Multi-node clusters".')
 
+def _add_config_args(command : argparse.ArgumentParser) -> None:
+    '''The solution config convention, for a command that loads the graph without running it.'''
+    command.add_argument('--config', default = None,
+                         help = 'Solution config file (default: config.yaml next to the graph; when '
+                                'absent and the solution ships config.template.yaml, its questions '
+                                'are asked and config.yaml written, as deploy does).')
+    command.add_argument('--non-interactive', action = 'store_true',
+                         help = 'Never prompt; fail with the list of missing config inputs instead.')
+
 def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.ArgumentParser:
     '''
     - Arguments:
@@ -1659,6 +1709,7 @@ def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.A
             ``set_defaults`` so an explicit flag still overrides them.
     '''
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
+    parser.add_argument('--version', action = 'version', version = f'videoflow {__version__}')
     sub = parser.add_subparsers(dest = 'command', required = True)
     profile_defaults = profile_defaults or {}
 
@@ -1674,7 +1725,7 @@ def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.A
                       '(k8s + broker streams + owned infra). A REALTIME flow is left running '
                       '(tear it down with `videoflow teardown`). Every automatic step has an '
                       'explicit override flag.')
-    deploy.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    deploy.add_argument('graph', help = GRAPH_HELP)
     deploy.add_argument('--nats', default = None,
                         help = 'NATS URL reachable from inside the cluster. Omit to auto-provision '
                                'a dev NATS (and Redis for the blob store) in --namespace; a BATCH '
@@ -1864,7 +1915,7 @@ def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.A
                       'the prepare hook and every worker run inside the solution image instead — '
                       'the same image `deploy` builds from its [gpu.]Dockerfile. Every '
                       'automatic step has an explicit override flag.')
-    run.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    run.add_argument('graph', help = GRAPH_HELP)
     run.add_argument('--nats', default = None,
                     help = 'NATS URL to use. Omit to reuse a broker already listening on '
                            'localhost:4222, or else start a dev NATS (and Redis) in docker and '
@@ -1964,17 +2015,19 @@ def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.A
     inspect.set_defaults(func = _cmd_component_inspect)
 
     explain = sub.add_parser('explain', help = 'Print a human-readable summary of a compiled graph.')
-    explain.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    explain.add_argument('graph', help = GRAPH_HELP)
     explain.add_argument('--run-id', default = None)
+    _add_config_args(explain)
     explain.add_argument('--gpu-resource-name', default = None, metavar = 'RESOURCE',
                          help = 'Default GPU extended-resource name, as on deploy — pass the same '
                                 'value so the printed GPU demand matches what deploy will request.')
     explain.set_defaults(func = _cmd_explain)
 
     prov = sub.add_parser('provision', help = 'Create a flow\'s streams/durables on the broker (usually run automatically).')
-    prov.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
+    prov.add_argument('graph', help = GRAPH_HELP)
     prov.add_argument('--nats', required = True)
     prov.add_argument('--run-id', default = None)
+    _add_config_args(prov)
     prov.set_defaults(func = _cmd_provision)
 
     teardown = sub.add_parser('teardown', help = 'Stop a run and delete its broker streams (and, with --namespace, its K8s workloads).')

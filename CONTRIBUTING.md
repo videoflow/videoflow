@@ -2,6 +2,9 @@ How to contribute
 =================
 
 Found a bug? Have a new feature to suggest? Want to contribute changes to the codebase? Make sure to read this first.
+The development setup (clone, ``uv sync``, the test tiers, the kind cluster, pre-commit) is in
+`How to contribute <docs/source/first-steps/how-to-contribute.rst>`_ (rendered on the docs site) and,
+in short, under *Developing videoflow* in the `README <README.md>`_.
 
 Bug reporting
 -------------
@@ -17,9 +20,9 @@ has encountered this bug already.  Still having a problem? Open an issue on Gith
 to let us know.
 
 3. Make sure to provide us with useful information about
-your configuration: What OS are you using? What Tensorflow version are you using?
-Are you running on GPU? If so, what is your version of Cuda, of CuDNN?
-What is your GPU?
+your configuration: What OS are you using? Which videoflow version
+(``python -c 'import videoflow; print(videoflow.__version__)'``, and whether from PyPI or a checkout)? How did you run the flow (``run-local``, ``deploy``,
+which cluster)? If on GPU: which GPU, driver and CUDA version?
 
 4. Provide us with a script to reproduce the issue.  This script should
 be runnable as-is and should not require external data download
@@ -29,7 +32,7 @@ Any issue that cannot be reproduced is likely to be closed.
 
 5. If possible, take a shot at fixing the bug yourself --if you can!
 
-The more information you provide, the easir it is for us to validate that
+The more information you provide, the easier it is for us to validate that
 there is a bug and the faster we'll be able to take action.
 If you want your issue to be resolved quickly, following the steps
 above is crucial.
@@ -46,7 +49,7 @@ users and not just a small subset.  If you are targeting
 a minority of users, consider writing and add-on library
 for Videoflow.
 
-2. Provide code snippets demostrating the API you have in
+2. Provide code snippets demonstrating the API you have in
 mind and illustrating the use cases of your feature.
 
 3. After discussing the feature you may choose to attempt
@@ -58,7 +61,7 @@ the process along.
 Pull Requests (PRs)
 -------------------
 **Where should I submit my pull request?** Videoflow
-improvements and bug gixes should go to the Videoflow
+improvements and bug fixes should go to the Videoflow
 `master` branch.
 
 Here is a quick guide on how to submit your improvements::
@@ -78,7 +81,8 @@ and there should be sections for `Arguments`, `Returns` and
 If you want to see your PRs merged promptly, this is crucial.
 
 4. Run our test suite locally. It is easy: from the
-Videoflow folder, simply run ``py.test tests/``
+Videoflow folder, ``uv run pytest --ignore=tests/integration -q`` (the integration
+tiers and how to run them are in *How to contribute*).
 
 
 5. Make sure all tests are
@@ -102,4 +106,4 @@ Adding new examples
 Even if you do not contribute to the Videoflow source code,
 if you have an application of Videoflow as is concise and
 powerful, please consider adding it to our collection of
-`examples <https://github.com/jadielam/videoflow/tree/master/examples>`_.
+`examples <https://github.com/videoflow/videoflow/tree/master/examples>`_.

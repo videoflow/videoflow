@@ -6,9 +6,14 @@ device placement, see ``resolve_needs_gpu``), build the ``videoflow-base`` image
 it is FROM if missing, and build the solution image from the enclosing git root
 (solution Dockerfiles COPY sibling packages, so the repo root is the context).
 
-The base images can only be auto-built from a videoflow *source checkout*
-(``docker/base/Dockerfile`` COPYs the source tree); a wheel-only install gets a
-precise error with the manual commands instead.
+A missing base image is built from the videoflow *source checkout* when there
+is one (``docker/base/Dockerfile`` COPYs the source tree, so local edits reach
+the workers), and otherwise — a wheel install from PyPI — pulled from
+``ghcr.io/videoflow/videoflow-base:<version>[-cuda]``, the images the release
+workflow publishes, and tagged under the local name the Dockerfiles expect.
+``VF_BASE_IMAGE_REGISTRY`` points the pull at another registry (a mirror, or a
+local ``registry:2`` while testing); a dev version with no published image gets
+a precise error with the manual commands instead.
 
 Two environment variables reach every docker invocation made here (a machine's
 concern, never a deploy flag): ``VF_DOCKER_BUILD_ARGS`` is spliced into each
@@ -35,6 +40,8 @@ _BASE_ARG_RE = re.compile(r'^ARG\s+BASE_IMAGE\s*=\s*(\S+)\s*$', re.MULTILINE)
 
 BUILD_ARGS_ENV = 'VF_DOCKER_BUILD_ARGS'
 RUN_ARGS_ENV = 'VF_DOCKER_RUN_ARGS'
+BASE_IMAGE_REGISTRY_ENV = 'VF_BASE_IMAGE_REGISTRY'
+DEFAULT_BASE_IMAGE_REGISTRY = 'ghcr.io/videoflow'
 
 def docker_build_extra_args() -> List[str]:
     '''Extra ``docker build`` arguments from ``VF_DOCKER_BUILD_ARGS`` (shell-split; empty when unset).'''
@@ -96,8 +103,11 @@ def build_context_for(graph_dir : str, override : Optional[str] = None) -> str:
     '''
     if override:
         return os.path.abspath(override)
-    proc = subprocess.run(['git', '-C', graph_dir, 'rev-parse', '--show-toplevel'],
-                          capture_output = True, text = True, check = False)
+    try:
+        proc = subprocess.run(['git', '-C', graph_dir, 'rev-parse', '--show-toplevel'],
+                              capture_output = True, text = True, check = False)
+    except FileNotFoundError:
+        return graph_dir   # no git on this machine: the graph dir is the best guess
     if proc.returncode == 0 and proc.stdout.strip():
         return proc.stdout.strip()
     return graph_dir
@@ -113,34 +123,76 @@ def image_exists(ref : str) -> bool:
                           capture_output = True, check = False)
     return proc.returncode == 0
 
+def published_base_ref(base_ref : str) -> str:
+    '''The published counterpart of a local ``videoflow-base:py3.12[-cuda]`` ref: ``<registry>/videoflow-base:<version>[-cuda]``.'''
+    registry = os.environ.get(BASE_IMAGE_REGISTRY_ENV, DEFAULT_BASE_IMAGE_REGISTRY).rstrip('/')
+    suffix = '-cuda' if base_ref.endswith('-cuda') else ''
+    return f'{registry}/videoflow-base:{videoflow.__version__}{suffix}'
+
+def _source_base_dockerfile(gpu : bool) -> Optional[str]:
+    '''``docker/base/Dockerfile[.gpu]`` of the checkout videoflow is installed from, or None for a wheel install.'''
+    source_root = os.path.dirname(os.path.dirname(os.path.abspath(videoflow.__file__)))
+    dockerfile = os.path.join(source_root, 'docker', 'base', 'Dockerfile.gpu' if gpu else 'Dockerfile')
+    return dockerfile if os.path.isfile(dockerfile) else None
+
+def pull_base_image(base_ref : str) -> bool:
+    '''
+    ``docker pull`` the published image for this version and tag it as ``base_ref``.
+
+    - Returns:
+        - False when the pull fails (no such image, denied, offline); the caller \
+            turns that into the error with the manual remedy.
+    - Raises:
+        - ``RuntimeError`` when docker itself is missing.
+    '''
+    published = published_base_ref(base_ref)
+    try:
+        proc = subprocess.run(['docker', 'pull', published], check = False)
+    except FileNotFoundError as e:
+        raise RuntimeError('docker not found on PATH — install docker or pass a '
+                           'prebuilt image with --image.') from e
+    if proc.returncode != 0:
+        return False
+    subprocess.run(['docker', 'tag', published, base_ref], check = True)
+    return True
+
 def ensure_base_image(base_ref : str) -> None:
     '''
-    Makes sure ``base_ref`` (a ``videoflow-base:*`` image) exists locally,
-    building it from the videoflow source checkout if missing.
+    Makes sure ``base_ref`` (a ``videoflow-base:*`` image) exists locally: built
+    from the videoflow source checkout when there is one (always — local edits
+    must reach the image), else pulled from the published registry image for the
+    installed version.
 
     - Raises:
-        - ``RuntimeError`` when the image is missing and videoflow is not an \
-            editable/source install (the base Dockerfile COPYs the source tree, \
-            so there is nothing to build from).
+        - ``RuntimeError`` when the image is missing, videoflow is a wheel \
+            install, and the published image cannot be pulled (a development \
+            version with no release, a private package, no network).
     '''
     if image_exists(base_ref):
         return
-    source_root = os.path.dirname(os.path.dirname(os.path.abspath(videoflow.__file__)))
     gpu = base_ref.endswith('-cuda')
-    dockerfile = os.path.join(source_root, 'docker', 'base',
-                              'Dockerfile.gpu' if gpu else 'Dockerfile')
-    if not os.path.isfile(dockerfile):
-        raise RuntimeError(
-            f'base image {base_ref} is not built and videoflow is not installed from '
-            f'source, so it cannot be built automatically. Build it once with:\n'
-            f'  git clone https://github.com/videoflow/videoflow && cd videoflow\n'
-            f'  ./docker/build-images.sh')
-    print(f'Building base image {base_ref} (one-time)...')
-    cmd = ['docker', 'build', '-f', dockerfile, '-t', base_ref]
-    if not gpu:
-        cmd += ['--build-arg', 'PYTHON_VERSION=3.12']
-    cmd.append(source_root)
-    _docker_build(cmd)
+    dockerfile = _source_base_dockerfile(gpu)
+    if dockerfile is not None:
+        print(f'Building base image {base_ref} (one-time)...')
+        cmd = ['docker', 'build', '-f', dockerfile, '-t', base_ref]
+        if not gpu:
+            cmd += ['--build-arg', 'PYTHON_VERSION=3.12']
+        # <root>/docker/base/Dockerfile -> <root>: the base Dockerfile COPYs the source tree.
+        cmd.append(os.path.dirname(os.path.dirname(os.path.dirname(dockerfile))))
+        _docker_build(cmd)
+        return
+    published = published_base_ref(base_ref)
+    print(f'Pulling base image {published} (one-time)...')
+    if pull_base_image(base_ref):
+        return
+    raise RuntimeError(
+        f'base image {base_ref} is not available locally and could not be pulled from '
+        f'{published} (no published image for videoflow {videoflow.__version__} — a '
+        f'development version? — or the pull was denied). Either install videoflow from a '
+        f'source checkout, or build the image once with:\n'
+        f'  git clone https://github.com/videoflow/videoflow && cd videoflow\n'
+        f'  ./docker/build-images.sh\n'
+        f'or point {BASE_IMAGE_REGISTRY_ENV} at a registry that has it.')
 
 def build_image(dockerfile : str, context : str, tag : str) -> None:
     '''Builds the solution image, streaming docker output (layer cache makes unchanged rebuilds fast).'''

@@ -57,8 +57,11 @@ from videoflow.core import Flow
 
 def build_flow(cfg=None):
     if cfg is None:
-        # Module-dir-relative so `videoflow deploy` works from any cwd.
-        cfg = load_config(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.yaml'))
+        # deploy / run-local / explain publish the config they resolved (--config, or the
+        # generated one) as VF_SOLUTION_CONFIG; otherwise the config.yaml beside this
+        # module, so the graph works from any cwd.
+        here = os.path.dirname(os.path.abspath(__file__))
+        cfg = load_config(os.environ.get('VF_SOLUTION_CONFIG') or os.path.join(here, 'config.yaml'))
 
     events = EventProducer(cfg.events, rate_fps=cfg.rate_fps, name='events')
     fragile = FragileProcessor(poison_values=cfg.poison_values, crash_at=cfg.crash_at,
