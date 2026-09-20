@@ -232,7 +232,7 @@ def test_pay_004_memory_backends_keep_the_obligation_until_the_settlement_is_cer
     rig = MemoryRig(BATCH)
     sever = _ModelSever(rig, ack_wait = 30)
     try:
-        schedule = _oracle_pay_004(rig, sever, evidence, ack_wait = 5)
+        schedule = _oracle_pay_004(rig, sever, evidence, ack_wait = 30)
     finally:
         rig.close()
     write_evidence(evidence_dir, 'ownership_snapshots.json', evidence)
@@ -507,7 +507,7 @@ def test_pay_006_crash_after_confirmed_settlement_does_not_leak_a_payload(nats_u
     evidence : Dict[str, Any] = {}
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
                                     marker_dir = str(evidence_dir / 'markers'))
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 5)
     try:
         _oracle_pay_006(rig, _subprocess_child(rig, redis_url, schedule), evidence)
     finally:
