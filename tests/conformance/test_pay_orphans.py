@@ -378,7 +378,7 @@ def test_pay_012_jetstream_eviction_is_reconciled_against_a_redis_store(nats_url
              spec('slow', ['parent'], 'consumer', False)]
     with redis_client(url) as client:
         store = KeyRecordingStore(RedisPayloadStore(url))
-        rig = JetStreamRig(nats_url, REALTIME, specs, store = store, ack_wait = 30)
+        rig = JetStreamRig(nats_url, REALTIME, specs, store = store, ack_wait = 5)
 
         def stored_bytes() -> int:
             return sum(int(client.strlen(k)) for k in store.keys if client.exists(k))
@@ -422,7 +422,7 @@ def test_pay_012_the_runtime_ledger_cancels_evicted_messages_itself(nats_url, re
         return FlowRuntime(FileRuntimeStore(root), rig.flow_id, rig.run_id, node, lease_seconds = 2)
     with redis_client(url) as client:
         store = KeyRecordingStore(RedisPayloadStore(url))
-        rig = JetStreamRig(nats_url, REALTIME, specs, store = store, ack_wait = 30)
+        rig = JetStreamRig(nats_url, REALTIME, specs, store = store, ack_wait = 5)
         try:
             publisher = rig.messenger('parent', [], store = store, blob_reader_ids = ['fast', 'slow'], runtime = runtime('parent'))
             fast = rig.messenger('fast', ['parent'], runtime = runtime('fast'))
@@ -580,7 +580,7 @@ def test_pay_013_rejected_and_deduplicated_publications_do_not_accumulate(nats_u
     specs = [spec('parent', [], 'producer', True), spec('child', ['parent'], 'consumer', False)]
     with redis_client(url):
         store = KeyRecordingStore(RedisPayloadStore(url))
-        rig = JetStreamRig(nats_url, BATCH, specs, store = store, ack_wait = 30)
+        rig = JetStreamRig(nats_url, BATCH, specs, store = store, ack_wait = 5)
 
         def limit_channel(max_msgs : Optional[int]) -> None:
             config = topology.stream_config_for(rig.flow_id, rig.run_id, 'parent', BATCH,

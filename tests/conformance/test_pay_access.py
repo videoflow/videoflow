@@ -162,7 +162,7 @@ def test_pay_002_transient_payload_access_failures_retry_without_terminal(nats_u
     '''
     caplog.set_level(logging.WARNING, logger = 'videoflow.messaging')
     evidence : Dict[str, Any] = {}
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 5, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 5, ack_wait = 5)
     try:
         schedule = _oracle_pay_002(rig, evidence, caplog)
     finally:
@@ -378,7 +378,7 @@ def test_pay_003_permanent_missing_or_corrupt_payloads_are_explicitly(nats_url, 
     from _brokers import sweep_refs
     evidence : Dict[str, Any] = {}
     for flow_type in (BATCH, REALTIME):
-        rig = JetStreamRig(nats_url, flow_type, _specs(), redis_url = redis_url, max_retries = 2, ack_wait = 30)
+        rig = JetStreamRig(nats_url, flow_type, _specs(), redis_url = redis_url, max_retries = 2, ack_wait = 5)
         try:
             evidence[flow_type] = {}
             schedule = _oracle_pay_003(rig, flow_type, evidence[flow_type])

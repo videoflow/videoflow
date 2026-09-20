@@ -813,7 +813,7 @@ def test_run_034_nonowner_replicas_route_from_metadata_without_downloading(nats_
     '''
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)     # every frame offloads
     evidence : Dict[str, Any] = {}
-    rig = JetStreamRig(nats_url, BATCH, _specs_034(4), redis_url = redis_url, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs_034(4), redis_url = redis_url, ack_wait = 5)
     try:
         _oracle_run_034(rig, evidence)
     finally:
@@ -827,7 +827,7 @@ def test_run_034_nonowner_replicas_route_from_metadata_without_downloading(nats_
 def test_run_034_memory_backends_route_from_metadata(evidence_dir, monkeypatch) -> None:
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     evidence : Dict[str, Any] = {}
-    rig = memory_rig(_specs_034(4), ack_wait = 30)
+    rig = memory_rig(_specs_034(4), ack_wait = 5)
     try:
         with rig.ticking():
             _oracle_run_034(rig, evidence)
@@ -840,7 +840,7 @@ def test_run_034_memory_backends_route_from_metadata(evidence_dir, monkeypatch) 
 def test_run_034_detects_a_replica_that_hydrates_before_deciding_ownership(monkeypatch) -> None:
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)
     defects_run2.hydrate_before_ownership(monkeypatch)
-    rig = memory_rig(_specs_034(4), ack_wait = 30)
+    rig = memory_rig(_specs_034(4), ack_wait = 5)
     try:
         with rig.ticking():
             assert defects.detects(_oracle_run_034, rig, {})

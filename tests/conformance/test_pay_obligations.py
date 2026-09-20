@@ -232,7 +232,7 @@ def test_pay_004_memory_backends_keep_the_obligation_until_the_settlement_is_cer
     rig = MemoryRig(BATCH)
     sever = _ModelSever(rig, ack_wait = 30)
     try:
-        schedule = _oracle_pay_004(rig, sever, evidence, ack_wait = 30)
+        schedule = _oracle_pay_004(rig, sever, evidence, ack_wait = 5)
     finally:
         rig.close()
     write_evidence(evidence_dir, 'ownership_snapshots.json', evidence)
@@ -556,7 +556,7 @@ def test_pay_006_the_runtime_ledger_reconciles_on_worker_start(nats_url, redis_u
     root = str(tmp_path / 'ledger')
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
                                     marker_dir = str(evidence_dir / 'markers'))
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 5)
 
     def runtime(node : str) -> FlowRuntime:
         return FlowRuntime(FileRuntimeStore(root), rig.flow_id, rig.run_id, node, lease_seconds = 2)
