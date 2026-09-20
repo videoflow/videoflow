@@ -28,7 +28,7 @@ import json
 import os
 import pathlib
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import pytest
 
@@ -140,6 +140,24 @@ def pytest_sessionfinish(session : pytest.Session, exitstatus : int) -> None:
 
 # -- fixtures shared by every level -----------------------------------------
 
+#: The messenger's receive poll while a rig is in use. The module default (1 s)
+#: is a broker round-trip budget; on an in-memory backend, or a compose broker on
+#: localhost, it is only how long an idle receiver takes to notice a stop, and a
+#: process-level case waits on dozens of those.
+MESSENGER_POLL_SECONDS = 0.05
+
+@pytest.fixture(autouse = True)
+def _fast_messenger_poll(monkeypatch : pytest.MonkeyPatch) -> None:
+    '''
+    Every case runs with the short receive poll, and every case starts from the
+    module default. The rigs used to assign the module global themselves and
+    never restore it, so whether a later test polled at 50 ms or 1 s depended on
+    which rig had run before it — RUN-021 took 9 s in a full run and 15 s alone.
+    '''
+    from videoflow.messaging import nats_messenger
+    monkeypatch.setattr(nats_messenger, '_FETCH_TIMEOUT_SECONDS', MESSENGER_POLL_SECONDS)
+
+
 @pytest.fixture(scope = 'session')
 def catalog() -> Dict[str, Any]:
     return load_catalog()
@@ -197,8 +215,8 @@ def evidence_dir(request : pytest.FixtureRequest) -> pathlib.Path:
 K3S_DEFAULTS = {'VF_K8S_CONTEXT': 'default', 'VF_K8S_NAMESPACE': 'videoflow-test', 'VF_K8S_PVC': 'vf-test-share'}
 #: The kubernetes level runs only when the operator names the namespace explicitly:
 #: its cases delete broker pods and scale StatefulSets inside the test namespaces,
-#: which a plain `pytest --ignore=tests/integration` on a host that happens to be a
-#: cluster node must not do on its own. `scripts/k3s-test-up.sh` prints the export.
+#: which a plain `pytest tests/conformance` on a host that happens to be a cluster
+#: node must not do on its own. `scripts/k3s-test-up.sh` prints the export.
 K3S_OPT_IN = 'VF_K8S_NAMESPACE'
 
 def _kubectl(*args : str, timeout : float = 20.0) -> tuple[int, str]:
@@ -311,6 +329,41 @@ def k3s_mig_node(k3s_gpu_nodes : List[str]) -> str:
     if str(labels.get('nvidia.com/mig.capable', '')).lower() != 'true':
         not_run(f'node {node} is not MIG-capable per GFD (nvidia.com/mig.capable)')
     return node
+
+@pytest.fixture
+def fake_smi(tmp_path : pathlib.Path, monkeypatch : pytest.MonkeyPatch) -> Callable[..., None]:
+    '''
+    A fake ``nvidia-smi`` first on PATH for the process-level GPU cases;
+    ``configure(devices, p2p = '0-1', fail = False)`` describes the host. The
+    answers to every argv the production code issues are rendered ahead of time
+    (``tools/fake_nvidia_smi.py``) and served by an ``sh`` shim, so a read costs
+    a shell start rather than an interpreter start — RUN-044 alone reads ~45 times.
+    '''
+    import importlib.util
+    spec = importlib.util.spec_from_file_location('fake_nvidia_smi', str(HERE / 'tools' / 'fake_nvidia_smi.py'))
+    assert spec is not None and spec.loader is not None
+    fake = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(fake)
+    bindir = tmp_path / 'bin'
+    bindir.mkdir()
+    shim = bindir / 'nvidia-smi'
+    shim.write_text(fake.shim_script(sys.executable))
+    shim.chmod(0o755)
+    answers = tmp_path / 'smi-answers'
+    monkeypatch.setenv('PATH', f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}')
+    monkeypatch.setenv('VF_FAKE_SMI_DIR', str(answers))
+    monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising = False)
+
+    def configure(devices : List[Dict[str, Any]], p2p : str = '', fail : bool = False) -> None:
+        monkeypatch.setenv('VF_FAKE_SMI_JSON', json.dumps(devices))       # the slow path, for any other argv
+        monkeypatch.setenv('VF_FAKE_SMI_P2P', p2p)
+        fake.prerender(str(answers), devices, p2p)
+        if fail:
+            monkeypatch.setenv('VF_FAKE_SMI_FAIL', '1')
+        else:
+            monkeypatch.delenv('VF_FAKE_SMI_FAIL', raising = False)
+    return configure
+
 
 @pytest.fixture
 def gpu(request : pytest.FixtureRequest) -> Dict[str, Any]:

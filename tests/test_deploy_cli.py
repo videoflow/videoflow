@@ -14,7 +14,7 @@ import pytest
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.constants import BATCH, GPU
-from videoflow.deploy import build, cli, solution
+from videoflow.deploy import build, cli, infra, solution
 from videoflow.deploy.compile import compile_to_dict
 from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
@@ -189,6 +189,9 @@ def test_the_detected_runtime_class_reaches_the_preflight(harness, monkeypatch):
     preflight = {}
     monkeypatch.setattr(cli, 'detect_cluster', lambda kubectl: 'k3s')
     monkeypatch.setattr(cli, 'hostpath_warning', lambda flavor: None)
+    # No --nats: the command would otherwise `kubectl get svc` the developer's cluster.
+    monkeypatch.setattr(infra, 'reused_infra',
+                        lambda kubectl, namespace, need_redis: infra.ReusedInfra(nats = None, redis = None))
     monkeypatch.setattr(cli, 'nvidia_runtimeclass', lambda kubectl: 'nvidia')
     monkeypatch.setattr(cli, 'gpu_preflight', lambda kubectl, **kw: preflight.update(kw) or [])
     monkeypatch.setattr(cli, 'free_gpu_devices_observed', lambda kubectl: known(4))
@@ -218,21 +221,17 @@ def _stub_resolver(monkeypatch, tmp_path):
     monkeypatch.setattr(solution_refs, 'resolve_solution_ref', resolve)
 
 
-def test_solution_ref_builds_from_its_checkout_root(harness, monkeypatch):
+@pytest.mark.parametrize('extra_argv, context', [
+    ([], '/clone/root'),                                   # the checkout root, where the Dockerfile's COPYs resolve
+    (['--build-context', '{tmp_path}'], '{tmp_path}'),     # unless the operator says otherwise
+], ids = ['checkout-root', 'explicit-build-context'])
+def test_a_solution_ref_builds_from_its_checkout_root_unless_told_otherwise(harness, monkeypatch, extra_argv, context):
     tmp_path, seen = harness
     _both_dockerfiles(tmp_path)
     _stub_resolver(monkeypatch, tmp_path)
-    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run']) == 0
-    assert seen['build'] == [{'needs_gpu': False, 'context_override': '/clone/root'}]
-
-
-def test_explicit_build_context_wins_over_the_solution_ref(harness, monkeypatch):
-    tmp_path, seen = harness
-    _both_dockerfiles(tmp_path)
-    _stub_resolver(monkeypatch, tmp_path)
-    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run',
-                     '--build-context', str(tmp_path)]) == 0
-    assert seen['build'] == [{'needs_gpu': False, 'context_override': str(tmp_path)}]
+    argv = [a.format(tmp_path = tmp_path) for a in extra_argv]
+    assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run', *argv]) == 0
+    assert seen['build'] == [{'needs_gpu': False, 'context_override': context.format(tmp_path = tmp_path)}]
 
 
 def test_explain_accepts_a_solution_ref(harness, monkeypatch, capsys):

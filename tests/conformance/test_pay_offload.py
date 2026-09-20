@@ -9,6 +9,7 @@ the reviewed defect (``defects_pay.py``) and prove it fails.
 '''
 from __future__ import absolute_import, division, print_function
 
+import functools
 import zlib
 from typing import Any, Callable, Dict, List, Optional
 
@@ -267,12 +268,14 @@ TIGHT_BUDGET = 2 << 20
 ADEQUATE_BUDGET = 8 << 20
 
 
+@functools.lru_cache(maxsize = 1)
 def _compressed_specimen() -> tuple:
     '''
     A 1080p frame of 3x3 flat blocks — content a lossless compressor shrinks to
     about a megabyte — and its compressed source. The frame is *read back through
     the compressed bytes*, as a worker decodes its input, so the estimator is
-    handed exactly what a producer would hand it.
+    handed exactly what a producer would hand it. Built once: the primary and its
+    negative control read the same specimen (neither writes to it).
     '''
     blocks = np.random.default_rng(20).integers(0, 256, (HD_SHAPE[0] // 3, HD_SHAPE[1] // 3, 3), dtype = np.uint8)
     frame = np.repeat(np.repeat(blocks, 3, axis = 0), 3, axis = 1)

@@ -120,23 +120,6 @@ def test_exclusive_preflight_reports_unknown_occupancy(monkeypatch):
     assert cluster.gpu_preflight(gpu_runtime_class = 'nvidia', demand = {'nvidia.com/gpu': 2}) == []
 
 
-def test_exclusive_preflight_rejects_spanning_an_mps_pool(monkeypatch):
-    mps = json.dumps({'items': [{
-        'metadata': {'name': 'gpu-box',
-                     'labels': {'nvidia.com/gpu.sharing-strategy': 'mps',
-                                'nvidia.com/gpu.replicas': '4',
-                                'nvidia.com/gpu.product': 'NVIDIA-A100-SXM4-80GB-SHARED'}},
-        'status': {'allocatable': {'nvidia.com/gpu': '4'}}}]})
-    monkeypatch.setattr(subprocess, 'run',
-                        _runner({'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                                 'gpu-pool=true -o json': mps, 'nodes -o json': mps,
-                                 'pods -A': '{"items": []}'}))
-    problems = cluster.gpu_preflight(gpu_runtime_class = 'nvidia', demand = {'nvidia.com/gpu': 2},
-                                     max_per_pod = {'nvidia.com/gpu': 2})
-    assert len(problems) == 1
-    assert problems[0].startswith(gpu.IMPOSSIBLE_GPU_REQUEST) and 'MPS' in problems[0]
-
-
 def test_gpu_resource_predicate():
     assert gpu._is_gpu_resource('nvidia.com/gpu')
     assert gpu._is_gpu_resource('nvidia.com/gpu.shared')

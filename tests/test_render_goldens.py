@@ -51,6 +51,7 @@ from videoflow.core import Flow
 from videoflow.core.compiler import NodeSpec, compile_flow
 from videoflow.core.constants import BATCH, GPU, REALTIME
 from videoflow.core.supervision import SupervisionPolicy
+from videoflow.deploy.compile import specs_from_document
 from videoflow.deploy.manifests import dump_manifests, k8s_name, parse_mounts, render_manifests
 from videoflow.messaging import topology
 from videoflow.processors import IdentityProcessor
@@ -104,7 +105,12 @@ def _compile_in_subprocess(graph : pathlib.Path) -> Dict[str, Any]:
                           cwd = str(graph.parent), capture_output = True, text = True,
                           timeout = 120, check = False)
     assert proc.returncode == 0, f'compile failed:\n{proc.stdout[-2000:]}\n{proc.stderr[-4000:]}'
-    return json.loads(proc.stdout)
+    # What stdout carries is what `deploy` reads back from the solution image:
+    # a document `specs_from_document` accepts as-is, not merely valid JSON.
+    document = json.loads(proc.stdout)
+    flow_id, flow_type, specs = specs_from_document(proc.stdout)
+    assert (flow_id, flow_type, len(specs)) == (document['flow_id'], document['flow_type'], len(document['specs']))
+    return document
 
 @pytest.mark.parametrize('name', sorted(TOYS))
 def test_toy_specs_and_manifests_are_byte_identical(name : str, tmp_path : pathlib.Path) -> None:

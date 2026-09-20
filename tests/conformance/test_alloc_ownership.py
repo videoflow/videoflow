@@ -112,10 +112,13 @@ def _oracle_alloc_004_model(evidence : Dict[str, Any]) -> None:
             labels = fake.labels('gpu-a')
             assert labels[gpu.GPU_OWNER_LABEL] == gpu.flow_owner_value(winner)
             assert labels[gpu.GPU_OWNER_EPOCH_LABEL] == outcomes[winner]['epoch']
-            # The loser's rollback (a stale release) cannot remove the winner's claim.
+            # The loser's rollback (a stale release) cannot remove the winner's claim —
+            # and does not even attempt the write: a mismatch is decided on the read.
+            writes_before = len([c for c, _ in fake.calls if c[1:3] == ['label', 'node']])
             assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(loser), 'stale') is False
             assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(winner), 'stale-epoch') is False
             assert fake.labels('gpu-a')[gpu.GPU_OWNER_LABEL] == gpu.flow_owner_value(winner)
+            assert len([c for c, _ in fake.calls if c[1:3] == ['label', 'node']]) == writes_before
             # A successor epoch after a real release: the old epoch's release is refused.
             assert gpu.MixGpu()._release_owner('kubectl', 'gpu-a', gpu.flow_owner_value(winner), outcomes[winner]['epoch']) is True
             successor = gpu.MixGpu()._stamp_node_owners('kubectl', ['gpu-a'], gpu.flow_owner_value('flowC'))
@@ -580,6 +583,7 @@ def _oracle_alloc_012_model(monkeypatch : pytest.MonkeyPatch, evidence : Dict[st
     finally:
         schedule.uninstall()
     assert 'conflict' in outcome and 'occupancy changed' in outcome['conflict'], outcome
+    assert 'gpu-a: 1 GPU unit(s) now in use' in outcome['conflict']            # the card and the count, named
     assert gpu.GPU_OWNER_LABEL not in fake.labels('gpu-a')                      # claim released
     assert fake.configmap is None and fake.pointer() == 'default-mig-parted-config'   # no geometry mutation
     assert fake.pods == [('gpu-a', 'nvidia.com/gpu', 1)]                        # the foreign pod is untouched
@@ -724,6 +728,7 @@ def _oracle_alloc_013_model(monkeypatch : pytest.MonkeyPatch, evidence : Dict[st
     claim = backend.reserve(plan, 'flowA:r', plan.snapshot_generation)
     assert claim.status == 'ready', claim
     geometry_live = dict(fake.allocatable('gpu-a'))
+    pointer_live, mutations_live = fake.pointer(), len(fake.mutation_log)
     # The workload holds its slice; the controller leaves with keep_workloads: everything stays.
     fake.pods.append(('gpu-a', 'nvidia.com/mig-1g.10gb', 1))
     kept = backend.release(claim.claim_id, 'flowA:r', claim.desired_generation, keep_workloads = True)
@@ -734,6 +739,8 @@ def _oracle_alloc_013_model(monkeypatch : pytest.MonkeyPatch, evidence : Dict[st
     assert released.status == RELEASE_PENDING_RECOVERY, released
     assert fake.allocatable('gpu-a') == geometry_live and fake.labels('gpu-a').get(gpu.GPU_OWNER_LABEL) == 'flowa'
     assert fake.nodes['gpu-a']['annotations'].get(gpu.MIG_RESTORE_ANNOTATION) is not None
+    # ...and the shared map stays wired: nothing was written at all while the slice was held.
+    assert fake.pointer() == pointer_live and fake.mutation_log[mutations_live:] == []
     evidence['while_held'] = {'release': released.status, 'allocatable': fake.allocatable('gpu-a')}
     # The final user exits: one cleanup completes; the unrelated allocation on gpu-b is untouched.
     fake.pods.clear()

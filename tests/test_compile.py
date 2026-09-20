@@ -4,8 +4,6 @@ that round-trips back into equivalent NodeSpec objects — the contract that let
 deploy compile inside the solution container and render manifests on the host.
 '''
 import json
-import subprocess
-import sys
 
 from videoflow.deploy.compile import compile_to_dict, specs_from_document
 
@@ -106,11 +104,3 @@ def test_non_identifier_filename_falls_back(tmp_path):
     graph.write_text(INLINE_GRAPH)
     document = compile_to_dict(str(graph))
     assert _node_class(document, 'inline') == '_videoflow_user_graph.InlineNode'
-
-
-def test_cli_module_prints_json_document(tmp_path):
-    graph = _write_graph(tmp_path)
-    proc = subprocess.run([sys.executable, '-m', 'videoflow.compile', graph],
-                          capture_output = True, text = True, check = True)
-    flow_id, flow_type, specs = specs_from_document(proc.stdout)
-    assert flow_id == 'demo' and flow_type == 'batch' and len(specs) == 3

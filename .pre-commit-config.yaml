@@ -3,8 +3,9 @@
 #   pre-commit install --hook-type pre-push # enable the pytest pre-push hook
 #
 # Commit stage: fast file-hygiene checks, ruff lint (auto-fix), and mypy type checks.
-# Push stage: the full pytest suite (too slow to run on every commit; it also needs a
-# local NATS JetStream server for the integration tests).
+# Push stage: the unit suite (too slow to run on every commit). The integration
+# buckets need a local NATS JetStream server and the backend conformance suite is
+# a several-minute run of its own; both are run explicitly (see CONTRIBUTING.md).
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -44,9 +45,11 @@ repos:
 
       - id: pytest
         name: pytest (unit suite)
-        # tests/integration/ needs a live NATS JetStream server, so it is excluded
-        # here — run it explicitly with `uv run pytest tests/integration`.
-        entry: uv run pytest --ignore=tests/integration
+        # tests/integration/ needs a live NATS JetStream server and
+        # tests/conformance/ is the 130-case backend suite (minutes, mostly waiting
+        # on model time), so both are excluded here — run them explicitly with
+        # `uv run pytest tests/integration` and `uv run pytest tests/conformance -q -rs`.
+        entry: uv run pytest --ignore=tests/integration --ignore=tests/conformance
         language: system
         pass_filenames: false
         always_run: true

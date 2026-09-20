@@ -99,19 +99,8 @@ def test_shared_wraps_around_and_labels_the_grant_nonexclusive():
     assert DeliveredGrant.from_dict(json.loads(env[GRANT_ENV])).exclusive is False
 
 
-def test_strict_admits_sharers_within_declared_peaks_plus_headroom():
-    # 96 GiB card, 6 GiB in use, 1 GiB headroom: 89 GiB budget → two 40 GiB peaks fit, three do not.
-    backend = _backend('strict', _host(1), used = {'GPU-0000': 6 * GIB})
-    snapshot = backend.inventory({}).value
-    assert snapshot.occupancy == {'GPU-0000': 6 * GIB}
-    two = backend.plan([_request('s', peak_gib = 40), _request('t', peak_gib = 40)], snapshot)
-    assert isinstance(two, FeasiblePlan) and two.notes == (f'headroom {GIB} B per shared device',)
-    three = backend.plan([_request(w, peak_gib = 40) for w in 'stu'], snapshot)
-    assert isinstance(three, Infeasible) and 'u: declared peak' in three.reasons[0] and 'headroom' in three.reasons[0]
-    undeclared = backend.plan([_request('s', peak_gib = 40), WorkloadRequest('f', 'r', 'v', 1, SHARING_COOPERATIVE)],
-                              snapshot)
-    assert isinstance(undeclared, Infeasible) and 'needs a declared peak memory' in undeclared.reasons[0]
-    # An exclusive grant and the sharers never share a card.
+def test_strict_keeps_an_exclusive_grant_and_the_sharers_on_different_cards():
+    # The peak-plus-headroom budget itself is ALLOC-016's (tests/conformance/test_alloc_local.py).
     backend = _backend('strict', _host(2))
     plan = backend.plan([_request('x'), _request('s', peak_gib = 10)], backend.inventory({}).value)
     assert isinstance(plan, FeasiblePlan)

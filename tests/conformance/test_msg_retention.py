@@ -182,6 +182,7 @@ def test_msg_002_memory_mixed_retention_is_rejected_and_the_separated_graph_keep
     try:
         _oracle_msg_002(driver, record)
         assert record['admission']['outcome'] == 'rejected', record['admission']
+        assert 'one retention class' in record['admission']['message'], record['admission']
     finally:
         driver.close()
         _write(evidence_dir, 'retention_ledger.json', record)
@@ -197,6 +198,7 @@ def test_msg_002_memory_a_backend_with_mixed_retention_serves_both_classes(evide
     try:
         _oracle_msg_002(driver, record)
         assert record['admission']['outcome'] == 'admitted', record['admission']
+        assert any('mixed retention' in n for n in record['admission']['notes']), record['admission']
     finally:
         driver.close()
         _write(evidence_dir, 'retention_ledger.json', record)

@@ -1,8 +1,9 @@
 '''
-Phase 6 deployment/observability polish: init Job + spec ConfigMap, PDB,
-startupProbe, the `explain` CLI, structured logging, and sink idempotency logic.
-Mostly pure/unit (no broker); the idempotency logic is exercised with in-memory
-fakes so it stays deterministic.
+Phase 6 deployment/observability polish: the `explain` CLI, structured logging,
+and sink idempotency logic (the init Job, spec ConfigMap, PDB and startupProbe
+rendering is pinned by tests/test_render_goldens.py). Mostly pure/unit (no
+broker); the idempotency logic is exercised with in-memory fakes so it stays
+deterministic.
 '''
 import io
 import json
@@ -12,50 +13,10 @@ from contextlib import redirect_stdout
 
 import pytest
 
-from videoflow.consumers import CommandlineConsumer, VoidConsumer
-from videoflow.core import Flow
-from videoflow.core.compiler import compile_flow
-from videoflow.core.constants import REALTIME
+from videoflow.consumers import VoidConsumer
 from videoflow.core.engine import Messenger
 from videoflow.core.task import ConsumerTask
-from videoflow.deploy.manifests import render_manifests
-from videoflow.processors import IdentityProcessor
-from videoflow.producers import IntProducer
 from videoflow.runtime.idempotency import IdempotencyStore, idempotency_key
-
-
-def _demo_flow():
-    p = IntProducer(0, 5, name = 'producer')
-    a = IdentityProcessor(name = 'identity', nb_tasks = 2)(p)
-    out = CommandlineConsumer(name = 'printer')(a)
-    return Flow([out], flow_type = REALTIME, flow_id = 'demo')
-
-# -- manifests -------------------------------------------------------------
-
-IMG = 'ghcr.io/acme/app:v1'
-
-def test_provision_init_job_and_spec_configmap_present():
-    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG)
-    by = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    assert ('Job', 'vf-demo-run1-provision') in by
-    assert ('ConfigMap', 'vf-demo-run1-specs') in by
-    # The init Job mounts the specs, runs the provision entrypoint, on the default image.
-    job = by[('Job', 'vf-demo-run1-provision')]
-    container = job['spec']['template']['spec']['containers'][0]
-    assert container['command'] == ['python', '-m', 'videoflow.provision']
-    assert container['image'] == IMG
-
-def test_pdb_for_multi_replica_and_startup_probe():
-    manifests = render_manifests(compile_flow(_demo_flow()), 'demo', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG)
-    by = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    # identity has nb_tasks=2 → gets a PodDisruptionBudget; producer/consumer don't.
-    assert ('PodDisruptionBudget', 'vf-demo-run1-identity-pdb') in by
-    assert ('PodDisruptionBudget', 'vf-demo-run1-producer-pdb') not in by
-    dep = by[('Deployment', 'vf-demo-run1-identity')]
-    container = dep['spec']['template']['spec']['containers'][0]
-    assert 'startupProbe' in container
 
 # -- explain CLI -----------------------------------------------------------
 

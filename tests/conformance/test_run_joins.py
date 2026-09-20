@@ -426,8 +426,10 @@ def test_run_002_detects_a_join_without_a_group_ledger(tmp_path, monkeypatch) ->
         lambda: SimulatedCrash('the join process died after acking A')))})
     rig = ModelRig()
     try:
+        # The first process crashes at its barrier within milliseconds; only the
+        # replacement's wait is bounded here, and under the defect it never ends.
         assert defects.detects(_oracle_run_002_inprocess, rig, str(tmp_path / 'ledger'), 'after-ack-a', schedule,
-                               {}, 5.0)
+                               {}, 1.5)
     finally:
         rig.close()
 
@@ -553,7 +555,8 @@ def test_run_005_detects_a_fixed_credit_that_deadlocks(tmp_path, monkeypatch) ->
     defects_run1.fixed_join_credit(monkeypatch)
     rig = ModelRig()
     try:
-        assert defects.detects(_oracle_run_005, rig, str(tmp_path / 'ledger'), {}, 12, 5, 12, 4.0)
+        # A join that deadlocks shows no progress at all; 1.5 s of it is as telling as 4.
+        assert defects.detects(_oracle_run_005, rig, str(tmp_path / 'ledger'), {}, 12, 5, 12, 1.5)
     finally:
         rig.close()
 
@@ -581,7 +584,7 @@ class _Warnings(logging.Handler):
         self.messages.append(record.getMessage())
 
 
-def _oracle_run_006(rig : ModelRig, store_dir : str, record : Dict[str, Any]) -> None:
+def _oracle_run_006(rig : ModelRig, store_dir : str, record : Dict[str, Any], observe_s : float = 10.0) -> None:
     '''
     Three children of the same two parents, each with a declared policy for a
     branch that never comes: a bounded ``drop`` resolves trace1 once at its
@@ -590,6 +593,10 @@ def _oracle_run_006(rig : ModelRig, store_dir : str, record : Dict[str, Any]) ->
     unbounded ``wait`` stays observable as *waiting* — never as healthy progress
     — until the control stop cancels it and its half returns to the broker for a
     replacement.
+
+    ``observe_s`` bounds how long a held half may take to show up as a pending
+    group. It shows up at once on a correct join, and never on one that reports
+    nothing, so the negative control passes a short bound.
     '''
     timeout = 5.0
     specs = [spec('A', [], 'producer', True), spec('B', [], 'producer', True),
@@ -610,7 +617,7 @@ def _oracle_run_006(rig : ModelRig, store_dir : str, record : Dict[str, Any]) ->
         for r in receivers:
             r.start()
         for m in (bounded, errored, waiting):
-            assert rig.until(lambda m = m: m.join_status()['pending_groups'] == 1, 10), m.join_status()
+            assert rig.until(lambda m = m: m.join_status()['pending_groups'] == 1, observe_s), m.join_status()
         clock_0 = rig.clock.monotonic()
         # Short of the deadline nothing resolves; past it (plus one poll of scheduler
         # tolerance) the bounded policies resolve trace1 exactly once.
@@ -701,7 +708,7 @@ def test_run_006_detects_an_unobservable_wait(tmp_path, monkeypatch) -> None:
     rig = ModelRig(auto_advance = 0.0)
     monkeypatch.setattr(grouping, 'time', _ClockShim(rig))
     try:
-        assert defects.detects(_oracle_run_006, rig, str(tmp_path / 'ledger'), {})
+        assert defects.detects(_oracle_run_006, rig, str(tmp_path / 'ledger'), {}, observe_s = 2.0)
     finally:
         rig.close()
 

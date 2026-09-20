@@ -267,7 +267,10 @@ def test_pay_007_detects_a_publisher_without_an_intent(monkeypatch) -> None:
 
 # -- PAY-012 ----------------------------------------------------------------------
 
-FRAMES = 1000
+#: Enough frames for fifteen reconcile cycles: the plateau the case asserts is
+#: established by the second one, and each frame is a real megabyte through the
+#: model — a thousand of them cost eight seconds and showed nothing more.
+FRAMES = 300
 RECONCILE_EVERY = 20
 #: The declared live budget: one reclamation horizon's worth of frames, plus two in flight.
 BUDGET_FRAMES = RECONCILE_EVERY + 2
@@ -465,7 +468,9 @@ def test_pay_012_detects_a_store_with_no_eviction_reconciliation(monkeypatch) ->
     defects_pay.leaking_reconciler(monkeypatch)
     rig, store = _memory_rig_pay_012()
     try:
-        assert defects.detects(_oracle_pay_012, rig, store, store.inner.stored_bytes, {}, 200)
+        # A store that never reclaims is over the 22-frame budget by its second
+        # reconcile; four cycles of megabyte frames are plenty to see it.
+        assert defects.detects(_oracle_pay_012, rig, store, store.inner.stored_bytes, {}, 4 * RECONCILE_EVERY)
     finally:
         rig.close()
 
@@ -606,11 +611,21 @@ def test_pay_013_rejected_and_deduplicated_publications_do_not_accumulate(nats_u
     record_faults(schedule)
 
 
+def _fast_publish_timeout(monkeypatch : Any) -> None:
+    '''
+    A full channel is final once the retry ladder runs out of ``_PUBLISH_TIMEOUT``.
+    The model refuses instantly, so the ladder's shape — retryable, retried, then
+    final — is the same at a third of a second as at the two the broker needs.
+    '''
+    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 0.3)
+    monkeypatch.setattr(nats_messenger, '_PUBLISH_RETRY_BACKOFF', [0.01, 0.02, 0.05])
+
+
 @pytest.mark.case('PAY-013')
 @pytest.mark.level('broker')
 @pytest.mark.variant('memory')
 def test_pay_013_memory_backends_reclaim_every_unreachable_object(evidence_dir, record_faults, monkeypatch) -> None:
-    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 2)
+    _fast_publish_timeout(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig, store, limit_channel, sever_channel = _memory_rig_pay_013()
     try:
@@ -628,7 +643,7 @@ def test_pay_013_detects_a_store_that_never_reclaims_a_rejected_publications_obj
     deduplicated send, and a reconciler that never reclaims what that leaves —
     either half alone is covered by the fixed other, so the control removes both.
     '''
-    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 2)
+    _fast_publish_timeout(monkeypatch)
     defects_pay.leaking_reconciler(monkeypatch)
     defects_pay.intent_only_resolution(monkeypatch)
     rig, store, limit_channel, sever_channel = _memory_rig_pay_013()

@@ -17,7 +17,6 @@ from __future__ import absolute_import, division, print_function
 
 import json
 import os
-import pathlib
 import subprocess
 import sys
 import time
@@ -26,7 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 import defects
 import defects_alloc
 import pytest
-from _gpu import FAKE_SMI, measured_memory, run_probe, start_holder, wait_for_processes
+from _gpu import measured_memory, run_probe, start_holder, wait_for_processes
 
 from videoflow.backends.allocation import SHARING_COOPERATIVE, DeliveredGrant, WorkloadRequest
 from videoflow.backends.outcomes import Unknown, known
@@ -37,11 +36,16 @@ from videoflow.engines.local import allocate_local_gpus
 from videoflow.utils.system import apply_mask, mask_entries
 
 GIB = 1 << 30
-ENUMERATE = ('import json, os\n'
+#: What a worker sees of its grant, from a fresh interpreter: one JSON line per
+#: environment handed on stdin (a list of dicts), each applied over the parent's.
+ENUMERATE = ('import json, os, sys\n'
              'from videoflow.utils.system import visible_devices, granted_gpus\n'
              'from videoflow.deploy.allocation_local import grant_from_env\n'
-             'g = grant_from_env()\n'
-             'print(json.dumps({"mask": os.environ.get("CUDA_VISIBLE_DEVICES"), '
+             'for env in json.load(sys.stdin):\n'
+             '    os.environ.pop("CUDA_VISIBLE_DEVICES", None)\n'
+             '    os.environ.update(env)\n'
+             '    g = grant_from_env()\n'
+             '    print(json.dumps({"mask": os.environ.get("CUDA_VISIBLE_DEVICES"), '
              '"visible": [d.mig_uuid or d.uuid for d in visible_devices()], "indices": granted_gpus(), '
              '"grant": g.to_dict() if g else None}))\n')
 
@@ -51,39 +55,28 @@ def _fake_host(devices : int, memory_mib : int = 98304) -> List[Dict[str, Any]]:
              'memory_total_mib': memory_mib, 'memory_used_mib': 0} for i in range(devices)]
 
 
-@pytest.fixture
-def fake_smi(tmp_path : pathlib.Path, monkeypatch : pytest.MonkeyPatch) -> Callable[..., None]:
-    '''Puts a fake ``nvidia-smi`` first on PATH; ``configure(devices, fail=False)`` describes the host.'''
-    bindir = tmp_path / 'bin'
-    bindir.mkdir()
-    shim = bindir / 'nvidia-smi'
-    shim.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_SMI} "$@"\n')
-    shim.chmod(0o755)
-    monkeypatch.setenv('PATH', f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}')
-    monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising = False)
-
-    def configure(devices : List[Dict[str, Any]], fail : bool = False) -> None:
-        monkeypatch.setenv('VF_FAKE_SMI_JSON', json.dumps(devices))
-        if fail:
-            monkeypatch.setenv('VF_FAKE_SMI_FAIL', '1')
-        else:
-            monkeypatch.delenv('VF_FAKE_SMI_FAIL', raising = False)
-    return configure
-
-
 def _spec(name : str, nb_tasks : int = 1, gpu_count : int = 1, gpu_memory_gib : Optional[float] = None) -> NodeSpec:
     return NodeSpec(name, 'videoflow.processors.basic.IdentityProcessor', {}, [], 'processor', True, nb_tasks, 'gpu',
                     True, gpu_count = gpu_count, gpu_memory_gib = gpu_memory_gib)
 
 
-def enumerate_in_child(env : Dict[str, str]) -> Dict[str, Any]:
-    '''What a worker launched with ``env`` sees — a fresh interpreter, never this process's view.'''
+def enumerate_in_children(envs : List[Dict[str, str]]) -> List[Dict[str, Any]]:
+    '''
+    What workers launched with each of ``envs`` see — a fresh interpreter, never
+    this process's view. One interpreter serves every environment in turn: the
+    grant is read from the environment on each pass, and the interpreter start
+    (the videoflow import, mostly) is what the four launches of ALLOC-014 paid for.
+    '''
     full = dict(os.environ)
     full.pop('CUDA_VISIBLE_DEVICES', None)
-    full.update(env)
-    out = subprocess.run([sys.executable, '-c', ENUMERATE], capture_output = True, text = True, env = full,
-                         timeout = 60, check = True)
-    return json.loads(out.stdout.strip().splitlines()[-1])
+    out = subprocess.run([sys.executable, '-c', ENUMERATE], input = json.dumps(envs), capture_output = True,
+                         text = True, env = full, timeout = 60, check = True)
+    lines = out.stdout.strip().splitlines()[-len(envs):]
+    return [json.loads(line) for line in lines]
+
+
+def enumerate_in_child(env : Dict[str, str]) -> Dict[str, Any]:
+    return enumerate_in_children([env])[0]
 
 
 def _grant(env : Dict[str, str]) -> DeliveredGrant:
@@ -110,9 +103,9 @@ def _oracle_alloc_014(configure : Callable[..., None], evidence : Dict[str, Any]
     env = allocate_local_gpus([_spec('pair', gpu_count = 2), _spec('w', nb_tasks = 3)], 'f', 'r',
                               LocalAllocationBackend('shared'))
     evidence['shared_env'] = {f'{k[0]}/{k[1]}': v for k, v in env.items()}
-    for key, worker_env in env.items():
+    children = enumerate_in_children(list(env.values()))
+    for (key, worker_env), seen in zip(env.items(), children):
         grant = _grant(worker_env)
-        seen = enumerate_in_child(worker_env)
         evidence.setdefault('children', {})[f'{key[0]}/{key[1]}'] = seen
         assert seen['visible'] == [d.uuid for d in grant.devices], (key, seen, grant)
         assert seen['indices'] == list(range(len(grant.devices)))
@@ -297,6 +290,7 @@ def _oracle_alloc_016_model(evidence : Dict[str, Any]) -> None:
     over = strict.plan([request('a', 40), request('b', 40), request('c', 40)], snapshot)
     missing = strict.plan([request('a', 40), request('b', None)], snapshot)
     assert not hasattr(fitting, 'reasons'), fitting
+    assert fitting.notes == (f'headroom {GIB} B per shared device',)             # the reservation is stated
     assert hasattr(over, 'reasons') and 'c: declared peak' in over.reasons[0] and 'headroom' in over.reasons[0]
     assert hasattr(missing, 'reasons') and 'needs a declared peak memory' in missing.reasons[0]
     caps = strict.capabilities({})

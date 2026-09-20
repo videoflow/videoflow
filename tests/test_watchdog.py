@@ -67,49 +67,6 @@ def _watchdog(deadline : ProgressDeadline, interval : float = 1.0):
 
 # -- ticks against a fake clock (RUN-012 controls, RUN-011 detection) ----------
 
-def test_an_idle_source_never_fires():
-    '''Nothing pending is idle, not stalled — however long the silence.'''
-    clock = _Clock()
-    deadline = ProgressDeadline(10.0, pending_probe = lambda: known(0), clock = clock)
-    watchdog, stalls = _watchdog(deadline)
-    clock.advance(1000.0)
-    assert watchdog.tick() is False
-    clock.advance(1000.0)
-    assert watchdog.tick() is False
-    assert stalls.errors == [] and watchdog.fired is False
-
-
-def test_a_slow_but_progressing_node_never_fires():
-    '''
-    The false-positive control: a node that takes nearly the whole deadline per
-    message but keeps acking is slow, not stuck, whatever the pending count says.
-    '''
-    clock = _Clock()
-    deadline = ProgressDeadline(10.0, pending_probe = lambda: known(50), clock = clock)
-    watchdog, stalls = _watchdog(deadline)
-    for _ in range(50):
-        clock.advance(9.0)
-        deadline.record_progress()             # the loop's ack
-        assert watchdog.tick() is False
-    assert stalls.errors == []
-
-
-def test_a_startup_as_long_as_the_deadline_is_not_a_stall():
-    '''
-    A model load in open() is silence by the clock but not by intent: the task
-    resets the window after open(), and only then does the watchdog look.
-    '''
-    clock = _Clock()
-    deadline = ProgressDeadline(10.0, pending_probe = lambda: known(5), clock = clock)
-    watchdog, stalls = _watchdog(deadline)
-    clock.advance(100.0)                       # open() took a hundred seconds
-    deadline.record_progress()                 # ...which NodeTask.run() forgives
-    assert watchdog.tick() is False
-    clock.advance(9.0)
-    assert watchdog.tick() is False            # a full window from that point
-    assert stalls.errors == []
-
-
 def test_a_stall_fires_once_with_the_deadline_error():
     clock = _Clock()
     deadline = ProgressDeadline(10.0, pending_probe = lambda: known(3), clock = clock,

@@ -15,7 +15,6 @@ import pytest
 
 from videoflow.backends import faults
 from videoflow.backends.capabilities import (
-    DURABLE_CONTROL,
     LIVE_LATEST,
     RELIABLE_WORK,
     REPLAY_ARCHIVE,
@@ -180,18 +179,6 @@ def test_default_requirements_follow_the_flow_type_and_delivery_overrides():
     mixed = default_requirements(REALTIME, specs)
     assert (('a', RELIABLE_WORK) in {(r.channel, r.profile) for r in mixed.profiles})
 
-def test_core_nats_rejects_every_reliable_profile_and_keeps_live():
-    for profile in (RELIABLE_WORK, DURABLE_CONTROL, REPLAY_ARCHIVE):
-        req = FlowRequirements(profiles = (ProfileRequest('p', profile),))
-        with pytest.raises(IncompatibleProfile) as info:
-            plan_composition(req, _core_nats())
-        assert info.value.code == 'VF_INCOMPATIBLE_PROFILE'
-        assert 'p' in info.value.context['channels']
-        assert info.value.remedy
-    plan = plan_composition(FlowRequirements(profiles = (ProfileRequest('p', LIVE_LATEST),)), _core_nats())
-    assert plan.channel_profiles == {'p': LIVE_LATEST}
-    assert plan.channel_retention == {'p': 'limits'}
-
 def test_planner_lists_every_incompatibility_at_once():
     req = FlowRequirements(profiles = (ProfileRequest('p', RELIABLE_WORK), ProfileRequest('q', REPLAY_ARCHIVE)))
     with pytest.raises(IncompatibleProfile) as info:
@@ -212,13 +199,6 @@ def test_unknown_store_durability_is_not_a_pass():
         plan_composition(req, _jetstream(), payload = definitely_evictable, payload_refs_in_use = True)
     # Without payload refs in play the store's durability is irrelevant to the channel.
     plan_composition(req, _jetstream(), payload = definitely_evictable, payload_refs_in_use = False)
-
-def test_mixed_retention_on_one_channel_is_rejected_unless_supported():
-    req = FlowRequirements(profiles = (ProfileRequest('p', LIVE_LATEST), ProfileRequest('p', RELIABLE_WORK)))
-    with pytest.raises(IncompatibleProfile, match = 'one retention class'):
-        plan_composition(req, _jetstream())
-    plan = plan_composition(req, _jetstream(mixed_retention_per_channel = True))
-    assert plan.notes and 'mixed retention' in plan.notes[0]
 
 def test_restart_safe_needs_a_durable_shared_store():
     req = FlowRequirements(restart_safe = True)
@@ -277,13 +257,9 @@ def test_sanitize_collisions_are_detected_on_compiled_specs():
     assert found, 'a.b and a_b must collide'
     assert any(c.physical == 'vf-f-r-a_b' for c in found)
     assert not collisions(compile_flow(_flow_with(['p', 'a', 'c'])), 'f', 'r')
-
-def test_k8s_name_case_and_truncation_collisions_are_detected():
+    # Which pairs of names collide after encoding (case, truncation, sanitizing) is
+    # MSG-019's corpus; the name-level check agrees with the spec-level one.
     from videoflow.backends.identity import node_name_collisions
-    found = node_name_collisions(['p', 'Node', 'node'])
-    assert any(c.physical == 'vf-f-r-node' and c.identities[0].kind == 'kubernetes' for c in found)
-    long_a, long_b = 'x' * 70 + 'a', 'x' * 70 + 'b'
-    assert any(c.identities[0].kind == 'kubernetes' for c in node_name_collisions([long_a, long_b]))
     assert node_name_collisions(['p', 'a', 'c']) == []
 
 def test_hyphen_joined_tuples_collide_across_runs():

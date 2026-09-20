@@ -42,6 +42,7 @@ from _runs2 import (
     crash_at,
     data_ids,
     ledger,
+    ledger_sink,
     memory_rig,
     messenger_for,
     outbox_snapshot,
@@ -141,7 +142,7 @@ def _oracle_run_003(rig : Any, store_for : Callable[[str], Any], evidence : Dict
         run_id = f'{rig.run_id}-{label}'
         provision_run(rig, run_id, batch_specs())
         store = store_for(label)
-        sink = Collector(rig, 'acc', run_id = run_id)
+        sink = ledger_sink(rig, store, 'acc', run_id)
         sink.start()
         src = rig.messenger('src', [], run_id = run_id, replayable = True)
         crashes = label != 'receipt-dropped'
@@ -375,7 +376,7 @@ def _oracle_run_004(rig : Any, store_for : Callable[[str], Any], evidence : Dict
         run_id = f'{rig.run_id}-{label}'
         provision_run(rig, run_id, batch_specs('inf'))
         store = store_for(label)
-        sink = Collector(rig, 'inf', run_id = run_id)
+        sink = ledger_sink(rig, store, 'inf', run_id)
         sink.start()
         src = rig.messenger('src', [], run_id = run_id, replayable = True)
         _publish_records(src, INPUTS, eos = False)
@@ -551,7 +552,7 @@ def _oracle_run_022(rig : Any, store_for : Callable[[str], Any], evidence : Dict
         run_id = f'{rig.run_id}-{label}'
         provision_run(rig, run_id, batch_specs())
         store = store_for(label)
-        sink = Collector(rig, 'acc', run_id = run_id)
+        sink = ledger_sink(rig, store, 'acc', run_id)
         sink.start()
         src = rig.messenger('src', [], run_id = run_id, replayable = True)
         _publish_records(src, RECORDS, eos = False)
@@ -924,7 +925,10 @@ def test_run_017_sink_side_effects_and_idempotency_markers_survive_crash(tmp_pat
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs(processor = 'sink', processor_kind = 'consumer', sink = None))
     try:
-        with rig.ticking():
+        # Six of the schedules end with a replacement waiting for the dead
+        # sink's lease (ACK_WAIT model seconds) to lapse; the lease's length is
+        # not what this case is about, so the clock runs at 10x rather than 4x.
+        with rig.ticking(step = 0.5):
             schedules = _oracle_run_017(rig, tmp_path, lambda runtime: LedgerIdempotencyStore(runtime, RETENTION),
                                         evidence, advance = rig.clock.advance)
         _admission_run_017(evidence)
@@ -977,7 +981,7 @@ def test_run_017_detects_a_marker_that_certifies_before_the_effect(tmp_path, mon
     defects_run2.marker_before_effect(monkeypatch)
     rig = memory_rig(batch_specs(processor = 'sink', processor_kind = 'consumer', sink = None))
     try:
-        with rig.ticking():
+        with rig.ticking(step = 0.5):
             assert defects.detects(_oracle_run_017, rig, tmp_path,
                                    lambda runtime: LedgerIdempotencyStore(runtime, RETENTION), {},
                                    advance = rig.clock.advance)
@@ -1000,7 +1004,7 @@ def _oracle_run_013(rig : Any, store : Any, evidence : Dict[str, Any], stall : C
     run_id = rig.run_id
     ids = data_ids(rig, 'src', 2, run_id)
     pid1, pid2 = (publication_id(rig, 'proc', f'src:{i}', i, run_id) for i in (1, 2))
-    sink = Collector(rig, 'proc', run_id = run_id)
+    sink = ledger_sink(rig, store, 'proc', run_id)
     sink.start()
     src = rig.messenger('src', [], run_id = run_id, replayable = True)
     _publish_records(src, [1], eos = False)
@@ -1119,12 +1123,21 @@ def test_run_013_timed_out_output_publication_has_one_authoritative_owner(nats_u
         record_faults(schedule)
 
 
+def _fast_publish_timeout(monkeypatch : Any) -> None:
+    '''
+    The stalled send must time out; how long that takes is the model's choice, not
+    the case's claim. A third of a second is a few retry steps on the memory backend.
+    '''
+    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 0.3)
+    monkeypatch.setattr(nats_messenger, '_PUBLISH_RETRY_BACKOFF', [0.01, 0.02, 0.05])
+
+
 @pytest.mark.case('RUN-013')
 @pytest.mark.level('model')
 @pytest.mark.variant('memory')
 def test_run_013_memory_backends_hold_the_send_until_the_stall_lifts(tmp_path, evidence_dir, record_faults,
                                                                      monkeypatch) -> None:
-    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 1)
+    _fast_publish_timeout(monkeypatch)
     allow_task_threads(monkeypatch)
     evidence : Dict[str, Any] = {}
     rig = memory_rig(batch_specs('proc'))
@@ -1156,7 +1169,7 @@ def _paused_acceptance(rig : Any, channel : Any) -> Any:
 
 @pytest.mark.negative_control(of = 'RUN-013')
 def test_run_013_detects_a_retry_that_mints_a_new_identity(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(nats_messenger, '_PUBLISH_TIMEOUT', 1)
+    _fast_publish_timeout(monkeypatch)
     allow_task_threads(monkeypatch)
     defects_run2.fresh_identity_per_attempt(monkeypatch)
     rig = memory_rig(batch_specs('proc'))

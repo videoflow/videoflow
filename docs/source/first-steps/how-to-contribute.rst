@@ -63,9 +63,19 @@ the exact tags a release publishes. Run the solutions by path from a checkout
 the ``<repo>://`` form with ``VF_SOLUTION_REF=master`` when your version has
 no release tag yet.
 
-The unit tests need nothing but the checkout::
+The unit tests need nothing but the checkout, and are what the pre-push hook
+and CI's ``unit`` job run::
 
-    uv run pytest --ignore=tests/integration -q
+    uv run pytest --ignore=tests/integration --ignore=tests/conformance -q
+
+The backend conformance suite (``tests/conformance``, one test per case of the
+130-case catalog) also needs nothing at its model and process levels, but it is
+a several-minute run — mostly model time passing on in-memory backends — so it
+has its own CI job and is run on its own. A case whose fixture is absent (a
+broker, a cluster, a GPU) reports ``NOT_RUN`` rather than a green skip::
+
+    uv run pytest tests/conformance -q -rs
+    uv run python tests/conformance/report.py
 
 The integration tests come in three buckets, and each one gates itself on the
 infrastructure it needs. ``broker/`` and ``local/`` want a NATS JetStream server::

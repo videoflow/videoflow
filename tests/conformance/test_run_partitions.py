@@ -28,7 +28,6 @@ import pytest
 from _payloads import CountingStore, KeyRecordingStore, ReadLog, Receiver, frame_array, object_exists
 from _runnodes import Accumulator, FallbackStage, RejectingStage, Tracker
 from _runs2 import (
-    Collector,
     ContextSchedule,
     JetStreamRig,
     TaskThread,
@@ -36,6 +35,7 @@ from _runs2 import (
     crash_at,
     data_ids,
     ledger,
+    ledger_sink,
     memory_rig,
     messenger_for,
     outbox_snapshot,
@@ -387,7 +387,7 @@ def _oracle_run_021(rig : Any, store_for : Callable[[str], Any], evidence : Dict
         run_id = f'{rig.run_id}-perm{index}'
         provision_run(rig, run_id, _tracker_specs(2))
         store = store_for(f'perm{index}')
-        sink = Collector(rig, 'tracker', run_id = run_id)
+        sink = ledger_sink(rig, store, 'tracker', run_id, replicas = 2)
         sink.start()
         tasks = [_run_tracker(rig, store, run_id, r, 2, None, ORDERING) for r in range(2)]
         src = rig.messenger('src', [], run_id = run_id, replayable = True)
@@ -422,7 +422,7 @@ def _oracle_run_021(rig : Any, store_for : Callable[[str], Any], evidence : Dict
     run_id = f'{rig.run_id}-late'
     provision_run(rig, run_id, _tracker_specs(1))
     store = store_for('late')
-    sink = Collector(rig, 'tracker', run_id = run_id)
+    sink = ledger_sink(rig, store, 'tracker', run_id)
     sink.start()
     src = rig.messenger('src', [], run_id = run_id, replayable = True)
     late_order = [1, 3, 4, 2]
@@ -550,7 +550,7 @@ def _owner(rig : Any, store : Any, run_id : str, schedule : Any = None) -> Dict[
     return {'node': node, 'runtime': runtime, 'messenger': messenger, 'task': task, 'epoch': runtime.current_epoch()}
 
 
-def _oracle_run_023(rig : Any, store : Any, evidence : Dict[str, Any]) -> List[Any]:
+def _oracle_run_023(rig : Any, store : Any, evidence : Dict[str, Any], fence_s : float = 20.0) -> List[Any]:
     '''
     The fencing half. Owner A (epoch 1) commits records 1 and 2 and is paused
     with record 3 in hand, before its commit. Owner B takes the partition (epoch
@@ -558,9 +558,13 @@ def _oracle_run_023(rig : Any, store : Any, evidence : Dict[str, Any]) -> List[A
     4. A resumes: its commit is refused (``StaleAuthority``), it hands the input
     back unblamed and stops. Then owner C (epoch 3) loses its ownership service
     while its transport still works: it commits nothing; owner D (epoch 4) does.
+
+    ``fence_s`` bounds how long A may take to be fenced once released. A correct
+    runtime refuses the stale commit at once; an unfenced A simply carries on,
+    so the negative control passes a short bound rather than waiting out this one.
     '''
     run_id = rig.run_id
-    sink = Collector(rig, 'acc', run_id = run_id)
+    sink = ledger_sink(rig, store, 'acc', run_id)
     sink.start()
     src = rig.messenger('src', [], run_id = run_id, replayable = True)
     history : List[Dict[str, Any]] = []
@@ -590,7 +594,7 @@ def _oracle_run_023(rig : Any, store : Any, evidence : Dict[str, Any]) -> List[A
     # A resumes with its buffered old input: refused at the commit, handed back, stopped.
     schedule.release('old-owner')
     schedule.uninstall()
-    a['task'].wait(20)
+    a['task'].wait(fence_s)
     assert isinstance(a['task'].error, StaleAuthority), f'the stale owner was not fenced: {a["task"].error!r}'
     assert a['task'].error.disposition == 'worker_fatal'
     note('A resumed and was fenced', error = str(a['task'].error), disposition = a['task'].error.disposition)
@@ -695,7 +699,7 @@ def test_run_023_detects_an_unfenced_commit(tmp_path, monkeypatch) -> None:
                       spec('sink', ['acc'], 'consumer', False)])
     try:
         with rig.ticking():
-            assert defects.detects(_oracle_run_023, rig, ledger(tmp_path), {})
+            assert defects.detects(_oracle_run_023, rig, ledger(tmp_path), {}, fence_s = 2.0)
     finally:
         rig.close()
 

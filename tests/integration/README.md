@@ -117,7 +117,7 @@ uv run pytest tests/integration/broker tests/integration/local -q -rs
 
 `-rs` is the important part: without it a down broker reads as a clean pass. The
 unit-only command, which the pre-push hook runs, is
-`uv run pytest --ignore=tests/integration`.
+`uv run pytest --ignore=tests/integration --ignore=tests/conformance`.
 
 ---
 

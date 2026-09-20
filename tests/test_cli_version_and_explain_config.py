@@ -6,6 +6,7 @@ solution whose build_flow reads its config gets the same treatment before the
 first deploy has written one. Also pins the toy solutions honouring
 VF_SOLUTION_CONFIG, which is what makes --config reach them.
 '''
+import json
 import os
 import subprocess
 import sys
@@ -78,23 +79,47 @@ def test_explain_generates_the_config_from_the_template_when_interactive(graph, 
     assert 'cfgdemo' in capsys.readouterr().out
 
 
-@pytest.mark.parametrize('name', ['toy_calculator', 'toy_router', 'toy_recovery', 'toy_fusion'])
-def test_toy_solutions_honour_vf_solution_config(name, tmp_path):
-    solution_dir = os.path.join(ROOT, 'solutions', name)
-    assert not os.path.exists(os.path.join(solution_dir, 'config.yaml')), \
-        'this test relies on no config.yaml being checked in'
-    # One process per solution: they all ship a sibling `common.py`, which a single
-    # process could only import once (see compile._graph_module_name).
-    # The config's work_dir resolves next to the config file, so a copy under
-    # tmp_path keeps the out/ directory out of the checkout.
-    config = tmp_path / 'config.yaml'
-    config.write_text(open(os.path.join(solution_dir, 'config.example.yaml')).read())
-    env = dict(os.environ, **{solution.CONFIG_ENV: str(config)})
-    proc = subprocess.run(
-        [sys.executable, '-c',
-         'import sys; from videoflow.deploy.compile import load_flow; print(load_flow(sys.argv[1]).flow_id)',
-         os.path.join(solution_dir, f'{name}.py')],
-        cwd = tmp_path, env = env, capture_output = True, text = True)
+TOYS = ('toy_calculator', 'toy_router', 'toy_recovery', 'toy_fusion')
+
+# Loads each toy in turn with VF_SOLUTION_CONFIG pointing at a copy of its example
+# config, and prints {name: flow_id}. The toys all ship a sibling ``common.py``, so
+# between loads every module that came from the previous toy's directory is
+# evicted (a stale ``common`` would silently serve the next toy); the check that
+# ``common`` really is the toy's own is what makes one process as honest as four.
+_LOAD_TOYS = '''
+import json, os, sys
+from videoflow.deploy.compile import load_flow
+flow_ids = {}
+for name, graph, config in json.loads(sys.argv[1]):
+    os.environ['VF_SOLUTION_CONFIG'] = config
+    solution_dir = os.path.dirname(graph)
+    flow_ids[name] = load_flow(graph).flow_id
+    assert os.path.dirname(os.path.abspath(sys.modules['common'].__file__)) == solution_dir, name
+    for module_name, module in list(sys.modules.items()):
+        file = getattr(module, '__file__', None)
+        if file and os.path.dirname(os.path.abspath(file)) == solution_dir:
+            del sys.modules[module_name]
+    sys.path.remove(solution_dir)
+print(json.dumps(flow_ids))
+'''
+
+
+def test_toy_solutions_honour_vf_solution_config(tmp_path):
+    jobs = []
+    for name in TOYS:
+        solution_dir = os.path.join(ROOT, 'solutions', name)
+        assert not os.path.exists(os.path.join(solution_dir, 'config.yaml')), \
+            'this test relies on no config.yaml being checked in'
+        # The config's work_dir resolves next to the config file, so a copy under
+        # tmp_path keeps each solution's out/ directory out of the checkout.
+        config_dir = tmp_path / name
+        config_dir.mkdir()
+        (config_dir / 'config.yaml').write_text(open(os.path.join(solution_dir, 'config.example.yaml')).read())
+        jobs.append((name, os.path.join(solution_dir, f'{name}.py'), str(config_dir / 'config.yaml')))
+    proc = subprocess.run([sys.executable, '-c', _LOAD_TOYS, json.dumps(jobs)],
+                          cwd = tmp_path, env = dict(os.environ), capture_output = True, text = True)
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip()
-    assert (tmp_path / 'out').is_dir()   # ... and it was the copy that was honoured
+    flow_ids = json.loads(proc.stdout)
+    assert set(flow_ids) == set(TOYS) and all(flow_ids.values())
+    for name in TOYS:
+        assert (tmp_path / name / 'out').is_dir(), name   # ... and it was the copy that was honoured

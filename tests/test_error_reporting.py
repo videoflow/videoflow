@@ -200,23 +200,19 @@ def test_errors_are_counted_by_code_and_disposition():
     text = state.render_metrics()
     assert 'videoflow_errors_total{node="detector",code="VF_DEVICE",disposition="worker_fatal"} 2' in text
     assert 'videoflow_errors_total{node="detector",code="VF_POISON_SCHEMA",disposition="poison"} 1' in text
-
-
-def test_a_sampled_failure_is_still_counted():
-    '''
-    The DLQ is bounded on purpose; the counter is not. A suppressed specimen must
-    still move the number, or best-effort failures become invisible again.
-    '''
+    # Through the messenger wrapper the count is one per failed input, however
+    # many the DLQ sampler later suppresses: the DLQ is bounded on purpose, the
+    # counter is not, or best-effort failures become invisible again.
     from support_messenger import RecordingMessenger
 
     from videoflow.runtime.health import InstrumentedMessenger
 
-    state = HealthState('n')
-    messenger = InstrumentedMessenger(RecordingMessenger(), state)
+    wrapped = HealthState('n')
+    messenger = InstrumentedMessenger(RecordingMessenger(), wrapped)
     for _ in range(50):
         messenger.fail_inputs(SchemaError('bad row'))
     assert 'videoflow_errors_total{node="n",code="VF_POISON_SCHEMA",disposition="poison"} 50' \
-        in state.render_metrics()
+        in wrapped.render_metrics()
 
 
 if __name__ == '__main__':

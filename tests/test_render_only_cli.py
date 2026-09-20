@@ -62,6 +62,12 @@ def test_render_only_uses_the_image_it_just_built(tmp_path, monkeypatch):
     code, out = _render(tmp_path, monkeypatch)
     assert code == 0
     assert BUILT in _images(out)
+    # ...and the default render carries no priority class and no claim volumes.
+    for doc in _docs(out).values():
+        if 'template' in doc.get('spec', {}):
+            assert 'priorityClassName' not in _pod_spec(doc)
+            assert 'volumes' not in _pod_spec(doc) or all(
+                'persistentVolumeClaim' not in v for v in _pod_spec(doc)['volumes'])
 
 def test_an_explicit_image_still_wins(tmp_path, monkeypatch):
     code, out = _render(tmp_path, monkeypatch,
@@ -109,15 +115,6 @@ def test_mount_pvc_and_priority_class_reach_the_rendered_pods(tmp_path, monkeypa
     for key in (('Job', 'vf-render-r1-numbers'), ('Job', 'vf-render-r1-printer'),
                 ('Job', 'vf-render-r1-provision'), ('Deployment', 'nats'), ('Deployment', 'redis')):
         assert _pod_spec(docs[key])['priorityClassName'] == 'cluster-batch', key
-
-def test_the_default_render_carries_no_priority_or_claim(tmp_path, monkeypatch):
-    code, out = _render(tmp_path, monkeypatch)
-    assert code == 0
-    for doc in _docs(out).values():
-        if 'template' in doc.get('spec', {}):
-            assert 'priorityClassName' not in _pod_spec(doc)
-            assert 'volumes' not in _pod_spec(doc) or all(
-                'persistentVolumeClaim' not in v for v in _pod_spec(doc)['volumes'])
 
 def test_broker_profile_durable_renders_a_statefulset(tmp_path, monkeypatch):
     code, out = _render(tmp_path, monkeypatch,

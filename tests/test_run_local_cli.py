@@ -87,6 +87,9 @@ def wiring(tmp_path, monkeypatch):
                         lambda url, **kw: calls.append(('probe-nats', url)) or admission.jetstream_capabilities(None))
     monkeypatch.setattr(cli, 'redis_payload_capabilities_observed',
                         lambda url, **kw: calls.append(('probe-redis', url)) or admission.redis_payload_capabilities(None))
+    # The GPU-runtime probe is a real `docker info` (a third of a second per call,
+    # and a daemon dependency); nothing here is about GPUs.
+    monkeypatch.setattr(cli, 'docker_gpus_available', lambda: False)
     return tmp_path, calls
 
 
@@ -100,6 +103,12 @@ def test_provisions_and_tears_down_by_default(wiring):
     _run(tmp_path)
     assert ('ensure', {'need_redis': True}) in calls
     assert ('teardown', ['nats', 'redis']) in calls
+    # The dev containers are judged by the shape localinfra declared for them,
+    # never probed...
+    assert not any(c[0].startswith('probe-') for c in calls if isinstance(c, tuple))
+    # ...and the prepare hook runs before the graph is loaded: the factory reads
+    # prepare's outputs, so the ordering is load-bearing.
+    assert calls.index('prepare') < calls.index('load')
 
 
 def test_keep_infra_skips_teardown(wiring):
@@ -108,11 +117,14 @@ def test_keep_infra_skips_teardown(wiring):
     assert not any(c[0] == 'teardown' for c in calls if isinstance(c, tuple))
 
 
-def test_explicit_nats_never_provisions(wiring):
+def test_explicit_nats_never_provisions_and_is_read_back(wiring):
     tmp_path, calls = wiring
     _run(tmp_path, '--nats', 'nats://elsewhere:4222')
     assert not any(c[0] == 'ensure' for c in calls if isinstance(c, tuple))
     assert _FakeEngine.instances[0].kwargs['nats_url'] == 'nats://elsewhere:4222'
+    # A bring-your-own broker is read back, not assumed; there is no store to probe.
+    assert ('probe-nats', 'nats://elsewhere:4222') in calls
+    assert not any(c[0] == 'probe-redis' for c in calls if isinstance(c, tuple))
 
 
 def test_no_infra_uses_the_default_url_without_docker(wiring):
@@ -120,25 +132,7 @@ def test_no_infra_uses_the_default_url_without_docker(wiring):
     _run(tmp_path, '--no-infra')
     assert not any(c[0] == 'ensure' for c in calls if isinstance(c, tuple))
     assert _FakeEngine.instances[0].kwargs['nats_url'] == localinfra.DEFAULT_NATS_URL
-
-
-def test_a_bring_your_own_broker_is_read_back_not_assumed(wiring):
-    tmp_path, calls = wiring
-    _run(tmp_path, '--nats', 'nats://elsewhere:4222')
-    assert ('probe-nats', 'nats://elsewhere:4222') in calls
-    assert not any(c[0] == 'probe-redis' for c in calls if isinstance(c, tuple))
-
-
-def test_no_infra_reads_back_whatever_listens_on_the_default_url(wiring):
-    tmp_path, calls = wiring
-    _run(tmp_path, '--no-infra')
-    assert ('probe-nats', localinfra.DEFAULT_NATS_URL) in calls
-
-
-def test_the_dev_containers_are_judged_by_their_declared_shape(wiring):
-    tmp_path, calls = wiring
-    _run(tmp_path)
-    assert not any(c[0].startswith('probe-') for c in calls if isinstance(c, tuple))
+    assert ('probe-nats', localinfra.DEFAULT_NATS_URL) in calls   # whatever listens there is read back
 
 
 def test_whatever_already_answers_on_the_dev_ports_is_read_back(wiring, monkeypatch):
@@ -155,40 +149,23 @@ def test_whatever_already_answers_on_the_dev_ports_is_read_back(wiring, monkeypa
 
 def test_a_bring_your_own_store_is_read_back_beside_dev_infra(wiring, monkeypatch):
     tmp_path, calls = wiring
+    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
     _run(tmp_path, '--blob-redis-url', 'redis://flag:6379/3')
+    # The flag wins over the environment, reaches the engine, and is read back.
+    assert _FakeEngine.instances[0].kwargs['blob_redis_url'] == 'redis://flag:6379/3'
     assert ('probe-redis', 'redis://flag:6379/3') in calls
     assert not any(c[0] == 'probe-nats' for c in calls if isinstance(c, tuple))
     calls.clear()
-    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
     _run(tmp_path)
+    # Without the flag the environment's store is the one used and read back.
+    assert _FakeEngine.instances[-1].kwargs['blob_redis_url'] == 'redis://env:6379/2'
     assert ('probe-redis', 'redis://env:6379/2') in calls
-
-
-def test_prepare_runs_before_the_graph_is_loaded(wiring):
-    tmp_path, calls = wiring
-    _run(tmp_path)
-    # The factory reads prepare's outputs, so ordering is load-bearing.
-    assert calls.index('prepare') < calls.index('load')
 
 
 def test_no_prepare_skips_the_hook(wiring):
     tmp_path, calls = wiring
     _run(tmp_path, '--no-prepare')
     assert 'prepare' not in calls
-
-
-def test_blob_redis_url_defaults_from_environment(wiring, monkeypatch):
-    tmp_path, _calls = wiring
-    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
-    _run(tmp_path)
-    assert _FakeEngine.instances[0].kwargs['blob_redis_url'] == 'redis://env:6379/2'
-
-
-def test_explicit_blob_redis_url_wins_over_environment(wiring, monkeypatch):
-    tmp_path, _calls = wiring
-    monkeypatch.setenv('VIDEOFLOW_BLOB_REDIS_URL', 'redis://env:6379/2')
-    _run(tmp_path, '--blob-redis-url', 'redis://flag:6379/3')
-    assert _FakeEngine.instances[0].kwargs['blob_redis_url'] == 'redis://flag:6379/3'
 
 
 def test_a_batch_flow_is_admitted_on_the_dev_containers(wiring, monkeypatch):
@@ -287,7 +264,6 @@ def test_native_component_without_image_triggers_a_build(wiring, monkeypatch):
     tmp_path, _calls = wiring
     built = []
     monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: built.append(a) or 'img:1')
-    monkeypatch.setattr(cli, 'docker_gpus_available', lambda: False)
     monkeypatch.setattr(cli, 'specs_from_tasks_data',
                         lambda td: [_spec('native')])          # no node_class, no image
     _run(tmp_path)

@@ -188,24 +188,6 @@ def test_release_lifecycle_follows_the_rfc_worked_example(fake):
     assert isinstance(store.read(ref), Missing)
 
 
-def test_release_is_idempotent_by_reader_across_handles_and_processes(fake):
-    a, b = _store(fake), _store(fake)   # two worker processes sharing one server
-    ref = a.put(FRAME, 'c', _contract(obligations = ('x', 'y')))
-    assert a.release_obligation(ref, 'x', 'ack:newer-handle').remaining == 1
-    assert a.release_obligation(ref, 'x', 'ack:older-handle').remaining == 1
-    restarted = b.ref_for_key(ref.key)   # X after a restart: only the wire key survived
-    assert restarted == ref
-    assert b.release_obligation(restarted, 'x', 'ack:after-restart').remaining == 1
-    assert _members(fake, ref.key) == {'y'}
-    out = b.read(restarted, reader = 'y')
-    assert isinstance(out, PayloadBytes) and out.data == FRAME
-    assert b.release_obligation(ref, 'y', 'ack').reclaimed
-    # After the final cleanup: harmless, and nothing is recreated for a key nobody owns.
-    again = a.release_obligation(ref, 'y', 'ack')
-    assert (again.remaining, again.reclaimed, again.stale, again.unknown) == (None, False, False, False)
-    assert fake.live_keys('vf-blob*') == []
-
-
 def test_lost_release_response_is_unknown_and_the_retry_is_harmless(fake):
     store = _store(fake)
     ref = store.put(FRAME, 'c', _contract(obligations = ('x', 'y')))
@@ -227,15 +209,6 @@ def test_lost_release_response_is_unknown_and_the_retry_is_harmless(fake):
     fake.fail('WATCH', rexc.ConnectionError('blip'))
     receipt = store.release_obligation(other, 'x', 'ack')
     assert receipt.reclaimed and not receipt.unknown
-
-
-def test_dropped_response_at_the_barrier_reports_unknown(fake):
-    store = _store(fake)
-    ref = store.put(FRAME, 'c', _contract(obligations = ('x', 'y')))
-    with faults.FaultSchedule({'obligation.release.after': faults.DropResponse()}):
-        receipt = store.release_obligation(ref, 'x', 'ack')
-    assert receipt.unknown and receipt.remaining is None
-    assert store.release_obligation(ref, 'x', 'ack').remaining == 1
 
 
 def test_stale_generation_touches_nothing(fake):

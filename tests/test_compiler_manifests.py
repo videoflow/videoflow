@@ -5,7 +5,6 @@ cluster required — these exercise pure transformation logic.
 import json
 
 import pytest
-import yaml
 
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
@@ -68,27 +67,33 @@ def test_blob_readers_counts_each_partitioned_replica():
     # partitioned child contributes nb_tasks reads; plain sibling contributes 1.
     assert specs['p'].blob_readers == 4
 
-def test_blob_readers_round_trips_and_legacy_specs_default_to_none():
+@pytest.mark.parametrize('field, value, legacy_default', [
+    # A spec serialized before RFC 0002 has no blob_readers key: reclamation off.
+    ('blob_readers', 2, None),
+    # Old serialized specs (no GPU fields) load with the defaults.
+    ('gpu_count', 4, 1),
+    ('gpu_resource_name', 'amd.com/gpu', None),     # strategy-set, so stamped post-compile
+    ('gpu_memory_gib', 10, None),
+])
+def test_spec_fields_round_trip_and_legacy_specs_take_the_default(field, value, legacy_default):
+    # The flow-spec ConfigMap round-trips specs as JSON; every field must survive,
+    # and a spec written before the field existed must load with its default.
     from videoflow.core.compiler import NodeSpec
     spec = compile_flow(_demo_flow())[1]
+    setattr(spec, field, value)
     clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
-    assert clone.blob_readers == spec.blob_readers
-    # A spec serialized before RFC 0002 has no blob_readers key: reclamation off.
-    old = {k: v for k, v in spec.to_dict().items() if k != 'blob_readers'}
-    assert NodeSpec.from_dict(old).blob_readers is None
+    assert getattr(clone, field) == value
+    old = {k: v for k, v in spec.to_dict().items() if k != field}
+    assert getattr(NodeSpec.from_dict(old), field) == legacy_default
 
-def test_blob_env_vars_reach_the_configmaps():
+def test_blob_ttl_override_reaches_the_broker_configmap():
+    # The per-node reader counts and ids are pinned by the manifest goldens; the
+    # TTL override is the one thing no golden passes.
     specs = compile_flow(_demo_flow())
     manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
                                 default_image = IMG, blob_redis_url = 'redis://r:6379/0',
                                 blob_ttl_seconds = 300)
-    node_cms = {m['data']['VF_NODE_NAME']: m['data'] for m in manifests
-                if m['kind'] == 'ConfigMap' and 'VF_NODE_NAME' in m.get('data', {})}
-    # Per-node env carries the compile-time reader count (VF_BLOB_READERS)...
-    assert node_cms['producer']['VF_BLOB_READERS'] == '1'
-    assert node_cms['identity']['VF_BLOB_READERS'] == '2'
-    assert node_cms['printer']['VF_BLOB_READERS'] == '0'
-    # ...and the shared broker ConfigMap carries the TTL override (BLOB-7).
+    # The shared broker ConfigMap carries the TTL override (BLOB-7).
     broker_cm = next(m for m in manifests if m['kind'] == 'ConfigMap'
                      and 'VF_NATS_URL' in m.get('data', {}))
     assert broker_cm['data']['VF_BLOB_TTL_SECONDS'] == '300'
@@ -150,15 +155,6 @@ def _pull_policies(manifests):
             policies[m['metadata']['name']] = container.get('imagePullPolicy')
     return policies
 
-def test_image_pull_policy_defaults_to_if_not_present_everywhere():
-    # Unset, k8s infers 'Always' from the ':latest' tag autobuild produces, and a
-    # locally loaded image is re-pulled from a registry that never had it.
-    specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
-    policies = _pull_policies(manifests)
-    assert policies, 'expected at least one container'
-    assert set(policies.values()) == {'IfNotPresent'}
-
 def test_provision_job_pull_policy_matches_the_workers():
     # The provision Job runs first: if it alone cannot pull, the only symptom is the
     # provision-wait timeout, with no worker ever started.
@@ -176,88 +172,25 @@ def test_invalid_image_pull_policy_names_the_valid_values():
                         default_image = IMG, image_pull_policy = 'ifnotpresent')
     assert 'IfNotPresent' in str(e.value)
 
-def test_finite_producer_is_job_infinite_is_deployment():
-    # finite producer
-    specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
-                                namespace = 'ns', default_image = IMG)
-    by_name = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    assert ('Job', 'vf-demo-run1-producer') in by_name
-    # processors and consumer are Deployments
-    assert ('Deployment', 'vf-demo-run1-identity') in by_name
-    assert ('Deployment', 'vf-demo-run1-printer') in by_name
-
-def test_nb_tasks_maps_to_replicas():
-    specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-demo-run1-identity'][0]
-    assert dep['spec']['replicas'] == 2
-
-def test_gpu_node_resources():
+def test_gpu_pods_get_no_runtime_class_unless_asked():
+    # The GPU limits and pool selector are pinned by the manifest goldens, which all
+    # pass a runtime class; what none of them shows is the default.
     producer = IntProducer(name = 'p')
     gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
     printer = CommandlineConsumer(name = 'c')(gpu)
     flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
     manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1', default_image = IMG)
     dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
-    container = dep['spec']['template']['spec']['containers'][0]
-    assert container['resources']['limits']['nvidia.com/gpu'] == 1
-    assert dep['spec']['template']['spec']['nodeSelector'] == {'videoflow.io/gpu-pool': 'true'}
     # No runtimeClassName unless asked for: on a cluster whose node default already is
     # the NVIDIA runtime, naming a class that doesn't exist would fail the pod.
     assert 'runtimeClassName' not in dep['spec']['template']['spec']
 
-
-def test_gpu_runtime_class_applies_only_to_gpu_pods():
-    producer = IntProducer(name = 'p')
-    gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
-    printer = CommandlineConsumer(name = 'c')(gpu)
-    flow = Flow([printer], flow_type = REALTIME, flow_id = 'g')
-    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, gpu_runtime_class = 'nvidia')
-    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
-    assert by_name['vf-g-run1-g']['spec']['template']['spec']['runtimeClassName'] == 'nvidia'
-    # A CPU node must not get it — it would pin the pod to the GPU runtime for nothing.
-    assert 'runtimeClassName' not in by_name['vf-g-run1-c']['spec']['template']['spec']
 
 def _gpu_flow(**gpu_kwargs):
     producer = IntProducer(name = 'p')
     gpu = IdentityProcessor(name = 'g', device_type = GPU, **gpu_kwargs)(producer)
     printer = CommandlineConsumer(name = 'c')(gpu)
     return Flow([printer], flow_type = REALTIME, flow_id = 'g')
-
-def test_mix_mode_gpu_pods_get_owner_aware_affinity():
-    '''Mix stamps MIG'd nodes with the owning flow's videoflow.io/gpu-owner label;
-    the pod must be schedulable onto unowned pool nodes OR nodes this flow owns —
-    never another flow's, whose teardown would revert the geometry under it.'''
-    manifests = render_manifests(compile_flow(_gpu_flow()), 'g', 'realtime',
-                                 'nats://x:4222', 'run1', default_image = IMG,
-                                 gpu_mode = 'mix')
-    by_name = {m['metadata']['name']: m for m in manifests if m['kind'] == 'Deployment'}
-    pod = by_name['vf-g-run1-g']['spec']['template']['spec']
-    assert 'nodeSelector' not in pod
-    terms = (pod['affinity']['nodeAffinity']
-             ['requiredDuringSchedulingIgnoredDuringExecution']['nodeSelectorTerms'])
-    assert [
-        {'matchExpressions': [
-            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
-            {'key': 'videoflow.io/gpu-owner', 'operator': 'DoesNotExist'},
-        ]},
-        {'matchExpressions': [
-            {'key': 'videoflow.io/gpu-pool', 'operator': 'In', 'values': ['true']},
-            {'key': 'videoflow.io/gpu-owner', 'operator': 'In', 'values': ['g']},
-        ]},
-    ] == terms
-    # CPU pods carry neither the selector nor the affinity.
-    assert 'affinity' not in by_name['vf-g-run1-c']['spec']['template']['spec']
-
-def test_gpu_count_reaches_the_pod_spec():
-    flow = _gpu_flow(gpu_count = 2)
-    manifests = render_manifests(compile_flow(flow), 'g', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG)
-    dep = [m for m in manifests if m['kind'] == 'Deployment' and m['metadata']['name'] == 'vf-g-run1-g'][0]
-    limits = dep['spec']['template']['spec']['containers'][0]['resources']['limits']
-    assert limits == {'nvidia.com/gpu': 2}
 
 def test_strategy_resolved_resource_name_wins_over_the_deploy_default():
     # NodeSpec.gpu_resource_name is internal: only a GPU strategy sets it (the mix
@@ -323,12 +256,6 @@ def test_gpu_memory_gib_is_validated_and_reaches_the_spec():
     flow = _gpu_flow(gpu_memory_gib = 10)
     spec = next(s for s in compile_flow(flow) if s.name == 'g')
     assert spec.gpu_memory_gib == 10
-    # Round-trips through the spec-dict boundary; old specs default to None.
-    from videoflow.core.compiler import NodeSpec
-    clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
-    assert clone.gpu_memory_gib == 10
-    old = {k: v for k, v in spec.to_dict().items() if k != 'gpu_memory_gib'}
-    assert NodeSpec.from_dict(old).gpu_memory_gib is None
     # Validation: positive number, GPU-only, and never combined with a span.
     with pytest.raises(ValueError, match = 'gpu_memory_gib'):
         IdentityProcessor(name = 'g', device_type = GPU, gpu_memory_gib = 0)
@@ -351,20 +278,6 @@ def test_gpu_kwargs_are_validated():
     with pytest.raises(ValueError, match = 'gpu_count=2'):
         node.change_device('cpu')
 
-def test_gpu_fields_round_trip_through_spec_serialization():
-    # The flow-spec ConfigMap round-trips specs as JSON; the GPU knobs must survive
-    # (gpu_resource_name is strategy-set, so it is stamped post-compile here).
-    from videoflow.core.compiler import NodeSpec
-    spec = compile_flow(_gpu_flow(gpu_count = 4))[1]
-    spec.gpu_resource_name = 'amd.com/gpu'
-    clone = NodeSpec.from_dict(json.loads(json.dumps(spec.to_dict())))
-    assert clone.gpu_count == 4
-    assert clone.gpu_resource_name == 'amd.com/gpu'
-    # Old serialized specs (no GPU fields) load with the defaults.
-    old = {k: v for k, v in spec.to_dict().items() if not k.startswith('gpu_')}
-    assert NodeSpec.from_dict(old).gpu_count == 1
-    assert NodeSpec.from_dict(old).gpu_resource_name is None
-
 def test_autoscaling_skips_gpu_nodes_by_default():
     producer = IntProducer(name = 'p')
     gpu = IdentityProcessor(name = 'g', device_type = GPU)(producer)
@@ -381,16 +294,6 @@ def test_autoscaling_skips_gpu_nodes_by_default():
                                 default_image = IMG, autoscaling = True, gpu_autoscaling = True)
     scaled = {m['metadata']['name'] for m in manifests if m['kind'] == 'ScaledObject'}
     assert scaled == {'vf-g-run1-g-scaler', 'vf-g-run1-k-scaler'}
-
-def test_manifests_are_valid_yaml():
-    specs = compile_flow(_demo_flow())
-    manifests = render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, autoscaling = True)
-    ystr = dump_manifests(manifests)
-    parsed = list(yaml.safe_load_all(ystr))
-    assert len(parsed) == len(manifests)
-    scaled = [m for m in parsed if m['kind'] == 'ScaledObject']
-    assert len(scaled) == 2  # identity, identity1 — a join keeps its declared scale (RUN-018)
 
 # -- partitioning: policy, compiled specs, rendered workload -----------------
 #
@@ -427,24 +330,6 @@ def test_compiler_carries_partition_and_join_policy():
     assert specs['joined'].partition_by == 'trace_id'
     assert specs['joined'].nb_tasks == 3
 
-def test_partitioned_node_renders_statefulset_and_headless_service():
-    specs = compile_flow(_partitioned_flow())
-    manifests = render_manifests(specs, 'part', 'realtime', 'nats://x:4222', 'run1',
-                                default_image = IMG, autoscaling = True)
-    by = {(m['kind'], m['metadata']['name']): m for m in manifests}
-    assert ('StatefulSet', 'vf-part-run1-joined') in by
-    assert ('Service', 'vf-part-run1-joined-hl') in by
-    # Non-partitioned processor 'a' stays a Deployment.
-    assert ('Deployment', 'vf-part-run1-a') in by
-    # Partitioned nodes are not KEDA-autoscaled (rehash on scale is unsafe).
-    scaled = [m for m in manifests if m['kind'] == 'ScaledObject']
-    scaled_names = {m['metadata']['name'] for m in scaled}
-    assert 'vf-part-run1-joined-scaler' not in scaled_names
-    # The StatefulSet pod gets POD_NAME via the downward API for its replica id.
-    ss = by[('StatefulSet', 'vf-part-run1-joined')]
-    env = ss['spec']['template']['spec']['containers'][0].get('env', [])
-    assert any(e['name'] == 'POD_NAME' for e in env)
-
 def test_video_file_reader_is_finite():
     reader = VideoFileReader('/tmp/x.mp4', name = 'reader')
     printer = CommandlineConsumer(name = 'printer')(reader)
@@ -471,12 +356,3 @@ def test_stream_replicas_reach_the_provision_job_only_for_a_replicated_profile()
     # Everything else is byte-identical: only the provision Job's env differs.
     assert dump_manifests(plain) != dump_manifests(replicated)
     assert [m for m in plain if m['kind'] != 'Job'] == [m for m in replicated if m['kind'] != 'Job']
-
-def test_reader_ids_are_rendered_per_publisher(monkeypatch):
-    specs = compile_flow(_demo_flow())
-    def node_cms(manifests):
-        return {m['data']['VF_NODE_NAME']: m['data'] for m in manifests
-                if m['kind'] == 'ConfigMap' and 'VF_NODE_NAME' in m.get('data', {})}
-    on = node_cms(render_manifests(specs, 'demo', 'realtime', 'nats://x:4222', 'run1', default_image = IMG))
-    assert on['producer']['VF_BLOB_READER_IDS'] == 'identity'           # ENV-12: the child that reads it
-    assert 'VF_BLOB_READER_IDS' not in on['printer']                    # no readers at all

@@ -6,7 +6,6 @@ graph support.
 import pytest
 
 from videoflow.consumers import CommandlineConsumer
-from videoflow.core.errors import GraphError
 from videoflow.core.graph import GraphEngine
 from videoflow.core.node import Node
 from videoflow.processors import IdentityProcessor, JoinerProcessor
@@ -23,13 +22,6 @@ def test_auto_generated_names_are_unique():
 def test_explicit_name_is_used():
     a = IntProducer(name = 'camera-1')
     assert a.name == 'camera-1'
-
-def test_duplicate_explicit_names_rejected_at_graph_build():
-    a = IntProducer(name = 'dup')
-    b = IdentityProcessor(name = 'dup')(a)
-    c = CommandlineConsumer()(b)
-    with pytest.raises(GraphError):
-        GraphEngine([a], [c])
 
 def test_error_handling_kwargs_survive_the_worker_round_trip():
     '''
@@ -89,16 +81,6 @@ def test_single_producer_still_works():
     c = CommandlineConsumer()(b)
     graph_engine = GraphEngine([a], [c])
     assert len(graph_engine.topological_sort()) == 3
-
-def test_replicated_join_without_partition_by_is_rejected():
-    a = IntProducer(name = 'a')
-    b = IdentityProcessor(name = 'b')(a)
-    # joiner with 2 parents and nb_tasks > 1 needs partition_by: otherwise replicas
-    # would receive the two halves of a join on different workers.
-    joined = JoinerProcessor(name = 'joined', nb_tasks = 3)(a, b)
-    out = CommandlineConsumer(name = 'out')(joined)
-    with pytest.raises(GraphError):
-        GraphEngine([a], [out])
 
 def test_replicated_join_with_partition_by_is_accepted():
     a = IntProducer(name = 'a')

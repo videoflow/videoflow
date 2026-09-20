@@ -324,7 +324,11 @@ def test_pay_005_redis_store_releases_by_reader_id(evidence_dir, record_faults) 
     '''The Redis store's ``WATCH``/``MULTI`` release on the in-process fake with a lost ``EXEC`` reply.'''
     pytest.importorskip('redis')
     evidence : Dict[str, Any] = {}
-    schedule = _oracle_pay_005(_fake_redis_store(), evidence)
+    store = _fake_redis_store()
+    schedule = _oracle_pay_005(store, evidence)
+    # Server side, the reclaimed object left nothing behind: no bytes, no metadata,
+    # no obligation set (the oracle's second object is what is still there).
+    assert not [k for k in store.client.live_keys('vf-blob*') if evidence['key'] in k]   # type: ignore[attr-defined]
     write_evidence(evidence_dir, 'ownership_snapshots.json', evidence)
     record_faults(schedule)
 

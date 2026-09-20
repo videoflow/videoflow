@@ -267,17 +267,6 @@ def test_time_redelivery_supersedes_in_group():
     ready = asm.pop_ready()
     assert fresh in ready.handles and stale not in ready.handles
 
-def test_time_group_seq_is_deterministic_for_dedup():
-    def build():
-        asm = TimeGroupAssembler('n', ['cam1', 'cam2'], _time_policy())
-        asm.add('cam1', entry('cam1:1', 1, event_ts = 1000.0), FakeHandle())
-        asm.add('cam2', entry('cam2:1', 1, event_ts = 1000.002), FakeHandle())
-        return asm.pop_ready()
-
-    a, b = build(), build()
-    # The same members regrouping after a crash derive the same identity.
-    assert a.trace_id == b.trace_id and a.seq == b.seq
-
 def test_time_assembler_validation():
     with pytest.raises(ValueError):  # collect names a non-parent
         TimeGroupAssembler('n', ['cam1'], _time_policy(collect = {'ghost': 10}))

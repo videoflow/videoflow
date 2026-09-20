@@ -59,7 +59,7 @@ from videoflow.core.compiler import NodeSpec
 from videoflow.core.constants import BATCH
 from videoflow.core.errors import SchemaError
 from videoflow.core.node import ConsumerNode, Node, ProcessorNode, ProducerNode
-from videoflow.messaging import nats_messenger, topology
+from videoflow.messaging import topology
 from videoflow.messaging.jetstream_backend import JetStreamMessagingBackend, channel_spec_for, subscription_spec_for
 from videoflow.messaging.nats_messenger import NATSMessenger
 from videoflow.wire.serialization import (
@@ -72,10 +72,14 @@ from videoflow.wire.serialization import (
 )
 
 HERE = pathlib.Path(__file__).parent
-#: The messenger's receive poll while a rig is in use (the module default is 1 s).
+#: The messenger's receive poll while a rig is in use — applied to every case by
+#: the conftest's ``_fast_messenger_poll`` (the module default is 1 s).
 MESSENGER_POLL_SECONDS = 0.05
 #: The historical drain rule's quiescence window (EOS-3), which EOS-7 replaces.
-HISTORICAL_QUIESCENCE_MS = 500
+#: The rule's real value was 500 ms; the completion cases hand this one to their
+#: messengers and then wait three of it in real time to prove the rule is gone,
+#: so it is what the wait costs, not what the rule was.
+HISTORICAL_QUIESCENCE_MS = 100
 
 
 class SimulatedCrash(Exception):
@@ -333,7 +337,6 @@ class ModelRig:
                     rig.clock.advance(rig.auto_advance)
                 time.sleep(0.001)
         self.backend.receive_any = types.MethodType(receive_any, self.backend)  # type: ignore[method-assign]
-        nats_messenger._FETCH_TIMEOUT_SECONDS = MESSENGER_POLL_SECONDS
 
     def channel(self, node : str) -> ChannelId:
         return ChannelId(self.flow_id, self.run_id, node)
@@ -443,7 +446,6 @@ class BrokerRig:
         self.clock = None
         self._messengers : List[NATSMessenger] = []
         self._backends : List[JetStreamMessagingBackend] = []
-        nats_messenger._FETCH_TIMEOUT_SECONDS = MESSENGER_POLL_SECONDS
 
     def channel(self, node : str) -> ChannelId:
         return ChannelId(self.flow_id, self.run_id, node)

@@ -51,6 +51,10 @@ def test_every_diagnostic_names_a_fix():
     # The join diagnostic names the two ways out, not just the problem.
     join = [d for d in validate([a], [out]) if d.code == 'VF_GRAPH_UNPARTITIONED_JOIN'][0]
     assert 'partition_by' in join.remedy and 'nb_tasks=1' in join.remedy
+    # ...and on its own it is enough to refuse the graph: replicas of a join would
+    # otherwise receive the two halves of a group on different workers.
+    with pytest.raises(GraphError):
+        GraphEngine([a], [out])
 
 
 def test_a_cycle_short_circuits_the_rest():

@@ -333,6 +333,10 @@ def _oracle_alloc_031_model(evidence : Dict[str, Any]) -> None:
     rendered = backend.bindings(claim.claim_id, 'w').node_constraints['expressions']
     assert {e['key'] for e in rendered} == {'nvidia.com/gpu.product', 'nvidia.com/gpu.memory', 'kubernetes.io/hostname'}
     assert not any(e['key'] == 'topology.kubernetes.io/zone' for e in rendered)          # a preference, not a term
+    # Verbatim, in declaration order, the host pin last: what the pod's affinity will say.
+    assert rendered == [{'key': 'nvidia.com/gpu.product', 'operator': 'In', 'values': ['NVIDIA-H100-80GB-HBM3']},
+                        {'key': 'nvidia.com/gpu.memory', 'operator': 'Gt', 'values': ['40000']},
+                        {'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': ['gpu-h']}]
     # gpu-s has four cards (count satisfied) but not the model/memory: count alone does not do.
     only_count = backend.plan([WorkloadRequest('cap', 'r', 'w', 2, SHARING_EXCLUSIVE, constraints = (
         Constraint('nvidia.com/gpu.memory', 'Gt', ('40000',)),))], snapshot)

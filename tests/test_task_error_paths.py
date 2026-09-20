@@ -249,7 +249,7 @@ def test_a_processor_relays_the_end_of_stream_but_not_a_hard_stop():
     # relayed here would complete every child without the rest (RUN-030).
     graceful = RecordingMessenger(inputs = [RecordingMessenger.data(1), RecordingMessenger.eos()])
     ProcessorTask(_Doubler(name = 'x'), graceful, True, ['p']).run()
-    assert graceful.stop_signals == 1
+    assert graceful.stop_signals == 1 and graceful.aborts == []
     hard = RecordingMessenger(inputs = [RecordingMessenger.data(1), RecordingMessenger.hard_stop()])
     ProcessorTask(_Doubler(name = 'x'), hard, True, ['p']).run()
     assert hard.acks == 1 and hard.stop_signals == 0
@@ -326,12 +326,6 @@ def test_an_aborted_parent_stops_this_node_and_is_relayed():
     assert 'terminated abnormally' in str(exc.value)
     assert messenger.aborts == [{'code': 'VF_DEVICE', 'message': 'card fell over'}]
     assert messenger.stop_signals == 0     # an abort is not a clean end of stream
-
-
-def test_a_clean_eos_is_still_a_clean_eos():
-    messenger = RecordingMessenger([RecordingMessenger.eos('p')], parents = ['p'])
-    ProcessorTask(_Doubler(name = 'd'), messenger, True, ['p']).run()
-    assert messenger.stop_signals == 1 and messenger.aborts == []
 
 
 def test_a_consumer_reports_the_abort_without_relaying_it():

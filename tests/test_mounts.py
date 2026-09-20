@@ -60,19 +60,6 @@ def _volumes_and_mounts(workload):
     return pod.get('volumes'), pod['containers'][0].get('volumeMounts')
 
 
-def test_batch_jobs_get_hostpath_volumes_but_provision_does_not():
-    mounts = parse_mounts(['/data:/data:ro'])
-    _, by = _by_kind(BATCH, mounts)
-    for node in ('producer', 'work', 'printer'):
-        volumes, vmounts = _volumes_and_mounts(by[('Job', f'vf-demo-run1-{node}')])
-        assert volumes == [{'name': 'vf-mount-0', 'hostPath': {'path': '/data'}}]
-        assert vmounts == [{'name': 'vf-mount-0', 'mountPath': '/data', 'readOnly': True}]
-    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-provision')])
-    # The provision Job keeps only its specs ConfigMap volume — no hostPath.
-    assert all(v.get('hostPath') is None for v in volumes)
-    assert all(m['mountPath'] != '/data' for m in vmounts)
-
-
 def test_realtime_deployment_and_statefulset_get_volumes():
     mounts = parse_mounts(['/data'])
     _, by = _by_kind(REALTIME, mounts, partitioned = True)
@@ -80,12 +67,6 @@ def test_realtime_deployment_and_statefulset_get_volumes():
         volumes, vmounts = _volumes_and_mounts(by[key])
         assert volumes[0]['hostPath'] == {'path': '/data'}
         assert vmounts[0] == {'name': 'vf-mount-0', 'mountPath': '/data', 'readOnly': False}
-
-
-def test_no_mounts_leaves_manifests_unchanged():
-    _, by = _by_kind(BATCH, None)
-    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-work')])
-    assert volumes is None and vmounts is None
 
 
 def test_parse_mounts_numbers_from_zero_per_call():
@@ -124,7 +105,6 @@ def test_render_rejects_duplicate_mount_names():
 # that drops a shadowed hostPath from the pods (and only the pods), and that none
 # of it changes a render that uses neither.
 
-from videoflow.deploy import build  # noqa: E402
 from videoflow.deploy.manifests import parse_pvc_mounts, pod_mounts  # noqa: E402
 
 
@@ -208,35 +188,13 @@ def test_a_claim_at_root_shadows_every_hostpath():
     assert [m.name for m in pod_mounts(mounts)] == ['vf-pvc-0']
 
 
-def test_run_in_image_skips_claim_mounts(monkeypatch):
-    '''The prep/compile container runs on the host, where a claim does not exist.'''
-    import subprocess
-
-    seen = {}
-
-    class _Proc:
-        returncode = 0
-        stdout = ''
-        stderr = ''
-
-    def run(cmd, **kwargs):
-        seen['cmd'] = cmd
-        return _Proc()
-
-    monkeypatch.setattr(subprocess, 'run', run)
-    mounts = parse_mounts(['/graph', '/graph/out']) + parse_pvc_mounts(['share:/share', 'm:/models:ro'])
-    build.run_in_image('img:1', ['python', '-c', 'pass'], mounts = mounts)
-    flags = [seen['cmd'][i + 1] for i, a in enumerate(seen['cmd']) if a == '-v']
-    assert flags == ['/graph:/graph', '/graph/out:/graph/out']
-
-
 def _pod_specs(manifests):
     '''Every pod template spec in a render, keyed by workload kind/name.'''
     return {(m['kind'], m['metadata']['name']): m['spec']['template']['spec']
             for m in manifests if 'template' in m.get('spec', {})}
 
 
-def test_priority_class_lands_on_every_pod_and_defaults_to_none():
+def test_priority_class_lands_on_every_pod():
     manifests = render_manifests(compile_flow(_flow(REALTIME, partitioned = True)), 'demo', REALTIME,
                                  'nats://x:4222', 'run1', default_image = IMG,
                                  priority_class = 'cluster-batch')
@@ -246,11 +204,8 @@ def test_priority_class_lands_on_every_pod_and_defaults_to_none():
     assert {kind for kind, _ in pods} == {'Job', 'Deployment', 'StatefulSet'}
     assert all(spec['priorityClassName'] == 'cluster-batch' for spec in pods.values()), pods
     assert pods[('Job', 'vf-demo-run1-provision')]['priorityClassName'] == 'cluster-batch'
-    # Absent by default: kubectl explain pod.spec.priorityClassName — unset means
-    # the cluster's default priority, and the goldens pin that nothing is emitted.
-    manifests = render_manifests(compile_flow(_flow(REALTIME, partitioned = True)), 'demo', REALTIME,
-                                 'nats://x:4222', 'run1', default_image = IMG)
-    assert all('priorityClassName' not in spec for spec in _pod_specs(manifests).values())
+    # Absent by default (kubectl explain pod.spec.priorityClassName: unset means the
+    # cluster's default priority): the manifest goldens pin that nothing is emitted.
 
 
 def test_a_remapped_hostpath_under_the_claim_is_served_by_the_claim_with_a_subpath():

@@ -66,15 +66,35 @@ def test_shim_defines_main(shim_path):
     assert callable(_import(shim_path).main)
 
 
-@pytest.mark.parametrize('shim_path', RUNNABLE)
-def test_shim_is_runnable_as_module(shim_path):
+# What ``python -m <shim> --help`` does, for every runnable shim in one fresh
+# interpreter (an interpreter start plus the videoflow import is most of the cost
+# of the four separate spawns this replaces). ``runpy.run_module`` with
+# ``run_name = '__main__'`` is the ``-m`` machinery itself, so the shim's own
+# ``if __name__ == '__main__'`` block runs. Exiting is fine; failing to import is not.
+_RUN_SHIMS = '''
+import runpy, sys
+for shim in sys.argv[1:]:
+    sys.argv = [shim, '--help']
+    try:
+        runpy.run_module(shim, run_name = '__main__', alter_sys = True)
+    except SystemExit:
+        pass
+    except ImportError:
+        raise
+    except Exception as e:                     # the entrypoint needs env/config we do not supply
+        print(f'{shim}: {type(e).__name__}: {e}', file = sys.stderr)
+'''
+
+
+def test_shims_are_runnable_as_modules():
     '''
     ``python -m <shim>`` must reach the real code. A non-zero exit is fine (these
     entrypoints need env/config we do not supply here) -- an import error is not.
     '''
-    proc = subprocess.run([sys.executable, '-m', shim_path, '--help'],
+    proc = subprocess.run([sys.executable, '-c', _RUN_SHIMS, *RUNNABLE],
                           capture_output = True, text = True, timeout = 60)
     combined = proc.stdout + proc.stderr
+    assert proc.returncode == 0, combined
     assert 'ModuleNotFoundError' not in combined, combined
     assert 'ImportError' not in combined, combined
 

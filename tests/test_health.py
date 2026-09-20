@@ -64,32 +64,17 @@ def test_liveness_stalls():
     state.beat()
     assert state.is_live() is True
 
-def test_metrics_accumulate():
-    state = HealthState('detector')
-    im = InstrumentedMessenger(_FakeInner(), state)
-    im.publish_message('a', {'proctime': 0.1, 'actual_proctime': 0.3})
-    im.publish_message('b', {'proctime': 0.2, 'actual_proctime': 0.4})
-    text = state.render_metrics()
-    assert 'videoflow_proctime_seconds_count{node="detector"} 2' in text
-    assert 'videoflow_proctime_seconds_sum{node="detector"} 0.3' in text or \
-           'videoflow_proctime_seconds_sum{node="detector"} 0.30000000000000004' in text
-
-def test_instrumented_delegates():
-    inner = _FakeInner()
-    im = InstrumentedMessenger(inner, HealthState('n'))
-    im.receive_message()
-    im.publish_stop_signal()
-    assert inner.received == 1
-    assert ('STOP', None) in inner.published
-
-def test_ack_fail_delegate_and_count():
+def test_instrumented_delegates_and_counts():
     inner = _FakeInner()
     state = HealthState('n')
     im = InstrumentedMessenger(inner, state)
     im.receive_message()
+    im.publish_stop_signal()
     im.ack_inputs()
     err = RuntimeError('boom')
     im.fail_inputs(err)
+    assert inner.received == 1
+    assert ('STOP', None) in inner.published
     assert inner.acked == 1
     assert inner.failed == [err]
     text = state.render_metrics()
@@ -190,31 +175,6 @@ def test_p99_estimated_from_the_buckets_brackets_the_true_p99():
     assert 0.0 < lower and upper < math.inf                             # a real bucket, not a tail
     # the bracket is one bucket wide: that is the declared error bound
     assert (lower, upper) in list(zip(bounds, bounds[1:]))
-
-def test_same_count_and_sum_but_different_tails_are_told_apart():
-    '''
-    RUN-045's populations: 100 x 10 ms against 90 x 1 ms + 10 x 91 ms. Same
-    count, same sum, p95 of 10 ms versus 91 ms. Count and sum cannot tell them
-    apart; the buckets put the two p95s on opposite sides of a 50 ms objective.
-    '''
-    flat, spiky = HealthState('flat'), HealthState('spiky')
-    for _ in range(100):
-        flat.observe('proctime_seconds', 0.010)
-    for _ in range(90):
-        spiky.observe('proctime_seconds', 0.001)
-    for _ in range(10):
-        spiky.observe('proctime_seconds', 0.091)
-    sums = [float(re.search(r'proctime_seconds_sum\{[^}]*\} (\S+)', s.render_metrics()).group(1))
-            for s in (flat, spiky)]
-    assert math.isclose(sums[0], sums[1]) and math.isclose(sums[0], 1.0)
-    a, b = flat.histogram('proctime_seconds'), spiky.histogram('proctime_seconds')
-    assert a[-1] == b[-1] == 100
-    lo_a, hi_a = quantile_bounds(a, 0.95)
-    lo_b, hi_b = quantile_bounds(b, 0.95)
-    objective = 0.05
-    assert hi_a <= objective          # flat: p95 is at most 10 ms — definitely meets it
-    assert lo_b >= objective          # spiky: p95 is above 50 ms — definitely violates it
-    assert (lo_a, hi_a) == (0.005, 0.01) and (lo_b, hi_b) == (0.05, 0.1)
 
 def test_percentile_is_unavailable_without_buckets_rather_than_a_mean():
     empty = (0,) * (len(LATENCY_BUCKETS_SECONDS) + 1)

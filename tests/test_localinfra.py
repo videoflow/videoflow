@@ -76,18 +76,13 @@ def test_mixed_ownership_starts_only_what_is_missing(monkeypatch):
     assert len(runs) == 1 and localinfra.REDIS_IMAGE in runs[0]
 
 
-def test_skips_redis_when_not_needed(monkeypatch):
-    _fake_docker(monkeypatch)
+def test_only_the_broker_is_started_when_redis_is_not_needed_and_a_stale_container_goes_first(monkeypatch):
+    calls = _fake_docker(monkeypatch)
     _listening(monkeypatch, nats = False, redis = False)
     urls, created = localinfra.ensure_local_infra(need_redis = False)
     assert created == ['nats']
     assert urls['redis'] is None
-
-
-def test_stale_container_removed_before_start(monkeypatch):
-    calls = _fake_docker(monkeypatch)
-    _listening(monkeypatch, nats = False, redis = False)
-    localinfra.ensure_local_infra(need_redis = False)
+    # A leftover container of the same name is removed before the new one starts.
     kinds = [c[:3] for c in calls if c[0] == 'docker' and c[1] in ('rm', 'run')]
     assert kinds[0] == ['docker', 'rm', '-f']
     assert kinds[1][:2] == ['docker', 'run']

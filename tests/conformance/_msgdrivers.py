@@ -114,6 +114,10 @@ class Driver:
     flow_id : str = ''
     run_id : str = ''
     clock : Optional[FakeClock] = None
+    #: Real seconds an oracle waits to see that nothing *else* happens (a worker
+    #: past the credit reaching the barrier): long enough for a late receiver to
+    #: have made its attempt through this driver.
+    settle_seconds : float = 1.0
 
     # -- provisioning ----------------------------------------------------------------
     def capabilities(self) -> MessagingCapabilities:
@@ -368,6 +372,7 @@ class Driver:
 
 class MemoryDriver(Driver):
     name = 'memory'
+    settle_seconds = 0.2                    # a receiver thread's attempt is a lock, not a round trip
 
     def __init__(self, flow_id : str = 'f', run_id : str = 'r', clock : FakeClock | None = None,
                  messenger_poll : float = 0.05, **backend_kwargs : Any) -> None:
@@ -512,7 +517,7 @@ class MemoryDriver(Driver):
     def messenger(self, node : str, parents : List[str], flow_type : str, max_retries : int = 3,
                   ack_wait : int = 2, delivery : dict | None = None, blob_store : BlobStore | None = None,
                   replica_id : int = 0, nb_tasks : int = 1, partition_by : str | None = None) -> NATSMessenger:
-        nats_messenger._FETCH_TIMEOUT_SECONDS = self._messenger_poll
+        nats_messenger._FETCH_TIMEOUT_SECONDS = self._messenger_poll   # restored per test by conftest._fast_messenger_poll
         m = NATSMessenger(StubNode(node), list(parents), 'memory://model', self.flow_id, flow_type, self.run_id,
                           max_retries = max_retries, ack_wait = ack_wait, delivery_policy = delivery,
                           blob_store = blob_store, replica_id = replica_id, nb_tasks = nb_tasks,

@@ -18,7 +18,6 @@ from videoflow.core.policies import JoinPolicy
 from videoflow.messaging.grouping import TraceGroupAssembler
 from videoflow.messaging.nats_messenger import NATSMessenger
 from videoflow.wire.serialization import (
-    ENVELOPE_OVERHEAD_BYTES,
     MAX_INLINE_PAYLOAD_BYTES,
     MSG_TYPE_DATA,
     MSG_TYPE_EOS,
@@ -55,24 +54,15 @@ def _delivery(buf, headers = None, seq = 1):
 
 # -- inline threshold negotiation (PAY-001) ---------------------------------------------
 
-def test_threshold_is_lowered_to_what_the_broker_carries_when_a_store_can_offload():
+def test_an_unread_broker_limit_leaves_the_threshold_alone_and_the_refusal_names_the_knob():
+    # Lowering to what the broker carries, a roomy limit, and the refusal without a
+    # store are PAY-001's (tests/conformance/test_pay_offload.py, memory rig).
     m = _bare(blob_store = object())
-    m._negotiate_inline_threshold(known(200_000))
-    assert m._inline_threshold == 200_000 - ENVELOPE_OVERHEAD_BYTES
-
-
-def test_threshold_is_untouched_by_a_roomy_or_unread_limit():
-    m = _bare(blob_store = object())
-    m._negotiate_inline_threshold(known(1 << 30))
-    assert m._inline_threshold == MAX_INLINE_PAYLOAD_BYTES
     m._negotiate_inline_threshold(unknown('unread', 'not connected'))
     assert m._inline_threshold == MAX_INLINE_PAYLOAD_BYTES
-
-
-def test_unsafe_threshold_without_a_store_is_a_config_error(monkeypatch):
-    m = _bare()
+    bare = _bare()
     with pytest.raises(ConfigError) as e:
-        m._negotiate_inline_threshold(known(200_000))
+        bare._negotiate_inline_threshold(known(200_000))
     assert 'VIDEOFLOW_MAX_INLINE_PAYLOAD_BYTES' in e.value.remedy
 
 
