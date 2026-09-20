@@ -118,6 +118,8 @@ class FakeRedis:
         self._faults : dict[str, list[BaseException]] = {}
         self._lost : dict[str, int] = {}
         self._hooks : dict[str, list[list]] = {}
+        #: What ``INFO memory`` reports as ``used_memory``; None means the bytes stored.
+        self.memory_used : Optional[int] = None
 
     # -- test seams ------------------------------------------------------------------
 
@@ -475,7 +477,10 @@ class FakeRedis:
         return {k: v for k, v in self.config.items() if any(fnmatch.fnmatchcase(k, p) for p in wanted)}
 
     def _cmd_info(self, section : Optional[str] = None, *args : str) -> dict:
-        return {'redis_version': '7.4.11', 'cluster_enabled': 1 if self.cluster_enabled else 0}
+        used = self.memory_used if self.memory_used is not None else sum(
+            len(v) for v in self._data.values() if isinstance(v, (bytes, str)))
+        return {'redis_version': '7.4.11', 'cluster_enabled': 1 if self.cluster_enabled else 0,
+                'used_memory': used}
 
     def _cmd_cluster(self, cluster_arg : str, *args : Any) -> Any:
         if not self.cluster_enabled:

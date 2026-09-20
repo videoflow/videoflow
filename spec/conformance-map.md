@@ -280,6 +280,7 @@ their catalog topic, and every case introduced by RFC 0006's requirement IDs.
 | `DELIV-15` | MSG-009, MSG-010, MSG-012 | `test_msg_recovery.py` |
 | `DELIV-16` | PAY-015, PAY-016 | `test_pay_replay.py` |
 | `BLOB-13`…`BLOB-15` | PAY-002, PAY-003, PAY-004, PAY-005, PAY-006 (`ledger` variant: the runtime-derived reconcile at start), PAY-007, PAY-008, PAY-012 (`ledger` variant: periodic reconcile of evictions), PAY-013, PAY-014, PAY-018, PAY-021 | `test_pay_access.py`, `test_pay_obligations.py`, `test_pay_orphans.py`, `test_pay_retention.py`, `test_pay_routing.py`; unit `tests/test_obligation_ledger.py` |
+| `BLOB-16` | unit: the hold, its ladder, the budget and termination exits, the typed refusal from both stores, the Redis store's headroom and depth-graded admission, the compiled `VF_STORE_ADMISSION` shares | `tests/test_store_backpressure.py` |
 | `ENV-10`…`ENV-18` | env emission and parsing | `tests/test_local_engine.py`, `tests/test_compiler_manifests.py`, `tests/test_runtime_policies.py`, `tests/test_backends_core.py` |
 | `CTRL-4` | RUN-001, RUN-002, RUN-003, RUN-013, RUN-018, RUN-019, RUN-022, RUN-023, MSG-018 (`ledger` variant on the durable Redis) | `test_run_joins.py`, `test_run_commit.py`, `test_run_scaling.py`, `test_run_partitions.py`, `test_msg_retention.py`; unit `tests/test_flow_runtime.py` |
 | run-scoped names, `--single-run` | RUN-047 | `test_run_rollout.py`; goldens `tests/golden/manifests/` |

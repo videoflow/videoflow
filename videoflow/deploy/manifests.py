@@ -24,6 +24,7 @@ dict at the YAML boundary. Records this module owns outright (``Mount``,
 from __future__ import absolute_import, division, print_function
 
 import json
+import os
 import re
 import subprocess
 from dataclasses import dataclass
@@ -37,6 +38,7 @@ from ..core.compiler import (
     NodeSpec,
     blob_reader_ids,
     parent_replicas,
+    store_admission,
     validate_wire_compatibility,
 )
 from ..core.constants import BATCH
@@ -131,12 +133,17 @@ class Mount:
             lets a multi-node cluster share a work directory that no node's own \
             filesystem holds (an RWX claim over NFS), where a hostPath would \
             silently mount an empty directory on every node but one.
+        - sub_path: for a host path that a claim serves at a *different* container \
+            path (``~/.videoflow:/root/.videoflow`` with the operator's home inside \
+            the claim's directory): the subdirectory of the claim to mount there, \
+            rendered as the volumeMount's ``subPath``. Set only by ``pod_mounts``.
     '''
     name : str
     host_path : str
     container_path : str
     read_only : bool
     claim : str | None = None
+    sub_path : str | None = None
 
 def parse_mounts(values : Optional[List[str]]) -> List[Mount]:
     '''
@@ -220,31 +227,71 @@ def _shadowed_by_claim(mount : Mount, claims : List[Mount]) -> bool:
             return True
     return False
 
+def _served_by_claim(mount : Mount, claims : List[Mount]) -> Optional[Mount]:
+    '''
+    The claim mount whose container path holds ``mount``'s *host* path, if any.
+    A claim is mounted in the pods at its own backing directory (``--mount-pvc
+    claim:<dir>``), so a host path under that directory is the claim's data: the
+    claim serves it, and a hostPath over it would only shadow the claim.
+    '''
+    host = mount.host_path.rstrip('/') or '/'
+    for claim in claims:
+        root = claim.container_path.rstrip('/') or '/'
+        if root == '/' or host == root or host.startswith(root + '/'):
+            return claim
+    return None
+
 def pod_mounts(mounts : List[Mount]) -> List[Mount]:
     '''
     The mounts a pod actually renders, from the full list the deploy collected.
 
     The rule, deterministic and applied nowhere else: every claim mount is kept,
-    and a hostPath mount whose container path lies at or under a claim mount's
-    container path is **dropped from the pod**. Such a path is served by the
-    claim — a solution's ``work_dir`` staged inside an RWX share, say — and a
-    hostPath over it would shadow the claim on every node whose own filesystem
-    does not hold that directory, mounting an empty root-owned directory where the
-    artifacts should land. The dropped mount is still honoured by
-    ``deploy.build.run_in_image``, which runs the prepare/compile containers on
-    the host, where the path does resolve. Input order is preserved.
+    and a hostPath mount whose path lies at or under a claim mount's path is
+    served by the claim instead. Such a path is the claim's data — a solution's
+    ``work_dir`` staged inside an RWX share, say — and a hostPath over it would
+    shadow the claim on every node whose own filesystem does not hold that
+    directory, mounting an empty root-owned directory where the artifacts should
+    land. Two cases:
+
+    - the mount's container path is the host path (a same-path mount): it is \
+        **dropped**, the claim at its root already exposes it;
+    - the mount remaps the directory elsewhere (``<home>/.videoflow`` onto \
+        ``/root/.videoflow``): it becomes a mount of the **claim** at that \
+        container path with ``subPath`` naming the subdirectory.
+
+    A hostPath whose *container* path sits under a claim's is dropped too (the
+    claim owns that part of the container's filesystem). The dropped mounts are
+    still honoured by ``deploy.build.run_in_image``, which runs the prepare/compile
+    containers on the host, where the paths do resolve. Input order is preserved.
 
     - Arguments:
         - mounts: one ``parse_mounts`` result plus one ``parse_pvc_mounts`` result.
 
     - Returns:
         - ``mounts`` itself (same order, every element) when it holds no claim; \
-            otherwise the filtered list.
+            otherwise the rewritten list.
     '''
     claims = [m for m in mounts if m.claim is not None]
     if not claims:
         return list(mounts)
-    return [m for m in mounts if m.claim is not None or not _shadowed_by_claim(m, claims)]
+    rendered : List[Mount] = []
+    for m in mounts:
+        if m.claim is not None:
+            rendered.append(m)
+            continue
+        claim = _served_by_claim(m, claims)
+        if claim is not None:
+            if m.container_path.rstrip('/') == m.host_path.rstrip('/'):
+                continue
+            root = claim.container_path.rstrip('/') or '/'
+            rendered.append(Mount(name = claim.name, host_path = '', container_path = m.container_path,
+                                  read_only = m.read_only, claim = claim.claim,
+                                  sub_path = os.path.relpath(m.host_path, root)))
+            continue
+        if _shadowed_by_claim(m, claims):
+            continue
+        rendered.append(m)
+    return rendered
 
 def _volume_for(mount : Mount) -> dict:
     '''
@@ -265,7 +312,8 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
                envelope_version : int, profile_requests : Optional[dict] = None,
                blob_reader_ids : Optional[List[str]] = None,
                parent_replicas : Optional[List[int]] = None,
-               replica_slots : Optional[int] = None) -> dict:
+               replica_slots : Optional[int] = None,
+               store_admission : Optional[float] = None) -> dict:
     '''
     - Arguments:
         - profile_requests: the ``VF_PROFILE_REQUESTS_JSON`` entry from \
@@ -323,6 +371,10 @@ def _env_pairs(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str,
     if blob_reader_ids:
         # The same readers by identity (RFC 0006 BLOB-13); rendered only under the switch.
         env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
+    if store_admission is not None and store_admission < 1.0:
+        # This publisher's share of the payload store before it holds (BLOB-16);
+        # the deepest publisher's full share is the worker's default.
+        env['VF_STORE_ADMISSION'] = f'{store_admission:g}'
     if parent_replicas:
         # The EOS-7 barrier's expectation per parent (RFC 0006 ENV-11); rendered only under the switch.
         env['VF_PARENT_REPLICAS'] = ','.join(str(n) for n in parent_replicas)
@@ -635,7 +687,7 @@ def _pod_spec(spec : NodeSpec, flow_id : str, run_id : str, flow_type : str, ima
         # two of its results repeats names (see its docstring). That list is only
         # meant for run_in_image, where docker ignores names; catch it here rather
         # than shipping a pod spec the cluster refuses.
-        names = [m.name for m in mounts]
+        names = [m.name for m in mounts if m.claim is None]
         duplicates = sorted({n for n in names if names.count(n) > 1})
         if duplicates:
             raise ValueError(
@@ -647,9 +699,12 @@ def _pod_spec(spec : NodeSpec, flow_id : str, run_id : str, flow_type : str, ima
         # the one holding that directory — see pod_mounts for the rule.
         rendered = pod_mounts(mounts)
         container['volumeMounts'] = [
-            {'name': m.name, 'mountPath': m.container_path, 'readOnly': m.read_only}
+            {'name': m.name, 'mountPath': m.container_path, 'readOnly': m.read_only,
+             **({'subPath': m.sub_path} if m.sub_path else {})}
             for m in rendered]
-        pod_spec['volumes'] = [_volume_for(m) for m in rendered]
+        # A claim-served mount (sub_path set) reuses its claim's volume, which is
+        # always in the list too: one volume per claim, several mounts of it.
+        pod_spec['volumes'] = [_volume_for(m) for m in rendered if m.sub_path is None]
     if node_selector:
         pod_spec['nodeSelector'] = node_selector
     if node_affinity:
@@ -671,7 +726,8 @@ def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str
                    envelope_version : int, profile_requests : Optional[dict] = None,
                    blob_reader_ids : Optional[List[str]] = None,
                    parent_replicas : Optional[List[int]] = None,
-                   replica_slots : Optional[int] = None) -> dict:
+                   replica_slots : Optional[int] = None,
+                   store_admission : Optional[float] = None) -> dict:
     return {
         'apiVersion': 'v1',
         'kind': 'ConfigMap',
@@ -680,7 +736,7 @@ def node_configmap(spec : NodeSpec, flow_id : str, flow_type : str, run_id : str
             'labels': _labels(flow_id, spec.name),
         },
         'data': _env_pairs(spec, flow_id, flow_type, run_id, envelope_version, profile_requests,
-                           blob_reader_ids, parent_replicas, replica_slots),
+                           blob_reader_ids, parent_replicas, replica_slots, store_admission = store_admission),
     }
 
 def nats_configmap(flow_id : str, run_id : str, nats_url : str, blob_redis_url : Optional[str] = None,
@@ -1158,7 +1214,8 @@ def render_manifests(specs : List[NodeSpec], flow_id : str, flow_type : str, nat
     for spec in specs:
         manifests.append(node_configmap(spec, flow_id, flow_type, run_id, resolved_version, profile_requests,
                                         blob_reader_ids(spec, specs), parent_replicas(spec, specs),
-                                        replica_slots = max(max_replicas, spec.nb_tasks) if spec.name in scaled else None))
+                                        replica_slots = max(max_replicas, spec.nb_tasks) if spec.name in scaled else None,
+                                        store_admission = store_admission(spec, specs)))
         if _is_partitioned(spec):
             manifests.append(headless_service(spec, flow_id, run_id))
         if spec.device_type == 'gpu':

@@ -142,6 +142,7 @@ data:
   VF_NODE_CLASS: toy_recovery_nodes.EventProducer
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: fragile
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job

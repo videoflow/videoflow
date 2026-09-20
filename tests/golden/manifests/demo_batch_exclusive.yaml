@@ -162,6 +162,7 @@ data:
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: joined
+  VF_STORE_ADMISSION: '0.667'
   VF_PARENT_REPLICAS: '1'
   VF_GPU_COUNT: '1'
 ---
@@ -261,6 +262,7 @@ data:
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '3'
   VF_BLOB_READER_IDS: part/p0,part/p1,part/p2
+  VF_STORE_ADMISSION: '0.667'
   VF_PARENT_REPLICAS: '1'
   VF_GPU_COUNT: '2'
 ---
@@ -395,6 +397,7 @@ data:
   VF_NODE_CLASS: videoflow.producers.basic.IntProducer
   VF_BLOB_READERS: '2'
   VF_BLOB_READER_IDS: gpu-sharer,gpu-two
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job
@@ -457,6 +460,7 @@ data:
   VF_PARTITION_BY: trace_id
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: joined
+  VF_STORE_ADMISSION: '0.833'
   VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: v1

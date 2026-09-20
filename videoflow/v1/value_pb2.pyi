@@ -3,8 +3,7 @@ from google.protobuf.internal import containers as _containers
 from google.protobuf.internal import enum_type_wrapper as _enum_type_wrapper
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from collections.abc import Iterable as _Iterable, Mapping as _Mapping
-from typing import ClassVar as _ClassVar, Optional as _Optional, Union as _Union
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Mapping as _Mapping, Optional as _Optional, Union as _Union
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -33,7 +32,7 @@ class Value(_message.Message):
     list_value: ListValue
     map_value: MapValue
     tensor_value: _payloads_pb2.Tensor
-    def __init__(self, null_value: _Optional[_Union[NullValue, str]] = ..., double_value: _Optional[float] = ..., int_value: _Optional[int] = ..., string_value: _Optional[str] = ..., bytes_value: _Optional[bytes] = ..., bool_value: _Optional[bool] = ..., list_value: _Optional[_Union[ListValue, _Mapping]] = ..., map_value: _Optional[_Union[MapValue, _Mapping]] = ..., tensor_value: _Optional[_Union[_payloads_pb2.Tensor, _Mapping]] = ...) -> None: ...
+    def __init__(self, null_value: _Optional[_Union[NullValue, str]] = ..., double_value: _Optional[float] = ..., int_value: _Optional[int] = ..., string_value: _Optional[str] = ..., bytes_value: _Optional[bytes] = ..., bool_value: bool = ..., list_value: _Optional[_Union[ListValue, _Mapping]] = ..., map_value: _Optional[_Union[MapValue, _Mapping]] = ..., tensor_value: _Optional[_Union[_payloads_pb2.Tensor, _Mapping]] = ...) -> None: ...
 
 class ListValue(_message.Message):
     __slots__ = ("values",)

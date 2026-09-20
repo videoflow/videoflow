@@ -29,7 +29,7 @@ import random
 import threading
 import time
 import uuid
-from typing import Any, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 from ..backends import faults
 from ..backends.capabilities import LIVE_LATEST, RELIABLE_WORK
@@ -95,6 +95,7 @@ from ..core.errors import (
     DecodeError,
     IncompatibleProfile,
     PartitionKeyError,
+    PayloadStoreFull,
     StaleAuthority,
     TransientFailure,
     WorkerFatal,
@@ -110,6 +111,8 @@ from ..core.policies import (
     INVALID_KEY_FALLBACK,
     INVALID_KEY_REJECT,
     JOIN_TIME,
+    MISSING_DROP,
+    MISSING_ERROR,
     DeliveryPolicy,
     JoinPolicy,
     PartitionKeyPolicy,
@@ -159,6 +162,16 @@ DEFAULT_BLOB_TTL_BATCH_SECONDS = 86400
 # before giving up. Each retry rechecks the termination flag so a stopping flow
 # doesn't wedge here forever.
 _PUBLISH_RETRY_BACKOFF = [0.05, 0.1, 0.2, 0.5, 1.0]
+#: Backoff between attempts of a publication the payload store refused for
+#: memory (BLOB-16). A full store drains at its readers' pace — a frame per
+#: inference, not per millisecond — so the ladder climbs to a second and stays.
+_STORE_BACKPRESSURE_BACKOFF = [0.1, 0.2, 0.5, 1.0]
+#: How long a BATCH publisher holds a publication the payload store refused
+#: before the refusal is its failure (``VF_STORE_BACKPRESSURE_SECONDS``). Long
+#: enough for a stuck reader's lease to lapse and its replacement to drain.
+DEFAULT_STORE_BACKPRESSURE_SECONDS = 600.0
+#: A hold at least this long is reported at INFO when it ends; shorter ones at DEBUG.
+_STORE_HOLD_NOTABLE_SECONDS = 5.0
 # Hard bound on getting an ABORT marker out. A dying worker should spend seconds,
 # not minutes, trying to tell its children — the supervisor's control-abort and
 # the receiver's progress deadline cover the case where it never manages.
@@ -344,6 +357,14 @@ class NATSMessenger(Messenger):
         - prefetch_bytes (int): the most envelope bytes the default backend holds \
             unsettled before it stops fetching (``VF_PREFETCH_BYTES``, RUN-025); \
             None leaves it unbounded.
+        - store_backpressure_seconds (float): how long a BATCH publisher holds a \
+            publication the payload store refused for memory, retrying while the \
+            store's readers drain it, before the refusal is its failure (BLOB-16, \
+            ``VF_STORE_BACKPRESSURE_SECONDS``); 0 never waits. None means the \
+            default (600).
+        - keepalive (callable): called at every step of such a hold, so whatever \
+            watches this process for liveness (the health state) tells a \
+            deliberate wait from a wedge. None does nothing.
     """
     def __init__(self, node : Node, parent_names : list[str], nats_url : str, flow_id : str,
                 flow_type : str, run_id : str, blob_store : BlobStore | None = None,
@@ -358,7 +379,9 @@ class NATSMessenger(Messenger):
                 blob_reader_ids : list[str] | None = None,
                 runtime : FlowRuntime | None = None,
                 replayable : bool = False,
-                prefetch_bytes : int | None = None) -> None:
+                prefetch_bytes : int | None = None,
+                store_backpressure_seconds : float | None = None,
+                keepalive : Callable[[], None] | None = None) -> None:
         self._node = node
         # Wire version this node emits (the protobuf v4 envelope; §4 of PROTOCOL.md).
         self._envelope_version = DEFAULT_ENVELOPE_VERSION if envelope_version is None else envelope_version
@@ -376,6 +399,10 @@ class NATSMessenger(Messenger):
                                 else DEFAULT_BLOB_TTL_BATCH_SECONDS))
         self._replica_id = replica_id
         self._ack_wait = ack_wait
+        # BLOB-16: a full payload store is backpressure on this publisher.
+        self._store_backpressure_seconds = (DEFAULT_STORE_BACKPRESSURE_SECONDS if store_backpressure_seconds is None
+                                            else float(store_backpressure_seconds))
+        self._keepalive : Callable[[], None] = keepalive if keepalive is not None else (lambda: None)
         # What a failure costs here. Resolved once: the flow-type preset, this
         # node's own delivery/on_error override, then the deployment's retry count.
         self._delivery_policy = DeliveryPolicy.resolve(flow_type, delivery_policy, max_retries)
@@ -513,6 +540,9 @@ class NATSMessenger(Messenger):
         backend.ensure_channel(channel_spec_for(self._flow_id, self._run_id, self._node.name, self._flow_type,
                                                 profile), operation)
         backend.subscribe_control(lambda: self._stop(Messenger.STOP_CONTROL))
+        # What the parents may hold un-acked in total, hence how many incomplete
+        # groups the join may ever see at once (grouping.GroupAssembler.group_cap).
+        total_credit = 0
         for parent_name in self._parent_names:
             channel = ChannelId(self._flow_id, self._run_id, parent_name)
             backend.ensure_channel(channel_spec_for(self._flow_id, self._run_id, parent_name, self._flow_type,
@@ -527,7 +557,7 @@ class NATSMessenger(Messenger):
                                   self._replica_id if self._partition_by else None, SUBSCRIPTION_DATA)
             verified = backend.ensure_subscription(subscription_spec_for(data, self._ack_wait, self._max_deliver,
                                                                          credit), operation)
-            self._admit_join_credit(parent_name, verified.effective, working_set)
+            total_credit += self._admit_join_credit(parent_name, verified.effective, working_set) or credit
             # Decide ownership and replay scope where the delivery arrives, so a
             # message this replica will never process is acked out of its ack
             # window at once instead of waiting behind the one being processed;
@@ -538,6 +568,8 @@ class NATSMessenger(Messenger):
             backend.ensure_subscription(subscription_spec_for(eos, 30, 1, 1), operation)
             self._data_subs[parent_name] = data
             self._eos_subs[parent_name] = eos
+        if len(self._parent_names) >= 2:
+            self._assembler.set_group_cap(total_credit)
         self._restore_from_ledger()
 
     def _restore_from_ledger(self) -> None:
@@ -601,20 +633,22 @@ class NATSMessenger(Messenger):
                        f'bytes: the broker max_payload is {max_payload.value} bytes')
         self._inline_threshold = safe
 
-    def _admit_join_credit(self, parent_name : str, effective : Mapping[str, Any], working_set : int) -> None:
+    def _admit_join_credit(self, parent_name : str, effective : Mapping[str, Any], working_set : int) -> int:
         """
         A join whose durable admits fewer un-acked deliveries than its working set
         can be filled with halves that never complete (RUN-005): refused before
         any input is taken, naming both numbers. The credit read back is the
         durable's *effective* one — provisioning may have created it with another
-        value, and a bind never changes an existing durable.
+        value, and a bind never changes an existing durable. Returns that
+        effective credit (0 when the backend did not report one, or for a node
+        that is no join).
         """
         if len(self._parent_names) < 2:
-            return
+            return 0
         # JetStream reports the durable's ``max_ack_pending``; the reference model its ``item_credit``.
         raw = effective.get('max_ack_pending', effective.get('item_credit'))
         if raw is None:
-            return
+            return 0
         credit = int(raw)
         if credit < working_set:
             raise CapabilityError(
@@ -624,6 +658,7 @@ class NATSMessenger(Messenger):
                 remedy = f'Provision the durable with max_ack_pending >= {working_set} (re-run provisioning under '
                          'RFC 0006, which derives it from the join policy), or lower JoinPolicy.max_pending.',
                 node = self._node.name)
+        return credit
 
     def _data_durable_name(self, parent_name : str) -> str:
         if self._partition_by:
@@ -1089,6 +1124,56 @@ class NATSMessenger(Messenger):
     def _count(self, kind : str) -> None:
         self.publication_stats[kind] = self.publication_stats.get(kind, 0) + 1
 
+    def _encode_admitted(self, encode : Callable[[], bytes]) -> bytes:
+        """
+        The envelope, once the payload store has admitted its offloaded bytes
+        (BLOB-16). A refusal for memory is the store applying backpressure, and
+        a BATCH publisher answers it as it answers a full stream (DELIV-5): it
+        holds the publication and retries with backoff while the readers of
+        what the store holds release it — for at most
+        ``store_backpressure_seconds`` and never past the termination flag —
+        beating ``keepalive`` at every step so liveness tells the hold from a
+        wedge. Past the budget the refusal is the publication's failure, as it
+        was before the wait. A REALTIME publisher never waits (DELIV-4). The
+        progress deadline (ERR-7) is deliberately not extended: a processor
+        that holds an input past its progress timeout is stalled, and the input
+        goes to another replica.
+        """
+        deadline : float | None = None
+        held_since = 0.0
+        attempt = 0
+        while True:
+            try:
+                buf = encode()
+            except PayloadStoreFull as e:
+                budget = self._store_backpressure_seconds
+                if self._flow_type == REALTIME or budget <= 0:
+                    raise
+                now = time.monotonic()
+                if deadline is None:
+                    deadline = now + budget
+                    held_since = now
+                    self._count('held')
+                    # Steady-state backpressure holds every publication: the first
+                    # hold and every hundredth are worth a warning, the rest are debug.
+                    holds = self.publication_stats['held']
+                    logger.log(logging.WARNING if holds == 1 or holds % 100 == 0 else logging.DEBUG,
+                               f'{self._node.name}: the payload store refused the publication ({e}); '
+                               f'holding it for up to {budget:g} s while its readers drain the store '
+                               f'(hold #{holds})')
+                if now >= deadline or self._termination_event.is_set():
+                    raise
+                self._keepalive()
+                time.sleep(min(_STORE_BACKPRESSURE_BACKOFF[min(attempt, len(_STORE_BACKPRESSURE_BACKOFF) - 1)],
+                               deadline - now))
+                attempt += 1
+            else:
+                if deadline is not None:
+                    waited = time.monotonic() - held_since
+                    logger.log(logging.INFO if waited >= _STORE_HOLD_NOTABLE_SECONDS else logging.DEBUG,
+                               f'{self._node.name}: the payload store admitted the publication after {waited:.1f} s')
+                return buf
+
     def _publish(self, message : Any, metadata : Optional[dict], trace_id : str, seq : int,
                 msg_type : str, event_ts : float | None = None,
                 error : Optional[dict] = None, checkpoint : bytes | None = None) -> None:
@@ -1113,13 +1198,13 @@ class NATSMessenger(Messenger):
         if self._bridge is not None:
             self._bridge.last_ref = None
         try:
-            buf = encode_envelope(
+            buf = self._encode_admitted(lambda: encode_envelope(
                 node_name, self._flow_id, self._run_id, trace_id, seq, msg_type,
                 metadata, message, replica_id = self._replica_id, event_ts = event_ts,
                 blob_store = self._blob_store, version = self._envelope_version,
                 blob_readers = self._blob_readers, blob_ttl_seconds = self._blob_ttl_seconds,
                 error = error, inline_threshold = self._inline_threshold,
-            )
+            ))
         finally:
             self._current_publication = None
         put_ref = self._bridge.last_ref if self._bridge is not None else None
@@ -1678,7 +1763,7 @@ class NATSMessenger(Messenger):
                 # already ended) and still not stopped after ~15s of idle polls,
                 # say why — a stall here otherwise looks like a silent hang.
                 self._idle_polls += 1
-                if self._eos_seen and self._idle_polls % 15 == 0:
+                if self._eos_seen and self._idle_polls % 15 == 0 and not self._flush_unfinishable_groups():
                     self._log_drain_stall()
             for parent_name, entry, handle in ready_items:
                 if entry.is_stop_signal:
@@ -1980,6 +2065,38 @@ class NATSMessenger(Messenger):
 
     def _has_pending_from(self, parent : str) -> bool:
         return self._assembler.has_pending_from(parent)
+
+    def _flush_unfinishable_groups(self) -> bool:
+        """
+        End of stream for a join: once every parent has ended and none has
+        anything left to deliver (nothing prefetched, nothing pending on the
+        broker), an incomplete group can never complete — its missing halves are
+        not coming. Waiting for them (``missing='wait'``) would hang the drain
+        and the run behind it, so the groups are settled per the policy instead:
+        ``error`` hands the halves back for redelivery (they dead-letter once
+        their budget is spent), everything else drops them, with the eviction
+        warning naming what was held. Returns whether anything was settled.
+        """
+        if set(self._parent_names) - self._eos_seen:
+            return False
+        if not any(self._assembler.has_pending_from(p) for p in self._parent_names):
+            return False
+        for parent in self._parent_names:
+            if parent in self._stopped_parents:
+                continue
+            subscription = self._data_subs.get(parent)
+            if subscription is not None and self._backend.prefetched(subscription):
+                return False
+            observed = self._consumer_pending(parent)
+            if isinstance(observed, Unknown) or observed.value[0] != 0:
+                return False
+        missing = MISSING_ERROR if self._join_policy.missing == MISSING_ERROR else MISSING_DROP
+        settled = self._assembler.evict_all(missing = missing,
+                                            reason = 'end of stream, no missing half can still arrive')
+        if settled:
+            logger.warning(f'{self._node.name}: settled {settled} incomplete join group(s) at end of stream '
+                           f'(missing policy={missing}).')
+        return settled > 0
 
     def _log_drain_stall(self) -> None:
         """

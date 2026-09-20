@@ -134,6 +134,11 @@ ACK_CONFIRM_SECONDS = 2.0
 #: Bound on a synchronous call bridged onto the loop thread; a broker that does
 #: not answer within it yields an Unknown outcome rather than a hang.
 BRIDGE_TIMEOUT_SECONDS = 15.0
+#: Attempts and backoff for a bind the server refuses with 503 ``ServiceUnavailableError``
+#: (err_code 10008, "JetStream system temporarily unavailable"): the meta layer has
+#: no leader for the moment — a rollout, a restarted server, a quorum re-forming.
+_BIND_ATTEMPTS = 6
+_BIND_BACKOFF = [0.5, 1.0, 2.0, 4.0, 8.0]
 #: Prefetch depth per subscription: un-acked deliveries parked locally age
 def channel_spec_for(flow_id : str, run_id : str, node : str, flow_type : str, profile : str,
                      required : Sequence[SubscriptionId] = (),
@@ -301,6 +306,29 @@ class JetStreamMessagingBackend(MessagingBackend):
     def _run_loop(self) -> None:
         asyncio.set_event_loop(self._loop)
         self._loop.run_forever()
+
+    def _bind_with_patience(self, bind : Callable[[], Coroutine[Any, Any, _T]], durable : str, stream : str) -> _T:
+        '''
+        Run ``bind()`` on the loop, retrying a 503 ``ServiceUnavailableError`` —
+        JetStream's own word for "not right now" — up to ``_BIND_ATTEMPTS`` times
+        with ``_BIND_BACKOFF`` between them; the last refusal is ``BrokerUnavailable``.
+        Every other failure propagates untouched.
+        '''
+        for attempt in range(_BIND_ATTEMPTS):
+            try:
+                return self._run(bind(), timeout = self._connect_timeout)
+            except nats.js.errors.ServiceUnavailableError as e:
+                if attempt + 1 >= _BIND_ATTEMPTS:
+                    raise BrokerUnavailable(
+                        f'binding {durable} on {stream}: JetStream stayed unavailable through {_BIND_ATTEMPTS} '
+                        f'attempts ({e.description or e})',
+                        remedy = 'Check the JetStream servers have a leader and quorum '
+                                 '(`nats server report jetstream`); a cluster on slow or shared storage '
+                                 'loses it under load.') from e
+                logger.warning(f'binding {durable} on {stream}: JetStream temporarily unavailable '
+                               f'({e.description or e}); retrying')
+                time.sleep(_BIND_BACKOFF[min(attempt, len(_BIND_BACKOFF) - 1)])
+        raise AssertionError('unreachable')
 
     def _run(self, coro : Coroutine[Any, Any, _T], timeout : float = BRIDGE_TIMEOUT_SECONDS) -> _T:
         '''Run ``coro`` on the loop thread and wait for it (bounded): the bridge every sync method crosses.'''
@@ -485,7 +513,7 @@ class JetStreamMessagingBackend(MessagingBackend):
                 self._tasks.append(task)
             return psub, info
 
-        _psub, info = self._run(_bind(), timeout = self._connect_timeout)
+        _psub, info = self._bind_with_patience(_bind, durable, stream)
         faults.barrier('provision.subscription.after', subscription = sub, op_id = operation_id)
         effective = _consumer_effective(info.config) if info is not None else {}
         mismatches = topology._mismatches(config, info.config, topology._CONSUMER_FIELDS) if info is not None else ()

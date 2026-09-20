@@ -14,6 +14,8 @@ import sysconfig
 import threading
 import time
 
+import pytest
+
 from videoflow.consumers import CommandlineConsumer
 from videoflow.core import Flow
 from videoflow.core.compiler import blob_reader_ids, compile_flow
@@ -502,3 +504,164 @@ def test_worker_env_names_reader_obligations_only_when_asked():
     assert env['VF_BLOB_READER_IDS'] == ','.join(ids) and ids
     # Nothing else moves: the identity list rides next to the count (RFC 0006 BLOB-13).
     assert {k: v for k, v in env.items() if k != 'VF_BLOB_READER_IDS'} == plain
+
+
+# -- workers inside the solution image ----------------------------------------------
+
+def _docker_argv(monkeypatch, engine, spec_filter = None):
+    '''Runs the flow through ``engine`` with Popen stubbed; returns the argv per node.'''
+    launched = {}
+    def fake_popen(cmd, env = None, **kwargs):
+        name = next((a.split('=', 1)[1] for a in cmd if a.startswith('VF_NODE_NAME=')), None) or env.get('VF_NODE_NAME')
+        launched[name] = cmd
+        return _FakeProc()
+    monkeypatch.setattr(subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync', lambda *a, **kw: None)
+    monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    flow = _flow()
+    engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
+    return launched
+
+
+def test_workers_run_as_docker_containers_of_the_worker_image(monkeypatch):
+    from videoflow.deploy.manifests import parse_mounts
+    monkeypatch.delenv('VF_DOCKER_RUN_ARGS', raising = False)
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                worker_mounts = parse_mounts(['/data/clip.mp4:ro', '/work']))
+    launched = _docker_argv(monkeypatch, engine)
+    argv = launched['work']
+    assert argv[:7] == ['docker', 'run', '--rm', '--network', 'host', '--name', 'vf-demo-run1-work-0']
+    assert argv[-1] == 'sol:abc' and '--entrypoint' not in argv     # the base image's worker entrypoint
+    assert '--gpus' not in argv                                        # a CPU node
+    env_pairs = [argv[i + 1] for i, a in enumerate(argv) if a == '-e']
+    assert any(pair.startswith('VF_NODE_CLASS=') and pair.endswith('.IdentityProcessor') for pair in env_pairs)
+    assert 'VF_NATS_URL=nats://localhost:4222' in env_pairs            # Linux: --network host
+    assert not any(p.startswith('PYTHONPATH=') for p in env_pairs)
+    mounts = [argv[i + 1] for i, a in enumerate(argv) if a == '-v']
+    assert mounts[:2] == ['/data/clip.mp4:/data/clip.mp4:ro', '/work:/work']
+    term = engine._termination_dir
+    assert mounts[2] == f'{term}:{term}'                              # the death notes and the ledger
+    assert engine._containers == ['vf-demo-run1-producer-0', 'vf-demo-run1-work-0', 'vf-demo-run1-printer-0']
+
+
+def test_without_a_worker_image_the_launch_is_unchanged(monkeypatch):
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled())
+    launched = _docker_argv(monkeypatch, engine)
+    assert launched['work'] == [__import__('sys').executable, '-m', 'videoflow.worker']
+    assert engine._containers == []
+
+
+def test_docker_run_args_env_reaches_every_container(monkeypatch):
+    monkeypatch.setenv('VF_DOCKER_RUN_ARGS', '--add-host host.docker.internal:host-gateway')
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc')
+    argv = _docker_argv(monkeypatch, engine)['work']
+    assert argv[7:9] == ['--add-host', 'host.docker.internal:host-gateway']
+
+
+def test_localhost_urls_are_rewritten_off_linux_only(monkeypatch):
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                blob_redis_url = 'redis://127.0.0.1:6379/0')
+    env = {'VF_NODE_NAME': 'work', 'VF_NATS_URL': 'nats://localhost:4222', 'VF_BLOB_REDIS_URL': 'redis://127.0.0.1:6379/0'}
+    monkeypatch.setattr('sys.platform', 'darwin')
+    argv, _ = engine._docker_command(env, 'sol:abc', None, 0)
+    assert '-e' in argv and 'VF_NATS_URL=nats://host.docker.internal:4222' in argv
+    assert 'VF_BLOB_REDIS_URL=redis://host.docker.internal:6379/0' in argv
+    monkeypatch.setattr('sys.platform', 'linux')
+    argv, _ = engine._docker_command(env, 'sol:abc', None, 0)
+    assert 'VF_NATS_URL=nats://localhost:4222' in argv
+    # An explicit --local-docker-nats-url wins everywhere.
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                local_docker_nats_url = 'nats://10.0.0.5:4222')
+    argv, _ = engine._docker_command(env, 'sol:abc', None, 0)
+    assert 'VF_NATS_URL=nats://10.0.0.5:4222' in argv
+
+
+def test_restarted_containers_get_a_fresh_name():
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc')
+    env = {'VF_FLOW_ID': 'My Flow', 'VF_RUN_ID': 'run1', 'VF_NODE_NAME': 'work_2', 'VF_REPLICA_ID': '1'}
+    argv, _ = engine._docker_command(env, 'sol:abc', None, 2)
+    assert argv[argv.index('--name') + 1] == 'vf-my-flow-run1-work-2-1-r2'
+
+
+def test_cleanup_containers_removes_what_was_started(monkeypatch):
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc')
+    engine._containers = ['vf-a', 'vf-b']
+    seen = []
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw: seen.append(cmd) or _FakeProc())
+    engine.cleanup_containers()
+    assert seen == [['docker', 'rm', '-f', 'vf-a', 'vf-b']]
+    assert engine._containers == []
+    engine.cleanup_containers()                                       # nothing left: no docker call
+    assert len(seen) == 1
+
+
+def _two_gpu_backend(monkeypatch):
+    from videoflow.backends.allocation import DeviceIdentity
+    from videoflow.backends.outcomes import known
+    from videoflow.deploy import allocation_local
+    real_backend = allocation_local.LocalAllocationBackend
+
+    def fake_backend(policy):
+        return real_backend(policy, host_reader = lambda: known(
+            [DeviceIdentity(None, i, f'GPU-{i:04x}', None, 'Fake', 96 << 30) for i in range(2)]),
+            used_reader = lambda: known({}), inherit_mask = False)
+    monkeypatch.setattr('videoflow.engines.local.LocalAllocationBackend', fake_backend)
+
+
+def _gpu_flow():
+    from videoflow.core.constants import GPU
+    p = IntProducer(0, 3, name = 'producer')
+    a = IdentityProcessor(name = 'work', device_type = GPU, gpu_count = 2)(p)
+    out = CommandlineConsumer(name = 'printer')(a)
+    return Flow([out], flow_type = BATCH, flow_id = 'demo')
+
+
+def _launch_gpu_flow(monkeypatch, engine):
+    launched = {}
+    def fake_popen(cmd, env = None, **kwargs):
+        launched[env['VF_NODE_NAME'] if 'VF_NODE_NAME' in env else
+                 next(a.split('=', 1)[1] for a in cmd if a.startswith('VF_NODE_NAME='))] = cmd
+        return _FakeProc()
+    monkeypatch.setattr(subprocess, 'Popen', fake_popen)
+    monkeypatch.setattr('videoflow.messaging.topology.provision_flow_sync', lambda *a, **kw: None)
+    monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
+    flow = _gpu_flow()
+    engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
+    return launched
+
+
+def test_a_granted_worker_container_gets_exactly_its_devices(monkeypatch):
+    _two_gpu_backend(monkeypatch)
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                docker_gpus = True)
+    argv = _launch_gpu_flow(monkeypatch, engine)['work']
+    # docker's CSV parser needs the quoted form for a comma-separated device list.
+    assert argv[argv.index('--gpus') + 1] == '"device=GPU-0000,GPU-0001"'
+    assert 'CUDA_VISIBLE_DEVICES=GPU-0000,GPU-0001' in argv
+
+
+def test_without_the_nvidia_runtime_shared_warns_and_strict_refuses(monkeypatch, caplog):
+    import logging
+
+    from videoflow.core.errors import ResourceUnavailable
+    _two_gpu_backend(monkeypatch)
+    engine = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                docker_gpus = False)
+    with caplog.at_level(logging.WARNING, logger = 'videoflow.engines'):
+        argv = _launch_gpu_flow(monkeypatch, engine)['work']
+    assert '--gpus' not in argv
+    assert any('no nvidia runtime' in r.message for r in caplog.records)
+    strict = LocalProcessEngine(supervision = SupervisionPolicy.disabled(), worker_image = 'sol:abc',
+                                docker_gpus = False, gpu_policy = 'strict')
+    with pytest.raises(ResourceUnavailable, match = 'nvidia runtime'):
+        _launch_gpu_flow(monkeypatch, strict)
+
+
+def test_signal_exit_statuses_are_not_failures(monkeypatch):
+    '''
+    130/143 are what a worker's own SIGINT/SIGTERM handlers exit with — and what a
+    ``docker run`` client relays for its container. Same meaning as the raw signal.
+    '''
+    _envs, engine = _run_engine(monkeypatch, returncodes = [128 + signal.SIGINT, 128 + signal.SIGTERM, 0])
+    assert engine.wait_for_completion() == []
+    assert engine.failures() == []

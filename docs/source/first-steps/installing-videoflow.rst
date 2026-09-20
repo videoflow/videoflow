@@ -1,29 +1,47 @@
 Installing Videoflow
 ==============================
 
-**Python 2** is not supported. You need to be running on **Python 3.8+**. A running
-**NATS JetStream** server is required at runtime (``nats-server -js``, or
-``docker compose up -d`` using the ``docker-compose.yml`` in the repository root).
+You need **Python 3.12+** and docker. A **NATS JetStream** server is required
+at runtime; ``videoflow run-local`` starts one in docker when none is
+listening, or run your own (``nats-server -js``, or ``docker compose up -d``
+using the ``docker-compose.yml`` in the repository root).
 
-There are two ways to install **Videoflow**:
+Videoflow is not on PyPI yet (the ``videoflow`` published there is an older,
+unrelated generation), so install it **from a clone** — next to
+`videoflow-contrib <https://github.com/videoflow/videoflow-contrib>`_ if you
+want its solutions, the layout both repositories' docs assume::
 
-- Install **Videoflow** from PyPI (recommended). Pick the extras your nodes need::
+    git clone https://github.com/videoflow/videoflow
+    git clone https://github.com/videoflow/videoflow-contrib      # optional, side by side
 
-    pip install "videoflow[distributed]"   # core + broker client + wire format
-    pip install "videoflow[vision]"         # + OpenCV for vision processors
-    pip install "videoflow[video]"          # + ffmpeg/OpenCV for video I/O
-    pip install "videoflow[deploy]"         # + Kubernetes manifest generation
-    pip install "videoflow[all]"            # everything
+Then pick one of:
 
-- Alternatively, install **Videoflow** from the Github source with `uv
-  <https://docs.astral.sh/uv/>`_:
+- A tool install with `uv <https://docs.astral.sh/uv/>`_, which puts the
+  ``videoflow`` command on your PATH for every shell and directory::
 
-First clone Videoflow using `git`::
+    uv tool install --editable './videoflow[all]'
 
-    git clone https://github.com/videoflow/videoflow.git
+- A virtual environment of your own::
 
-Then, `cd` to the **Videoflow** folder and sync the environment::
+    python3 -m venv .venv && .venv/bin/pip install -e './videoflow[all]'
+
+- The development environment, to work on videoflow itself (dev tools
+  included; run the command through ``uv run``)::
 
     cd videoflow
-    uv sync          # creates .venv with all dependencies (including dev tools)
-    uv run pytest    # optional: run the test suite (needs a NATS server)
+    uv sync
+    uv run videoflow --help
+    uv run pytest    # optional: the unit suite
+
+``--editable`` (``-e``) matters: ``deploy`` and ``run-local`` build the
+``videoflow-base`` image from this checkout the first time they need it, and
+only a source install knows where the checkout is.
+
+The extras are the same in every form: ``distributed`` (core + broker client +
+wire format), ``vision`` / ``video`` (OpenCV, ffmpeg), ``deploy`` (Kubernetes
+manifests, component descriptors), ``blob`` (the Redis payload store), or
+``all``.
+
+A solution whose dependencies you do not want on your machine — the ML
+solutions in videoflow-contrib — needs nothing more than this: ``run-local``
+builds its image and runs it there (see :doc:`../distributed/deploying-to-kubernetes`).

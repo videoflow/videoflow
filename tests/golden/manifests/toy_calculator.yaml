@@ -191,6 +191,7 @@ data:
   VF_NODE_CLASS: videoflow.processors.basic.IdentityProcessor
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: pair
+  VF_STORE_ADMISSION: '0.667'
   VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1
@@ -260,6 +261,7 @@ data:
   VF_NODE_CLASS: videoflow.producers.basic.IntProducer
   VF_BLOB_READERS: '2'
   VF_BLOB_READER_IDS: delay,square
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job
@@ -333,6 +335,7 @@ data:
     100000, "mode": "trace", "tolerance_ms": null, "quorum": null, "collect": {}}'
   VF_BLOB_READERS: '3'
   VF_BLOB_READER_IDS: pairs-log,report,stats
+  VF_STORE_ADMISSION: '0.833'
   VF_PARENT_REPLICAS: 1,2
 ---
 apiVersion: batch/v1
@@ -678,6 +681,7 @@ data:
   VF_NODE_CLASS: toy_calculator_nodes.SquareProcessor
   VF_BLOB_READERS: '2'
   VF_BLOB_READER_IDS: pair,proctimes
+  VF_STORE_ADMISSION: '0.667'
   VF_PARENT_REPLICAS: '1'
 ---
 apiVersion: batch/v1

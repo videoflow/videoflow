@@ -53,8 +53,12 @@ class JoinPolicy:
             the answer to "how long after a window's first message may a straggler \
             still arrive".
         - missing: one of ``drop`` / ``wait`` / ``error`` (see constants above).
-        - max_pending: hard cap on buffered incomplete groups; the oldest is \
-            evicted (as ``drop``) beyond this, protecting against unbounded memory.
+        - max_pending: sizes the join's working set — the incomplete groups it \
+            may hold, and the delivery credit each parent is provisioned with \
+            (``working_set``). The oldest group is evicted (as ``drop``) only \
+            beyond that working set, so a parent that runs ahead stalls on its \
+            credit rather than evicting groups a slower parent is about to \
+            complete; the eviction is a last-resort memory guard.
         - mode: ``trace`` (default) or ``time``. ``time`` groups inputs whose \
             ``event_ts`` (stamped by the producers) are within ``tolerance_ms`` of \
             each other, instead of requiring a shared upstream trace id — required \

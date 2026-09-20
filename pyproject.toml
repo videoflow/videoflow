@@ -96,7 +96,11 @@ dev = [
     "mypy>=1.8",
     "ruff>=0.6",
     "pre-commit>=3.5",
-    "grpcio-tools>=1.68",   # provides grpc_tools.protoc for scripts/gen-proto.sh
+    # Provides grpc_tools.protoc for scripts/gen-proto.sh. Pinned to the release that
+    # bundles protobuf 5.27: the generated videoflow/v1 modules carry the generating
+    # protoc's version as their *runtime floor*, and 5.27 is the floor declared above
+    # (a newer protoc would silently raise it — and past what tensorflow < 2.18 allows).
+    "grpcio-tools>=1.66,<1.67",
     "types-PyYAML",
     "types-requests",
 ]

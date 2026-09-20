@@ -164,6 +164,9 @@ class GroupAssembler:
         self._node_name = node_name
         self._parent_names = list(parent_names)
         self._policy = policy
+        # The bound the messenger derives from the parents' provisioned credits
+        # (set_group_cap); until then the policy's working set stands in.
+        self._group_cap : Optional[int] = None
 
     def add(self, parent_name : str, entry : EnvelopeEntry, handle : Any) -> None:
         raise NotImplementedError
@@ -183,6 +186,34 @@ class GroupAssembler:
         '''Incomplete groups held right now.'''
         raise NotImplementedError
 
+    def evict_all(self, missing : str, reason : str) -> int:
+        '''
+        Settles every incomplete group per ``missing`` (``error`` hands the halves
+        back, anything else drops them) — what a join does at end of stream, when
+        no missing half can still arrive. Returns how many groups were settled.
+        '''
+        raise NotImplementedError
+
+    def group_cap(self) -> int:
+        '''
+        How many incomplete groups may be held before the oldest is evicted: the
+        sum of the delivery credits the parents were provisioned with
+        (``set_group_cap``), since a group exists only for a delivery some parent
+        holds un-acked — until the messenger has bound, the policy's working set
+        (``max_pending`` groups' worth of halves plus one) stands in. Evicting any
+        earlier would let a parent that runs ahead (a frame branch beside a
+        detector) evict the very groups the slow parent is about to complete; at
+        its credit the fast parent stalls instead, and the eviction stays what it
+        is meant to be: a last-resort guard for a credit that was misconfigured.
+        '''
+        if self._group_cap is not None:
+            return self._group_cap
+        return self._policy.working_set(len(self._parent_names))
+
+    def set_group_cap(self, cap : int) -> None:
+        '''The bound derived from the parents' effective credits (see ``group_cap``).'''
+        self._group_cap = max(1, int(cap))
+
     def oldest_wait_seconds(self, now : float | None = None) -> float:
         '''How long the oldest incomplete group has waited (0 when none).'''
         raise NotImplementedError
@@ -192,7 +223,7 @@ class TraceGroupAssembler(GroupAssembler):
     Groups by exact ``trace_id``. A group is ready when every parent's half with
     the same trace id has arrived; a group that outlives the policy timeout is
     evicted per the missing policy, and the oldest group is evicted (as drop)
-    beyond ``max_pending``.
+    beyond the policy's working set (``group_cap``).
     '''
     def __init__(self, node_name : str, parent_names : list[str], policy : JoinPolicy) -> None:
         super().__init__(node_name, parent_names, policy)
@@ -218,8 +249,16 @@ class TraceGroupAssembler(GroupAssembler):
         group[parent_name] = entry
         handles[parent_name] = handle
         # Hard cap on buffered groups (last-resort memory guard): drop the oldest.
-        while len(self._order) > self._policy.max_pending:
-            self._evict(self._order[0], missing = 'drop', reason = 'max_pending exceeded')
+        cap = self.group_cap()
+        while len(self._order) > cap:
+            self._evict(self._order[0], missing = 'drop', reason = f'working set of {cap} groups exceeded')
+
+    def evict_all(self, missing : str, reason : str) -> int:
+        settled = 0
+        for trace_id in list(self._order):
+            self._evict(trace_id, missing = missing, reason = reason)
+            settled += 1
+        return settled
 
     def sweep(self, now : float | None = None) -> None:
         timeout = self._policy.timeout_seconds
@@ -389,8 +428,16 @@ class TimeGroupAssembler(GroupAssembler):
         best.handles[parent_name] = handle
         best.ts = min(best.ts, ts)
 
-        while len(self._order) > self._policy.max_pending:
-            self._evict(self._order[0], missing = 'drop', reason = 'max_pending exceeded')
+        cap = self.group_cap()
+        while len(self._order) > cap:
+            self._evict(self._order[0], missing = 'drop', reason = f'working set of {cap} groups exceeded')
+
+    def evict_all(self, missing : str, reason : str) -> int:
+        settled = 0
+        for gid in list(self._order):
+            self._evict(gid, missing = missing, reason = reason)
+            settled += 1
+        return settled
 
     # -- expiry --------------------------------------------------------
 

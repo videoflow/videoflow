@@ -58,6 +58,8 @@ def test_autobuild_builds_base_then_solution(monkeypatch, tmp_path):
     calls = []
     def run(cmd, **kwargs):
         calls.append(cmd)
+        if cmd[:4] == ['docker', 'image', 'inspect', '--format']:
+            return _Proc(stdout = 'sha256:0123456789abcdef0123456789abcdef\n')   # the built image's id
         if cmd[:3] == ['docker', 'image', 'inspect']:
             return _Proc(returncode = 1)                      # base missing → build it
         if cmd[0] == 'git':
@@ -65,12 +67,14 @@ def test_autobuild_builds_base_then_solution(monkeypatch, tmp_path):
         return _Proc()
     monkeypatch.setattr(subprocess, 'run', run)
     tag = build.autobuild(str(tmp_path), needs_gpu = True)
-    assert tag == f'videoflow-{tmp_path.name}:latest'
+    # Deployed under a content-addressed tag; :latest keeps the layer cache warm.
+    assert tag == f'videoflow-{tmp_path.name}:0123456789ab'
     builds = [c for c in calls if c[:2] == ['docker', 'build']]
     assert len(builds) == 2
     assert '-t' in builds[0] and 'videoflow-base:py3.12-cuda' in builds[0]
     assert 'Dockerfile.gpu' in builds[0][builds[0].index('-f') + 1]
-    assert tag in builds[1] and str(tmp_path) == builds[1][-1]
+    assert f'videoflow-{tmp_path.name}:latest' in builds[1] and str(tmp_path) == builds[1][-1]
+    assert ['docker', 'tag', f'videoflow-{tmp_path.name}:latest', tag] in calls
 
 
 def test_autobuild_returns_none_without_dockerfile(tmp_path):
@@ -147,3 +151,122 @@ def test_run_in_image_raises_with_stderr_on_failure(monkeypatch):
     _capture_argv(monkeypatch, returncode = 1)
     with pytest.raises(RuntimeError, match = 'command failed in img:1'):
         build.run_in_image('img:1', ['boom'], capture = True)
+
+
+# -- which Dockerfile: the flow decides, never the docker daemon ----------------------
+
+def test_resolve_needs_gpu_follows_the_declaration_then_the_files_then_the_specs(tmp_path):
+    class _Spec:
+        def __init__(self, device_type):
+            self.device_type = device_type
+    # Declared wins over everything, including a solution that ships only one file.
+    (tmp_path / 'Dockerfile').write_text('FROM x')
+    assert build.resolve_needs_gpu(str(tmp_path), True, None) == (True, None)
+    assert build.resolve_needs_gpu(str(tmp_path), False, [_Spec('gpu')]) == (False, None)
+    # One file: that one.
+    assert build.resolve_needs_gpu(str(tmp_path), None, [_Spec('gpu')]) == (False, None)
+    (tmp_path / 'Dockerfile').unlink()
+    (tmp_path / 'gpu.Dockerfile').write_text('FROM y')
+    assert build.resolve_needs_gpu(str(tmp_path), None, None) == (True, None)
+    # Both files: the compiled graph's device placement when it is known...
+    (tmp_path / 'Dockerfile').write_text('FROM x')
+    assert build.resolve_needs_gpu(str(tmp_path), None, [_Spec('cpu'), _Spec('gpu')]) == (True, None)
+    assert build.resolve_needs_gpu(str(tmp_path), None, [_Spec('cpu')]) == (False, None)
+    # ...else CPU, with a note that names the fix.
+    needs_gpu, note = build.resolve_needs_gpu(str(tmp_path), None, None)
+    assert needs_gpu is False and 'x-gpu' in note
+
+
+def test_resolve_needs_gpu_without_any_dockerfile_is_cpu_and_quiet(tmp_path):
+    assert build.resolve_needs_gpu(str(tmp_path), None, None) == (False, None)
+
+
+# -- the machine's docker flags: VF_DOCKER_BUILD_ARGS / VF_DOCKER_RUN_ARGS ------------
+
+def test_build_args_env_is_spliced_into_every_docker_build(monkeypatch):
+    seen = _capture_argv(monkeypatch)
+    monkeypatch.setenv('VF_DOCKER_BUILD_ARGS', '--build-arg http_proxy=http://proxy:3128 --network=host')
+    build.build_image('/sol/Dockerfile', '/ctx', 'sol:latest')
+    assert seen['cmd'] == ['docker', 'build', '--build-arg', 'http_proxy=http://proxy:3128', '--network=host',
+                           '-f', '/sol/Dockerfile', '-t', 'sol:latest', '/ctx']
+    monkeypatch.delenv('VF_DOCKER_BUILD_ARGS')
+    build.build_image('/sol/Dockerfile', '/ctx', 'sol:latest')
+    assert seen['cmd'] == ['docker', 'build', '-f', '/sol/Dockerfile', '-t', 'sol:latest', '/ctx']
+
+
+def test_run_args_env_and_env_pairs_reach_run_in_image(monkeypatch):
+    seen = _capture_argv(monkeypatch)
+    monkeypatch.setenv('VF_DOCKER_RUN_ARGS', '--network host')
+    build.run_in_image('img:1', ['python', 'prepare.py'], env = {'VF_SOLUTION_CONFIG': '/sol/config.yaml'})
+    cmd = seen['cmd']
+    assert cmd[:5] == ['docker', 'run', '--rm', '--network', 'host']
+    assert cmd[cmd.index('-e') + 1] == 'VF_SOLUTION_CONFIG=/sol/config.yaml'
+    monkeypatch.delenv('VF_DOCKER_RUN_ARGS')
+    build.run_in_image('img:1', ['python', 'prepare.py'])
+    assert seen['cmd'][:4] == ['docker', 'run', '--rm', '--entrypoint']
+
+
+# -- content-addressed tags and the registry push --------------------------------------
+
+def test_content_tag_names_the_image_by_its_id(monkeypatch):
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:4] == ['docker', 'image', 'inspect', '--format']:
+            return _Proc(stdout = 'sha256:fedcba9876543210fedcba9876543210\n')
+        return _Proc()
+    monkeypatch.setattr(subprocess, 'run', run)
+    assert build.content_tag('videoflow-x:latest') == 'videoflow-x:fedcba987654'
+    assert ['docker', 'tag', 'videoflow-x:latest', 'videoflow-x:fedcba987654'] in calls
+    # A registry port is not a tag.
+    assert build.content_tag('10.0.0.1:5000/videoflow-x:latest') == '10.0.0.1:5000/videoflow-x:fedcba987654'
+    assert build.content_tag('10.0.0.1:5000/videoflow-x') == '10.0.0.1:5000/videoflow-x:fedcba987654'
+
+
+def test_content_tag_falls_back_to_the_mutable_tag_with_a_warning(monkeypatch, capsys):
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw: _Proc(returncode = 1))
+    assert build.content_tag('videoflow-x:latest') == 'videoflow-x:latest'
+    assert 'mutable tag' in capsys.readouterr().err
+
+
+def test_push_image_with_docker_tags_and_pushes(monkeypatch):
+    calls = []
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw: calls.append(cmd) or _Proc())
+    ref = build.push_image('videoflow-x:abc', 'ghcr.io/acme')
+    assert ref == 'ghcr.io/acme/videoflow-x:abc'
+    assert calls == [['docker', 'tag', 'videoflow-x:abc', ref], ['docker', 'push', ref]]
+
+
+def test_push_image_with_crane_goes_through_a_tarball(monkeypatch, tmp_path):
+    monkeypatch.setenv('VF_IMAGE_TMPDIR', str(tmp_path))
+    calls = []
+    def run(cmd, **kw):
+        calls.append(cmd)
+        if cmd[:2] == ['docker', 'save']:
+            open(cmd[cmd.index('-o') + 1], 'wb').close()          # the tarball crane pushes
+        return _Proc()
+    monkeypatch.setattr(subprocess, 'run', run)
+    ref = build.push_image('videoflow-x:abc', '10.0.0.1:5000/', tool = 'crane')
+    tarball = str(tmp_path / 'videoflow-x-abc.tar')
+    assert ref == '10.0.0.1:5000/videoflow-x:abc'
+    assert calls == [['docker', 'save', 'videoflow-x:abc', '-o', tarball],
+                     ['crane', 'push', '--insecure', tarball, ref],
+                     ['crane', 'manifest', '--insecure', ref],
+                     ['docker', 'tag', 'videoflow-x:abc', ref]]           # so `docker run <ref>` finds it
+    assert not (tmp_path / 'videoflow-x-abc.tar').exists()                # cleaned up
+
+
+def test_push_image_names_the_missing_tool_and_the_failed_step(monkeypatch, tmp_path):
+    monkeypatch.setenv('VF_IMAGE_TMPDIR', str(tmp_path))
+    def no_crane(cmd, **kw):
+        if cmd[0] == 'crane':
+            raise FileNotFoundError('crane')
+        return _Proc()
+    monkeypatch.setattr(subprocess, 'run', no_crane)
+    with pytest.raises(RuntimeError, match = 'go-containerregistry'):
+        build.push_image('videoflow-x:abc', 'r:5000', tool = 'crane')
+    monkeypatch.setattr(subprocess, 'run', lambda cmd, **kw: _Proc(returncode = 1))
+    with pytest.raises(RuntimeError, match = 'docker tag'):
+        build.push_image('videoflow-x:abc', 'r:5000')
+    with pytest.raises(ValueError, match = 'unknown push tool'):
+        build.push_image('videoflow-x:abc', 'r:5000', tool = 'skopeo')

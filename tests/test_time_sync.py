@@ -116,13 +116,46 @@ def test_trace_timeout_evicts_with_drop_and_error():
         assert h.state == expected
         assert not asm.has_pending_from('a')
 
-def test_trace_max_pending_evicts_oldest():
+def test_trace_evicts_oldest_only_beyond_the_working_set():
+    '''
+    The cap is the working set the parents are credited with (max_pending × halves
+    + 1), not max_pending itself: a parent that runs ahead by exactly its credit
+    stalls on it instead of evicting the groups the slow parent is about to complete.
+    '''
     asm = TraceGroupAssembler('n', ['a', 'b'], JoinPolicy(max_pending = 2))
-    handles = [FakeHandle() for _ in range(3)]
-    for i, h in enumerate(handles):
+    assert asm.group_cap() == 3
+    handles = [FakeHandle() for _ in range(4)]
+    for i, h in enumerate(handles[:3]):
         asm.add('a', entry(f't{i}', i), h)
-    assert handles[0].state == 'acked'  # oldest dropped
-    assert handles[1].state is None and handles[2].state is None
+    assert all(h.state is None for h in handles[:3])           # at the working set: nothing evicted
+    asm.add('a', entry('t3', 3), handles[3])
+    assert handles[0].state == 'acked'                          # one beyond it: the oldest dropped
+    assert all(h.state is None for h in handles[1:])
+
+
+def test_the_bound_cap_follows_the_parents_credits():
+    '''Once bound, the cap is what the parents can hold un-acked in total, not the working set.'''
+    asm = TraceGroupAssembler('n', ['a', 'b'], JoinPolicy(max_pending = 2))
+    asm.set_group_cap(2 * (asm.group_cap() + 4))              # two parents, working set + a prefetch of 4 each
+    assert asm.group_cap() == 14
+    handles = [FakeHandle() for _ in range(15)]
+    for i, h in enumerate(handles[:14]):
+        asm.add('a', entry(f't{i}', i), h)
+    assert all(h.state is None for h in handles[:14])
+    asm.add('a', entry('t14', 14), handles[14])
+    assert handles[0].state == 'acked' and all(h.state is None for h in handles[1:])
+
+
+def test_evict_all_settles_every_incomplete_group_per_policy():
+    for missing, expected in (('drop', 'acked'), ('wait', 'acked'), ('error', 'naked')):
+        asm = TraceGroupAssembler('n', ['a', 'b'], JoinPolicy(missing = missing))
+        handles = [FakeHandle() for _ in range(3)]
+        for i, h in enumerate(handles):
+            asm.add('a', entry(f't{i}', i), h)
+        settled = asm.evict_all(missing = 'error' if missing == 'error' else 'drop', reason = 'end of stream')
+        assert settled == 3 and asm.pending_count() == 0
+        assert all(h.state == expected for h in handles), missing
+    assert asm.evict_all(missing = 'drop', reason = 'again') == 0
 
 def test_trace_redelivery_supersedes_buffered_half():
     asm = TraceGroupAssembler('n', ['a', 'b'], JoinPolicy())

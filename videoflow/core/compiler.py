@@ -218,6 +218,48 @@ def specs_from_tasks_data(tasks_data : List[tuple]) -> List[NodeSpec]:
             for child in specs if spec.name in child.parents)
     return specs
 
+#: BLOB-16: the share of the payload store's budget a source may fill before it
+#: holds, and the share the deepest publisher may. Graded by depth so a stage can
+#: never take the memory the stages below it need to drain the store: the store
+#: always empties from the sinks up, and a flow of any shape makes progress.
+STORE_ADMISSION_SOURCE = 0.5
+STORE_ADMISSION_DEEPEST = 1.0
+
+def publish_depths(specs : List[NodeSpec]) -> Dict[str, int]:
+    '''The longest path from a source, for every node that publishes (has children).'''
+    by_name = {s.name: s for s in specs}
+    memo : Dict[str, int] = {}
+    visiting : set = set()
+
+    def depth(name : str) -> int:
+        if name in visiting:
+            return 0        # a cycle (only colliding names can make one): the collision check reports it
+        if name not in memo:
+            visiting.add(name)
+            parents = [p for p in by_name[name].parents if p in by_name]
+            memo[name] = 1 + max(depth(p) for p in parents) if parents else 0
+            visiting.discard(name)
+        return memo[name]
+    return {s.name: depth(s.name) for s in specs if s.has_children}
+
+def store_admission(spec : NodeSpec, specs : List[NodeSpec]) -> float:
+    '''
+    The fraction of the payload store's budget ``spec`` may fill before its
+    publications hold (RFC 0006 BLOB-16, ``VF_STORE_ADMISSION``): a source gets
+    ``STORE_ADMISSION_SOURCE``, the deepest publisher ``STORE_ADMISSION_DEEPEST``,
+    the stages between them a share in proportion to their depth — so a source
+    stalls first and every stage keeps a band of the store no stage above it can
+    take. 1.0 for a node that publishes nothing, and for every publisher of a
+    flow with a single publishing depth. Not a ``NodeSpec`` field, so the specs
+    document is unchanged.
+    '''
+    depths = publish_depths(specs)
+    deepest = max(depths.values(), default = 0)
+    if spec.name not in depths or deepest == 0:
+        return STORE_ADMISSION_DEEPEST
+    span = STORE_ADMISSION_DEEPEST - STORE_ADMISSION_SOURCE
+    return round(STORE_ADMISSION_SOURCE + span * depths[spec.name] / deepest, 3)
+
 def blob_reader_ids(spec : NodeSpec, specs : List[NodeSpec]) -> List[str]:
     '''
     The reader obligations every payload ``spec`` publishes is held for (RFC 0006
