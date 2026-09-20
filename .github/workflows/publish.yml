@@ -1,0 +1,156 @@
+# Build videoflow and publish it to PyPI (https://pypi.org/project/videoflow/).
+#
+# Releases are deliberate, not a side effect of merging: this workflow only runs when someone
+# presses "Run workflow" in the Actions tab (or `gh workflow run publish.yml --ref master`).
+# Nothing here fires on push, PR, or tag. The release recipe is:
+#
+#   1. bump __version__ in videoflow/version.py, commit, merge to master
+#   2. Actions -> "Publish to PyPI" -> Run workflow (branch: master)
+#
+# The workflow reads the version from version.py — it never writes it — and refuses to run if
+# that version is already on PyPI or already has a vX.Y.Z tag, so forgetting the bump fails
+# loudly before anything irreversible happens.
+#
+# Auth is PyPI Trusted Publishing (OIDC), not an API token: pypi.org is configured to accept
+# uploads from this exact repo + workflow file + `pypi` environment, and GitHub mints a
+# short-lived identity token per run. There is no long-lived secret to leak or rotate; the
+# PYPI_TOKEN repository secret is unused.
+#
+# The git tag and GitHub Release are created only AFTER the upload succeeds. A tag created
+# first would survive a failed upload and then block the retry.
+name: Publish to PyPI
+
+on:
+  # No inputs on purpose: the version is whatever videoflow/version.py says on the chosen ref.
+  workflow_dispatch:
+
+# Default to nothing; each job asks for exactly what it needs.
+permissions: {}
+
+# Never run two releases at once, and never cancel one mid-upload — a cancelled run can leave
+# the sdist on PyPI without the wheel.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      # The `pypi` environment's branch rule also enforces this, but that lives in repo settings;
+      # this check lives in code and fails before any work is done.
+      - name: Refuse to release from anything but master
+        if: github.ref != 'refs/heads/master'
+        run: |
+          echo "::error::Releases must be run from master (got ${{ github.ref }})."
+          exit 1
+
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      # Single source of truth is videoflow/version.py (see [tool.hatch.version] in pyproject).
+      - name: Read version
+        id: version
+        run: |
+          version=$(sed -nE "s/^__version__ = ['\"]([^'\"]+)['\"].*/\1/p" videoflow/version.py)
+          if [ -z "$version" ]; then
+            echo "::error::Could not parse __version__ from videoflow/version.py"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing videoflow $version"
+
+      # PyPI would reject a re-upload anyway, but a 400 from the upload step is far less
+      # readable than this, and by then a tag might already be half-created.
+      - name: Fail if this version is already on PyPI
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          if curl -sf -o /dev/null "https://pypi.org/pypi/videoflow/$v/json"; then
+            echo "::error::videoflow $v is already on PyPI. Bump videoflow/version.py first."
+            exit 1
+          fi
+
+      - name: Fail if tag v${{ steps.version.outputs.version }} already exists
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
+            echo "::error::Tag v$v already exists. Bump videoflow/version.py first."
+            exit 1
+          fi
+
+      - name: Build sdist and wheel
+        run: uv build
+
+      # Install the wheel into a venv that is NOT the repo checkout, so a package missing from
+      # the wheel or a broken console-script entry point shows up here rather than for users.
+      - name: Smoke-test the wheel
+        run: |
+          v="${{ steps.version.outputs.version }}"
+          uv venv /tmp/smoke
+          uv pip install --python /tmp/smoke dist/*.whl
+          /tmp/smoke/bin/python -c "import videoflow, sys; assert videoflow.__version__ == sys.argv[1], videoflow.__version__" "$v"
+          /tmp/smoke/bin/videoflow --help >/dev/null
+
+      - name: Upload dist
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    # The environment name is part of the trusted-publisher registration on pypi.org; a
+    # required-reviewer rule on it adds a confirmation click before anything is uploaded.
+    environment:
+      name: pypi
+      url: https://pypi.org/project/videoflow/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write   # OIDC token for trusted publishing; nothing else
+    steps:
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # No `password:` input — with id-token: write the action authenticates via OIDC and also
+      # attaches PEP 740 attestations to the uploaded files.
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  release:
+    needs: [build, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # create the tag and the GitHub Release
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      # `gh release create` creates the tag at --target when it does not exist, so there is no
+      # separate git tag / git push step.
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          v="${{ needs.build.outputs.version }}"
+          gh release create "v$v" dist/* \
+            --target "$GITHUB_SHA" \
+            --title "v$v" \
+            --generate-notes
