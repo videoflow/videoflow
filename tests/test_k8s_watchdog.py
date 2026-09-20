@@ -10,6 +10,8 @@ was reported as a clean deploy: ``rollout_report``'s predecessor only looked
 for Unschedulable. These tests pin the fail-fast behavior of both watchdogs
 with a canned kubectl and a fake clock; no cluster required.
 '''
+import types
+
 import pytest
 
 from videoflow.core.errors import EXIT_FLOW_STALLED, FlowStalled
@@ -66,8 +68,11 @@ class _FakeClock:
 @pytest.fixture
 def engine(monkeypatch):
     clock = _FakeClock()
-    monkeypatch.setattr(k8s_engine.time, 'time', clock.time)
-    monkeypatch.setattr(k8s_engine.time, 'sleep', clock.sleep)
+    # The engine module's own ``time`` name, never the global module: a daemon
+    # thread left by an earlier test that loops on ``time.sleep`` would otherwise
+    # spin through the fake and advance this clock by days within the test.
+    monkeypatch.setattr(k8s_engine, 'time', types.SimpleNamespace(time = clock.time, sleep = clock.sleep,
+                                                                  monotonic = clock.time))
     eng = KubernetesExecutionEngine(nats_url = 'nats://x:4222', namespace = 'ns')
     eng._flow_id, eng._run_id = 'f', 'run1'
     return eng
