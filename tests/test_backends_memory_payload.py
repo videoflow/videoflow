@@ -1,49 +1,21 @@
-'''The in-memory payload store's physics: obligations, generations, tiers, budgets, digests.'''
+'''
+The in-memory payload store's physics: read classification, tiers, forwarding,
+inventory and metrics. Its obligation arithmetic — idempotent release, stale
+generations, lost responses, reconciliation — is the subject of the always-run
+PAY-005/006/007/008/012/013 cases in tests/conformance, which drive it directly.
+'''
 from __future__ import absolute_import, division, print_function
-
-import pytest
 
 from videoflow.backends import faults
 from videoflow.backends.memory.clock import FakeClock
-from videoflow.backends.memory.payload import TIER_EVICTABLE, MemoryPayloadStore, StaticLedger
+from videoflow.backends.memory.payload import TIER_EVICTABLE, MemoryPayloadStore
 from videoflow.backends.outcomes import Known, Unknown
 from videoflow.backends.payload import Corrupt, Missing, PayloadBytes, RetentionContract, TransientFailure
-from videoflow.core.errors import ResourceUnavailable
 from videoflow.core.errors import TransientFailure as TransientError
 
 
 def _contract(ttl = 3600, horizon = 3600, obligations = ('x', 'y'), durable = True):
     return RetentionContract(ttl, horizon, durable, tuple(obligations))
-
-def test_release_is_idempotent_by_reader_and_reclaims_on_the_last_one():
-    store = MemoryPayloadStore(FakeClock())
-    ref = store.put(b'frame', 'c1', _contract())
-    r1 = store.release_obligation(ref, 'x', 'done')
-    r2 = store.release_obligation(ref, 'x', 'done')      # duplicate delivery handle, same reader
-    assert (r1.remaining, r2.remaining) == (1, 1) and not r2.reclaimed
-    assert isinstance(store.read(ref, reader = 'y'), PayloadBytes)
-    r3 = store.release_obligation(ref, 'y', 'done')
-    assert r3.reclaimed and store.object_count() == 0
-    assert isinstance(store.read(ref), Missing)
-    assert not store.release_obligation(ref, 'y', 'done').stale       # harmless after cleanup
-
-def test_stale_generation_cannot_delete_a_newer_object():
-    store = MemoryPayloadStore(FakeClock(), forward_unchanged = False)
-    old = store.put(b'a', 'c1', _contract(obligations = ('x',)))
-    store.release_obligation(old, 'x', 'done')                        # reclaimed
-    new = store.put(b'a', 'c1', _contract(obligations = ('x',)))
-    stale_ref = type(old)(new.store, new.key, new.size, new.digest, old.generation, new.content_id)
-    receipt = store.release_obligation(stale_ref, 'x', 'done')
-    assert receipt.stale and store.object_count() == 1
-
-def test_lost_release_response_is_reported_unknown_and_safe_to_retry():
-    store = MemoryPayloadStore(FakeClock())
-    ref = store.put(b'a', 'c1', _contract(obligations = ('x', 'y')))
-    with faults.FaultSchedule({'obligation.release.after': faults.DropResponse()}):
-        first = store.release_obligation(ref, 'x', 'done')
-    assert first.unknown and first.remaining is None
-    again = store.release_obligation(ref, 'x', 'done')
-    assert again.remaining == 1 and not again.unknown
 
 def test_reads_classify_transient_missing_and_corrupt():
     store = MemoryPayloadStore(FakeClock())
@@ -58,14 +30,12 @@ def test_reads_classify_transient_missing_and_corrupt():
     store.delete(ref.key)
     assert isinstance(store.read(ref), Missing)
 
-def test_durable_tier_extends_life_under_obligation_and_refuses_over_budget():
+def test_durable_tier_extends_life_under_obligation():
+    # The over-budget refusal is test_store_backpressure's (the typed error and all).
     clock = FakeClock(); store = MemoryPayloadStore(clock, max_bytes = 10)
     ref = store.put(b'12345', 'c1', _contract(ttl = 10, horizon = 100, obligations = ('x',)))
     clock.advance(50)                                        # TTL passed, obligation outstanding
     assert isinstance(store.read(ref, reader = 'x'), PayloadBytes)
-    with pytest.raises(ResourceUnavailable):
-        store.put(b'123456', 'c2', _contract(obligations = ('x',)))   # 5 + 6 > 10: backpressure, not eviction
-    assert store.object_count() == 1
 
 def test_evictable_tier_expires_and_evicts_regardless_of_obligations():
     clock = FakeClock(); store = MemoryPayloadStore(clock, tier = TIER_EVICTABLE, max_bytes = 10)
@@ -86,14 +56,6 @@ def test_unchanged_bytes_forward_as_one_object_with_merged_obligations():
     assert set(store.obligations(a.key)) == {'x', 'y'}
     c = store.put(b'changed', 'frame-1', _contract(obligations = ('z',)))
     assert c.key != a.key
-
-def test_reconcile_cancels_unreferenced_obligations_and_reclaims_orphans():
-    store = MemoryPayloadStore(FakeClock())
-    live = store.put(b'a', 'c1', _contract(obligations = ('x', 'y')))
-    orphan = store.put(b'b', 'c2', _contract(obligations = ('intent/p9',)))
-    result = store.reconcile(StaticLedger({live.key: ('x',)}), 'op')
-    assert result.reclaimed == (orphan.key,) and result.retained == (live.key,)
-    assert set(store.obligations(live.key)) == {'x'}
 
 def test_inventory_can_be_unknown():
     store = MemoryPayloadStore(FakeClock())

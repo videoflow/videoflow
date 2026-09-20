@@ -28,7 +28,7 @@ from videoflow.core import Flow
 from videoflow.core.compiler import compile_flow
 from videoflow.core.constants import BATCH, REALTIME
 from videoflow.core.errors import EXIT_USER, ConfigError, IncompatibleProfile, UnobservableState
-from videoflow.deploy import admission, build, cli
+from videoflow.deploy import admission, build, cli, infra
 from videoflow.deploy.broker_profiles import BrokerProfile, RedisProfile
 from videoflow.deploy.manifests import render_manifests
 from videoflow.engines.local import _worker_env
@@ -311,7 +311,7 @@ def test_observed_broker_without_jetstream_offers_no_retained_delivery(monkeypat
 ])
 def test_observed_broker_connect_failures_are_unknown_with_their_reason(monkeypatch, setup, reason):
     _connect(monkeypatch, _FakeNats(_FakeJetStream()), **setup)
-    caps = admission.jetstream_capabilities_observed('nats://byo:4222', timeout = 0.2)
+    caps = admission.jetstream_capabilities_observed('nats://byo:4222', timeout = 0.02)
     assert caps.retained_backlog                       # the adapter's static promise still describes JetStream
     for observation in (caps.max_payload_bytes, caps.persistent_storage, caps.replication_factor):
         assert isinstance(observation, Unknown) and observation.reason == reason, observation
@@ -428,6 +428,11 @@ def _deploy(tmp_path, monkeypatch, *argv_extra):
     monkeypatch.setattr(cli, 'detect_cluster', lambda kubectl: 'k3s')
     monkeypatch.setattr(cli, 'image_exists', lambda ref: False)
     monkeypatch.setattr(cli, 'hostpath_warning', lambda flavor: None)
+    # Without --nats the command asks the cluster what it would reuse — a real
+    # `kubectl get svc` per component, and a verdict that depends on whatever
+    # cluster the developer's context points at. Nothing is there to reuse.
+    monkeypatch.setattr(infra, 'reused_infra',
+                        lambda kubectl, namespace, need_redis: infra.ReusedInfra(nats = None, redis = None))
     monkeypatch.setattr(cli, 'jetstream_capabilities_observed',
                         lambda url, **kw: seen['probes'].append(('nats', url, kw)) or admission.jetstream_capabilities(None))
     monkeypatch.setattr(cli, 'redis_payload_capabilities_observed',

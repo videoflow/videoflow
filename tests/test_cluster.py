@@ -52,23 +52,6 @@ def _fake_run(responses):
     return run, calls
 
 
-@pytest.mark.parametrize('ctx,expected', [
-    ('kind-dev', cluster.KIND),
-    ('minikube', cluster.MINIKUBE),
-    ('docker-desktop', cluster.DOCKER_DESKTOP),
-])
-def test_detect_by_context_name(monkeypatch, ctx, expected):
-    run, _ = _fake_run({'current-context': ctx})
-    monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.detect_cluster() == expected
-
-
-def test_detect_k3s_by_node_labels(monkeypatch):
-    run, _ = _fake_run({'current-context': 'default', 'get nodes': 'k3s \n'})
-    monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.detect_cluster() == cluster.K3S
-
-
 def test_detect_falls_back_to_remote(monkeypatch):
     run, _ = _fake_run({'current-context': 'gke_my-proj_us-east1_prod'})
     monkeypatch.setattr(subprocess, 'run', run)
@@ -214,21 +197,6 @@ def test_gpu_preflight_checks_each_requested_resource(monkeypatch):
     assert 'does not expose it' in problems[0]
 
 
-def test_allocatable_gpus_sums_across_nodes(monkeypatch):
-    run, _ = _fake_run({'version': '{}', 'allocatable': '1 4'})
-    monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.allocatable_gpus() == 5
-
-
-def test_max_allocatable_gpus_per_node_takes_the_largest_node(monkeypatch):
-    run, _ = _fake_run({'version': '{}', 'allocatable': '1 4'})
-    monkeypatch.setattr(subprocess, 'run', run)
-    assert cluster.max_allocatable_gpus_per_node() == 4
-    run_empty, _ = _fake_run({'version': '{}'})
-    monkeypatch.setattr(subprocess, 'run', run_empty)
-    assert cluster.max_allocatable_gpus_per_node() == 0
-
-
 def test_gpu_preflight_flags_gpu_count_exceeding_largest_node(monkeypatch):
     '''A 3-GPU pod against two 2-GPU nodes: total capacity (4) satisfies the demand
     (3), but no single host can bind the pod — it would stay Pending forever, and
@@ -365,6 +333,9 @@ def test_allocatable_gpus_is_scoped_to_the_pool(monkeypatch):
     assert cluster.allocatable_gpus() == 5
     assert cluster.max_allocatable_gpus_per_node() == 4
     assert all('-l videoflow.io/gpu-pool=true' in ' '.join(c) for c in calls)
+    run_empty, _ = _fake_run({'version': '{}'})                # no pool node at all
+    monkeypatch.setattr(subprocess, 'run', run_empty)
+    assert cluster.max_allocatable_gpus_per_node() == 0
 
 
 def test_gpu_inventory_reads_sharing_and_mig_state(monkeypatch):

@@ -104,7 +104,8 @@ def test_dlq_on_exhausted_retries():
     flow_id, run_id = _ids()
     specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH, max_retries = 0)
-    m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, BATCH, run_id, max_retries = 0)
+    m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, BATCH, run_id, max_retries = 0,
+                      ack_wait = 3)
     try:
         _publish_parent_message(flow_id, run_id, 'parent', 't1', 1, {'value': 42})
         inputs = m.receive_message()
@@ -134,7 +135,7 @@ def test_realtime_failure_drops_the_message_but_not_the_evidence():
     flow_id, run_id = _ids()
     specs = [_spec('parent', [], 'producer', True), _spec('child', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, REALTIME)
-    m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, REALTIME, run_id)
+    m = NATSMessenger(_StubNode('child'), ['parent'], NATS_URL, flow_id, REALTIME, run_id, ack_wait = 3)
     try:
         _publish_parent_message(flow_id, run_id, 'parent', 't1', 1, {'value': 7})
         inputs = m.receive_message()

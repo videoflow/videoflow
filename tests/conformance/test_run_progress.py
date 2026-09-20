@@ -92,7 +92,7 @@ def _oracle_run_011(termination_log : str, evidence : Dict[str, Any],
     entered = time.monotonic()
     deadline.record_progress()                 # callback entry: the input was received
     watchdog.start()
-    bail = threading.Timer(deadline_s + tolerance + 1.0, latch.set)   # a watchdog that never fires must not hang the suite
+    bail = threading.Timer(deadline_s + tolerance + 0.2, latch.set)   # a watchdog that never fires must not hang the suite
     bail.daemon = True
     bail.start()
     latch.wait()                               # the wedged callback: returns only when released
@@ -166,9 +166,10 @@ def _oracle_run_012(trace : List[Dict[str, Any]]) -> None:
         trace.append({'state': phase, 'advanced': seconds, 'pending': pending, 'progress': progress,
                       'silent_for': deadline.silent_for(), 'fired': fired, 'restarts': len(fires)})
 
-    # Startup: a warm-up four times the deadline, then the task records progress
-    # once open() returns — silence during warm-up is not a stall.
-    step('startup', 40.0, 0, progress = True)
+    # Startup: a warm-up four times the deadline with inputs already waiting, then
+    # the task records progress once open() returns — silence during warm-up is
+    # not a stall, whatever is pending.
+    step('startup', 40.0, 5, progress = True)
     # Idle: nothing upstream for far longer than the deadline.
     for _ in range(10):
         step('idle', 10.0, 0, progress = False)
@@ -299,4 +300,6 @@ def test_run_048_local_supervision_notices_a_later_worker_failure_while_an(monke
 @pytest.mark.timeout(60)
 def test_run_048_detects_a_sequential_supervisor(monkeypatch) -> None:
     defects.sequential_supervisor(monkeypatch)
-    assert defects.detects(_oracle_run_048, monkeypatch, {})
+    # A concurrent supervisor reacts within ~0.1 s; a sequential one never does
+    # while the source lives, so one second of not reacting is the whole evidence.
+    assert defects.detects(_oracle_run_048, monkeypatch, {}, observation_deadline = 1.0)

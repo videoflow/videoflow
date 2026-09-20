@@ -1012,8 +1012,9 @@ this is the manual form). From a checkout, run the solutions by path —
 tag yet.
 
 The unit tests need nothing but the checkout (`uv run pytest
---ignore=tests/integration -q`); the integration tiers, the kind cluster
-scripts and the pre-commit hooks are described in
+--ignore=tests/integration --ignore=tests/conformance -q`); the integration
+tiers, the backend conformance suite, the kind cluster scripts and the
+pre-commit hooks are described in
 [How to contribute](docs/source/first-steps/how-to-contribute.rst).
 
 ## Contributing

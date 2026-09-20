@@ -97,15 +97,6 @@ def test_the_trip_carries_the_originating_error():
 
 # -- progress deadline -------------------------------------------------------
 
-def test_deadline_does_not_trip_while_work_is_being_acked():
-    clock = _Clock()
-    deadline = ProgressDeadline(10.0, pending_probe = lambda: 5, clock = clock)
-    for _ in range(10):
-        clock.advance(9.0)
-        deadline.record_progress()
-        deadline.check()                     # must not raise
-
-
 def test_deadline_does_not_trip_when_nothing_is_pending():
     '''
     Idle is not stalled. A node with no upstream work has acked nothing for a

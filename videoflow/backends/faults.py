@@ -142,9 +142,23 @@ class FaultSchedule:
         return self
 
     def uninstall(self) -> None:
+        '''
+        Stops consulting this schedule — and lets every thread it still holds at a
+        ``Pause`` continue. An uninstalled schedule injects no more faults, so a
+        thread parked at one of its barriers has nothing left to wait for; left
+        parked, it would wait out the pause's own timeout (a minute or more),
+        and so would the test teardown joining it. That is the difference
+        between an oracle's failed assertion reporting in a second and in a
+        minute, which is what every negative control provokes on purpose.
+        '''
         global _SCHEDULE
         if _SCHEDULE is self:
             _SCHEDULE = None
+        for action in self._actions.values():
+            if isinstance(action, Nth):
+                action = action.action
+            if isinstance(action, Pause):
+                self.release(action.name)
 
     def __enter__(self) -> 'FaultSchedule':
         return self.install()

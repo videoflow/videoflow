@@ -14,6 +14,8 @@ from __future__ import absolute_import, division, print_function
 import logging
 import subprocess
 
+import pytest
+
 from videoflow.backends.allocation import DeviceIdentity
 from videoflow.backends.outcomes import known
 from videoflow.utils import system
@@ -26,10 +28,11 @@ def _fake_gpus(monkeypatch, n):
         [DeviceIdentity(None, i, f'GPU-{i:04x}', None, 'Fake', 1 << 30) for i in range(n)]))
 
 
-def test_granted_gpus_defaults_to_all_system_devices(monkeypatch):
+@pytest.mark.parametrize('enumerate_gpus', [system.granted_gpus, system.visible_physical_gpus])
+def test_an_unset_mask_exposes_every_system_device(monkeypatch, enumerate_gpus):
     _fake_gpus(monkeypatch, 3)
     monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising = False)
-    assert system.granted_gpus() == [0, 1, 2]
+    assert enumerate_gpus() == [0, 1, 2]
 
 
 def test_granted_gpus_are_cuda_indices_not_physical_ordinals(monkeypatch):
@@ -76,27 +79,17 @@ def test_no_nvidia_smi_means_no_gpus(monkeypatch):
     assert system.granted_gpus() == []
 
 
-def test_visible_physical_gpus_defaults_to_all_system_devices(monkeypatch):
-    _fake_gpus(monkeypatch, 3)
-    monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising = False)
-    assert system.visible_physical_gpus() == [0, 1, 2]
-
-
 def test_visible_physical_gpus_keeps_physical_ordinals(monkeypatch):
     _fake_gpus(monkeypatch, 4)
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '2,0')
     assert system.visible_physical_gpus() == [0, 2]
 
 
-def test_visible_physical_gpus_warns_on_junk_but_not_out_of_range_entries(monkeypatch, caplog):
+def test_visible_physical_gpus_stay_silent_on_out_of_range_entries(monkeypatch, caplog):
+    # (The junk-entry warning is test_granted_gpus_drops_junk_entries_with_a_warning's.)
     _fake_gpus(monkeypatch, 2)
-    monkeypatch.setenv('CUDA_VISIBLE_DEVICES', 'GPU-8a7b,1,7')
-    with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
-        assert system.visible_physical_gpus() == []          # the runtime stops at the junk entry
-    assert 'GPU-8a7b' in caplog.text
     # Out-of-range ordinals ('7' on a 2-GPU host) are dropped by the intersection and
     # a trailing comma's stray '' is harmless — both stay silent.
-    caplog.clear()
     monkeypatch.setenv('CUDA_VISIBLE_DEVICES', '0,7,')
     with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
         assert system.visible_physical_gpus() == [0]
@@ -153,23 +146,15 @@ def test_old_driver_mig_uuid_format_counts_one_gpu(monkeypatch):
     assert system.get_number_of_gpus() == 1
 
 
-def test_wedged_nvidia_smi_degrades_to_zero_gpus_with_a_warning(monkeypatch, caplog):
-    _probe_raises(monkeypatch,
-                  subprocess.TimeoutExpired(['nvidia-smi', '-L'], system.NVIDIA_SMI_TIMEOUT_SECONDS))
+@pytest.mark.parametrize('error, warns', [
+    # a wedged driver and an unreadable binary are worth a warning...
+    (subprocess.TimeoutExpired(['nvidia-smi', '-L'], system.NVIDIA_SMI_TIMEOUT_SECONDS), True),
+    (PermissionError(13, 'Permission denied'), True),
+    # ...a host with no nvidia-smi at all is simply a host without GPUs.
+    (FileNotFoundError(2, 'No such file or directory'), False),
+], ids = ['wedged', 'unreadable', 'missing'])
+def test_a_failed_probe_is_zero_gpus(monkeypatch, caplog, error, warns):
+    _probe_raises(monkeypatch, error)
     with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
         assert system.get_number_of_gpus() == 0
-    assert 'assuming 0 GPUs' in caplog.text
-
-
-def test_unreadable_nvidia_smi_degrades_to_zero_gpus_with_a_warning(monkeypatch, caplog):
-    _probe_raises(monkeypatch, PermissionError(13, 'Permission denied'))
-    with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
-        assert system.get_number_of_gpus() == 0
-    assert 'assuming 0 GPUs' in caplog.text
-
-
-def test_missing_nvidia_smi_is_zero_gpus_and_silent(monkeypatch, caplog):
-    _probe_raises(monkeypatch, FileNotFoundError(2, 'No such file or directory'))
-    with caplog.at_level(logging.WARNING, logger = 'videoflow.utils'):
-        assert system.get_number_of_gpus() == 0
-    assert not caplog.records
+    assert ('assuming 0 GPUs' in caplog.text) is warns

@@ -61,7 +61,27 @@ jobs:
         run: uv python install 3.12
 
       - name: Run unit tests
-        run: uv run pytest --ignore=tests/integration -q
+        run: uv run pytest --ignore=tests/integration --ignore=tests/conformance -q
+
+  # tests/conformance: the 130-case backend conformance suite at the levels that
+  # need no fixture (model and process). The broker, kubernetes, gpu and benchmark
+  # levels report NOT_RUN here — -rs prints every one so a partial run reads as
+  # partial. Its own job because it is a several-minute run that would otherwise
+  # sit in front of every unit-test result.
+  conformance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Run the backend conformance suite
+        run: uv run pytest tests/conformance -q -rs
 
   # tests/integration/{broker,local}: the transport contract driven straight against
   # JetStream, and whole flows run as worker subprocesses. Redis is a service
@@ -94,8 +114,10 @@ jobs:
       # -rs prints skip reasons. These suites skip themselves silently when the
       # broker is unreachable, so without it a misconfigured job is a green run
       # that tested nothing.
+      # --durations: the slowest tests in the job log, so a regression in a flow's
+      # shutdown or a new real-time wait is visible without re-running locally.
       - name: Run broker and local-engine integration tests
-        run: uv run pytest tests/integration/broker tests/integration/local -q -rs
+        run: uv run pytest tests/integration/broker tests/integration/local -q -rs --durations=25
 
   # tests/integration/k8s: the same toy solutions, deployed to a kind cluster as one
   # workload per node. Runs in parallel with integration-local — they share no

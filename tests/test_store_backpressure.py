@@ -160,15 +160,6 @@ def test_an_admitted_publication_is_not_a_hold(clock):
     assert clock.sleeps == [] and m.publication_stats == {}
 
 
-def test_the_constructor_defaults_and_wires_the_knobs():
-    m = NATSMessenger.__new__(NATSMessenger)
-    assert nm.DEFAULT_STORE_BACKPRESSURE_SECONDS == 600.0
-    # The two attributes the seam reads, as __init__ derives them.
-    m._store_backpressure_seconds = (nm.DEFAULT_STORE_BACKPRESSURE_SECONDS if None is None else 0.0)
-    assert m._store_backpressure_seconds == 600.0
-    assert nm._STORE_BACKPRESSURE_BACKOFF == [0.1, 0.2, 0.5, 1.0]
-
-
 # -- both stores raise the typed refusal ---------------------------------------------------
 
 class _FakeClock:

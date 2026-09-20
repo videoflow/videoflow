@@ -74,9 +74,18 @@ def _gpu_descriptor(count = 2):
                     device = ['cpu', 'gpu'], resources = {'gpu': {'count': count}})
 
 
-def test_component_defaults_gpu_count_from_descriptor():
-    node = component(_gpu_descriptor(count = 2), device_type = 'gpu')
-    assert node.gpu_count == 2
+@pytest.mark.parametrize('kwargs, gpu_count', [
+    ({'device_type': 'gpu'}, 2),                                # the descriptor's count is the default
+    ({'device_type': 'gpu', 'gpu_count': 1}, 1),                # an explicit argument overrides it
+    ({'device_type': 'cpu', 'gpu_count': 1}, 1),                # ...and makes a cpu run legal again
+], ids = ['descriptor-default', 'explicit-override', 'cpu-with-single-gpu'])
+def test_gpu_count_comes_from_the_descriptor_unless_overridden(kwargs, gpu_count):
+    assert component(_gpu_descriptor(count = 2), **kwargs).gpu_count == gpu_count
+
+
+def test_cpu_device_with_multi_gpu_count_is_rejected():
+    with pytest.raises(ValueError, match = "device_type='gpu'"):
+        component(_gpu_descriptor(count = 2), device_type = 'cpu')
 
 
 def test_component_resolves_gpu_memory_gib_from_descriptor():
@@ -93,32 +102,17 @@ def test_component_resolves_gpu_memory_gib_from_descriptor():
         component(d, device_type = 'cpu', gpu_memory_gib = 10)
 
 
-def test_gpu_memory_gib_on_a_non_processor_component_is_rejected():
+# Bug 5 regression: the GPU arguments used to be silently dropped for producer and
+# consumer roles — a GPU-hungry decode producer would get a CPU-class pod with no
+# signal to the author.
+@pytest.mark.parametrize('descriptor, kwargs', [
+    (dict(role = 'consumer'), {'gpu_memory_gib': 10}),
+    (dict(role = 'producer', io = {}), {'gpu_count': 2}),
+    (dict(role = 'consumer'), {'gpu_count': 1}),
+], ids = ['memory-on-consumer', 'count-on-producer', 'count-on-consumer'])
+def test_gpu_demands_on_a_non_processor_component_are_rejected(descriptor, kwargs):
     with pytest.raises(ValueError, match = 'processor components only'):
-        component(_descriptor(role = 'consumer'), gpu_memory_gib = 10)
-
-
-def test_gpu_count_on_a_non_processor_component_is_rejected():
-    # Bug 5 regression: the argument used to be silently dropped for producer and
-    # consumer roles — a GPU-hungry decode producer would get a CPU-class pod with
-    # no signal to the author.
-    with pytest.raises(ValueError, match = 'processor components only'):
-        component(_descriptor(role = 'producer', io = {}), gpu_count = 2)
-    with pytest.raises(ValueError, match = 'processor components only'):
-        component(_descriptor(role = 'consumer'), gpu_count = 1)
-
-
-def test_explicit_gpu_count_overrides_descriptor():
-    node = component(_gpu_descriptor(count = 4), device_type = 'gpu', gpu_count = 1)
-    assert node.gpu_count == 1
-
-
-def test_cpu_device_with_multi_gpu_count_is_rejected():
-    with pytest.raises(ValueError, match = "device_type='gpu'"):
-        component(_gpu_descriptor(count = 2), device_type = 'cpu')
-    # gpu_count=1 override makes the cpu run legal again.
-    node = component(_gpu_descriptor(count = 2), device_type = 'cpu', gpu_count = 1)
-    assert node.gpu_count == 1
+        component(_descriptor(**descriptor), **kwargs)
 
 
 def test_descriptor_gpu_count_reaches_nodespec():
@@ -245,9 +239,7 @@ def test_wire_compatibility_requires_v4():
         validate_wire_compatibility(specs, 3)
     validate_wire_compatibility(specs, 4)
     validate_wire_compatibility(specs, None)
-
-
-def test_compile_flow_rejects_non_v4_pin():
+    # ...and compile_flow runs the same check on its own pin.
     with pytest.raises(ValueError, match = 'protobuf|envelope'):
         compile_flow(_remote_flow(), envelope_version = 3)
 

@@ -9,12 +9,11 @@ measured-partitioning strategies need.
 '''
 from __future__ import absolute_import, division, print_function
 
-import json
 import subprocess
 
 import pytest
 
-from videoflow.deploy import cluster, gpu, manifests
+from videoflow.deploy import gpu, manifests
 
 
 class _Spec:
@@ -38,22 +37,19 @@ def test_builtin_modes_are_registered():
     assert gpu.registered_gpu_modes() == ['dra', 'exclusive', 'mix']
 
 
-def test_exclusive_claims_whole_devices():
-    resources = gpu.get_gpu_mode('exclusive').pod_resources(_Spec(gpu_count = 2))
-    assert resources == {'limits': {'nvidia.com/gpu': 2}}
-
-
-def test_exclusive_honours_a_strategy_resolved_resource_name():
+@pytest.mark.parametrize('spec, default, limits', [
+    # whole devices, as many as the spec asks for
+    (_Spec(gpu_count = 2), None, {'nvidia.com/gpu': 2}),
     # spec.gpu_resource_name is internal plumbing (a strategy's resolved choice,
-    # e.g. the mix solver's MIG profile) — when set, it wins over the deploy default.
-    spec = _Spec(gpu_count = 1, gpu_resource_name = 'nvidia.com/mig-1g.10gb')
-    resources = gpu.get_gpu_mode('exclusive').pod_resources(spec, 'amd.com/gpu')
-    assert resources == {'limits': {'nvidia.com/mig-1g.10gb': 1}}
-
-
-def test_exclusive_falls_back_to_the_deploy_default():
-    resources = gpu.get_gpu_mode('exclusive').pod_resources(_Spec(), 'amd.com/gpu')
-    assert resources == {'limits': {'amd.com/gpu': 1}}
+    # e.g. the mix solver's MIG profile) — when set, it wins over the deploy default...
+    (_Spec(gpu_count = 1, gpu_resource_name = 'nvidia.com/mig-1g.10gb'), 'amd.com/gpu', {'nvidia.com/mig-1g.10gb': 1}),
+    # ...which applies otherwise.
+    (_Spec(), 'amd.com/gpu', {'amd.com/gpu': 1}),
+], ids = ['whole-devices', 'strategy-resolved-name', 'deploy-default'])
+def test_exclusive_pod_resources(spec, default, limits):
+    strategy = gpu.get_gpu_mode('exclusive')
+    resources = strategy.pod_resources(spec, default) if default else strategy.pod_resources(spec)
+    assert resources == {'limits': limits}
 
 
 def test_unknown_mode_names_the_known_ones_and_the_fix():
@@ -137,59 +133,12 @@ def _fake_kubectl(monkeypatch, outputs):
     monkeypatch.setattr(subprocess, 'run', run)
 
 
-def test_preflight_delegates_capacity_math_to_the_strategy(monkeypatch):
-    pool = json.dumps({'items': [{'metadata': {'name': 'gpu-box', 'labels': {}},
-                                  'status': {'allocatable': {'nvidia.com/gpu': '2'}}}]})
-    _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true -o name': 'node/gpu-box',
-                                'gpu-pool=true -o json': pool})
-    problems = cluster.gpu_preflight(demand = {'nvidia.com/gpu': 9}, gpu_mode = 'exclusive')
-    assert any('demands 9' in p for p in problems)
-
-
-def test_preflight_uses_a_registered_strategys_checks(monkeypatch, registry_sandbox):
-    class _Picky(gpu.GpuStrategy):
-        name = 'picky'
-
-        # **kwargs is the documented pattern for third-party strategies: new
-        # preflight inputs arrive as keywords (max_per_pod did, RFC 0003).
-        def preflight_problems(self, kubectl = 'kubectl', demand = None, gpu_runtime_class = None,
-                            **kwargs):
-            return ['picky mode says no']
-
-    registry_sandbox.register_gpu_mode(_Picky())
-    _fake_kubectl(monkeypatch, {'version': '{}', 'gpu-pool=true': 'node/gpu-box'})
-    assert cluster.gpu_preflight(gpu_mode = 'picky') == ['picky mode says no']
-
-
 # -- lifecycle hooks -------------------------------------------------------
 
 def test_builtin_lifecycle_hooks_are_noops():
     strategy = gpu.get_gpu_mode('exclusive')
     assert strategy.prepare(demand = {'nvidia.com/gpu': 1}) is None
     assert strategy.cleanup() is None
-
-
-def test_prepare_receives_the_flows_demand(registry_sandbox):
-    '''
-    The hook a per-run time-slicing strategy needs: it must know how many devices
-    the flow wants before it retunes the device plugin.
-    '''
-    seen = {}
-
-    class _Recording(gpu.GpuStrategy):
-        name = 'recording'
-
-        def prepare(self, demand = None, kubectl = 'kubectl'):
-            seen['demand'] = demand
-
-        def cleanup(self, kubectl = 'kubectl'):
-            seen['cleaned'] = True
-
-    registry_sandbox.register_gpu_mode(_Recording())
-    strategy = registry_sandbox.get_gpu_mode('recording')
-    strategy.prepare(demand = {'nvidia.com/gpu': 6})
-    strategy.cleanup()
-    assert seen == {'demand': {'nvidia.com/gpu': 6}, 'cleaned': True}
 
 
 if __name__ == '__main__':

@@ -122,9 +122,9 @@ def test_fanout_blob_deleted_after_every_child_acks(store):
              _spec('c2', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH)
     m1 = NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
-                       blob_store = store)
+                       blob_store = store, ack_wait = 3)
     m2 = NATSMessenger(_StubNode('c2'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
-                       blob_store = store)
+                       blob_store = store, ack_wait = 3)
     before = _snapshot(store._client)
     refs = []
     try:
@@ -152,7 +152,7 @@ def test_partial_consumption_keeps_the_blob(store):
              _spec('c1', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH)
     m1 = NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
-                       blob_store = store)
+                       blob_store = store, ack_wait = 3)
     before = _snapshot(store._client)
     refs = []
     try:
@@ -174,14 +174,13 @@ def test_dead_letter_preserves_the_blob(store):
              _spec('c1', ['parent'], 'consumer', False)]
     provision_flow_sync(NATS_URL, specs, flow_id, run_id, BATCH, max_retries = 0)
     m1 = NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
-                       blob_store = store, max_retries = 0)
+                       blob_store = store, max_retries = 0, ack_wait = 3)
     before = _snapshot(store._client)
     refs = []
     try:
         _publish_blob_message(store, flow_id, run_id, 'parent', 't1', 1, blob_readers = 1)
         m1.receive_message()
-        m1.fail_inputs(ValueError('permanent boom'))
-        time.sleep(0.5)
+        m1.fail_inputs(ValueError('permanent boom'))              # the decision not to release is synchronous
         refs = [k for k in _blob_keys(store._client, before) if k.startswith('vf-blob-')]
         assert refs, 'dead-lettering must leave the blob to its TTL, not delete it'
     finally:
@@ -204,7 +203,7 @@ def test_partitioned_ack_skip_counts_as_a_release(store):
     owner = int(hashlib.sha256(b't1').hexdigest()[:8], 16) % 2
     replicas = [NATSMessenger(_StubNode('c1'), ['parent'], NATS_URL, flow_id, BATCH, run_id,
                               blob_store = store, nb_tasks = 2, partition_by = 'trace_id',
-                              replica_id = r) for r in (0, 1)]
+                              replica_id = r, ack_wait = 3) for r in (0, 1)]
     before = _snapshot(store._client)
     refs = []
     try:

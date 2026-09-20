@@ -373,7 +373,7 @@ def _oracle_msg_017(driver : Any, record : Dict[str, Any], record_faults : Calla
     with schedule_a:
         held, settled, release = _hold_at_barrier(driver, bounds, 'barrier-a', 20)
         driver.until(lambda: schedule_a.fired().get('worker.ready.after', 0) >= min(credit_two, WORKERS), 15)
-        time.sleep(1.0)                                          # nobody else reaches the barrier
+        time.sleep(driver.settle_seconds)                        # nobody else reaches the barrier
         active_two = schedule_a.fired().get('worker.ready.after', 0)
         assert 0 < active_two <= credit_two < WORKERS, active_two
         assert not settled, 'an input completed before the barrier was released'

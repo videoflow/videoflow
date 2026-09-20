@@ -155,14 +155,14 @@ def test_read_back_streams_uses_a_connection_of_its_own(monkeypatch):
         await asyncio.sleep(30)
 
     monkeypatch.setattr('nats.connect', refused)
-    read = topology.read_back_streams('nats://x:1', 'f', 'r', ['a', 'b'], REALTIME, timeout = 0.2)
+    read = topology.read_back_streams('nats://x:1', 'f', 'r', ['a', 'b'], REALTIME, timeout = 0.02)
     assert {v.reason for v in read.values()} == {'unreachable'} and 'nats://x:1' in read['a'].detail
 
     async def denied(url, **options):
         raise nats.errors.Error("nats: 'Authorization Violation'")
 
     monkeypatch.setattr('nats.connect', denied)
-    assert topology.read_back_streams('nats://x:4222', 'f', 'r', ['a'], REALTIME, timeout = 0.2)['a'].reason == 'auth'
+    assert topology.read_back_streams('nats://x:4222', 'f', 'r', ['a'], REALTIME, timeout = 0.02)['a'].reason == 'auth'
 
 
 # -- the verdict --------------------------------------------------------------------------

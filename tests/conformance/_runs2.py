@@ -119,6 +119,10 @@ def messenger_for(rig : Any, node : Node, parents : Sequence[str], runtime : Opt
         kwargs.setdefault('backend', rig.backend)
         kwargs.setdefault('payload_store', rig.store)
         kwargs.setdefault('ack_wait', ACK_WAIT)
+        # The EOS quiescence window is real time even on the fake clock (it
+        # tolerates a sibling replica between finishing and publishing); the
+        # production 500 ms is paid on every drained parent of every schedule.
+        kwargs.setdefault('eos_quiescence_ms', 50)
     else:
         kwargs.setdefault('ack_wait', rig.ack_wait)
         kwargs.setdefault('max_retries', rig.max_retries)
@@ -271,6 +275,18 @@ class Collector(threading.Thread):
         self.join(timeout)
         assert self.error is None, f'{self.name}: {self.error!r}'
         assert not self.is_alive(), f'{self.name} never saw the end of stream ({self.count()} received)'
+
+
+def ledger_sink(rig : Any, store : Any, parent : str, run_id : str, replicas : int = 1) -> Collector:
+    '''
+    A ``Collector`` on the run's own ledger. With a runtime the sink ends on the
+    parent's terminators (EOS-7), as a deployed sink does; without one it falls
+    back to the historical rule and pays half a second of quiet after every
+    parent's end of stream — which a case with five crash schedules pays five
+    times, and RUN-021's twelve permutations twelve times.
+    '''
+    return Collector(rig, parent, run_id = run_id,
+                     runtime = runtime_for(store, rig, 'sink', parent_replicas = {parent: replicas}, run_id = run_id))
 
 
 # -- worker subprocesses ------------------------------------------------------------------------

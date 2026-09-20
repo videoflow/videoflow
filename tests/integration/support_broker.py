@@ -107,14 +107,19 @@ def read_dlq(flow_id : str, run_id : Optional[str] = None,
             sub = await js.pull_subscribe(subject, durable = f'dlqreader{uuid.uuid4().hex[:6]}',
                                         stream = stream)
             try:
-                msgs = await sub.fetch(info.state.messages, timeout = 3)
+                # Every message is already in the stream, so a matching read returns at
+                # once; only a filter that matches nothing waits this out.
+                msgs = await sub.fetch(info.state.messages, timeout = 1)
             except Exception:
                 msgs = []
             for m in msgs:
                 out.append({'headers': dict(m.headers or {}), 'data': m.data,
                             'subject': m.subject})
                 await m.ack()
-        await nc.drain()
+        # close(), not drain(): a fetch that timed out can leave an unconsumed 408 in
+        # the subscription's inbox, and a graceful drain then waits its full
+        # drain_timeout (30 s) for it — the trap the dlq CLI documents.
+        await nc.close()
         return out
 
     return asyncio.run(_go())

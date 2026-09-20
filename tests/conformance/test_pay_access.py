@@ -425,7 +425,9 @@ def test_pay_003_detects_a_silent_terminal_discard(monkeypatch) -> None:
     defects_pay.silent_terminal_discard(monkeypatch)
     rig = _memory_rig_pay_003(BATCH)
     try:
-        assert defects.detects(_oracle_pay_003, rig, BATCH, {}, 10.0)
+        # A discarded input never produces a terminal record, so two seconds without
+        # one is as conclusive as ten (the memory variant needs well under one).
+        assert defects.detects(_oracle_pay_003, rig, BATCH, {}, 2.0)
     finally:
         rig.close()
 
@@ -535,7 +537,9 @@ def test_pay_019_memory_backends_keep_reads_off_the_transport_path(evidence_dir,
     evidence : Dict[str, Any] = {}
     rig = MemoryRig(BATCH)
     try:
-        schedule = _oracle_pay_019(rig, delay_s = 1.5, ack_wait = 2, evidence = evidence)
+        # The lease is on the fake clock, so the blocked read only has to outlast a
+        # few of the monitor's 0.2 s status samples.
+        schedule = _oracle_pay_019(rig, delay_s = 0.5, ack_wait = 2, evidence = evidence)
     finally:
         rig.close()
     write_evidence(evidence_dir, 'heartbeat_history.json', evidence)

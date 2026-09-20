@@ -1,9 +1,11 @@
-'''The in-memory allocator: Unknown reads, CAS ownership, correlated readiness, retained workloads, tombstones, packing, geometry.'''
+'''
+The in-memory allocator: correlated readiness, retained workloads, tombstones,
+packing, geometry. Its Unknown-read, CAS-race, sharing-classification and
+zero-mutation behaviour is the subject of the always-run ALLOC-004/007/009/023
+model variants in tests/conformance, which exercise it more thoroughly.
+'''
 from __future__ import absolute_import, division, print_function
 
-import threading
-
-from videoflow.backends import faults
 from videoflow.backends.allocation import (
     CLAIM_ALLOCATED,
     CLAIM_PREPARED,
@@ -14,7 +16,6 @@ from videoflow.backends.allocation import (
     SHARING_EXCLUSIVE,
     SHARING_ISOLATED_MIG,
     FeasiblePlan,
-    Infeasible,
     WorkloadRequest,
 )
 from videoflow.backends.memory.allocation import (
@@ -25,8 +26,7 @@ from videoflow.backends.memory.allocation import (
 )
 from videoflow.backends.memory.clock import FakeClock
 from videoflow.backends.memory.mig_geometry import check_layout, smallest_profile
-from videoflow.backends.outcomes import Known, Unknown
-from videoflow.core.errors import OwnershipConflict
+from videoflow.backends.outcomes import Known
 
 H100 = 'NVIDIA-H100-80GB-HBM3'
 BLACKWELL = 'NVIDIA-RTX-PRO-6000-Blackwell-Server-Edition'
@@ -68,47 +68,7 @@ def test_aggregate_capacity_hides_per_host_fragmentation():
     assert pack_whole_devices([('a', 2), ('b', 2), ('c', 2)], {'h1': 2, 'h2': 2, 'h3': 2}) is not None
     assert pack_whole_devices([('a', 2), ('b', 2)], {'h1': 3, 'h2': 3}) is not None
 
-# -- unknown reads ------------------------------------------------------------------------
-
-def test_failed_pod_listing_is_not_idle_capacity():
-    backend = MemoryAllocationBackend([_node('n1')], FakeClock())
-    backend.bind_workload('n1', 'foreign', 4)
-    backend.fail_reads('pods')
-    snapshot = _snapshot(backend)
-    assert snapshot.completeness == 'partial' and snapshot.occupancy == {}
-    plan = backend.plan([_req('w', 1)], snapshot)
-    assert isinstance(plan, Infeasible) and 'occupancy unknown' in plan.reasons[0]
-    backend.fail_reads('pods', None)
-    plan2 = backend.plan([_req('w', 1)], _snapshot(backend))
-    assert isinstance(plan2, Infeasible)                 # the foreign workload really holds all four
-    backend.fail_reads('nodes')
-    assert isinstance(backend.inventory({}), Unknown)
-
 # -- CAS ownership ---------------------------------------------------------------------------
-
-def test_two_reservers_race_and_exactly_one_wins():
-    backend = MemoryAllocationBackend([_node('n1')], FakeClock())
-    snapshot = _snapshot(backend)
-    plan_a = backend.plan([_req('a', 2, flow = 'flowA')], snapshot)
-    plan_b = backend.plan([_req('b', 2, flow = 'flowB')], snapshot)
-    assert isinstance(plan_a, FeasiblePlan) and isinstance(plan_b, FeasiblePlan)
-    results = {}
-    schedule = faults.FaultSchedule({'owner.update.before': faults.Pause('both-read', timeout_seconds = 10)})
-    schedule.install()
-    def run(name, plan):
-        try:
-            results[name] = backend.reserve(plan, f'{name}:op', None)
-        except OwnershipConflict as e:
-            results[name] = e
-    ta = threading.Thread(target = run, args = ('flowA', plan_a)); ta.start()
-    tb = threading.Thread(target = run, args = ('flowB', plan_b)); tb.start()
-    schedule.release('both-read')
-    ta.join(5); tb.join(5)
-    schedule.uninstall()
-    kinds = sorted(type(v).__name__ for v in results.values())
-    assert kinds == ['ClaimObservation', 'OwnershipConflict'], results
-    assert backend.node('n1').owner in ('flowA', 'flowB')
-    assert len(backend.mutations(['stamp-owner'])) == 1
 
 def test_stale_rollback_cannot_remove_a_newer_owner():
     backend = MemoryAllocationBackend([_node('n1'), _node('n2')], FakeClock())
@@ -156,30 +116,3 @@ def test_release_waits_for_workloads_and_tombstones_the_shared_map():
     assert entries == {} and tombstone and backend.pointer() == 'default-mig-parted-config'
     assert backend.node('n1').mig_config == 'all-disabled' and backend.node('n1').owner is None
     assert 'delete-map' not in {m[1] for m in backend.mutations()}
-
-def test_unknown_config_read_keeps_ownership_for_retry():
-    backend = MemoryAllocationBackend([_node('n1')], FakeClock(), authority = AUTHORITY_MANAGED_MIG)
-    plan = backend.plan([_req('s1', 1, sharing = SHARING_ISOLATED_MIG, memory_bytes = 20 << 30)], _snapshot(backend))
-    claim = backend.reserve(plan, 'flowA:op', None)
-    backend.fail_reads('config', 'auth')
-    out = backend.release(claim.claim_id, 'flowA:release', claim.desired_generation)
-    assert out.status == RELEASE_PENDING_RECOVERY and backend.node('n1').owner == 'flowA'
-    backend.fail_reads('config', None)
-    assert backend.release(claim.claim_id, 'flowA:release', claim.desired_generation).status == RELEASE_RELEASED
-
-def test_sharing_classification_blocks_exclusive_claims_on_shared_pools():
-    ts = _node('ts', **{'nvidia.com/gpu.sharing-strategy': 'time-slicing', 'nvidia.com/gpu.replicas': '4'})
-    mps = _node('mps', **{'nvidia.com/gpu.sharing-strategy': 'mps'})
-    whole = _node('whole')
-    backend = MemoryAllocationBackend([ts, mps, whole], FakeClock())
-    snapshot = _snapshot(backend)
-    assert snapshot.sharing == {'ts': 'time-sliced', 'mps': 'mps', 'whole': 'physical'}
-    plan = backend.plan([_req('a', 2)], snapshot)
-    assert isinstance(plan, FeasiblePlan) and all(d.node == 'whole' for d in plan.assignments['a'])
-    only_shared = MemoryAllocationBackend([ts, mps], FakeClock())
-    assert isinstance(only_shared.plan([_req('a', 2)], _snapshot(only_shared)), Infeasible)
-
-def test_zero_mutation_audit_for_rejected_plans():
-    backend = MemoryAllocationBackend([_node('n1', count = 1)], FakeClock())
-    assert isinstance(backend.plan([_req('a', 2)], _snapshot(backend)), Infeasible)
-    assert backend.mutations() == []

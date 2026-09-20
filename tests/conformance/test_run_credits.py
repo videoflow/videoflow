@@ -83,7 +83,7 @@ def _oracle_run_024(driver : Any, record : Dict[str, Any], record_faults : Calla
     with schedule_a:
         held, settled, release = hold_at_barrier(driver, bounds)
         driver.until(lambda: _reached(schedule_a) >= admits, 15)
-        time.sleep(1.0)                                          # nobody else reaches the barrier
+        time.sleep(driver.settle_seconds)                        # nobody else reaches the barrier
         active_control = _reached(schedule_a)
         observed = driver.observe(bounds['w0'])
         assert isinstance(observed, Known), observed

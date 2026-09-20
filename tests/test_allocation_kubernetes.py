@@ -36,6 +36,16 @@ _GFD = {'videoflow.io/gpu-pool': 'true', 'nvidia.com/gpu.product': 'NVIDIA-A100-
         'nvidia.com/gpu.count': '2', 'nvidia.com/gpu.memory': '81920'}
 
 
+@pytest.fixture(autouse = True)
+def _no_poll_delay(monkeypatch):
+    '''
+    The MIG waits poll a fake that answers at once. Every wait checks its deadline
+    before sleeping, so today each resolves on its first poll — but one more poll
+    would cost the production 5 s, which is not what these tests measure.
+    '''
+    monkeypatch.setattr(gpu, 'MIG_APPLY_POLL_SECONDS', 0)
+
+
 def _request(workload, count = 1, sharing = SHARING_EXCLUSIVE, memory_gib = None):
     return WorkloadRequest('flow1', 'run1', workload, count, sharing,
                            minimum_usable_memory_bytes = int(memory_gib * GIB) if memory_gib else None)
@@ -214,49 +224,3 @@ def test_exclusive_consumes_static_mig_slices_without_touching_geometry(monkeypa
     # Two more sharers: only one free slice exists.
     outcome = backend.plan([_request(w, sharing = SHARING_ISOLATED_MIG, memory_gib = 10) for w in 'st'], snapshot)
     assert isinstance(outcome, Infeasible) and 't: no pool node advertises a free MIG slice' in outcome.reasons[0]
-
-
-def test_dra_owned_nodes_are_never_planned_on_by_the_device_plugin_paths(monkeypatch):
-    '''ALLOC-018: a node whose devices a DRA driver publishes is the other allocator's.'''
-    responses = {
-        'get nodes -l videoflow.io/gpu-pool=true -o json': nodes_json(
-            ('gpu-a', _GFD, {'nvidia.com/gpu': '2'}), ('gpu-d', _GFD, {'nvidia.com/gpu': '2'})),
-        'get pods -A -o json': pods_json(),
-        'get resourceslices.resource.k8s.io -o json': '{"items": [{"spec": {"driver": "gpu.nvidia.com", "nodeName": "gpu-d"}}]}',
-    }
-    monkeypatch.setattr(subprocess, 'run', FakeKubectl(responses))
-    for mode in ('exclusive', 'mix'):
-        backend = KubernetesAllocationBackend(mode)
-        snapshot = backend.inventory({}).value
-        plan = backend.plan([_request('a', 2), _request('b', 2)], snapshot)
-        assert isinstance(plan, Infeasible) and 'gpu-d' in plan.reasons[0] and 'DRA driver' in plan.reasons[0]
-        plan = backend.plan([_request('a', 2)], snapshot)
-        assert isinstance(plan, FeasiblePlan) and {d.node for d in plan.assignments['a']} == {'gpu-a'}
-
-
-def test_hard_constraints_narrow_placement_or_are_refused_by_name(monkeypatch):
-    """ALLOC-031: a count alone never satisfies a stronger requirement; an attribute the backend
-    cannot verify is refused, not dropped; soft preferences never become terms."""
-    from videoflow.backends.allocation import Constraint
-    h100 = dict(_GFD, **{'nvidia.com/gpu.product': 'NVIDIA-H100-80GB-HBM3'})
-    _pool(monkeypatch, extra = {'get nodes -l videoflow.io/gpu-pool=true -o json': nodes_json(
-        ('gpu-a', _GFD, {'nvidia.com/gpu': '2'}), ('gpu-h', h100, {'nvidia.com/gpu': '2'}))})
-    backend = KubernetesAllocationBackend('exclusive')
-    snapshot = backend.inventory({}).value
-    wants_h100 = WorkloadRequest('flow1', 'run1', 'w', 2, SHARING_EXCLUSIVE, constraints = (
-        Constraint('nvidia.com/gpu.product', 'In', ('NVIDIA-H100-80GB-HBM3',)),
-        Constraint('nvidia.com/gpu.memory', 'Gt', ('40000',)),
-        Constraint('topology.kubernetes.io/zone', 'In', ('eu-1',), hard = False)))
-    plan = backend.plan([wants_h100], snapshot)
-    assert isinstance(plan, FeasiblePlan) and {d.node for d in plan.assignments['w']} == {'gpu-h'}
-    claim = backend.reserve(plan, 'flow1:run1', plan.snapshot_generation)
-    expressions = backend.bindings(claim.claim_id, 'w').node_constraints['expressions']
-    assert expressions == [{'key': 'nvidia.com/gpu.product', 'operator': 'In', 'values': ['NVIDIA-H100-80GB-HBM3']},
-                           {'key': 'nvidia.com/gpu.memory', 'operator': 'Gt', 'values': ['40000']},
-                           {'key': 'kubernetes.io/hostname', 'operator': 'In', 'values': ['gpu-h']}]
-    nothing = backend.plan([WorkloadRequest('flow1', 'run1', 'w', 1, SHARING_EXCLUSIVE, constraints = (
-        Constraint('nvidia.com/gpu.product', 'In', ('NVIDIA-B200',)),))], snapshot)
-    assert isinstance(nothing, Infeasible) and 'no pool node satisfies' in nothing.reasons[0]
-    unknown_key = backend.plan([WorkloadRequest('flow1', 'run1', 'w', 1, SHARING_EXCLUSIVE, constraints = (
-        Constraint('nvidia.com/nvlink.present', 'In', ('true',)),))], snapshot)
-    assert isinstance(unknown_key, Infeasible) and 'cannot verify' in unknown_key.reasons[0]

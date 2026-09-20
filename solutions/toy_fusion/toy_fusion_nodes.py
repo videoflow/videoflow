@@ -178,7 +178,13 @@ class LiveStateWriter(ConsumerNode):
     A REALTIME-shaped sink: atomically rewrites ``latest.json`` on every fused
     moment, so an operator (or a verifier) can watch the file's content and
     mtime advance while the flow runs. ``close()`` — reached only when the
-    sources are bounded or the flow is stopped — writes a run summary.
+    sources are bounded or the flow is stopped — writes a run summary: the
+    moment count, the complete/quorum split, and how many moments carried IMU
+    samples (with the sample total), which is the whole-run evidence that the
+    collect window grouped the sensor in. Any *single* moment can legitimately
+    carry none: the sources anchor their own time grids (``_aligned_start``),
+    so one that opened a second later also ends a second later, and its last
+    frames fall past the IMU's final sample.
     '''
 
     def __init__(self, latest_path: str, summary_path: str, **kwargs: Any) -> None:
@@ -186,6 +192,8 @@ class LiveStateWriter(ConsumerNode):
         self._summary_path = summary_path
         self._moments = 0
         self._complete = 0
+        self._with_sensor = 0
+        self._sensor_samples = 0
         self._started: float | None = None
         super().__init__(**kwargs)
 
@@ -196,6 +204,9 @@ class LiveStateWriter(ConsumerNode):
         self._moments += 1
         if moment['views'] == moment['expected_views']:
             self._complete += 1
+        if moment['sensor_samples'] > 0:
+            self._with_sensor += 1
+            self._sensor_samples += moment['sensor_samples']
         self._write(self._latest_path, {**moment, 'updated_unix': round(time.time(), 3)})
 
     def close(self) -> None:
@@ -204,6 +215,8 @@ class LiveStateWriter(ConsumerNode):
             'moments': self._moments,
             'complete_moments': self._complete,
             'quorum_moments': self._moments - self._complete,
+            'moments_with_sensor': self._with_sensor,
+            'sensor_samples_total': self._sensor_samples,
             'elapsed_s': round(elapsed, 3) if elapsed is not None else None,
         })
 

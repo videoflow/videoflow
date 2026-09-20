@@ -164,14 +164,29 @@ def test_toy_fusion_rolls_out_and_fuses(k8s_work_root, k8s_namespace, k8s_nats_u
         assert 'REALTIME flow is running' in proc.stdout, proc.stdout
 
         work_dir = work / 'out'
-        latest = wait_for(lambda: (work_dir / 'latest.json').is_file(), timeout = 90)
-        assert latest, (f'no fused moment reached the host within 90s; work_dir holds: '
-                        f'{sorted(p.name for p in work_dir.iterdir())}')
-        assert_fusion_latest(read_artifact(work_dir, 'latest.json'))
+        # Not the first moment: the pods open seconds apart, each source anchors
+        # its own time grid, and until the IMU's pod is up the cameras' moments
+        # carry no samples. The flow is unbounded, so an IMU-bearing moment always
+        # arrives; that one is the evidence the time join grouped the sensor in.
+        with_sensor = wait_for(lambda: _latest_with_sensor(work_dir), timeout = 90)
+        assert with_sensor, (f'no fused moment carrying IMU samples reached the host within 90s; '
+                             f'work_dir holds: {sorted(p.name for p in work_dir.iterdir())}')
+        assert_fusion_latest(with_sensor)
     finally:
         teardown(k8s_namespace, flow_id, run_id, k8s_nats_url)
 
     assert resources_for(k8s_namespace, flow_id) == []
+
+
+def _latest_with_sensor(work_dir):
+    '''The current ``latest.json`` if it exists and its moment carries IMU samples, else None.'''
+    if not (work_dir / 'latest.json').is_file():
+        return None
+    try:
+        latest = read_artifact(work_dir, 'latest.json')
+    except ValueError:                                     # mid-replace; read again next poll
+        return None
+    return latest if latest.get('sensor_samples', 0) > 0 else None
 
 def test_a_solution_image_builds_from_its_own_dockerfile(k8s_work_root, flow_ids, tmp_path):
     '''

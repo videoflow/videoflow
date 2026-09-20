@@ -139,7 +139,7 @@ def _oracle_msg_001(planner : Callable[..., Any], report : List[Dict[str, Any]])
     assert plan.channel_profiles == {'p': DURABLE_CONTROL}
     core = MemoryMessagingBackend(clock, core_only = True)
     plan = _deploy(core, FlowRequirements(profiles = (ProfileRequest('p', LIVE_LATEST),)), planner)
-    assert plan.channel_profiles == {'p': LIVE_LATEST}
+    assert plan.channel_profiles == {'p': LIVE_LATEST} and plan.channel_retention == {'p': 'limits'}
 
     # live_latest with explicit per-key freshness is admitted only when implemented.
     per_key = FlowRequirements(profiles = (ProfileRequest('p', LIVE_LATEST, {'latest_per_key': True}),))

@@ -62,6 +62,11 @@ def _run_engine(monkeypatch, engine = None, returncodes = None):
     engine = engine or LocalProcessEngine(supervision = SupervisionPolicy.disabled())
     monkeypatch.setattr(engine, '_teardown_streams', lambda: None)
     monkeypatch.setattr(engine, 'signal_flow_termination', lambda: None)
+    # The real one announces the abort over NATS from a thread; with no broker
+    # listening that thread never connects and reaping waits the full announcer
+    # join (7 s) for every node that gives up. The announcement itself is asserted
+    # in test_giving_up_is_announced_while_an_earlier_worker_still_runs.
+    monkeypatch.setattr(engine, '_abort_flow', lambda node: None)
     flow = _flow()
     engine.allocate_and_run_tasks(flow.tasks_data(), 'demo', BATCH, 'run1')
     return envs, engine
@@ -291,12 +296,14 @@ def test_docker_branch_does_not_leak_pythonpath():
     assert not any(arg.startswith('PYTHONPATH=') for arg in argv)
 
 
-def test_failures_are_reported_and_deduped_per_node(monkeypatch):
+def test_failures_are_reported_and_deduped_per_node(monkeypatch, capsys):
     # producer ok, work fails, printer ok (order follows the topological sort).
-    _envs, engine = _run_engine(monkeypatch, returncodes = [0, 1, 0])
+    _envs, engine = _run_engine(monkeypatch, returncodes = [0, 3, 0])
     failed = engine.wait_for_completion()
-    assert len(failed) == 1
-    assert engine.failures() and engine.failures()[0][2] == 1
+    assert failed == ['work']
+    assert engine.failures() == [('work', 0, 3)]
+    engine.report_failures()
+    assert 'exited with code 3' in capsys.readouterr().err
 
 
 def test_clean_run_reports_no_failures(monkeypatch):
@@ -305,19 +312,17 @@ def test_clean_run_reports_no_failures(monkeypatch):
     assert engine.failures() == []
 
 
-def test_sigint_exit_is_not_a_failure(monkeypatch):
-    '''Ctrl-C / flow.stop() kills workers by signal — that is not a crash.'''
-    _envs, engine = _run_engine(monkeypatch,
-                                returncodes = [-signal.SIGINT, -signal.SIGTERM, 0])
+@pytest.mark.parametrize('returncodes', [
+    # Ctrl-C / flow.stop() kills workers by signal — that is not a crash.
+    [-signal.SIGINT, -signal.SIGTERM, 0],
+    # 130/143 are what a worker's own SIGINT/SIGTERM handlers exit with — and what
+    # a `docker run` client relays for its container. Same meaning as the raw signal.
+    [128 + signal.SIGINT, 128 + signal.SIGTERM, 0],
+], ids = ['signal', 'exit-status'])
+def test_signal_exits_are_not_failures(monkeypatch, returncodes):
+    _envs, engine = _run_engine(monkeypatch, returncodes = returncodes)
     assert engine.wait_for_completion() == []
-
-
-def test_report_failures_names_node_and_code(monkeypatch, capsys):
-    _envs, engine = _run_engine(monkeypatch, returncodes = [0, 3, 0])
-    engine.wait_for_completion()
-    engine.report_failures()
-    err = capsys.readouterr().err
-    assert 'exited with code 3' in err
+    assert engine.failures() == []
 
 
 def test_failed_worker_is_restarted_and_the_flow_recovers(monkeypatch):
@@ -655,13 +660,3 @@ def test_without_the_nvidia_runtime_shared_warns_and_strict_refuses(monkeypatch,
                                 docker_gpus = False, gpu_policy = 'strict')
     with pytest.raises(ResourceUnavailable, match = 'nvidia runtime'):
         _launch_gpu_flow(monkeypatch, strict)
-
-
-def test_signal_exit_statuses_are_not_failures(monkeypatch):
-    '''
-    130/143 are what a worker's own SIGINT/SIGTERM handlers exit with — and what a
-    ``docker run`` client relays for its container. Same meaning as the raw signal.
-    '''
-    _envs, engine = _run_engine(monkeypatch, returncodes = [128 + signal.SIGINT, 128 + signal.SIGTERM, 0])
-    assert engine.wait_for_completion() == []
-    assert engine.failures() == []

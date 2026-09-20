@@ -22,16 +22,13 @@ implemented in ``../videoflow-contrib``, where the components live.
 from __future__ import absolute_import, division, print_function
 
 import json
-import os
-import pathlib
-import sys
 from typing import Any, Callable, Dict, List, Optional
 
 import defects
 import defects_alloc
 import defects_run3
 import pytest
-from _gpu import FAKE_SMI, run_probe
+from _gpu import run_probe
 from _status import unsupported
 
 from videoflow.backends import capabilities
@@ -63,27 +60,6 @@ GIB = 1 << 30
 def _fake_host(devices : int) -> List[Dict[str, Any]]:
     return [{'index': i, 'uuid': f'GPU-{i:08x}-fake-4000-8000-000000000000', 'name': 'Fake GPU',
              'memory_total_mib': 98304, 'memory_used_mib': 0} for i in range(devices)]
-
-
-@pytest.fixture
-def fake_smi(tmp_path : pathlib.Path, monkeypatch : pytest.MonkeyPatch) -> Callable[..., None]:
-    '''A fake ``nvidia-smi`` first on PATH; ``configure(devices, p2p='0-1', fail=False)`` describes the host.'''
-    bindir = tmp_path / 'bin'
-    bindir.mkdir()
-    shim = bindir / 'nvidia-smi'
-    shim.write_text(f'#!/bin/sh\nexec {sys.executable} {FAKE_SMI} "$@"\n')
-    shim.chmod(0o755)
-    monkeypatch.setenv('PATH', f'{bindir}{os.pathsep}{os.environ.get("PATH", "")}')
-    monkeypatch.delenv('CUDA_VISIBLE_DEVICES', raising = False)
-
-    def configure(devices : List[Dict[str, Any]], p2p : str = '', fail : bool = False) -> None:
-        monkeypatch.setenv('VF_FAKE_SMI_JSON', json.dumps(devices))
-        monkeypatch.setenv('VF_FAKE_SMI_P2P', p2p)
-        if fail:
-            monkeypatch.setenv('VF_FAKE_SMI_FAIL', '1')
-        else:
-            monkeypatch.delenv('VF_FAKE_SMI_FAIL', raising = False)
-    return configure
 
 
 class TwoDeviceNode(ProcessorNode):

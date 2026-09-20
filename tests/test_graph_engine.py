@@ -7,32 +7,23 @@ from videoflow.processors import IdentityProcessor
 from videoflow.producers import IntProducer
 
 
-def test_no_raise_error():
+def _detached_consumer(producer):
+    '''A consumer with no parents at all.'''
+    return CommandlineConsumer()
+
+
+def _detached_chain(producer):
+    '''A consumer whose only ancestor is a processor nobody feeds.'''
+    return CommandlineConsumer()(IdentityProcessor())
+
+
+@pytest.mark.parametrize('build_consumer', [_detached_consumer, _detached_chain])
+def test_a_consumer_the_producers_cannot_reach_is_rejected(build_consumer):
     a = IntProducer()
-    b = IdentityProcessor()(a)
-    c = IdentityProcessor()(b)
-    d = CommandlineConsumer()(c)
-
-    graph_engine = GraphEngine([a], [d])
-
-def test_raise_error_1():
-    a = IntProducer()
-    b = IdentityProcessor()(a)
-    c = IdentityProcessor()(b)
-    d = CommandlineConsumer()
-
+    IdentityProcessor()(IdentityProcessor()(a))
     with pytest.raises(GraphError):
-        graph_engine = GraphEngine([a], [d])
+        GraphEngine([a], [build_consumer(a)])
 
-def test_raise_error_2():
-    a = IntProducer()
-    b = IdentityProcessor()(a)
-    c = IdentityProcessor()(b)
-    d = IdentityProcessor()
-    e = CommandlineConsumer()(d)
-
-    with pytest.raises(GraphError):
-        graph_engine = GraphEngine([a], [e])
 
 if __name__ == "__main__":
     pytest.main([__file__])

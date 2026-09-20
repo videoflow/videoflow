@@ -190,6 +190,7 @@ def _oracle_alloc_009(monkeypatch : pytest.MonkeyPatch, decisions : Dict[str, An
             fatal = [p for p in problems if p.startswith(gpu.IMPOSSIBLE_GPU_REQUEST)]
             assert len(fatal) == 1, f'{name}: expected one impossible-request rejection: {problems}'
             assert {'mps': 'MPS', 'time-sliced': 'time-sliced', 'mig': 'MIG'}[expected] in fatal[0]
+            assert problems == fatal, f'{name}: the rejection is the whole verdict, not one line of it: {problems}'
 
 
 @pytest.mark.case('ALLOC-009')

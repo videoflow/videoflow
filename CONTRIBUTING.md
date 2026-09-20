@@ -81,8 +81,9 @@ and there should be sections for `Arguments`, `Returns` and
 If you want to see your PRs merged promptly, this is crucial.
 
 4. Run our test suite locally. It is easy: from the
-Videoflow folder, ``uv run pytest --ignore=tests/integration -q`` (the integration
-tiers and how to run them are in *How to contribute*).
+Videoflow folder, ``uv run pytest --ignore=tests/integration --ignore=tests/conformance -q``
+(the integration tiers, the backend conformance suite and how to run them are in
+*How to contribute*).
 
 
 5. Make sure all tests are

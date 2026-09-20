@@ -1,3 +1,46 @@
+# Time-slicing audit — 2026-09-20
+
+**Status: Design follow-up.** Reviewed against core commit `73e3b84`.
+**This file primarily records a design
+decision, not an unresolved bug list.** Time-slicing remains an operator-owned
+pool property; dynamically managing it per flow would be an additional feature.
+The current audit below supersedes any implication that the historical host
+description has been reverified. The original text is preserved unchanged below.
+
+## Current disposition
+
+| Historical topic | Status | Current evidence and remaining work |
+| --- | --- | --- |
+| Q1 — Give videoflow permission to rewrite time-slicing configuration per run | **Design decision** | The current built-ins are [exclusive, mix, and DRA](../videoflow/deploy/gpu.py#L2285). Time-slicing is [recognized from inventory labels](../videoflow/deploy/cluster.py#L522), while [mix excludes time-sliced nodes](../videoflow/deploy/gpu.py#L1274) and [solves declared memory demands as MIG slices](../videoflow/deploy/mig.py#L388). There is no existing contract requiring per-run device-plugin reconfiguration. |
+| Q2 — Time-sharing has no per-share memory isolation | **Design constraint; no implementation fix identified** | Maintained [GPU-sharing documentation](../docs/source/distributed/gpu-sharing.rst#L118) states the same constraint. The implementation distinguishes shared units from whole devices and rejects multi-device claims against time-sliced resources; see the [preflight regression](../tests/test_cluster.py#L274). Changing permissions or replica count is not an implemented replacement for mix's memory-aware planning. |
+| Q3 — Device/node/resource targeting capabilities of the NVIDIA plugin | **Background capability claim; not independently reverified** | This describes the external plugin rather than a missing videoflow API. The repository's [documented static example](../docs/source/distributed/gpu-sharing.rst#L94) omits device selection. This audit did not inspect an installed plugin version or re-research its configuration API, so it makes no new compatibility claim about the historical targeting examples. |
+| Shared node configuration, convergence, and blast radius | **Design rationale remains applicable; MIG safety needs qualification** | Videoflow currently reads time-slicing as pool state and owns only its managed-MIG lifecycle. That scope is consistent with the design rationale. However, the historical contrast with MIG must not imply fully proven concurrency safety: the [GPU audit](00_gpu_allocation_bugs.md) identifies remaining #5 shared-policy retirement and #9/#10 status-correlation gaps. |
+| Proposed “videoflow-managed compute-only sharing” mode | **Unimplemented optional feature** | No such built-in mode is registered. Adding one would require an explicit product/design decision about device-plugin ownership and lifecycle; it is not a bug fix required by the current modes. |
+| Specific RTX 4090 / bare-plugin / no config-manager host description | **Unverified historical environment context** | No live hardware, DaemonSet, ConfigMap, or cluster inspection was performed. The [repository instructions](../docs/source/distributed/gpu-sharing.rst#L114) describe mounting `CONFIG_FILE` and restarting the plugin, but cannot establish the user's current installation or reload behavior. Recheck the deployed version/configuration if this host-specific guidance is needed operationally. |
+
+## Validation and limits
+
+The related GPU allocation audit ran the following existing tests. These provide
+repository-level evidence for classification, preflight, allocation, and MIG
+lifecycle behavior; they do not test a live NVIDIA time-slicing installation:
+
+```sh
+.venv/bin/python -m pytest -q tests/test_mix_strategy.py tests/test_cluster.py tests/test_mig_solver.py tests/test_gpu_provenance.py tests/test_gpu_lifecycle_cli.py tests/test_allocation_kubernetes.py tests/test_unknown_states.py
+# 198 passed in 2.85s
+
+.venv/bin/python -m pytest -q tests/conformance/test_alloc_mig_lifecycle.py tests/conformance/test_alloc_ownership.py -m 'level_model or level_process'
+# 13 passed, 19 deselected in 2.87s
+
+.venv/bin/python -m pytest -q tests/conformance/test_alloc_planning.py -m level_model
+# 7 passed, 5 deselected in 1.06s
+```
+
+No live cluster, GPU Operator, GPU hardware, or external plugin documentation
+verification was performed. Tests were not rerun while adding these annotations.
+No code or device-plugin configuration changes are included.
+
+## Historical notes (preserved)
+
 We are revisiting this topic:
 
 First, a correction (Q3: can it target certain GPUs?)
