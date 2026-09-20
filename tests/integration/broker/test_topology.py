@@ -107,9 +107,9 @@ def test_read_back_and_live_capabilities_against_the_provisioned_run():
 
 def test_read_back_and_capabilities_report_an_unreachable_broker_as_unknown():
     '''Nothing listens on port 1: the answer is "unreachable", within the deadline, never a config.'''
-    read = topology.read_back_streams('nats://localhost:1', 'topo-rb', 'r', ['a', 'b'], BATCH, timeout = 2)
+    read = topology.read_back_streams('nats://localhost:1', 'topo-rb', 'r', ['a', 'b'], BATCH, timeout = 0.5)
     assert {v.reason for v in read.values()} == {'unreachable'}
-    caps = jetstream_capabilities_observed('nats://localhost:1', timeout = 2)
+    caps = jetstream_capabilities_observed('nats://localhost:1', timeout = 0.5)
     assert isinstance(caps.persistent_storage, Unknown) and caps.persistent_storage.reason == 'unreachable'
     assert isinstance(caps.max_payload_bytes, Unknown) and caps.max_payload_bytes.reason == 'unreachable'
 

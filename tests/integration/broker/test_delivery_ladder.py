@@ -47,6 +47,16 @@ def _messenger(flow_id, run_id, flow_type, delivery = None, max_retries = 3):
                         delivery_policy = delivery)
 
 
+def _instant_retries(monkeypatch, m):
+    '''
+    A transient failure is NAKed with a jittered exponential backoff (2-6 s over
+    two retries). These tests assert what the ladder *does* with the retries —
+    redelivery, the attempt count, the final dead letter — not how long the broker
+    holds them; the schedule itself is pinned by tests/test_error_policy.py.
+    '''
+    monkeypatch.setattr(m._delivery_policy, 'retry_delay', lambda num_delivered, jitter = 1.0: 0.05)
+
+
 def test_poison_is_dead_lettered_on_the_first_failure():
     '''
     The waste this removes: a message that will never parse used to burn four
@@ -73,10 +83,11 @@ def test_poison_is_dead_lettered_on_the_first_failure():
         cleanup(flow_id, run_id)
 
 
-def test_transient_is_redelivered_up_to_the_budget_then_dead_lettered():
+def test_transient_is_redelivered_up_to_the_budget_then_dead_lettered(monkeypatch):
     flow_id, run_id = ids()
     _flow(flow_id, run_id, BATCH, max_retries = 2)          # max_deliver 3
     m = _messenger(flow_id, run_id, BATCH, max_retries = 2)
+    _instant_retries(monkeypatch, m)
     try:
         publish_parent_message(flow_id, run_id, 'parent', 't1', 1, {'value': 1})
         for _ in range(3):
@@ -156,7 +167,7 @@ def test_realtime_drops_but_keeps_a_sampled_specimen():
         cleanup(flow_id, run_id)
 
 
-def test_a_node_can_opt_into_at_least_once_inside_a_realtime_flow():
+def test_a_node_can_opt_into_at_least_once_inside_a_realtime_flow(monkeypatch):
     '''
     The mixed-criticality case: a REALTIME flow whose frames are best-effort but
     whose alert sink is not. Before the override, the flow type decided for
@@ -166,6 +177,7 @@ def test_a_node_can_opt_into_at_least_once_inside_a_realtime_flow():
     override = {'delivery': 'at-least-once'}
     _flow(flow_id, run_id, REALTIME, delivery = override, max_retries = 1)
     m = _messenger(flow_id, run_id, REALTIME, delivery = override, max_retries = 1)
+    _instant_retries(monkeypatch, m)
     try:
         publish_parent_message(flow_id, run_id, 'parent', 't1', 1, {'value': 1})
         m.receive_message()

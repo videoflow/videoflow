@@ -41,7 +41,8 @@ from support_errors import (  # noqa: E402
 from videoflow.core import Flow  # noqa: E402
 from videoflow.core.constants import BATCH  # noqa: E402
 from videoflow.core.supervision import SupervisionPolicy  # noqa: E402
-from videoflow.engines.local import ABORT_REANNOUNCE_SECONDS, LocalProcessEngine  # noqa: E402
+from videoflow.engines import local as local_engine  # noqa: E402
+from videoflow.engines.local import LocalProcessEngine  # noqa: E402
 from videoflow.messaging.topology import control_subject_for  # noqa: E402
 from videoflow.processors import IdentityProcessor, JoinerProcessor  # noqa: E402
 from videoflow.producers import IntProducer  # noqa: E402
@@ -166,8 +167,9 @@ def test_the_supervisors_abort_reaches_a_worker_that_was_still_connecting():
     engine._flow_id, engine._run_id = flow_id, run_id
     engine._abort_flow('left')
     try:
-        # Comfortably after the first announcement, comfortably before the second.
-        time.sleep(ABORT_REANNOUNCE_SECONDS / 2)
+        # Comfortably after the first announcement, comfortably before the second
+        # (the period is the conftest's test-sized one, read through the module).
+        time.sleep(local_engine.ABORT_REANNOUNCE_SECONDS / 2)
         assert _wait_for_stop(flow_id, run_id, timeout = 15)
     finally:
         engine._stop_abort_announcer()

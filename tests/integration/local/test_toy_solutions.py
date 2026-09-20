@@ -46,6 +46,7 @@ from support_solutions import (
     SOLUTION_CONFIGS,
     assert_calculator_report,
     assert_fusion_latest,
+    assert_fusion_summary,
     assert_recovery_report,
     assert_router_counts,
     read_artifact,
@@ -167,15 +168,14 @@ def test_toy_fusion(tmp_path):
     ``duration_s`` bounds what is normally an unbounded flow so the run drains
     and writes its summary — which is why this bucket can assert the close()
     artifact and the k8s one cannot. The assertions stay above the timing noise a
-    realtime path is allowed to have: that moments were fused, and that at least
-    one saw every camera (the time join really did group them rather than always
-    emitting at quorum).
+    realtime path is allowed to have: that moments were fused, that at least one
+    saw every camera (the time join really did group them rather than always
+    emitting at quorum), and that at least one carried IMU samples — all over the
+    whole run, never on the last moment, whose sample count depends on which
+    source's time grid ended last.
     '''
     work_dir = run_solution(tmp_path, 'toy_fusion')
-    summary = read_artifact(work_dir, 'fusion_summary.json')
-    assert summary['moments'] > 0, summary
-    assert summary['complete_moments'] > 0, summary
-
+    assert_fusion_summary(read_artifact(work_dir, 'fusion_summary.json'))
     assert_fusion_latest(read_artifact(work_dir, 'latest.json'))
 
 if __name__ == "__main__":

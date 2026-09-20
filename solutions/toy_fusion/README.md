@@ -41,7 +41,8 @@ REALTIME success is observed, not awaited:
   fused moment — watch its `moment` counter and mtime advance
   (`watch -n1 cat out/latest.json`).
 - **After a bounded run** (`duration_s > 0`) or a stop: `fusion_summary.json`
-  reports total moments and the complete/quorum split.
+  reports total moments, the complete/quorum split, and how many moments
+  carried IMU samples (`moments_with_sensor`, `sensor_samples_total`).
 
 ```bash
 python -c "import json; s=json.load(open('out/fusion_summary.json')); print(s); assert s['moments'] > 0"
@@ -86,7 +87,10 @@ python toy_fusion.py --config config.yaml
 every CI build: it copies the solution to a temp directory, writes a config
 with a small `duration_s` so the unbounded sources become a bounded run, drives
 it with `videoflow run-local`, and asserts `fusion_summary.json` reports
-complete moments carrying IMU samples. This is the only integration test that
+complete moments and moments carrying IMU samples (`moments_with_sensor`) — a
+whole-run claim on purpose: each source anchors its own time grid at `open()`,
+so a source that opened a second later also ends a second later, and the *last*
+moment can legitimately have no IMU sample. This is the only integration test that
 exercises the REALTIME path with independent producers, so keep the solution
 runnable with a short `duration_s`.
 

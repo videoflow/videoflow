@@ -176,12 +176,29 @@ def assert_recovery_report(report : Dict[str, Any]) -> None:
     # The crash event came back: a sick worker never blames its message.
     assert 12 in report['delivered'], report
 
+def assert_fusion_summary(summary : Dict[str, Any]) -> None:
+    '''
+    The run summary, written from ``close()``. Moments were fused; at least one saw
+    every camera (the time join really grouped them rather than always emitting
+    at quorum); and at least one carried IMU samples — the cameras and the IMU
+    share no lineage, so nothing here could be grouped by trace id: a sample lands
+    in a moment only because the collect window matched their event timestamps.
+    '''
+    assert summary['moments'] > 0, summary
+    assert summary['complete_moments'] > 0, summary
+    assert summary['moments_with_sensor'] > 0, summary
+
 def assert_fusion_latest(latest : Dict[str, Any]) -> None:
     '''
-    The live-state artifact, rewritten on every fused moment. The cameras and the
-    IMU share no lineage, so nothing here could be grouped by trace id — a moment
-    exists only because each producer stamps an event timestamp and the join groups
-    on it.
+    The live-state artifact, rewritten on every fused moment — so it holds whichever
+    moment came *last*, and the shape is all it can vouch for. Every source anchors
+    its own time grid at ``open()`` (``_aligned_start``); when the workers open
+    across a whole-second boundary, a camera on the later grid also ends a second
+    after the IMU, and its final frames form moments with one view and no sample.
+    The IMU claim belongs to the summary (``assert_fusion_summary``) or, where no
+    summary is ever written, to a moment observed to carry samples.
     '''
     assert latest['moment'] > 0, latest
-    assert latest['sensor_samples'] > 0, latest
+    assert latest['expected_views'] == 2, latest
+    assert 1 <= latest['views'] <= latest['expected_views'], latest
+    assert latest['sensor_samples'] >= 0, latest

@@ -103,7 +103,7 @@ def test_ls_groups_by_code_and_show_decodes_the_payload(capsys):
     flow_id, run_id = ids('dlq')
     try:
         _dead_letter(flow_id, run_id, [{'v': 41}, {'v': 42}])
-        cli.main(['dlq', 'ls', '--flow-id', flow_id, '--nats', NATS_URL])
+        cli.main(['dlq', 'ls', '--flow-id', flow_id, '--nats', NATS_URL, '--limit', '2'])
         out = capsys.readouterr().out
         assert 'VF_POISON_SCHEMA' in out
         assert 'VF_POISON_SCHEMA=2' in out           # the by-code summary
@@ -130,7 +130,7 @@ def test_replay_republishes_onto_the_origin_subject(capsys):
         assert len(read_dlq(flow_id)) == 1
 
         cli.main(['dlq', 'replay', '--flow-id', flow_id, '--run-id', run_id,
-                '--nats', NATS_URL])
+                '--nats', NATS_URL, '--limit', '1'])
         assert 'Replayed 1' in capsys.readouterr().out
 
         # It is back on the input subject the failing node reads from, decodable
@@ -152,7 +152,7 @@ def test_replay_dry_run_changes_nothing(capsys):
     try:
         _dead_letter(flow_id, run_id, [{'v': 1}])
         cli.main(['dlq', 'replay', '--flow-id', flow_id, '--run-id', run_id,
-                '--nats', NATS_URL, '--dry-run'])
+                '--nats', NATS_URL, '--dry-run', '--limit', '1'])
         out = capsys.readouterr().out
         assert 'would replay' in out and '--dry-run' in out
         assert len(read_dlq(flow_id)) == 1           # still there, nothing republished
@@ -165,7 +165,7 @@ def test_replay_can_select_by_code(capsys):
     try:
         _dead_letter(flow_id, run_id, [{'v': 1}, {'v': 2}])
         cli.main(['dlq', 'replay', '--flow-id', flow_id, '--run-id', run_id,
-                '--code', 'VF_NO_SUCH_CODE', '--nats', NATS_URL])
+                '--code', 'VF_NO_SUCH_CODE', '--nats', NATS_URL, '--limit', '2'])
         assert 'Nothing to replay' in capsys.readouterr().out
     finally:
         cleanup(flow_id, run_id)

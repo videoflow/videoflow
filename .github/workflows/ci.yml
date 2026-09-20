@@ -114,8 +114,10 @@ jobs:
       # -rs prints skip reasons. These suites skip themselves silently when the
       # broker is unreachable, so without it a misconfigured job is a green run
       # that tested nothing.
+      # --durations: the slowest tests in the job log, so a regression in a flow's
+      # shutdown or a new real-time wait is visible without re-running locally.
       - name: Run broker and local-engine integration tests
-        run: uv run pytest tests/integration/broker tests/integration/local -q -rs
+        run: uv run pytest tests/integration/broker tests/integration/local -q -rs --durations=25
 
   # tests/integration/k8s: the same toy solutions, deployed to a kind cluster as one
   # workload per node. Runs in parallel with integration-local — they share no

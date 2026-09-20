@@ -70,3 +70,32 @@ def pytest_collection_modifyitems(config, items):
             continue
         if not available:
             item.add_marker(skip)
+
+
+@pytest.fixture(autouse = True)
+def _short_worker_waits(request, monkeypatch):
+    '''
+    Two production defaults that only add latency here, set to test-sized values
+    for the broker and local buckets (the k8s bucket's workers run in pods and do
+    not inherit this environment):
+
+    - ``VF_ACK_WAIT_SECONDS`` — the worker's JetStream lease, 60 s by default.
+      Its only cost in these flows is on the way out: the backend's keepalive
+      sleeps ``ack_wait / 3`` between renewals and ``shutdown()`` waits on that
+      task alongside the pull loops, so every worker's ``close()`` sat at the
+      3 s cap. At 3 s the keepalive wakes every second and a close takes about
+      one. No test here asserts the lease length (those that do pass their own
+      ``ack_wait`` to an in-process messenger), and in-flight leases are renewed
+      every second, so nothing is redelivered for being slow.
+    - ``ABORT_REANNOUNCE_SECONDS`` — how often the local supervisor repeats the
+      flow-wide stop after a node gives up, and therefore how long reaping waits
+      for the announcer to notice the run is over: 0.5 s here instead of 2.
+      ``test_abort_propagation`` reads the patched value through the module.
+    '''
+    path = pathlib.Path(str(request.node.fspath))
+    if HERE not in path.parents or K8S_DIR in path.parents:
+        return
+    if 'VF_ACK_WAIT_SECONDS' not in os.environ:          # an explicit choice always wins
+        monkeypatch.setenv('VF_ACK_WAIT_SECONDS', '3')
+    from videoflow.engines import local as local_engine
+    monkeypatch.setattr(local_engine, 'ABORT_REANNOUNCE_SECONDS', 0.5)
