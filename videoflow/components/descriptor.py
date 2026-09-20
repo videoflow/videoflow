@@ -7,16 +7,20 @@ of the component's code (which may not even be Python). See
 ``spec/descriptor/component-schema.json`` for the full schema and Phase 2 of the
 migration plan.
 
-This module deliberately avoids a hard dependency on ``jsonschema``: it validates
-component params against the descriptor's declared JSON Schema with a small built-in
-checker covering the common subset (type/required/enum/default), and uses
-``jsonschema`` for full validation only if it happens to be installed.
+Descriptors are validated against that schema, and a component's params against the
+JSON Schema the descriptor declares, with ``jsonschema`` (a core dependency). The
+few cross-field rules JSON Schema cannot express (``_validate_gpu_resources``,
+``_validate_host_resources``) are checked by hand on top.
 '''
 from __future__ import absolute_import, division, print_function
 
+import functools
 import json
 import os
 from typing import Dict, List, Optional
+
+import jsonschema
+import yaml
 
 #: Payload-type token meaning "any payload" in a descriptor's io section.
 IO_ANY = 'any'
@@ -135,7 +139,6 @@ def load_descriptor(ref : str) -> ComponentDescriptor:
         path = os.path.join(path, 'component.yaml')
     if not os.path.isfile(path):
         raise FileNotFoundError(f'Component descriptor not found: {path}')
-    import yaml  # optional dependency (extra): the core imports without PyYAML
     with open(path) as f:
         raw = yaml.safe_load(f)
     if not isinstance(raw, dict):
@@ -144,55 +147,47 @@ def load_descriptor(ref : str) -> ComponentDescriptor:
 
 # -- descriptor shape validation -------------------------------------------
 
-_VALID_ROLES = ('producer', 'processor', 'consumer')
-_VALID_DEVICES = ('cpu', 'gpu')
+def _schema_path() -> str:
+    '''
+    ``spec/descriptor/component-schema.json``: the copy hatch places inside the
+    package for a wheel install, else the checkout's ``spec/`` next to the package
+    (an editable install). A build that ships neither is a packaging bug, so it
+    fails here rather than silently validating nothing.
+    '''
+    package = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [os.path.join(package, 'spec', 'descriptor', 'component-schema.json'),
+                  os.path.join(os.path.dirname(package), 'spec', 'descriptor', 'component-schema.json')]
+    for path in candidates:
+        if os.path.isfile(path):
+            return path
+    raise RuntimeError('videoflow is packaged without spec/descriptor/component-schema.json '
+                       f'(looked in {candidates}); reinstall it from a wheel or a checkout.')
+
+@functools.lru_cache(maxsize = 1)
+def _descriptor_validator() -> jsonschema.Draft202012Validator:
+    with open(_schema_path()) as f:
+        return jsonschema.Draft202012Validator(json.load(f))
+
+def _violation(error : jsonschema.ValidationError) -> str:
+    '''``spec.role: 'pilot' is not one of [...]`` — the offending path, then jsonschema's own sentence.'''
+    path = '.'.join(str(p) for p in error.absolute_path)
+    return f'{path}: {error.message}' if path else error.message
 
 def _validate_descriptor_shape(raw : dict, source : str | None = None) -> None:
     where = f' ({source})' if source else ''
-    # Cross-field GPU check first: JSON Schema cannot express "count > 1 requires
-    # the gpu device type", so it runs regardless of jsonschema availability.
+    # Cross-field checks first: JSON Schema cannot express "count > 1 requires the
+    # gpu device type", and their messages say what to change.
     _validate_gpu_resources(raw.get('spec') or {}, where)
     _validate_host_resources(raw.get('spec') or {}, where)
-    # Prefer full JSON Schema validation when jsonschema is available.
-    try:
-        import jsonschema  # optional dependency (extra): full validation only when installed
-        schema_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                'spec', 'descriptor', 'component-schema.json')
-        if os.path.isfile(schema_path):
-            with open(schema_path) as f:
-                jsonschema.validate(raw, json.load(f))
-            return
-    except ImportError:
-        pass
-    except Exception as e:  # jsonschema.ValidationError and friends
-        raise ValueError(f'Invalid component descriptor{where}: {e}') from e
-
-    # Minimal built-in checks (subset of the JSON Schema) for when jsonschema is absent.
-    if raw.get('apiVersion') != 'videoflow.io/v1':
-        raise ValueError(f'component descriptor{where}: apiVersion must be videoflow.io/v1')
-    if raw.get('kind') != 'Component':
-        raise ValueError(f'component descriptor{where}: kind must be Component')
-    meta = raw.get('metadata') or {}
-    if not meta.get('name') or not meta.get('version'):
-        raise ValueError(f'component descriptor{where}: metadata.name and metadata.version are required')
-    spec = raw.get('spec') or {}
-    if spec.get('role') not in _VALID_ROLES:
-        raise ValueError(f'component descriptor{where}: spec.role must be one of {_VALID_ROLES}')
-    if not isinstance(spec.get('protocol'), int) or spec['protocol'] < 1:
-        raise ValueError(f'component descriptor{where}: spec.protocol must be an integer >= 1')
-    images = ((spec.get('runtime') or {}).get('images')) or {}
-    if not images:
-        raise ValueError(f'component descriptor{where}: spec.runtime.images must declare at least one of cpu/gpu')
-    devices = spec.get('device') or []
-    if not devices or any(d not in _VALID_DEVICES for d in devices):
-        raise ValueError(f'component descriptor{where}: spec.device must be a non-empty subset of {_VALID_DEVICES}')
+    error = jsonschema.exceptions.best_match(_descriptor_validator().iter_errors(raw))
+    if error is not None:
+        raise ValueError(f'Invalid component descriptor{where}: {_violation(error)}') from error
 
 def _validate_gpu_resources(spec : dict, where : str) -> None:
     '''
     Validate ``spec.resources.gpu`` (RFC 0003): the block belongs to processors,
     the count is an integer >= 1, and a multi-GPU component supports the gpu
-    device. Cross-field rules JSON Schema cannot express, so they run regardless
-    of jsonschema availability.
+    device. Cross-field rules JSON Schema cannot express.
     '''
     resources = spec.get('resources') or {}
     if 'gpu' not in resources:
@@ -227,9 +222,8 @@ def _validate_host_resources(spec : dict, where : str) -> None:
     '''
     Validate ``spec.resources.cpu`` / ``spec.resources.memory``: optional
     host-resource requests, each a Kubernetes quantity — a non-empty string
-    (``'500m'``, ``'2Gi'``) or a positive number. Type-only, mirroring the JSON
-    Schema; runs regardless of jsonschema availability so a bare install rejects
-    the same shapes an installed one does.
+    (``'500m'``, ``'2Gi'``) or a positive number. The JSON Schema only says
+    ``string | number``; the non-empty / positive rules live here.
     '''
     resources = spec.get('resources') or {}
     for key, example in (('cpu', '500m'), ('memory', '2Gi')):
@@ -243,60 +237,20 @@ def _validate_host_resources(spec : dict, where : str) -> None:
                             f'quantity (a non-empty string such as {example!r}, or a positive number), '
                             f'got {value!r}')
 
-# -- minimal params validation (JSON Schema subset) ------------------------
-
-_JSON_TYPE_CHECKS = {
-    'object': lambda v: isinstance(v, dict),
-    'array': lambda v: isinstance(v, (list, tuple)),
-    'string': lambda v: isinstance(v, str),
-    'integer': lambda v: isinstance(v, int) and not isinstance(v, bool),
-    'number': lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-    'boolean': lambda v: isinstance(v, bool),
-    'null': lambda v: v is None,
-}
+# -- params validation -----------------------------------------------------
 
 def _validate_params(schema : dict, params : dict) -> dict:
-    '''Validate ``params`` (an object) against a JSON-Schema-subset ``schema``.'''
+    '''Validate ``params`` (an object) against the descriptor's JSON Schema; returns them with defaults filled.'''
     if not schema:
         return params
-    # Full validation if jsonschema is installed.
     try:
-        import jsonschema  # optional dependency (extra): full validation only when installed
-        validator = jsonschema.Draft202012Validator(schema)
-        validator.validate(params)
-        return _fill_defaults(schema, params)
-    except ImportError:
-        pass
-    except Exception as e:
-        raise ValueError(str(e)) from e
-
-    if schema.get('type', 'object') != 'object':
-        raise ValueError('top-level params schema must be an object')
-    props = schema.get('properties', {}) or {}
-    for req in schema.get('required', []) or []:
-        if req not in params:
-            raise ValueError(f"missing required param '{req}'")
-    for key, value in params.items():
-        if key not in props:
-            if schema.get('additionalProperties', True) is False:
-                raise ValueError(f"unknown param '{key}'")
-            continue
-        _validate_value(props[key], value, key)
+        jsonschema.Draft202012Validator.check_schema(schema)
+    except jsonschema.SchemaError as e:
+        raise ValueError(f'the descriptor declares an invalid params schema: {_violation(e)}') from e
+    error = jsonschema.exceptions.best_match(jsonschema.Draft202012Validator(schema).iter_errors(params))
+    if error is not None:
+        raise ValueError(_violation(error)) from error
     return _fill_defaults(schema, params)
-
-def _validate_value(prop_schema : dict, value : object, name : str) -> None:
-    jtype = prop_schema.get('type')
-    if jtype is not None:
-        types = jtype if isinstance(jtype, list) else [jtype]
-        if not any(_JSON_TYPE_CHECKS.get(t, lambda _v: True)(value) for t in types):
-            raise ValueError(f"param '{name}' must be of type {jtype}, got {type(value).__name__}")
-    if 'enum' in prop_schema and value not in prop_schema['enum']:
-        raise ValueError(f"param '{name}' must be one of {prop_schema['enum']}, got {value!r}")
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        if 'minimum' in prop_schema and value < prop_schema['minimum']:
-            raise ValueError(f"param '{name}' must be >= {prop_schema['minimum']}")
-        if 'maximum' in prop_schema and value > prop_schema['maximum']:
-            raise ValueError(f"param '{name}' must be <= {prop_schema['maximum']}")
 
 def _fill_defaults(schema : dict, params : dict) -> dict:
     out = dict(params)

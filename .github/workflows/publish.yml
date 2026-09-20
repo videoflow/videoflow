@@ -140,6 +140,9 @@ jobs:
           uv pip install --python /tmp/smoke dist/*.whl
           /tmp/smoke/bin/python -c "import videoflow, sys; assert videoflow.__version__ == sys.argv[1], videoflow.__version__" "$v"
           /tmp/smoke/bin/videoflow --help >/dev/null
+          # The descriptor schema rides inside the wheel (a hatch force-include); a wheel without it
+          # would validate no descriptor at all.
+          /tmp/smoke/bin/python -c "from videoflow.components.descriptor import _schema_path; print(_schema_path())"
 
       - name: Upload dist
         uses: actions/upload-artifact@v4
@@ -176,7 +179,8 @@ jobs:
         uses: astral-sh/setup-uv@v5
 
       # PEP 508 direct reference: the only portable way to install a local wheel with an extra.
-      # The deploy extra brings the component CLI and jsonschema for validate-components.sh.
+      # The deploy extra brings the broker client the component CLI imports (jsonschema and
+      # PyYAML, which validate-components.sh needs, are core dependencies).
       - name: Install the freshly built wheel with the deploy extra
         run: |
           whl=$(ls dist/videoflow-*.whl)

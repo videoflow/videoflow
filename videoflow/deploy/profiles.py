@@ -41,6 +41,8 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+import yaml
+
 from ..core.errors import ConfigError
 from .broker_profiles import BROKER_PROFILE_NAMES
 from .build import BUILD_ARGS_ENV, PUSH_TOOLS, RUN_ARGS_ENV
@@ -142,7 +144,6 @@ def load_profiles(path : Optional[str] = None) -> Profiles:
             raise ConfigError(f'Clusters file not found: {path}',
                               remedy = 'Create it (see the videoflow README, "Multi-node clusters"), or drop --clusters-file.')
         return Profiles()
-    import yaml  # optional dep (deploy extra)
     with open(path) as f:
         try:
             raw = yaml.safe_load(f) or {}

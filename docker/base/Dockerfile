@@ -31,9 +31,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # the system environment.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Dependencies first, from a stub of the package (its metadata, version and the
+# descriptor schema hatch bundles), in their own layer: `run-local`/`deploy`
+# rebuild this image on every run from a source checkout, and a source edit must
+# re-run only the no-deps install of the package below, not this download.
 COPY pyproject.toml README.md ./
-COPY videoflow ./videoflow
-
+COPY videoflow/version.py ./videoflow/version.py
+COPY spec/descriptor ./spec/descriptor
 RUN uv pip install --system --no-cache ".[all]"
+
+COPY videoflow ./videoflow
+RUN uv pip install --system --no-cache --no-deps .
 
 ENTRYPOINT ["python", "-m", "videoflow.worker"]

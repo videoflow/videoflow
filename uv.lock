@@ -1009,19 +1009,19 @@ wheels = [
 name = "videoflow"
 source = { editable = "." }
 dependencies = [
+    { name = "jsonschema" },
     { name = "numpy" },
+    { name = "pyyaml" },
     { name = "six" },
 ]
 
 [package.optional-dependencies]
 all = [
-    { name = "jsonschema" },
     { name = "msgpack" },
     { name = "nats-py" },
     { name = "opencv-python-headless" },
     { name = "oras" },
     { name = "protobuf" },
-    { name = "pyyaml" },
     { name = "redis" },
     { name = "requests" },
 ]
@@ -1029,12 +1029,10 @@ blob = [
     { name = "redis" },
 ]
 deploy = [
-    { name = "jsonschema" },
     { name = "msgpack" },
     { name = "nats-py" },
     { name = "oras" },
     { name = "protobuf" },
-    { name = "pyyaml" },
 ]
 distributed = [
     { name = "msgpack" },
@@ -1065,7 +1063,6 @@ dev = [
     { name = "protobuf" },
     { name = "pytest" },
     { name = "pytest-timeout" },
-    { name = "pyyaml" },
     { name = "redis" },
     { name = "requests" },
     { name = "ruff" },
@@ -1078,8 +1075,7 @@ gpu-test = [
 
 [package.metadata]
 requires-dist = [
-    { name = "jsonschema", marker = "extra == 'all'", specifier = ">=4.0" },
-    { name = "jsonschema", marker = "extra == 'deploy'", specifier = ">=4.0" },
+    { name = "jsonschema", specifier = ">=4.0" },
     { name = "msgpack", marker = "extra == 'all'", specifier = ">=1.0.0" },
     { name = "msgpack", marker = "extra == 'deploy'", specifier = ">=1.0.0" },
     { name = "msgpack", marker = "extra == 'distributed'", specifier = ">=1.0.0" },
@@ -1101,8 +1097,7 @@ requires-dist = [
     { name = "protobuf", marker = "extra == 'distributed'", specifier = ">=5.27" },
     { name = "protobuf", marker = "extra == 'video'", specifier = ">=5.27" },
     { name = "protobuf", marker = "extra == 'vision'", specifier = ">=5.27" },
-    { name = "pyyaml", marker = "extra == 'all'", specifier = ">=5.1" },
-    { name = "pyyaml", marker = "extra == 'deploy'", specifier = ">=5.1" },
+    { name = "pyyaml", specifier = ">=5.1" },
     { name = "redis", marker = "extra == 'all'", specifier = ">=4.0.0" },
     { name = "redis", marker = "extra == 'blob'", specifier = ">=4.0.0" },
     { name = "requests", marker = "extra == 'all'", specifier = ">=2.22.0" },
@@ -1121,7 +1116,6 @@ dev = [
     { name = "protobuf", specifier = ">=5.27" },
     { name = "pytest", specifier = ">=7.0" },
     { name = "pytest-timeout", specifier = ">=2.0" },
-    { name = "pyyaml", specifier = ">=5.1" },
     { name = "redis", specifier = ">=4.0.0" },
     { name = "requests", specifier = ">=2.22.0" },
     { name = "ruff", specifier = ">=0.6" },

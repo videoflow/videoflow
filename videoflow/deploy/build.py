@@ -158,32 +158,43 @@ def pull_base_image(base_ref : str) -> bool:
 
 def ensure_base_image(base_ref : str) -> None:
     '''
-    Makes sure ``base_ref`` (a ``videoflow-base:*`` image) exists locally: built
-    from the videoflow source checkout when there is one (always — local edits
-    must reach the image), else pulled from the published registry image for the
-    installed version.
+    Makes sure ``base_ref`` (a ``videoflow-base:*`` image) exists locally *and is
+    the one this videoflow means*: built from the source checkout when there is
+    one — on every call, so local edits reach the image (docker's layer cache
+    makes an unchanged rebuild a few seconds) — else the published image for the
+    installed version, pulled once and recognised afterwards by its image id.
+    A ``base_ref`` left behind by an older checkout or an earlier version is
+    therefore replaced, never silently reused under a new solution image.
 
     - Raises:
-        - ``RuntimeError`` when the image is missing, videoflow is a wheel \
-            install, and the published image cannot be pulled (a development \
-            version with no release, a private package, no network).
+        - ``RuntimeError`` when videoflow is a wheel install, no ``base_ref`` \
+            exists locally, and the published image cannot be pulled (a \
+            development version with no release, a private package, no network).
     '''
-    if image_exists(base_ref):
-        return
     gpu = base_ref.endswith('-cuda')
     dockerfile = _source_base_dockerfile(gpu)
     if dockerfile is not None:
-        print(f'Building base image {base_ref} (one-time)...')
+        root = os.path.dirname(os.path.dirname(os.path.dirname(dockerfile)))
+        print(f'Building base image {base_ref} from {root} (cached layers make this fast when nothing changed)...')
         cmd = ['docker', 'build', '-f', dockerfile, '-t', base_ref]
         if not gpu:
             cmd += ['--build-arg', 'PYTHON_VERSION=3.12']
         # <root>/docker/base/Dockerfile -> <root>: the base Dockerfile COPYs the source tree.
-        cmd.append(os.path.dirname(os.path.dirname(os.path.dirname(dockerfile))))
+        cmd.append(root)
         _docker_build(cmd)
         return
     published = published_base_ref(base_ref)
+    published_id = image_id(published)
+    if published_id is not None and published_id == image_id(base_ref):
+        return                                      # the pull for this version, already tagged
     print(f'Pulling base image {published} (one-time)...')
     if pull_base_image(base_ref):
+        return
+    if image_exists(base_ref):
+        # Built by hand (./docker/build-images.sh) for a version with no published
+        # image, presumably; the remedy below says to do exactly that.
+        print(f'WARNING: using the local {base_ref}; could not pull {published} to confirm it is '
+              f'the image for videoflow {videoflow.__version__}.', file = sys.stderr)
         return
     raise RuntimeError(
         f'base image {base_ref} is not available locally and could not be pulled from '
@@ -216,9 +227,12 @@ def default_tag(graph_dir : str) -> str:
     return f'videoflow-{os.path.basename(os.path.abspath(graph_dir))}:latest'
 
 def image_id(ref : str) -> Optional[str]:
-    '''The local image's content id (``sha256:...``), or None when docker cannot read it.'''
-    proc = subprocess.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref],
-                          capture_output = True, text = True, check = False)
+    '''The local image's content id (``sha256:...``), or None when docker cannot read it (or is not installed).'''
+    try:
+        proc = subprocess.run(['docker', 'image', 'inspect', '--format', '{{.Id}}', ref],
+                              capture_output = True, text = True, check = False)
+    except FileNotFoundError:
+        return None
     out = proc.stdout.strip() if proc.returncode == 0 else ''
     return out or None
 

@@ -106,6 +106,32 @@ def test_no_traceback_unless_asked(monkeypatch, capsys):
     assert 'Traceback' in capsys.readouterr().err
 
 
+def test_missing_extra_is_reported_with_the_pip_remedy(monkeypatch, capsys):
+    # A bare `pip install videoflow` has the console script but not the broker
+    # client; the first import of it must become the install command, not a stack.
+    def boom(_args):
+        raise ModuleNotFoundError("No module named 'nats'", name = 'nats')
+
+    monkeypatch.setattr(cli, 'build_parser', _parser_running(boom))
+    monkeypatch.delenv('VF_DEBUG', raising = False)
+    assert cli.main(['explain', 'x']) == EXIT_ENVIRONMENT
+    err = capsys.readouterr().err
+    assert 'ERROR [VF_RESOURCE_UNAVAILABLE]' in err
+    assert '`videoflow explain`' in err and 'nats-py' in err
+    assert "pip install 'videoflow[all]'" in err and 'videoflow[distributed]' in err
+    assert 'Traceback' not in err
+
+
+def test_unknown_missing_module_keeps_its_traceback(monkeypatch):
+    # Only videoflow's own extras get the friendly treatment; anything else is a bug.
+    def boom(_args):
+        raise ModuleNotFoundError("No module named 'torch'", name = 'torch')
+
+    monkeypatch.setattr(cli, 'build_parser', _parser_running(boom))
+    with pytest.raises(ModuleNotFoundError):
+        cli.main(['explain', 'x'])
+
+
 # -- termination log ---------------------------------------------------------
 
 def test_termination_reason_is_machine_readable(tmp_path):

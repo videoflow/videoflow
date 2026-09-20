@@ -286,7 +286,7 @@ def test_compile_flow_with_remote_producer():
     — never by ProducerNode — so reading it unguarded made a native producer
     component impossible to deploy.
     '''
-    prod = component(_descriptor('producer', io = {'outputs': [{'name': 'out', 'type': 'any'}]}))
+    prod = component(_descriptor('producer', io = {'output': {'type': 'any'}}))
     cons = _NativeConsumer()(prod)
     specs = compile_flow(Flow([cons]), envelope_version = 4)
     remote = next(s for s in specs if s.is_remote)

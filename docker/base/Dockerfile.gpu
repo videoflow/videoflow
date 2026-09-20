@@ -47,10 +47,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # externally managed (PEP 668); inside a container installing system-wide is intended.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Dependencies first, from a stub of the package (its metadata, version and the
+# descriptor schema hatch bundles), in their own layer: `run-local`/`deploy`
+# rebuild this image on every run from a source checkout, and a source edit must
+# re-run only the no-deps install of the package below, not this download.
 COPY pyproject.toml README.md ./
-COPY videoflow ./videoflow
-
+COPY videoflow/version.py ./videoflow/version.py
+COPY spec/descriptor ./spec/descriptor
 RUN uv pip install --system --break-system-packages --no-cache ".[all]"
+
+COPY videoflow ./videoflow
+RUN uv pip install --system --break-system-packages --no-cache --no-deps .
 
 # The CUDA base's NVIDIA_REQUIRE_CUDA label demands cuda>=12.6 and lists driver-branch
 # exceptions (470/535/550) only for datacenter/professional brands — not GeForce. On a
