@@ -16,25 +16,30 @@ time on a model.
 |---|---|---|
 | [toy_calculator](toy_calculator) | BATCH | A diamond over a stream of integers: fan-out, a trace join re-aligning two branches, competing replicas, stateful aggregation, a two-parent consumer, a `metadata=True` consumer, and a prep hook. The smallest complete solution — **read this one first**. |
 | [toy_router](toy_router) | BATCH | Partitioned parallelism: `partition_by` routing that pins each key to one replica, `ctx.set_partition_key`, an `async def process` node, replica identity, and an idempotent sink. |
+| [toy_recovery](toy_recovery) | BATCH | The error taxonomy enforced by the runtime: a poison message dead-lettered on first sight, a crash restarted with its un-acked messages redelivered, and a self-checking `recovery_report.json`. |
 | [toy_fusion](toy_fusion) | REALTIME | Independent producers fused by **event time**: time-mode `JoinPolicy` with tolerance, lateness timeout, quorum and a collect window; unbounded live sources. |
 
 ## Running one
 
 ```bash
-docker compose up -d nats redis      # a broker to talk to (from the repo root)
 cd solutions/toy_calculator
 videoflow run-local toy_calculator.py
 ```
 
 `run-local` generates `config.yaml` from `config.template.yaml` the first time
-(it asks a few questions), runs `prepare.py`, and spawns one worker subprocess
-per node. To deploy the same graph to a cluster instead, swap in
+(it asks a few questions), runs `prepare.py`, starts a dev NATS + Redis in
+docker when nothing is listening on their ports (`docker compose up -d nats
+redis` from the repo root gives you one that stays), and spawns one worker
+subprocess per node. To deploy the same graph to a cluster instead, swap in
 `videoflow deploy toy_calculator.py`. Each solution's README documents every
-config key.
+config key. (Pass `--in-image` to run the workers inside the solution image
+instead of as host processes — what `run-local` does on its own for a solution
+whose dependencies are not installed here, such as the ML solutions in
+videoflow-contrib.)
 
 ## They are also the end-to-end test suite
 
-`tests/integration/local/test_toy_solutions.py` runs all of them on every CI build
+`tests/integration/local/test_toy_solutions.py` runs all four on every CI build
 and asserts their self-checking artifacts — `report.json`'s `matches_expected`,
 `counts.json`'s `matches_expected` and `sticky`, `fusion_summary.json`'s
 complete moments. A green run means the distributed path computed the right

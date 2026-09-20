@@ -78,8 +78,8 @@ def image_ref(name : str) -> str:
 # What workers run, all built by the up script (side-loaded on kind, pushed to the
 # registry on k3s). The base image carries a flow of built-in nodes; the solution
 # images are `videoflow-<dirname>:latest`, the same string deploy.build.default_tag
-# computes, so a hand-run `videoflow deploy` with no --image would build and find
-# these — under the registry prefix when one is in use.
+# computes (a hand-run `videoflow deploy` builds that, deploys it under a
+# content-addressed tag, and pushes it here only with --registry).
 BASE_IMAGE = image_ref('videoflow-base:py3.12')
 SOLUTION_IMAGES = {name: image_ref(f'videoflow-{name}:latest')
                    for name in ('toy_calculator', 'toy_router', 'toy_recovery', 'toy_fusion')}

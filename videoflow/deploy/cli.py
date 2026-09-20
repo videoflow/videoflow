@@ -26,6 +26,7 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import asyncio
 import os
+import signal
 import subprocess
 import sys
 import traceback
@@ -72,12 +73,25 @@ from .admission import (
     verify_topology_shape,
 )
 from .broker_profiles import BROKER_PROFILE_NAMES, BrokerProfile, RedisProfile, broker_profiles
-from .build import autobuild, docker_gpus_available, image_exists, run_in_image
+from .build import (
+    PUSH_TOOLS,
+    autobuild,
+    docker_gpus_available,
+    find_dockerfile,
+    image_exists,
+    push_image,
+    registry_ref,
+    resolve_needs_gpu,
+    run_in_image,
+)
 from .cluster import (
+    current_context,
     detect_cluster,
     gpu_preflight,
     hostpath_warning,
+    is_registry_qualified,
     load_images,
+    nvidia_runtimeclass,
 )
 from .compile import declared_requirements, load_flow, requirements_from_document, specs_from_document
 from .gpu import (
@@ -95,6 +109,10 @@ from .images import (
     parse_override,
     resolve_image,
 )
+from .profiles import PROFILES_FILE_ENV, apply_docker_env, command_defaults, load_profiles, select_profile
+
+#: The commands a cluster profile feeds (see ``deploy.profiles``).
+PROFILE_COMMANDS = ('deploy', 'run-local', 'teardown')
 
 
 def _load_flow(target : str) -> Flow:
@@ -107,6 +125,139 @@ def _load_flow(target : str) -> Flow:
         - a built ``Flow`` produced by calling the factory.
     '''
     return load_flow(target)
+
+def _probe_host_import(graph_target : str) -> ImportError | None:
+    '''
+    Whether the graph's dependencies import on this machine: the ``ImportError``
+    when they do not (the signal that the workers must run inside the solution
+    image), else None. Any other failure of the factory — a config that is not
+    there yet, an output the prepare hook has not produced — is not this probe's
+    to report: the deps import, so the real load after prepare will raise it with
+    its own message. ``SystemExit`` (no such module or factory) propagates.
+    '''
+    try:
+        _load_flow(graph_target)
+    except ImportError as e:
+        return e
+    except Exception:                                 # noqa: BLE001 — see docstring
+        return None
+    return None
+
+def _probe_host_flow(graph_target : str) -> Flow | None:
+    '''The graph when it builds on this machine, else None (see ``_probe_host_import``).'''
+    try:
+        return _load_flow(graph_target)
+    except Exception:                                 # noqa: BLE001 — a host that cannot build it
+        return None
+
+def _export_solution_config(config_path : str | None) -> None:
+    '''
+    Publishes the resolved config path to every ``build_flow`` this process (or a
+    worker it spawns) runs, so a solution reading ``VF_SOLUTION_CONFIG`` honours
+    ``--config`` instead of always opening the ``config.yaml`` beside its module.
+    '''
+    from .solution import CONFIG_ENV  # optional dep: solution imports yaml at module scope
+    if config_path:
+        os.environ[CONFIG_ENV] = config_path
+
+def _solution_env(config_path : str | None) -> dict[str, str]:
+    '''The same variable for a container (``run_in_image(env=...)``).'''
+    from .solution import CONFIG_ENV  # optional dep: solution imports yaml at module scope
+    return {CONFIG_ENV: config_path} if config_path else {}
+
+def _solution_template(graph_dir : str, config_path : str | None) -> tuple[dict | None, dict]:
+    '''The solution's ``config.template.yaml`` (None without one) and the resolved config (``{}`` without one).'''
+    from .solution import find_template, load_template  # optional dep: solution imports yaml at module scope
+    template_path = find_template(graph_dir)
+    template = load_template(template_path) if template_path else None
+    config : dict = {}
+    if config_path:
+        import yaml  # optional dep (deploy extra)
+        with open(config_path) as f:
+            config = yaml.safe_load(f) or {}
+    return template, config
+
+def _config_mounts(graph_dir : str, config_path : str | None) -> list:
+    '''
+    A ``--config`` that lives outside the solution directory, mounted read-only
+    at its own path so the prepare/compile containers (which see the solution
+    directory only) can read it.
+    '''
+    from .manifests import parse_mounts  # optional dep: manifests imports yaml at module scope
+    if not config_path:
+        return []
+    real = os.path.realpath(config_path)
+    if real.startswith(os.path.realpath(graph_dir).rstrip('/') + '/'):
+        return []
+    return parse_mounts([f'{real}:{os.path.abspath(config_path)}:ro'])
+
+def _needs_gpu_for_build(graph_dir : str, graph_target : str, declared : bool | None) -> tuple[bool, str | None]:
+    '''
+    Which of the solution's Dockerfiles to build (``build.resolve_needs_gpu``):
+    the template's ``x-gpu`` when declared; otherwise, when both files exist and
+    the graph builds on this machine, its compiled device placement.
+    '''
+    specs = None
+    if declared is None and find_dockerfile(graph_dir, True) != find_dockerfile(graph_dir, False):
+        flow = _probe_host_flow(graph_target)
+        if flow is not None:
+            try:
+                specs = compile_flow(flow)
+            except ValueError:
+                specs = None
+    return resolve_needs_gpu(graph_dir, declared, specs)
+
+#: ``--gpu-runtime-class none``: deliberately no runtimeClassName on the GPU pods.
+GPU_RUNTIME_CLASS_NONE = 'none'
+
+def _normalize_runtime_class(requested : str | None) -> str | None:
+    '''``none`` (or empty) means no runtimeClassName, not a class called that.'''
+    if requested is None or requested.strip().lower() in ('', GPU_RUNTIME_CLASS_NONE):
+        return None
+    return requested
+
+def _resolve_gpu_runtime_class(requested : str | None, gpu_specs : list, kubectl : str) -> str | None:
+    '''
+    The ``runtimeClassName`` GPU pods get: the one asked for; none for ``none``;
+    otherwise, for a flow with GPU nodes, the NVIDIA RuntimeClass the cluster
+    registers, when it does. k3s ships an opt-in ``nvidia`` handler and leaves
+    runc the default, so a GPU pod without it schedules and then starts with no
+    device — the easiest mistake to make, and one that does not look like a flag
+    problem; a cluster whose default runtime already injects devices is not
+    harmed by naming the class it also registers. The choice is announced.
+    '''
+    if not gpu_specs or requested is not None:
+        return _normalize_runtime_class(requested)
+    found = nvidia_runtimeclass(kubectl)
+    if found:
+        print(f'NOTE: GPU pods will use RuntimeClass {found!r} (registered in the cluster); '
+              f'pass --gpu-runtime-class {GPU_RUNTIME_CLASS_NONE} to opt out.', file = sys.stderr)
+    return found
+
+class _SpecsFlow:
+    '''
+    The engine-facing half of a ``Flow`` for a graph compiled inside its image:
+    ``run-local`` then holds the specs but no in-process graph. ``run``/``join``/
+    ``stop`` mirror ``core.flow.Flow`` without ``tasks_data`` — the engine was
+    constructed with the specs — so the run loop treats both the same way.
+    '''
+    def __init__(self, flow_id : str, flow_type : str) -> None:
+        self.flow_id = flow_id
+        self.flow_type = flow_type
+        self.run_id : str | None = None
+        self._engine : Any = None
+
+    def run(self, engine : Any, run_id : str | None = None) -> None:
+        self._engine = engine
+        self.run_id = run_id or uuid.uuid4().hex[:12]
+        engine.allocate_and_run_tasks(None, self.flow_id, self.flow_type, self.run_id)
+
+    def join(self) -> None:
+        self._engine.join_task_processes()
+
+    def stop(self) -> None:
+        self._engine.signal_flow_termination()
+        self.join()
 
 def _gpu_cleanup(gpu_strategy : GpuStrategy | None, kubectl : str,
                  flow_id : str | None = None) -> None:
@@ -208,36 +359,31 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
-    # config.template.yaml when none exists) and collect its x-mounts.
+    # config.template.yaml when none exists), collect its x-mounts, and read what
+    # it says about the image to build (x-gpu).
     # optional dep: solution imports yaml at module scope
-    from .solution import (
-        ensure_config,
-        find_template,
-        load_template,
-        resolve_mounts,
-        split_mount_specs,
-    )
+    from .solution import ensure_config, resolve_gpu, resolve_mounts, split_mount_specs
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
-    template_path = find_template(graph_dir)
-    template_mounts = []
-    if template_path and config_path:
-        import yaml  # optional dep (deploy extra)
-        with open(config_path) as f:
-            template_mounts = resolve_mounts(load_template(template_path), yaml.safe_load(f),
-                                             graph_dir)
+    _export_solution_config(config_path)
+    template, config = _solution_template(graph_dir, config_path)
     try:
+        template_mounts = (resolve_mounts(template, config, graph_dir, home = args.mount_home)
+                           if template and config_path else [])
         host_specs, claim_specs = split_mount_specs(template_mounts)
         # Host paths and claims in one list: the two parsers number their volume
         # names from disjoint prefixes (vf-mount-*, vf-pvc-*), so the pods take the
-        # concatenation as-is. A host path under a claim's path is dropped from the
-        # pods by manifests.pod_mounts and kept for the prep/compile containers.
+        # concatenation as-is. A host path under a claim's path is served by the
+        # claim in the pods (manifests.pod_mounts) and kept for the prep/compile
+        # containers.
         mounts = parse_mounts((args.mount or []) + host_specs) \
             + parse_pvc_mounts((args.mount_pvc or []) + claim_specs)
         # Prep/compile containers additionally see the solution directory itself
-        # (config, prepare.py, work dir) at its host path. run_in_image skips the
-        # claim mounts — a claim exists only inside the cluster.
-        container_mounts = parse_mounts([graph_dir]) + mounts
+        # (config, prepare.py, work dir) at its host path — and a --config kept
+        # elsewhere. run_in_image skips the claim mounts — a claim exists only
+        # inside the cluster.
+        container_mounts = parse_mounts([graph_dir]) + mounts + _config_mounts(graph_dir, config_path)
+        declared_gpu = resolve_gpu(template, config)
     except ValueError as e:
         raise ConfigError(str(e)) from e
     # Resolved before any step that costs time: a bad --broker-replicas should not
@@ -250,15 +396,20 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         storage_class = args.broker_storage_class, priority_class = args.priority_class)
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
-    # (base image auto-built from a source checkout when missing).
+    # (base image auto-built from a source checkout when missing). Which of the
+    # two is decided by the flow (x-gpu / device placement), never by whether
+    # this machine's docker daemon happens to have the NVIDIA runtime — that
+    # only decides whether the prepare/compile containers get --gpus.
     gpus = docker_gpus_available()
     image = args.image
     if image is None and not args.no_build:
+        needs_gpu, note = _needs_gpu_for_build(graph_dir, graph_target, declared_gpu)
+        if note:
+            print(f'NOTE: {note}', file = sys.stderr)
         try:
-            image = autobuild(graph_dir, needs_gpu = gpus, context_override = args.build_context)
+            image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
         except RuntimeError as e:
             raise ResourceUnavailable(str(e)) from e
-
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
     # baked into the compiled specs).
     # optional dep: solution imports yaml at module scope
@@ -267,7 +418,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         try:
             if image is not None:
                 run_in_image(image, prepare_command(config_path), mounts = container_mounts,
-                             workdir = graph_dir, gpus = gpus, interactive = interactive)
+                             workdir = graph_dir, gpus = gpus, interactive = interactive,
+                             env = _solution_env(config_path))
             else:
                 run_prepare_local(graph_dir, config_path)
         except (RuntimeError, subprocess.CalledProcessError) as e:
@@ -276,10 +428,27 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # 3. Compile: locally when the graph's deps import on the host, else inside
     # the image (specs round-trip as JSON — same format as the specs ConfigMap).
     flow_id, flow_type, specs, declared = _compile_graph(args, graph_target, graph_dir, image,
-                                                         container_mounts, gpus)
+                                                         container_mounts, gpus, config_path)
     if args.flow_id:
         flow_id = args.flow_id
     run_id = args.run_id or uuid.uuid4().hex[:12]
+
+    # 3b. A registry (--registry, typically from the cluster profile): the local
+    # image — now known to compile the graph — is pushed and the pods pull the
+    # registry-qualified ref, the way onto a multi-node cluster where side-loading
+    # reaches one node only. An image that already names a registry was pushed by
+    # whoever built it.
+    if args.registry and image and not is_registry_qualified(image) and image_exists(image):
+        if args.dry_run:
+            # No side effects on a dry run: render the ref the real deploy would push.
+            print(f'NOTE: --dry-run: {image} is not pushed to {args.registry}; the manifests name the ref '
+                  f'a deploy would.', file = sys.stderr)
+            image = registry_ref(args.registry, image)
+        else:
+            try:
+                image = push_image(image, args.registry, args.push_tool)
+            except (RuntimeError, ValueError) as e:
+                raise ClusterError(str(e)) from e
 
     # --dry-run / --render-only never touch the cluster (they include the dev-infra
     # manifests whenever the broker would have been auto-provisioned).
@@ -295,7 +464,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         images = sorted({resolve_image(s.name, s.image, image, overrides) for s in specs})
     except ValueError as e:
         raise ConfigError(str(e)) from e
-    local_images = [ref for ref in images if image_exists(ref)]
+    local_images = [ref for ref in images if not is_registry_qualified(ref) and image_exists(ref)]
     if local_images:
         try:
             load_images(flavor, local_images, kubectl = args.kubectl)
@@ -308,6 +477,9 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         if warning:
             print(f'WARNING: {warning}', file = sys.stderr)
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
+    # Decided here, before preflight, and used by everything downstream: the
+    # preflight's advice, the manifests and the teardown hint all see one value.
+    gpu_runtime_class = _resolve_gpu_runtime_class(args.gpu_runtime_class, gpu_specs, args.kubectl)
     if gpu_specs:
         # optional dep: manifests imports yaml at module scope
         from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod, gpu_pod_claims
@@ -325,7 +497,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         # its own gpu_count devices, so a partially-schedulable flow deadlocks. The
         # per-pod maximum bounds single-node schedulability for multi-GPU nodes.
         demand = gpu_demand(specs, default_resource = args.gpu_resource_name)
-        problems = gpu_preflight(args.kubectl, gpu_runtime_class = args.gpu_runtime_class,
+        problems = gpu_preflight(args.kubectl, gpu_runtime_class = gpu_runtime_class,
                                  demand = demand, gpu_mode = args.gpu_mode,
                                  max_per_pod = gpu_max_per_pod(specs, default_resource = args.gpu_resource_name),
                                  pod_claims = gpu_pod_claims(specs, default_resource = args.gpu_resource_name))
@@ -481,7 +653,7 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         kubectl = args.kubectl, envelope_version = args.envelope_version,
         provision_image = args.provision_image,
         autoscaling = args.autoscaling, max_replicas = args.max_replicas,
-        mounts = mounts, gpu_runtime_class = args.gpu_runtime_class,
+        mounts = mounts, gpu_runtime_class = gpu_runtime_class,
         gpu_mode = args.gpu_mode, gpu_resource_name = args.gpu_resource_name,
         gpu_autoscaling = args.gpu_autoscaling,
         image_pull_policy = args.image_pull_policy,
@@ -569,13 +741,41 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         raise FlowFailed(f'Flow failed: {", ".join(failed)}')
     print(f'Flow {flow_id} completed.')
 
+def _compile_in_image(args : argparse.Namespace, graph_target : str, graph_dir : str,
+                      image : str, container_mounts : list, gpus : bool,
+                      config_path : str | None = None) -> tuple:
+    '''
+    ``(flow_id, flow_type, specs, declared requirements)`` compiled inside the
+    solution image: the graph dir is mounted at the same absolute path, so config
+    paths resolve identically, and the specs round-trip as JSON — the same format
+    as the specs ConfigMap.
+    '''
+    compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
+    # run-local's parser has no --envelope-version; the build default applies.
+    envelope_version = getattr(args, 'envelope_version', None)
+    if envelope_version is not None:
+        compile_cmd += ['--envelope-version', str(envelope_version)]
+    try:
+        out = run_in_image(image, compile_cmd, mounts = container_mounts,
+                           workdir = graph_dir, gpus = gpus, capture = True,
+                           env = _solution_env(config_path))
+    except RuntimeError as e:
+        raise ResourceUnavailable(str(e)) from e
+    if out is None:
+        # capture = True above, so stdout is always captured; a None here would
+        # mean run_in_image stopped capturing, and json.loads would fail with a
+        # traceback instead of a message the operator can act on.
+        raise ResourceUnavailable(f'Compiling the graph in {image} produced no output. '
+                                  'Re-run with --no-build and an importable graph, or rebuild the image.')
+    return specs_from_document(out) + (requirements_from_document(out),)
+
 def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : str,
-                   image : str | None, container_mounts : list, gpus : bool) -> tuple:
+                   image : str | None, container_mounts : list, gpus : bool,
+                   config_path : str | None = None) -> tuple:
     '''
     ``(flow_id, flow_type, specs, declared requirements)`` — via a local import when
-    the graph's deps are installed on the host (cheap), else compiled inside the solution image (the
-    graph dir is mounted at the same absolute path, so config paths resolve
-    identically).
+    the graph's deps are installed on the host (cheap), else compiled inside the
+    solution image (``_compile_in_image``).
     '''
     try:
         flow = _load_flow(graph_target)
@@ -584,21 +784,7 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
             raise ConfigError(
                 f'Cannot import the graph on this machine ({e}) and there is no '
                 f'solution image to compile it in — pass --image or drop --no-build.') from e
-        compile_cmd = ['python', '-m', 'videoflow.compile', graph_target]
-        if args.envelope_version is not None:
-            compile_cmd += ['--envelope-version', str(args.envelope_version)]
-        try:
-            out = run_in_image(image, compile_cmd, mounts = container_mounts,
-                               workdir = graph_dir, gpus = gpus, capture = True)
-        except RuntimeError as e2:
-            raise ResourceUnavailable(str(e2)) from e2
-        if out is None:
-            # capture = True above, so stdout is always captured; a None here would
-            # mean run_in_image stopped capturing, and json.loads would fail with a
-            # traceback instead of a message the operator can act on.
-            raise ResourceUnavailable(f'Compiling the graph in {image} produced no output. '
-                            'Re-run with --no-build and an importable graph, or rebuild the image.') from e
-        return specs_from_document(out) + (requirements_from_document(out),)
+        return _compile_in_image(args, graph_target, graph_dir, image, container_mounts, gpus, config_path)
 
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
     try:
@@ -651,7 +837,9 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
             autoscaling = args.autoscaling, max_replicas = args.max_replicas,
             envelope_version = args.envelope_version,
             provision_image = args.provision_image, mounts = mounts,
-            gpu_runtime_class = args.gpu_runtime_class, gpu_mode = args.gpu_mode,
+            # A render never touches the cluster, so no RuntimeClass is detected
+            # here; `none` still means none.
+            gpu_runtime_class = _normalize_runtime_class(args.gpu_runtime_class), gpu_mode = args.gpu_mode,
             gpu_resource_name = args.gpu_resource_name,
             gpu_autoscaling = args.gpu_autoscaling,
             image_pull_policy = args.image_pull_policy,
@@ -751,6 +939,18 @@ def _needs_local_build(flow : Flow) -> bool:
     specs = specs_from_tasks_data(flow.tasks_data())
     return any(needs_container_image(s) and not s.image for s in specs)
 
+def _raise_interrupt(signum : int, frame : Any) -> None:
+    raise KeyboardInterrupt
+
+
+def _install_sigterm_as_interrupt() -> Any:
+    '''Route SIGTERM through the Ctrl-C path; returns the previous handler, or None off the main thread.'''
+    try:
+        return signal.signal(signal.SIGTERM, _raise_interrupt)
+    except ValueError:
+        return None
+
+
 def _cmd_run_local(args : argparse.Namespace) -> None:
     graph_path = args.graph.rsplit(':', 1)[0] if ':' in args.graph else args.graph
     if not os.path.isfile(graph_path):
@@ -760,22 +960,85 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         (':' + args.graph.rsplit(':', 1)[1] if ':' in args.graph else '')
 
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
-    # config.template.yaml when none exists).
-    from .solution import ensure_config  # optional dep: solution imports yaml at module scope
+    # config.template.yaml when none exists) and collect its x-mounts — locally
+    # they matter only for workers that run inside the solution image.
+    # optional dep: solution and manifests import yaml at module scope
+    from .manifests import parse_mounts
+    from .solution import (
+        ensure_config,
+        find_prepare,
+        prepare_command,
+        resolve_gpu,
+        resolve_mounts,
+        run_prepare_local,
+        split_mount_specs,
+    )
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
+    _export_solution_config(config_path)
+    template, config = _solution_template(graph_dir, config_path)
+    try:
+        host_specs, claim_specs = split_mount_specs(
+            resolve_mounts(template, config, graph_dir, home = args.mount_home)
+            if template and config_path else [])
+        worker_mounts = parse_mounts((args.mount or []) + host_specs)
+        declared_gpu = resolve_gpu(template, config)
+    except ValueError as e:
+        raise ConfigError(str(e)) from e
 
-    # 1. Prepare hook, on this host (the workers are local processes too). Runs
-    # before the graph is loaded, because the factory reads the hook's outputs.
-    if not args.no_prepare:
-        from .solution import run_prepare_local  # optional dep: solution imports yaml
+    # 1. Where the workers run: on this host when the graph's dependencies import
+    # here (the common case), inside the solution image — the same one deploy
+    # builds — when they do not, or on --in-image. The probe only runs when an
+    # image could exist at all, so a plain graph without a Dockerfile keeps the
+    # host path and is loaded exactly once, after prepare.
+    could_run_in_image = (args.in_image or args.image is not None
+                          or find_dockerfile(graph_dir, needs_gpu = False) is not None)
+    import_error = None if args.in_image or not could_run_in_image else _probe_host_import(graph_target)
+    in_image = args.in_image or import_error is not None
+    gpus = docker_gpus_available()
+    image = args.image
+    flow : Flow | None = None
+    if in_image:
+        if image is None and not args.no_build:
+            needs_gpu, note = resolve_needs_gpu(graph_dir, declared_gpu, None)
+            if note:
+                print(f'NOTE: {note}', file = sys.stderr)
+            try:
+                image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
+            except RuntimeError as e:
+                raise ResourceUnavailable(str(e)) from e
+        if image is None:
+            why = f' ({import_error})' if import_error is not None else ''
+            raise ConfigError(
+                f'Cannot import the graph on this machine{why} and there is no solution image to run it in.',
+                remedy = 'Pass --image <ref>, or drop --no-build so the solution\'s Dockerfile is built.')
+        # The prepare/compile containers see the solution directory itself (config,
+        # prepare.py, work dir) at its host path, plus whatever the workers mount.
+        container_mounts = parse_mounts([graph_dir]) + worker_mounts + _config_mounts(graph_dir, config_path)
+        if claim_specs:
+            print(f'NOTE: x-mounts claim entries ({", ".join(claim_specs)}) name data inside a cluster; '
+                  f'a local run cannot mount them.', file = sys.stderr)
+        # 2. Prepare hook, inside the image: its dependencies live there, not here.
+        if find_prepare(graph_dir) is not None and not args.no_prepare:
+            try:
+                run_in_image(image, prepare_command(config_path), mounts = container_mounts,
+                             workdir = graph_dir, gpus = gpus, interactive = interactive,
+                             env = _solution_env(config_path))
+            except RuntimeError as e:
+                raise ResourceUnavailable(f'prepare.py failed: {e}') from e
+        # 3. Compile inside the image; the specs are all the engine needs.
+        flow_id, flow_type, local_specs, declared = _compile_in_image(
+            args, graph_target, graph_dir, image, container_mounts, gpus, config_path)
+    elif not args.no_prepare:
+        # 2. Prepare hook, on this host (the workers are local processes too). Runs
+        # before the graph is loaded, because the factory reads the hook's outputs.
         try:
             run_prepare_local(graph_dir, config_path)
         except subprocess.CalledProcessError as e:
             raise ResourceUnavailable(f'prepare.py failed: {e}') from e
 
-    # 2. Warn about solution inputs that don't exist yet (nothing is mounted
-    # locally, but a bad path is worth catching before spawning N processes).
+    # Warn about solution inputs that don't exist yet (a bad path is worth
+    # catching before spawning N processes).
     _warn_missing_solution_inputs(graph_dir, config_path)
 
     # 3. Broker: bring-your-own via --nats, else reuse whatever already listens on
@@ -804,8 +1067,13 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                 print(f'Started dev {" + ".join(created)} (docker).')
 
     # 4. Load + run. load_flow puts the graph dir on sys.path, which the engine
-    # re-exports as PYTHONPATH so the workers can import its sibling modules.
-    flow = _load_flow(graph_target)
+    # re-exports as PYTHONPATH so the workers can import its sibling modules. A
+    # graph compiled inside its image was loaded there instead; its specs stand
+    # in for the Flow from here on.
+    if not in_image:
+        flow = _load_flow(graph_target)
+        local_specs = compile_flow(flow)
+        flow_id, flow_type, declared = flow.flow_id, flow.flow_type, declared_requirements(flow)
     from ..engines.local import LocalProcessEngine  # optional dep: the local engine imports nats
     # Composition admission: a container this run just started is judged by the
     # shape localinfra starts it with; whatever already answered on the dev port
@@ -813,9 +1081,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     # broker (--nats, or whatever listens under --no-infra) and a bring-your-own
     # store are read back live — see deploy.admission. Binding for a definite
     # incompatibility; an unobserved guarantee binds only under --require-profile.
-    local_specs = compile_flow(flow)
     explicit_profiles = parse_profile_requests(args.require_profile, local_specs)
-    verify_topology_shape(flow.flow_type, flow.flow_id, args.run_id or 'run', explicit_profiles)
+    verify_topology_shape(flow_type, flow_id, args.run_id or 'run', explicit_profiles)
     dev_messaging_caps, dev_payload_caps = local_dev_capabilities()
     if args.nats is None and not args.no_infra and 'nats' in created:
         messaging_caps = dev_messaging_caps
@@ -825,8 +1092,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                     else dev_payload_caps if not byo_redis and 'redis' in created
                     else redis_payload_capabilities_observed(blob_redis_url))
     try:
-        verify_graph_size(local_specs, flow.flow_id, args.run_id or 'run', messaging_caps)
-        admit(requirements_for(flow.flow_type, local_specs, explicit_profiles, declared_requirements(flow)),
+        verify_graph_size(local_specs, flow_id, args.run_id or 'run', messaging_caps)
+        admit(requirements_for(flow_type, local_specs, explicit_profiles, declared),
               messaging_caps, payload_caps,
               payload_refs_in_use = blob_redis_url is not None, enforce = enforce_admission(explicit_profiles),
               unknown_is_fatal = unknown_admission(explicit_profiles), where = 'run-local',
@@ -837,15 +1104,17 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         if created and not args.keep_infra:
             teardown_local_infra(created)
         raise
-    # 4a. Image, but only if some node actually needs one. A pure-Python flow runs as
-    # host subprocesses, so building the solution image would cost minutes and buy
-    # nothing; a native component without a localCommand is docker-run and can't start
-    # without it. --image wins over building, mirroring deploy.
-    image = args.image
-    if image is None and not args.no_build and _needs_local_build(flow):
+    # 4a. Image, but only if some node actually needs one. A pure-Python flow on
+    # this host runs as subprocesses, so building the solution image would cost
+    # minutes and buy nothing; a native component without a localCommand is
+    # docker-run and can't start without it. --image wins over building,
+    # mirroring deploy. (In-image runs built or were given theirs above.)
+    if image is None and not args.no_build and flow is not None and _needs_local_build(flow):
+        needs_gpu, note = resolve_needs_gpu(graph_dir, declared_gpu, local_specs)
+        if note:
+            print(f'NOTE: {note}', file = sys.stderr)
         try:
-            image = autobuild(graph_dir, needs_gpu = docker_gpus_available(),
-                              context_override = args.build_context)
+            image = autobuild(graph_dir, needs_gpu = needs_gpu, context_override = args.build_context)
         except RuntimeError as e:
             raise ResourceUnavailable(str(e)) from e
     # Restart failed workers by default, exactly as the cluster would — with a
@@ -858,22 +1127,36 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
                                 blob_ttl_seconds = args.blob_ttl_seconds,
                                 supervision = supervision,
                                 profile_requests = requests_env(explicit_profiles),
-                                gpu_policy = args.gpu_policy)
+                                gpu_policy = args.gpu_policy,
+                                specs = local_specs if in_image else None,
+                                worker_image = image if in_image else None,
+                                worker_mounts = worker_mounts if in_image else None,
+                                docker_gpus = gpus)
+    runner : Any = _SpecsFlow(flow_id, flow_type) if in_image else flow
+    # A SIGTERM — `kill`, a CI cancel, a closing multiplexer — stops the flow the
+    # way Ctrl-C does: the workers are quiesced and the containers removed,
+    # instead of the process dying and leaving them orphaned.
+    previous_term = _install_sigterm_as_interrupt()
     try:
         try:
-            flow.run(engine, run_id = args.run_id)
+            runner.run(engine, run_id = args.run_id)
         except (RuntimeError, ValueError) as e:
             # Broker unreachable / incompatible wire settings: report the message,
             # not a traceback through the engine internals.
             raise BrokerUnavailable(str(e)) from e
-        print(f'Flow {flow.flow_id} run {flow.run_id} running locally against {nats_url}. '
+        where = f'in {image}' if in_image else 'locally'
+        print(f'Flow {runner.flow_id} run {runner.run_id} running {where} against {nats_url}. '
               f'Ctrl-C to stop.')
         try:
-            flow.join()
+            runner.join()
         except KeyboardInterrupt:
             print('\nInterrupted; stopping...', file = sys.stderr)
-            flow.stop()
+            runner.stop()
     finally:
+        if previous_term is not None:
+            signal.signal(signal.SIGTERM, previous_term)
+        if in_image:
+            engine.cleanup_containers()
         if created and not args.keep_infra:
             teardown_local_infra(created)
         elif created:
@@ -885,7 +1168,7 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     if failed:
         engine.report_failures()
         raise FlowFailed(f'Flow failed: {", ".join(failed)}')
-    print(f'Flow {flow.flow_id} completed.')
+    print(f'Flow {runner.flow_id} completed.')
 
 def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> None:
     '''
@@ -991,6 +1274,11 @@ def _cmd_provision(args : argparse.Namespace) -> None:
 
 def _cmd_teardown(args : argparse.Namespace) -> None:
     import nats  # optional dep (distributed/deploy extras)
+
+    if not args.nats:
+        raise ConfigError('teardown needs the broker URL the run used.',
+                          remedy = 'Pass --nats <url> (deploy prints it in its teardown hint), or name '
+                                   '`nats:` in the cluster profile.')
 
     # optional dep: topology imports nats at module scope
     from ..messaging.topology import control_subject_for, delete_run_streams
@@ -1353,9 +1641,26 @@ def _cmd_dlq_purge(args : argparse.Namespace) -> None:
     asyncio.run(_go())
     print(f'Purged dead-letter stream {stream}.')
 
-def build_parser() -> argparse.ArgumentParser:
+def _add_profile_flags(command : argparse.ArgumentParser) -> None:
+    '''``--cluster`` / ``--clusters-file`` on every command a cluster profile feeds.'''
+    command.add_argument('--cluster', default = None, metavar = 'NAME',
+                         help = 'Cluster profile to take defaults from (a named entry of the clusters file). '
+                                'Without it, the profile whose `context` is the current kubectl context '
+                                'applies, if any. Flags given explicitly always win.')
+    command.add_argument('--clusters-file', default = None, metavar = 'PATH',
+                         help = f'The clusters file (default: ${PROFILES_FILE_ENV}, else '
+                                '~/.config/videoflow/clusters.yaml). See the README, "Multi-node clusters".')
+
+def build_parser(profile_defaults : dict[str, dict] | None = None) -> argparse.ArgumentParser:
+    '''
+    - Arguments:
+        - profile_defaults: per-command argparse defaults from the selected \
+            cluster profile (``main`` resolves them before parsing), applied with \
+            ``set_defaults`` so an explicit flag still overrides them.
+    '''
     parser = argparse.ArgumentParser(prog = 'videoflow', description = 'Deploy videoflow graphs.')
     sub = parser.add_subparsers(dest = 'command', required = True)
+    profile_defaults = profile_defaults or {}
 
     deploy = sub.add_parser(
         'deploy',
@@ -1411,11 +1716,18 @@ def build_parser() -> argparse.ArgumentParser:
                                'Solution x-mounts are added automatically.')
     deploy.add_argument('--mount-pvc', action = 'append', metavar = 'CLAIM:PATH[:ro]',
                         help = 'Existing PersistentVolumeClaim mounted at PATH in every node '
-                               'workload, e.g. --mount-pvc vf-test-share:/opt/data/share:ro. '
-                               'The claim must live in --namespace. A --mount host path at or '
-                               'under PATH is served by the claim in the pods (and still by the '
-                               'host in the prep/compile containers). Repeatable; solution '
-                               'x-mounts of the form pvc:CLAIM:PATH are added automatically.')
+                               'workload, e.g. --mount-pvc work-share:/shared/videoflow. '
+                               'The claim must live in --namespace. A --mount or x-mounts host '
+                               'path at or under PATH is served by the claim in the pods (and '
+                               'still by the host in the prep/compile containers) — the way a '
+                               'multi-node cluster shares inputs, work dirs and caches. '
+                               'Repeatable; solution x-mounts of the form pvc:CLAIM:PATH are '
+                               'added automatically.')
+    deploy.add_argument('--mount-home', default = None, metavar = 'DIR',
+                        help = 'What `~` in the solution\'s x-mounts resolves to on the host side '
+                               '(default: your home directory). On a multi-node cluster point it '
+                               'inside the directory passed to --mount-pvc, so the model caches '
+                               'the pods mount are the ones the prepare hook filled.')
     deploy.add_argument('--priority-class', default = None, metavar = 'NAME',
                         help = 'priorityClassName for every pod this deploy creates — workers, '
                                'the provision Job and any broker it provisions. The PriorityClass '
@@ -1456,10 +1768,11 @@ def build_parser() -> argparse.ArgumentParser:
                         help = 'StorageClass of the durable profile\'s claims (default '
                                f'{BrokerProfile.durable().storage_class}, what k3s and kind ship).')
     deploy.add_argument('--gpu-runtime-class', default = None, metavar = 'NAME',
-                        help = 'runtimeClassName for GPU pods, e.g. --gpu-runtime-class nvidia. '
-                               'Needed where the NVIDIA container runtime is an opt-in RuntimeClass '
-                               'instead of the node default (k3s): without it a GPU pod schedules '
-                               'but starts with no device visible.')
+                        help = 'runtimeClassName for GPU pods. Default: the NVIDIA RuntimeClass the '
+                               'cluster registers (`nvidia` on k3s, where the NVIDIA container '
+                               'runtime is opt-in and a GPU pod without it starts with no device '
+                               'visible), detected at deploy time and announced. Pass a name to '
+                               'choose one, or `none` for no runtimeClassName.')
     # Choices come from the strategy registry, so a registered third mode is
     # selectable without touching this file. The entry-point group is loaded
     # first: argparse fixes `choices` at parser-construction time, so a plugin
@@ -1498,6 +1811,15 @@ def build_parser() -> argparse.ArgumentParser:
     deploy.add_argument('--image', default = None,
                         help = 'Default container image ref for nodes that do not declare their own '
                                '(e.g. ghcr.io/acme/app:v1). Build it FROM videoflow-base with your code + deps.')
+    deploy.add_argument('--registry', default = None, metavar = 'HOST[:PORT][/PREFIX]',
+                        help = 'Push the built (or local --image) image here and have the pods pull '
+                               'it from there, e.g. --registry 10.0.0.1:5000 or ghcr.io/acme. Needed '
+                               'on a multi-node cluster, where side-loading reaches one node only; '
+                               'usually set once in the cluster profile (--cluster).')
+    deploy.add_argument('--push-tool', choices = list(PUSH_TOOLS), default = 'docker',
+                        help = 'How --registry pushes: docker (default; the daemon must trust the '
+                               'registry) or crane (user space, `--insecure`, for a plain-HTTP '
+                               'registry the daemon does not trust — needs crane on PATH).')
     deploy.add_argument('--blob-redis-url', default = None, help = 'Redis URL for the large-payload blob store.')
     deploy.add_argument('--blob-ttl-seconds', type = int, default = None,
                         help = 'TTL for offloaded payloads in the blob store. Default: flow-type '
@@ -1510,8 +1832,10 @@ def build_parser() -> argparse.ArgumentParser:
                         choices = list(IMAGE_PULL_POLICIES),
                         help = f'imagePullPolicy for every container (default {DEFAULT_IMAGE_PULL_POLICY}). '
                                'The default is what lets a locally built image run: deploy loads it into '
-                               'the cluster itself, so there is nothing to pull. Use Always only when every '
-                               'image comes from a registry the nodes can reach.')
+                               'the cluster itself, so there is nothing to pull — and an auto-built image '
+                               'is deployed under a content-addressed tag, so it stays right on a registry '
+                               'too (a changed image gets a new tag). Use Always for a registry image under '
+                               'a mutable tag you re-push.')
     deploy.add_argument('--autoscaling', action = 'store_true',
                         help = 'Emit a KEDA ScaledObject per processor node (requires KEDA in-cluster).')
     deploy.add_argument('--max-replicas', type = int, default = 10,
@@ -1523,18 +1847,22 @@ def build_parser() -> argparse.ArgumentParser:
                         help = 'Image the provision init Job runs on (needs videoflow + broker client). '
                                'Set this when --image is a non-Python vendor image.')
     deploy.add_argument('--dry-run', action = 'store_true', help = 'Print manifests to stdout, write nothing.')
-    deploy.set_defaults(func = _cmd_deploy)
+    _add_profile_flags(deploy)
+    deploy.set_defaults(func = _cmd_deploy, **profile_defaults.get('deploy', {}))
 
     run = sub.add_parser(
         'run-local',
         help = 'Run a graph as local subprocesses: config Q&A, prepare, broker provisioning, '
                'run to completion — the local twin of `deploy`.',
         description = 'One-stop local run: generates the solution config (interactive Q&A over '
-                      'its config.template.yaml when none exists), runs its prepare.py hook on '
-                      'this host, starts a dev NATS (and Redis for the blob store) in docker when '
+                      'its config.template.yaml when none exists), runs its prepare.py hook, '
+                      'starts a dev NATS (and Redis for the blob store) in docker when '
                       '--nats is omitted and nothing is already listening, spawns one worker '
                       'subprocess per node replica, waits for the flow to finish, reports any node '
-                      'that exited non-zero, and stops only the containers it started. Every '
+                      'that exited non-zero, and stops only the containers it started. When the '
+                      'graph\'s dependencies are not installed on this host (or with --in-image), '
+                      'the prepare hook and every worker run inside the solution image instead — '
+                      'the same image `deploy` builds from its [gpu.]Dockerfile. Every '
                       'automatic step has an explicit override flag.')
     run.add_argument('graph', help = 'path/to/graph.py[:build_flow]')
     run.add_argument('--nats', default = None,
@@ -1568,15 +1896,31 @@ def build_parser() -> argparse.ArgumentParser:
                     help = 'NATS URL a docker-run remote component connects to '
                            '(default rewrites localhost -> host.docker.internal).')
     run.add_argument('--image', default = None,
-                    help = 'Image for native components that declare no image= of their own. '
-                           'Suppresses the auto-build. Python nodes never need one — they run '
-                           'as host subprocesses.')
+                    help = 'The solution image: what the workers run in when the graph\'s '
+                           'dependencies are not installed on this host (or with --in-image), '
+                           'and what native components that declare no image= of their own '
+                           'run in. Suppresses the auto-build. A graph that imports here runs '
+                           'its Python nodes as host subprocesses regardless.')
     run.add_argument('--no-build', action = 'store_true',
-                    help = 'Never auto-build the solution image. A native component with no '
-                           'image= and no runtime.localCommand then fails to start.')
+                    help = 'Never auto-build the solution image. A graph that does not import '
+                           'here, or a native component with no image= and no '
+                           'runtime.localCommand, then fails to start.')
+    run.add_argument('--in-image', action = 'store_true',
+                    help = 'Run the prepare hook and every worker inside the solution image even '
+                           'when the graph imports on this host. The default does so only when '
+                           'it does not.')
     run.add_argument('--build-context', default = None,
                     help = 'docker build context for the auto-build (default: the git root '
                            'enclosing the graph).')
+    run.add_argument('--mount', action = 'append', metavar = 'HOST[:CONTAINER][:ro]',
+                    help = 'Extra bind mount for workers that run inside the solution image (and '
+                           'its prepare/compile containers), e.g. --mount /data/videos:ro. '
+                           'Absolute paths; the single-path form mounts the same path on both '
+                           'sides. Repeatable; solution x-mounts are added automatically. '
+                           'Workers on this host need none.')
+    run.add_argument('--mount-home', default = None, metavar = 'DIR',
+                    help = 'What `~` in the solution\'s x-mounts resolves to on the host side '
+                           '(default: your home directory); see deploy --mount-home.')
     run.add_argument('--require-profile', action = 'append', metavar = 'CHANNEL=PROFILE', default = None,
                     help = 'Require a messaging profile on the named channel; makes the composition check '
                            'against the dev broker/store binding (see deploy --require-profile).')
@@ -1592,7 +1936,8 @@ def build_parser() -> argparse.ArgumentParser:
                            'the exclusive grants do not fit, or a sharer\'s declared gpu_memory_gib '
                            'does not fit its device (VF_GPU_HEADROOM_BYTES of headroom each); '
                            'a host nvidia-smi cannot read is refused too.')
-    run.set_defaults(func = _cmd_run_local)
+    _add_profile_flags(run)
+    run.set_defaults(func = _cmd_run_local, **profile_defaults.get('run-local', {}))
 
     comp = sub.add_parser('component', help = 'Work with component descriptors.')
     comp_sub = comp.add_subparsers(dest = 'component_command', required = True)
@@ -1635,7 +1980,9 @@ def build_parser() -> argparse.ArgumentParser:
     teardown = sub.add_parser('teardown', help = 'Stop a run and delete its broker streams (and, with --namespace, its K8s workloads).')
     teardown.add_argument('--flow-id', required = True)
     teardown.add_argument('--run-id', required = True)
-    teardown.add_argument('--nats', required = True)
+    teardown.add_argument('--nats', default = None,
+                          help = 'The broker the run used (deploy prints it in its teardown hint). Required '
+                                 'unless the cluster profile names one.')
     teardown.add_argument('--namespace', default = None, help = 'If set, also kubectl-delete the run\'s workloads.')
     teardown.add_argument('--kubectl', default = 'kubectl', help = 'kubectl binary name/path.')
     teardown.add_argument('--infra', action = 'store_true',
@@ -1650,7 +1997,8 @@ def build_parser() -> argparse.ArgumentParser:
                           help = 'The GPU mode the run was deployed with. Only needed when that '
                                  'mode reconfigured the cluster in prepare() and must be undone; '
                                  'deploy prints this flag in the teardown command when it applies.')
-    teardown.set_defaults(func = _cmd_teardown)
+    _add_profile_flags(teardown)
+    teardown.set_defaults(func = _cmd_teardown, **profile_defaults.get('teardown', {}))
 
     debug = sub.add_parser('debug', help = 'Inspect wire messages (envelopes, DLQ).')
     debug_sub = debug.add_subparsers(dest = 'debug_command', required = True)
@@ -1700,6 +2048,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     return parser
 
+def resolve_profile_defaults(argv : list[str]) -> dict[str, dict]:
+    '''
+    The cluster profile's contribution to the command about to be parsed (see
+    ``deploy.profiles``): ``--cluster`` / ``--clusters-file`` are read ahead of
+    the real parse, the file is loaded, a profile is selected (by name, else by
+    the current kubectl context), its ``docker`` section becomes the docker
+    environment for variables not already set, and its cluster keys become the
+    command's argparse defaults — so a flag typed on the command line still wins.
+    Commands that take no profile get nothing and read no file.
+
+    - Raises:
+        - ConfigError: the file is malformed, or ``--cluster`` names no profile.
+    '''
+    command = argv[0] if argv and argv[0] in PROFILE_COMMANDS else None
+    if command is None:
+        return {}
+    pre = argparse.ArgumentParser(add_help = False, allow_abbrev = False)
+    pre.add_argument('--cluster', default = None)
+    pre.add_argument('--clusters-file', default = None)
+    pre.add_argument('--kubectl', default = 'kubectl')
+    known, _rest = pre.parse_known_args(argv[1:])
+    profiles = load_profiles(known.clusters_file)
+    apply_docker_env(profiles)
+    if command == 'run-local':
+        return {}                                   # a local run has no cluster; the docker section applied
+    selected = select_profile(profiles, known.cluster, lambda: current_context(known.kubectl))
+    if selected is None:
+        return {}
+    name, profile = selected
+    defaults = command_defaults(profile, command)
+    context = f" (context {profile['context']!r})" if profile.get('context') else ''
+    print(f'Using cluster profile {name!r}{context} from {profiles.path}: '
+          + ', '.join(f'{k}={v!r}' for k, v in defaults.items()), file = sys.stderr)
+    return {command: defaults}
+
 def render_error(error : VideoflowError) -> None:
     '''
     Prints a failure the way an operator needs to read it: what broke, then what
@@ -1723,7 +2106,15 @@ def main(argv : list[str] | None = None) -> int:
     environment, 4 the flow ran and lost nodes, 5 it stalled — so CI and wrapper
     scripts can triage without parsing stderr. Everything used to exit 1.
     '''
-    parser = build_parser()
+    argv = list(sys.argv[1:] if argv is None else argv)
+    try:
+        defaults = resolve_profile_defaults(argv)
+    except VideoflowError as e:
+        render_error(e)
+        return e.exit_code
+    # Built without arguments when no profile contributes anything — the common
+    # case, and the signature callers (tests included) may stand in for.
+    parser = build_parser(defaults) if defaults else build_parser()
     args = parser.parse_args(argv)
     try:
         args.func(args)

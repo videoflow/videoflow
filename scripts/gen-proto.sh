@@ -6,7 +6,11 @@
 # Run this whenever a .proto in spec/proto/ changes, then commit the result.
 #
 # Uses grpc_tools.protoc (pip: grpcio-tools) so no external protoc/buf binary is
-# required. The proto import root is spec/proto and the Python output root is the
+# required. The grpcio-tools release is pinned in pyproject.toml (dev group) on
+# purpose: the generated modules embed the generating protoc's version as the
+# protobuf *runtime floor* every user of the package must satisfy, and that floor
+# is the `protobuf>=5.27` the package declares. Regenerating with a newer protoc
+# raises it silently — past what tensorflow < 2.18 can coexist with. The proto import root is spec/proto and the Python output root is the
 # repo root, so a module declared `package videoflow.v1;` at
 # spec/proto/videoflow/v1/foo.proto generates to videoflow/v1/foo_pb2.py and its
 # cross-file imports (`from videoflow.v1 import value_pb2`) resolve against the

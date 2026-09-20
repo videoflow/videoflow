@@ -156,7 +156,7 @@ def test_pay_018_partition_ownership_is_checked_before_loading_large_image(nats_
     '''
     monkeypatch.setattr(nats_messenger, 'MAX_INLINE_PAYLOAD_BYTES', 1024)     # every frame offloads
     evidence : Dict[str, Any] = {}
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, ack_wait = 5)
     try:
         schedule = _oracle_pay_018(rig, evidence)
     finally:

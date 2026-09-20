@@ -625,3 +625,21 @@ def test_unknown_flavor_raises_on_load_but_not_on_warning():
         cluster.load_images('nope', ['img:1'])
     # Advisory: a missing warning must not fail a deploy.
     assert cluster.hostpath_warning('nope') is None
+
+
+def test_registry_qualified_images_are_never_side_loaded(monkeypatch, capsys):
+    '''
+    An image the nodes pull from a registry is skipped on every flavor: a remote
+    cluster no longer refuses it, kind does not load it, and only the bare local
+    tags reach the flavor's loader.
+    '''
+    run, calls = _fake_run({'current-context': 'kind-dev'})
+    monkeypatch.setattr(subprocess, 'run', run)
+    cluster.load_images(cluster.GENERIC_REMOTE, ['10.0.0.1:5000/videoflow-x:abc123', 'ghcr.io/acme/x:1'])
+    assert 'registry-qualified' in capsys.readouterr().out
+    cluster.load_images(cluster.KIND, ['ghcr.io/acme/x:1', 'img:1'])
+    load = [c for c in calls if c[0] == 'kind'][0]
+    assert load == ['kind', 'load', 'docker-image', 'img:1', '--name', 'dev']
+    assert cluster.is_registry_qualified('10.0.0.1:5000/videoflow-x:abc123')
+    assert cluster.is_registry_qualified('localhost:5000/x') and cluster.is_registry_qualified('ghcr.io/acme/x:1')
+    assert not cluster.is_registry_qualified('videoflow-x:abc123') and not cluster.is_registry_qualified('acme/x:1')

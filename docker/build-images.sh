@@ -9,7 +9,7 @@
 # The CPU image is also tagged videoflow-base:${TAG} (default latest).
 #
 # videoflow-contrib components ship a CPU Dockerfile (FROM videoflow-base:py3.12) and,
-# when they can use a GPU, a Dockerfile.gpu (FROM videoflow-base:py3.12-cuda).
+# when they can use a GPU, a gpu.Dockerfile (FROM videoflow-base:py3.12-cuda).
 #
 # Run from the repo root:  ./docker/build-images.sh [REGISTRY] [TAG]
 #

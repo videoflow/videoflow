@@ -243,6 +243,16 @@ class ResourceUnavailable(VideoflowEnvironmentError):
     '''A resource the flow needs does not exist or cannot be obtained.'''
     code = 'VF_RESOURCE_UNAVAILABLE'
 
+class PayloadStoreFull(ResourceUnavailable):
+    '''
+    The payload store refused a write for memory (``noeviction`` under
+    ``maxmemory``, the reference store's budget) rather than evict what a reader
+    still holds: backpressure, never silent loss (BLOB-16). A BATCH publisher
+    holds its publication and retries while the store's readers drain it; only
+    past that wait is this the publication's failure.
+    '''
+    code = 'VF_PAYLOAD_STORE_FULL'
+
 class FlowFailed(VideoflowEnvironmentError):
     '''The flow ran and one or more nodes failed. Distinct exit code so CI can tell it from a bad deploy.'''
     code = 'VF_FLOW_FAILED'

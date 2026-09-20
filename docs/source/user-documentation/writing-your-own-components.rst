@@ -231,7 +231,8 @@ image, and point the whole deploy at it::
     # Dockerfile (see docker/user-image.example.Dockerfile)
     FROM videoflow-base:latest
     RUN pip install torch my-libs        # your dependencies
-    COPY . . && RUN pip install .        # your package (importable by module path)
+    COPY . .
+    RUN pip install .                    # your package (importable by module path)
 
 ::
 

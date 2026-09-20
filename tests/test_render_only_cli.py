@@ -151,3 +151,14 @@ def test_durable_only_flags_are_refused_with_the_dev_profile(tmp_path, monkeypat
     code, _out = _render(tmp_path, monkeypatch, ['--broker-profile', 'durable',
                                                  '--broker-replicas', '2'])
     assert code == EXIT_USER       # an even cluster has no quorum
+
+def test_a_cache_inside_the_claim_directory_renders_as_a_subpath_mount(tmp_path, monkeypatch):
+    code, out = _render(tmp_path, monkeypatch,
+                        ['--mount-pvc', 'work-share:/share',
+                         '--mount', '/share/home/.videoflow:/root/.videoflow'])
+    assert code == 0
+    worker = _pod_spec(_docs(out)[('Job', 'vf-render-r1-numbers')])
+    assert worker['volumes'] == [{'name': 'vf-pvc-0', 'persistentVolumeClaim': {'claimName': 'work-share'}}]
+    assert worker['containers'][0]['volumeMounts'] == [
+        {'name': 'vf-pvc-0', 'mountPath': '/root/.videoflow', 'readOnly': False, 'subPath': 'home/.videoflow'},
+        {'name': 'vf-pvc-0', 'mountPath': '/share', 'readOnly': False}]

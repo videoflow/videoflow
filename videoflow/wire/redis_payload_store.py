@@ -137,7 +137,7 @@ from ..backends.payload import (
     RetentionContract,
     TransientFailure,
 )
-from ..core.errors import ResourceUnavailable
+from ..core.errors import PayloadStoreFull
 from ..core.errors import TransientFailure as TransientError
 
 logger = logging.getLogger(__package__)
@@ -153,6 +153,16 @@ COUNTER_KEY_PREFIX = 'vf-blobrc-'
 #: Publisher intents (``intent/<publication_id>``): the only obligations reconcile may cancel on its own.
 INTENT_PREFIX = 'intent/'
 
+#: BLOB-16: the fraction of ``maxmemory`` a put leaves free under ``noeviction``.
+#: The server refuses every memory-taking command at ``maxmemory`` — not only
+#: the next payload but the obligation set and metadata of a put in flight, a
+#: reader's lease, and the run ledger's records when it shares the server — so
+#: the store stops admitting bytes this far below the limit and the bookkeeping
+#: that drains it keeps working while publishers hold.
+MAXMEMORY_HEADROOM = 0.10
+#: How long an observed ``maxmemory`` and eviction policy are trusted before
+#: ``CONFIG GET`` is asked again (an operator may raise the limit live).
+LIMIT_OBSERVATION_SECONDS = 30.0
 #: Bound on optimistic-transaction retries (``BLOB-14`` step 2); past it the outcome is
 #: ``unknown``. Every contender on one object costs the others a round — eight replicas
 #: of a partitioned child release the same key within milliseconds of each other —
@@ -293,7 +303,7 @@ class RedisPayloadStore(PayloadStore):
 
     Thread-safe: every transaction takes its own pooled connection.
     '''
-    def __init__(self, url : Optional[str] = None, client : Any = None,
+    def __init__(self, url : Optional[str] = None, client : Any = None, admission : float = 1.0,
                  orphan_grace_seconds : float = DEFAULT_ORPHAN_GRACE_SECONDS,
                  clock : Callable[[], float] = time.time) -> None:
         import redis  # optional dependency (extra): only the Redis stores need it
@@ -306,6 +316,12 @@ class RedisPayloadStore(PayloadStore):
         self._client : Any = client
         self._grace = float(orphan_grace_seconds)
         self._clock = clock
+        if not 0.0 < float(admission) <= 1.0:
+            raise ValueError(f'admission must be in (0, 1], got {admission!r}')
+        #: The share of the budget this publisher may fill before it holds (BLOB-16, ``VF_STORE_ADMISSION``).
+        self._admission = float(admission)
+        #: (observed at, ``maxmemory`` under ``noeviction`` or 0): the admission budget.
+        self._budget_seen : Optional[tuple[float, int]] = None
 
     @property
     def client(self) -> Any:
@@ -327,8 +343,9 @@ class RedisPayloadStore(PayloadStore):
         leaves a counterless, TTL-only object (PAY-007).
 
         - Raises:
-            - ResourceUnavailable: the server refused the write for memory (``OOM`` \
-                under ``noeviction``) — backpressure, never silent eviction.
+            - PayloadStoreFull (a ResourceUnavailable): the server refused the write \
+                for memory (``OOM`` under ``noeviction``) — backpressure, never silent \
+                eviction (BLOB-16); the publisher holds and retries.
             - TransientFailure (core): the server was unreachable or slow. Whatever \
                 was written before the failure is TTL-only and harmless.
         '''
@@ -340,6 +357,8 @@ class RedisPayloadStore(PayloadStore):
         record = {'size': str(len(data)), 'digest': digest, 'generation': generation,
                   'content_id': content_id, 'created_at': repr(float(self._clock()))}
         try:
+            # 0. admission below maxmemory, with headroom for the bookkeeping (BLOB-16).
+            self._admit(len(data), content_id, key)
             # 1. the bytes — a crash from here on leaves at worst a TTL-only blob.
             self._client.set(key, bytes(data), ex = life)
             # 2. the metadata that lets a reader verify and fence.
@@ -364,10 +383,57 @@ class RedisPayloadStore(PayloadStore):
             faults.barrier('obligation.acquire.after', key = key, obligation_id = ','.join(contract.obligations))
         return ImmutablePayloadRef(STORE_ID, key, len(data), digest, generation, content_id)
 
+    def _budget(self) -> int:
+        '''
+        ``maxmemory`` while the policy is ``noeviction``, else 0 (unlimited, or an
+        evicting server that never refuses); re-read every
+        ``LIMIT_OBSERVATION_SECONDS``. A server that will not say (``CONFIG``
+        renamed, an ACL without it) leaves only its own refusal to bound us.
+        '''
+        now = float(self._clock())
+        if self._budget_seen is not None and now - self._budget_seen[0] < LIMIT_OBSERVATION_SECONDS:
+            return self._budget_seen[1]
+        budget = 0
+        try:
+            policy = _text(self._client.config_get('maxmemory-policy').get('maxmemory-policy') or '')
+            if policy.strip() == 'noeviction':
+                budget = int(_text(self._client.config_get('maxmemory').get('maxmemory') or '0') or 0)
+        except self._errors.ResponseError:
+            budget = 0
+        self._budget_seen = (now, budget)
+        return budget
+
+    def _admit(self, size : int, content_id : str, key : str) -> None:
+        '''
+        Refuse the put before a byte is written when it would take the server past
+        this publisher's share of ``maxmemory`` less ``MAXMEMORY_HEADROOM``
+        (BLOB-16): the publisher holds and retries while the readers drain the
+        store, the obligation records, releases and ledger writes that share the
+        server are still admitted meanwhile, and a source (the smallest share)
+        stalls before the stages below it run out of room. Transport failures
+        propagate to ``put``'s ladder.
+        '''
+        budget = self._budget()
+        if budget <= 0:
+            return
+        used = int(self._client.info('memory').get('used_memory') or 0)
+        headroom = int(budget * MAXMEMORY_HEADROOM)
+        limit = int((budget - headroom) * self._admission)
+        if used + size > limit:
+            share = '' if self._admission >= 1.0 else f" this publisher's {self._admission:.0%} share of"
+            raise PayloadStoreFull(
+                f'the Redis payload store cannot admit {size} bytes for {content_id}: {used} bytes are in use '
+                f'against{share} {budget} bytes of maxmemory less {headroom} bytes kept free for the obligation '
+                f'records and the run ledger that share the server',
+                remedy = 'Backpressure the producer (a BATCH publisher holds and retries), raise maxmemory, '
+                         'or release obligations so reclaimable objects free memory; do not switch to an '
+                         'evicting policy for reliable work.',
+                key = key, size = size, used = used, budget = budget, admission = self._admission)
+
     @staticmethod
-    def _refused(error : BaseException, content_id : str, key : str, size : int) -> ResourceUnavailable:
+    def _refused(error : BaseException, content_id : str, key : str, size : int) -> PayloadStoreFull:
         '''The server refused a write for memory (``OOM`` under ``noeviction``): backpressure, never silent eviction.'''
-        return ResourceUnavailable(
+        return PayloadStoreFull(
             f'the Redis payload store refused {size} bytes for {content_id}: {error}',
             remedy = 'Backpressure the producer, raise maxmemory, or release obligations so '
                      'reclaimable objects free memory; do not switch to an evicting policy for '

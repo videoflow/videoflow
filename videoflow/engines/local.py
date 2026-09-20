@@ -5,6 +5,12 @@ NATS server. Same ``videoflow.worker`` code path Kubernetes uses — only the wa
 processes are started differs — so it's the primary way to develop and test a
 flow without a cluster.
 
+A worker is the current interpreter by default. With ``worker_image`` set (what
+``run-local`` does when the graph's dependencies are not installed on this host)
+every Python worker is instead one ``docker run`` of the solution image — the
+same image a cluster deploy uses — on the host network, with the solution's
+mounts and, when the daemon has the NVIDIA runtime, its granted devices.
+
 Prerequisite: a running NATS JetStream server, e.g. ``nats-server -js`` or
 ``docker run -p 4222:4222 nats -js``.
 '''
@@ -15,6 +21,7 @@ import json
 import logging
 import os
 import queue
+import re
 import signal
 import site
 import subprocess
@@ -23,7 +30,7 @@ import sysconfig
 import tempfile
 import threading
 import time
-from typing import List, Mapping, Optional
+from typing import TYPE_CHECKING, List, Mapping, Optional
 
 import nats  # also an import guard: fail fast if the broker client is missing
 
@@ -37,6 +44,7 @@ from ..core.compiler import (
     blob_reader_ids,
     parent_replicas,
     specs_from_tasks_data,
+    store_admission,
     validate_wire_compatibility,
 )
 from ..core.engine import ExecutionEngine
@@ -51,11 +59,31 @@ from ..core.supervision import (
     render_event,
 )
 from ..deploy.allocation_local import GRANT_ENV, POLICY_SHARED, LocalAllocationBackend
+from ..deploy.build import docker_run_extra_args
 from ..messaging import topology
+
+if TYPE_CHECKING:
+    # Type-only: manifests imports the optional `yaml` extra at module scope.
+    from ..deploy.manifests import Mount
 
 logger = logging.getLogger(__package__)
 
 DEFAULT_NATS_URL = 'nats://localhost:4222'
+
+# Docker container names: [a-zA-Z0-9][a-zA-Z0-9_.-]+; everything else becomes a dash.
+_CONTAINER_NAME_RE = re.compile(r'[^a-z0-9.-]+')
+
+def _container_name(env : Mapping[str, str], attempt : int) -> str:
+    '''
+    ``vf-<flow>-<run>-<node>-<replica>[-r<attempt>]`` for a worker container:
+    unique per launch, so a restart never collides with a container that
+    ``--rm`` has not finished removing, and recognisable in ``docker ps``.
+    '''
+    parts = [env.get('VF_FLOW_ID', 'flow'), env.get('VF_RUN_ID', 'run'),
+             env.get('VF_NODE_NAME', 'node'), env.get('VF_REPLICA_ID', '0')]
+    if attempt:
+        parts.append(f'r{attempt}')
+    return 'vf-' + '-'.join(_CONTAINER_NAME_RE.sub('-', str(p).lower()).strip('-') or 'x' for p in parts)
 
 # Bound on the up-front stream provisioning. Locally an unreachable broker is a
 # setup mistake worth reporting, not a transient worth blocking on indefinitely.
@@ -113,9 +141,11 @@ def needs_container_image(spec : NodeSpec) -> bool:
     Only a native component with no ``runtime.localCommand`` does: a Python node runs
     as a host subprocess in the current interpreter, and a native component with a
     ``localCommand`` runs that binary directly. This is the predicate ``run-local``
-    uses to decide whether to auto-build at all — most flows are pure Python, and
-    building a (possibly CUDA) solution image to launch a few subprocesses would be a
-    large and pointless cost.
+    uses to decide whether to auto-build at all for a graph that imports on the host
+    — most flows are pure Python, and building a (possibly CUDA) solution image to
+    launch a few subprocesses would be a large and pointless cost. (A graph whose
+    dependencies are *not* installed here is a different case: then the image is the
+    only place the workers can run, and ``run-local`` builds it regardless.)
     '''
     if spec.node_class:
         return False
@@ -146,6 +176,17 @@ class LocalProcessEngine(ExecutionEngine):
             local development the one place the recovery path was never \
             exercised. Pass ``SupervisionPolicy.disabled()`` (``--no-restart``) \
             for a tight debug loop.
+        - worker_image: when set, every Python worker runs as ``docker run`` of \
+            this image (the solution image) instead of the current interpreter — \
+            for a graph whose dependencies live only in its image. Natives keep \
+            using their own ``image=`` / ``default_image``.
+        - worker_mounts: the bind mounts those containers get (the solution's \
+            ``x-mounts`` and ``--mount``; claim mounts are skipped — a claim \
+            exists only in a cluster).
+        - docker_gpus: whether the docker daemon has the NVIDIA runtime, so a \
+            worker's granted devices can be handed to its container (``--gpus``). \
+            Without it GPU workers in containers run device-less (a warning under \
+            the shared policy, a refusal under strict).
     '''
     def __init__(self, nats_url : str = DEFAULT_NATS_URL, blob_redis_url : str | None = None,
                 specs : List[NodeSpec] | None = None,
@@ -155,8 +196,18 @@ class LocalProcessEngine(ExecutionEngine):
                 blob_ttl_seconds : int | None = None,
                 supervision : SupervisionPolicy | None = None,
                 profile_requests : dict[str, str] | None = None,
-                gpu_policy : str = POLICY_SHARED) -> None:
+                gpu_policy : str = POLICY_SHARED,
+                worker_image : str | None = None,
+                worker_mounts : 'list[Mount] | None' = None,
+                docker_gpus : bool = False) -> None:
         self._supervision = supervision or SupervisionPolicy.local()
+        # In-image workers (see the module docstring): the image, its mounts and
+        # whether the daemon can hand a container its GPU grant.
+        self._worker_image = worker_image
+        self._worker_mounts : list = list(worker_mounts or [])
+        self._docker_gpus = docker_gpus
+        # Names of the containers this engine started, for cleanup_containers().
+        self._containers : list[str] = []
         # How the host's GPUs are partitioned across workers (``--gpu-policy``):
         # ``shared`` is today's wrap-around walk, ``strict`` refuses short grants
         # before launch. See deploy.allocation_local.
@@ -247,6 +298,23 @@ class LocalProcessEngine(ExecutionEngine):
         gpu_env : dict[tuple[str, int], Mapping[str, str]] = {}
         if any(s.device_type == 'gpu' for s in specs):
             gpu_env = allocate_local_gpus(specs, flow_id, run_id, LocalAllocationBackend(self._gpu_policy))
+        if self._worker_image is not None and not self._docker_gpus:
+            # A grant a container cannot receive: the daemon has no NVIDIA runtime,
+            # so there is no --gpus to hand the devices over with. Strict refuses
+            # (the whole point of strict is never launching on a short grant);
+            # shared launches device-less and says so — the same stance as an
+            # unobservable host.
+            granted = sorted({name for (name, _replica), env in gpu_env.items() if env.get('CUDA_VISIBLE_DEVICES')})
+            if granted and self._gpu_policy != POLICY_SHARED:
+                raise ResourceUnavailable(
+                    f'GPU node(s) {", ".join(granted)} would run inside {self._worker_image}, but the docker '
+                    f'daemon has no nvidia runtime to hand them their devices; strict GPU policy refuses to '
+                    f'launch them without.',
+                    remedy = 'Install the NVIDIA container toolkit (`docker info` must list the nvidia runtime), '
+                             'or run with --gpu-policy shared to launch them without a device.')
+            if granted:
+                logger.warning(f'docker daemon has no nvidia runtime: GPU node(s) {", ".join(granted)} run '
+                               f'inside {self._worker_image} without a device.')
         for spec in specs:
             for replica_idx in range(spec.nb_tasks):
                 env = _worker_env(spec, self._nats_url, flow_id, flow_type, run_id,
@@ -256,7 +324,8 @@ class LocalProcessEngine(ExecutionEngine):
                                 profile_requests = self._profile_requests,
                                 blob_reader_ids = blob_reader_ids(spec, specs),
                                 parent_replicas = parent_replicas(spec, specs),
-                                runtime_store_url = self._runtime_store_url())
+                                runtime_store_url = self._runtime_store_url(),
+                                store_admission = store_admission(spec, specs))
                 env['VF_TERMINATION_LOG'] = self._termination_log_path(spec.name, replica_idx)
                 # Kept so a restart relaunches the identical worker, and so the
                 # supervisor never has to re-derive an environment.
@@ -278,7 +347,7 @@ class LocalProcessEngine(ExecutionEngine):
 
     def _start_worker(self, spec : NodeSpec, replica_idx : int, attempt : int) -> None:
         _spec, env = self._launchers[(spec.name, replica_idx)]
-        cmd, run_env = self._launch_command(spec, env)
+        cmd, run_env = self._launch_command(spec, env, attempt)
         proc = subprocess.Popen(cmd, env = run_env)
         self._procs.append((spec.name, replica_idx, proc))
         self._attempts[(spec.name, replica_idx)] = attempt
@@ -289,11 +358,13 @@ class LocalProcessEngine(ExecutionEngine):
             + (f' [restart {attempt}]' if attempt else '')
         )
 
-    def _launch_command(self, spec : NodeSpec, env : dict) -> tuple:
+    def _launch_command(self, spec : NodeSpec, env : dict, attempt : int = 0) -> tuple:
         '''
         The command + environment to start one worker for ``spec``:
 
-        - native Python node: ``python -m videoflow.worker`` in the current env;
+        - native Python node: ``python -m videoflow.worker`` in the current env, \
+            or ``docker run`` of ``worker_image`` (its entrypoint is that worker) \
+            when the engine was given one;
         - remote component with a ``localCommand``: run that binary directly (env carries VF_*);
         - remote component otherwise: ``docker run`` its image with VF_* passed via -e.
         '''
@@ -301,19 +372,13 @@ class LocalProcessEngine(ExecutionEngine):
         # came from a graph class or a descriptor's pythonClass. Only a native
         # component (no node_class) uses localCommand / docker.
         if spec.node_class:
-            return [sys.executable, '-m', 'videoflow.worker'], env
+            if self._worker_image is None:
+                return [sys.executable, '-m', 'videoflow.worker'], env
+            return self._docker_command(env, self._worker_image, None, attempt)
         runtime = (spec.descriptor or {}).get('spec', {}).get('runtime', {})
         local_command = runtime.get('localCommand')
         if local_command:
             return list(local_command), env
-        # docker run: pass only the VF_* vars, and rewrite a localhost NATS URL to one
-        # the container can reach (host.docker.internal on macOS/Windows).
-        vf_env = {k: v for k, v in env.items() if k.startswith('VF_') or k == 'VIDEOFLOW_BLOB_REDIS_URL'}
-        docker_nats = self._local_docker_nats_url or self._nats_url.replace('localhost', 'host.docker.internal')
-        vf_env['VF_NATS_URL'] = docker_nats
-        docker = ['docker', 'run', '--rm', '--network', 'host']
-        for k, v in vf_env.items():
-            docker += ['-e', f'{k}={v}']
         image = spec.image or self._default_image
         if not image:
             raise ConfigError(
@@ -321,10 +386,71 @@ class LocalProcessEngine(ExecutionEngine):
                 remedy = 'Give it an `image=`, or a `runtime.localCommand` in its '
                         'component descriptor.',
                 node = spec.name)
+        return self._docker_command(env, image, spec.command, attempt)
+
+    def _docker_url(self, url : str) -> str:
+        '''
+        A localhost URL as a worker container reaches it. On Linux ``--network
+        host`` puts the container in the host's network namespace, so ``localhost``
+        is the host; Docker Desktop (macOS/Windows) routes to the host through
+        ``host.docker.internal`` instead.
+        '''
+        if sys.platform.startswith('linux'):
+            return url
+        return url.replace('localhost', 'host.docker.internal').replace('127.0.0.1', 'host.docker.internal')
+
+    def _docker_command(self, env : dict, image : str, command : Optional[list], attempt : int) -> tuple:
+        '''
+        ``docker run`` of ``image`` as one worker: the host network (the broker is
+        on this machine), only the VF_* environment (and the blob store URL and
+        device mask) passed through with localhost URLs rewritten for the
+        container, the worker mounts, the termination-log/ledger directory the
+        supervisor reads, and — for a Python worker holding a grant on a daemon
+        with the NVIDIA runtime — ``--gpus`` naming exactly its devices.
+        '''
+        passthrough = {k: v for k, v in env.items()
+                       if k.startswith('VF_') or k in ('VIDEOFLOW_BLOB_REDIS_URL', 'CUDA_VISIBLE_DEVICES')}
+        if 'VF_NATS_URL' in passthrough:
+            passthrough['VF_NATS_URL'] = self._local_docker_nats_url or self._docker_url(passthrough['VF_NATS_URL'])
+        for key in ('VF_BLOB_REDIS_URL', 'VIDEOFLOW_BLOB_REDIS_URL'):
+            if key in passthrough:
+                passthrough[key] = self._docker_url(passthrough[key])
+        name = _container_name(env, attempt)
+        docker = ['docker', 'run', '--rm', '--network', 'host', '--name', name, *docker_run_extra_args()]
+        devices = env.get('CUDA_VISIBLE_DEVICES')
+        if devices and self._docker_gpus:
+            # docker parses --gpus as CSV: a comma-separated device list needs the quoted form.
+            docker += ['--gpus', f'"device={devices}"']
+        for k, v in passthrough.items():
+            docker += ['-e', f'{k}={v}']
+        for m in self._worker_mounts:
+            if m.claim is not None:                 # a claim exists only in a cluster
+                continue
+            docker += ['-v', f'{m.host_path}:{m.container_path}' + (':ro' if m.read_only else '')]
+        if self._termination_dir is not None:
+            # VF_TERMINATION_LOG and the file:// run ledger live there; the
+            # supervisor reads the death note back from the same path.
+            docker += ['-v', f'{self._termination_dir}:{self._termination_dir}']
         docker.append(image)
-        if spec.command:
-            docker += list(spec.command)
+        if command:
+            docker += list(command)
+        self._containers.append(name)
         return docker, dict(os.environ)
+
+    def cleanup_containers(self) -> None:
+        '''
+        Removes whatever worker containers are still around — a client killed before
+        it attached, or a ``--rm`` that never got to run. Best effort: nothing here
+        can fail a run that already finished, and containers that are gone already
+        are the normal case.
+        '''
+        names, self._containers = self._containers, []
+        if not names:
+            return
+        try:
+            subprocess.run(['docker', 'rm', '-f', *names], capture_output = True, check = False)
+        except OSError:
+            logger.debug('could not remove worker containers', exc_info = True)
 
     def signal_flow_termination(self) -> None:
         flow_id, run_id = self._flow_id, self._run_id
@@ -343,7 +469,10 @@ class LocalProcessEngine(ExecutionEngine):
         messages are redelivered.
 
         A worker killed by SIGINT/SIGTERM is not counted and not restarted: that
-        is Ctrl-C or ``flow.stop()`` propagating, not a failure.
+        is Ctrl-C or ``flow.stop()`` propagating, not a failure. The same signal
+        reported as an exit status (130/143 — what the worker's own handlers
+        return, and what a ``docker run`` client relays for its container) counts
+        the same way.
 
         Every worker is watched **concurrently**: one waiter thread per child
         reports its exit on a queue, and this loop drains the queue. Waiting on
@@ -353,7 +482,7 @@ class LocalProcessEngine(ExecutionEngine):
         for an unbounded source is never: a healthy producer hid a dead
         downstream worker indefinitely.
         '''
-        stopped = {-signal.SIGINT, -signal.SIGTERM}
+        stopped = {-signal.SIGINT, -signal.SIGTERM, 128 + signal.SIGINT, 128 + signal.SIGTERM}
         self._failures = []
         pending = list(self._procs)
         self._procs = []
@@ -572,11 +701,13 @@ def _watch_exit(entry : tuple, exits : 'queue.Queue[tuple]') -> threading.Thread
 
 def _runs_via_docker(spec : NodeSpec) -> bool:
     '''
-    Whether ``_launch_command`` will run this spec with ``docker run``: a native
-    component with no ``localCommand``. Such a worker cannot receive a GPU grant
-    locally — the env filter passes only VF_* variables and no ``--gpus`` flag is
-    injected (a documented non-goal) — so the assignment and env code below must
-    treat it as ungrantable rather than hand it devices it can never see.
+    Whether this spec is a *native* component that ``_launch_command`` runs with
+    ``docker run`` (no ``localCommand``). Such a worker receives no GPU grant
+    locally (a documented non-goal), so the assignment and env code below must
+    treat it as ungrantable rather than hand it devices it can never see. A
+    Python worker keeps its grant wherever it runs: on the host the mask is its
+    environment, in the solution image the engine hands the same devices to the
+    container with ``--gpus``.
     '''
     if spec.node_class:
         return False
@@ -709,7 +840,8 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
                 profile_requests : dict[str, str] | None = None,
                 blob_reader_ids : list[str] | None = None,
                 parent_replicas : list[int] | None = None,
-                runtime_store_url : str | None = None) -> dict:
+                runtime_store_url : str | None = None,
+                store_admission : float | None = None) -> dict:
     env = dict(os.environ)
     if python_path:
         # Prepend, so a caller-supplied path wins over an inherited PYTHONPATH the
@@ -757,6 +889,10 @@ def _worker_env(spec : NodeSpec, nats_url : str, flow_id : str, flow_type : str,
     if blob_reader_ids:
         # Reader obligations by identity (RFC 0006 BLOB-13); only rendered under the switch.
         env['VF_BLOB_READER_IDS'] = ','.join(blob_reader_ids)
+    if store_admission is not None and store_admission < 1.0:
+        # This publisher's share of the payload store before it holds (BLOB-16); the
+        # deepest publisher's full share is the worker's default.
+        env['VF_STORE_ADMISSION'] = f'{store_admission:g}'
     if parent_replicas:
         # The EOS-7 barrier's expectation per parent (RFC 0006 ENV-11); under the switch only.
         env['VF_PARENT_REPLICAS'] = ','.join(str(n) for n in parent_replicas)

@@ -52,18 +52,31 @@ container images.
 
 ## Installation
 
-Requires **Python 3.12+** and a running NATS JetStream server at runtime.
+Requires **Python 3.12+** and docker; a NATS JetStream server is needed at
+runtime, and `run-local` starts one for you (see below).
+
+Videoflow is not on PyPI yet (the `videoflow` published there is an older,
+unrelated generation), so install it **from a clone**. Put it next to
+[videoflow-contrib](https://github.com/videoflow/videoflow-contrib) if you want
+the ML solutions too — that is the layout the docs of both repos assume:
 
 ```bash
-pip install "videoflow[distributed]"   # core + broker client + wire format
-pip install "videoflow[vision]"        # + OpenCV for vision processors
-pip install "videoflow[video]"         # + ffmpeg/OpenCV for video I/O
-pip install "videoflow[deploy]"        # + Kubernetes manifest generation
-pip install "videoflow[all]"           # everything
+git clone https://github.com/videoflow/videoflow
+git clone https://github.com/videoflow/videoflow-contrib      # optional, side by side
+
+uv tool install --editable './videoflow[all]'                # `videoflow` on your PATH, everywhere
+# or, into an environment of your own:
+python3 -m venv .venv && .venv/bin/pip install -e './videoflow[all]'
+# or, to work on videoflow itself (dev tools included):
+cd videoflow && uv sync && uv run videoflow --help
 ```
 
-From a clone with [uv](https://docs.astral.sh/uv/): `uv sync` (creates `.venv`
-with all dependencies). Or with pip: `pip install ".[all]"`.
+`--editable` matters: `deploy` and `run-local` build the `videoflow-base` image
+from this checkout the first time they need it, and only a source install knows
+where the checkout is. The extras are the same for every form: `distributed`
+(broker client + wire format), `vision` / `video` (OpenCV, ffmpeg), `deploy`
+(Kubernetes manifests, component descriptors), `blob` (the Redis payload store),
+or `all`.
 
 You do **not** need to start a broker by hand: `videoflow run-local` starts a dev
 NATS + Redis in Docker when none is already running, and stops them when the flow
@@ -75,6 +88,12 @@ docker compose up -d          # NATS JetStream on :4222, Redis on :6379
 # or, without Docker:
 nats-server -js
 ```
+
+A dev store you run yourself keeps what a run that *failed* left in it: its
+payloads stay pinned for their readers until the TTL (24 hours for a batch flow),
+so the next run starts against a fuller store. `docker compose down && docker
+compose up -d` gives you an empty one; the dev pair `run-local` starts itself is
+removed when the flow ends, so it never carries anything over.
 
 ---
 
@@ -139,6 +158,7 @@ teardown) actually work, and the best code to read after this README.
 |---|---|---|
 | [toy_calculator](solutions/toy_calculator) | BATCH | A diamond over a stream of integers: fan-out, a trace join, competing replicas, stateful aggregation, a two-parent consumer. The smallest complete solution. |
 | [toy_router](solutions/toy_router) | BATCH | Partitioned parallelism: `partition_by` pinning each key to one replica, an `async def process` node, an idempotent sink. |
+| [toy_recovery](solutions/toy_recovery) | BATCH | The error taxonomy at work: a poison message dead-lettered on first sight, a crash restarted with its un-acked messages redelivered, a self-checking recovery report. |
 | [toy_fusion](solutions/toy_fusion) | REALTIME | Independent producers fused by event time — tolerance, lateness timeout, quorum, collect windows — with unbounded live sources. |
 
 ```bash
@@ -147,9 +167,23 @@ videoflow run-local toy_calculator.py     # or: videoflow deploy toy_calculator.
 ```
 
 Each writes a self-checking artifact (`report.json`, `counts.json`,
-`fusion_summary.json`) saying whether the distributed run computed the right
-answer — which is also how they serve as the framework's end-to-end test suite,
-run on every CI build by `tests/integration/local/test_toy_solutions.py`.
+`recovery_report.json`, `fusion_summary.json`) saying whether the distributed
+run computed the right answer — which is also how they serve as the framework's
+end-to-end test suite, run on every CI build by
+`tests/integration/local/test_toy_solutions.py`.
+
+The ML solutions live in [videoflow-contrib](https://github.com/videoflow/videoflow-contrib)
+(`solutions/face_obfuscation`, `solutions/human_tracking`) and run with the
+same two commands. Their stacks (TensorFlow, torch, detectron2) are **not**
+installed on your machine: `run-local` notices the graph does not import here,
+builds the solution image from its Dockerfile — the same image `deploy` uses —
+and runs the prepare hook and every worker inside it:
+
+```bash
+cd ../videoflow-contrib/solutions/human_tracking
+videoflow run-local human_tracking.py     # builds the image (minutes, once); the workers are containers
+videoflow deploy human_tracking.py        # the same image, as pods
+```
 
 ---
 
@@ -168,7 +202,10 @@ producers) plus a ConfigMap per node, every object named for the run
 flow coexist in a namespace without overwriting each other — pass `--single-run`
 to have a second run refused before anything of it is created instead — and by
 default automates everything around that: it builds the node image from the `[gpu.]Dockerfile` next to your
-graph (auto-building `videoflow-base` first when missing) and loads it into the
+graph (auto-building `videoflow-base` first when missing; `gpu.Dockerfile` when
+the flow has GPU nodes — decided by the config keys the template names in
+`x-gpu`, or by the compiled graph's device placement, never by whether *this*
+machine's docker daemon has the NVIDIA runtime) and loads it into the
 detected cluster flavor, provisions a dev NATS (+ Redis for the blob store) in
 the namespace, applies the flow, and — for a BATCH flow — waits for completion
 and tears down the run and the infra it created. Solutions can additionally ship
@@ -181,8 +218,11 @@ the pods with repeatable `--mount /abs/path[:ro]` hostPath mounts (solution
 on your machine — a shared model cache, an RWX work directory on a multi-node
 cluster where no node's own filesystem holds it — is mounted from an existing
 PersistentVolumeClaim with `--mount-pvc claim:/path[:ro]` (or an `x-mounts` entry
-`pvc:claim:/path`); a `--mount` under that path is served by the claim in the
-pods and by the host in the prepare container. On a shared cluster,
+`pvc:claim:/path`); a `--mount` or `x-mounts` host path under that path is served
+by the claim in the pods — at the same path, or, for a cache the template remaps
+onto `/root/...`, as a `subPath` of the claim — and by the host in the prepare
+container; `--mount-home DIR` re-roots the `~` of those cache entries so they can
+live inside the claim's directory. On a shared cluster,
 `--priority-class cluster-batch` puts every pod the deploy creates — workers,
 provision Job and the broker it provisions — in that PriorityClass. The
 auto-provisioned broker is dev-grade by default (one emptyDir server each: a
@@ -216,12 +256,14 @@ to those hosts on top of the pool label, and `--resources NODE=cpu:500m,memory:1
 the worker containers' host requests, over whatever a component's descriptor
 declares in `spec.resources`.
 
-Because that image is built locally and loaded straight into the cluster, every
-container is rendered with `imagePullPolicy: IfNotPresent` — there is nothing to
-pull. (Left to Kubernetes' own inference, the `:latest` tag the build produces
-would mean `Always`, and the pod would try to fetch a locally built image from a
-registry that has never seen it.) Pass `--image-pull-policy Always` when every
-image instead comes from a registry the nodes can reach.
+An auto-built image is deployed under a **content-addressed tag**
+(`videoflow-<solution>:<12 hex of its id>`, tagged beside the `:latest` that
+keeps docker's layer cache warm), and every container is rendered with
+`imagePullPolicy: IfNotPresent`. Together they are what makes both paths right
+without a flag: a side-loaded image has nothing to pull, and on a registry a
+changed image is a new tag, so no node ever keeps running last week's build.
+Pass `--image-pull-policy Always` only for a registry image under a mutable tag
+you re-push yourself.
 
 Every automatic step has an explicit override — the fully manual path still
 works:
@@ -247,8 +289,9 @@ videoflow deploy my_flow.py:build_flow \
 
 Use `--dry-run` to print the manifests to stdout (including the dev-infra
 manifests when `--nats` is omitted) — the prepare hook's output goes to stderr,
-so stdout stays valid YAML — or `--render-only` to write them plus a
-`kustomization.yaml` for `kubectl apply -k`. Other CLI commands:
+so stdout stays valid YAML, and nothing is pushed — or `--render-only` to write
+them plus a `kustomization.yaml` for `kubectl apply -k` (that one pushes the
+image when a `--registry` is set, since its output is meant to be applied). Other CLI commands:
 `videoflow explain my_flow.py` (human-readable graph/topology summary),
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),
 `videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...] [--infra]`
@@ -265,6 +308,48 @@ can triage without parsing stderr: `2` your flow or config, `3` your cluster or
 broker, `4` the flow ran and nodes failed, `5` the flow stalled, `130`
 interrupted. Errors print as a message and a fix rather than a traceback; set
 `VF_DEBUG=1` when you want the traceback.
+
+### Multi-node and shared clusters
+
+A laptop cluster needs nothing above. A cluster with several nodes has two
+things a single node hides — a locally built image side-loaded into one node's
+containerd is invisible to the others, and a hostPath is a different directory
+on every node — and a shared cluster usually has a namespace, a PriorityClass
+and a set of GPU nodes that are yours. The answers are `--registry` (push the
+image, let the nodes pull it; `--push-tool crane` for a plain-HTTP registry the
+docker daemon does not trust), `--mount-pvc` (an RWX claim, mounted at the
+directory it is served at, so every path the solution reads or writes lives on
+it) with `--mount-home` (the caches too), and `--priority-class` /
+`--gpu-nodes`. Those values belong to the cluster, not to a solution or a run,
+so they live in a **cluster profile**, keyed by the kubectl context it describes:
+
+```yaml
+# ~/.config/videoflow/clusters.yaml   ($VF_CLUSTERS_FILE or --clusters-file to point elsewhere)
+docker:                                # machine-level, for every docker build / run
+  build_args: '--build-arg http_proxy=http://proxy:3128'
+clusters:
+  lab:                                 # `--cluster lab`, or matched by `context`
+    context: default                   # the kubectl context this profile belongs to
+    namespace: videoflow
+    registry: 10.0.0.1:5000
+    push_tool: crane
+    mount_pvc: ['work-share:/shared/videoflow']
+    mount_home: /shared/videoflow/home
+    priority_class: cluster-batch
+    gpu_nodes: [gpu-01]                # optional
+    broker_profile: durable            # optional: broker + payload store on claims of
+    broker_storage_class: nfs-shared   #   this class, not on the nodes' disks
+    broker_replicas: 1                 #   (NATS servers; default 3)
+```
+
+With that file in place, `videoflow deploy human_tracking.py` on that context
+is still one command: deploy says which profile it took its defaults from, a
+flag typed on the command line always wins, and `teardown` reads the same
+profile. Every key is a `deploy` flag with underscores; lists stand for
+repeatable flags. The one thing the profile cannot do for you is choose where
+the data goes: on such a cluster answer the `work_dir` question (and any input
+path) with a directory under the claim's, so the pods and your machine see the
+same files.
 
 ### Preparing a cluster with GPU access
 
@@ -355,17 +440,20 @@ the job of the NVIDIA container runtime. That works out of the box only when the
 node's container runtime uses it **by default**. Distributions that instead
 register it as an opt-in `RuntimeClass` — k3s is the notable one, exposing
 handlers named `nvidia` and `nvidia-experimental` — will happily schedule a GPU
-pod that then finds no device. Name the class at deploy time:
+pod that then finds no device. Deploy handles this for you: for a flow with GPU
+nodes it looks for the NVIDIA RuntimeClass the cluster registers and puts it on
+the GPU pods, announcing the choice. Name one yourself, or opt out, when you know
+better:
 
 ```bash
-videoflow deploy my_flow.py --gpu-runtime-class nvidia
+videoflow deploy my_flow.py --gpu-runtime-class nvidia-legacy   # a specific handler
+videoflow deploy my_flow.py --gpu-runtime-class none            # no runtimeClassName at all
 ```
-TODO: Why would we need to mention this? why isn't a default that is not needed to be passed explicitly as a paramter?
 
 `--gpu-runtime-class` puts `runtimeClassName` on GPU pods only; CPU nodes are left
-on the node's default runtime. Deploy's preflight warns when an `nvidia`
-RuntimeClass exists and the flag wasn't given, since that combination is the one
-that silently produces device-less GPU pods.
+on the node's default runtime. Deploy's preflight still warns when an `nvidia`
+RuntimeClass exists and none ended up on the pods (you opted out), since that
+combination is the one that silently produces device-less GPU pods.
 
 Making the nvidia runtime the node's containerd *default* also works and needs no
 flag, but it routes every pod through the NVIDIA shim — and that has a sharp edge.
@@ -402,8 +490,14 @@ your graph whenever the flow has GPU nodes:
 # gpu.Dockerfile, next to my_flow.py
 FROM videoflow-base:py3.12-cuda
 RUN pip install torch --index-url https://download.pytorch.org/whl/cu124
-COPY . . && RUN pip install .
+COPY . .
+RUN pip install .
 ```
+
+Which of the two files deploy builds is the flow's decision, not the docker
+daemon's: a solution names the config keys that select the device in its
+`config.template.yaml` (`x-gpu: ['{device}']`), and without that deploy reads
+the compiled graph's device placement when the graph imports on your machine.
 
 Keep the image's CUDA minor version compatible with the host driver — a driver
 too old for the image's CUDA runtime is the most common cause of a pod that
@@ -484,9 +578,9 @@ for MPS (hard per-client memory caps), MIG, and the full comparison.
 
 **Single-node dev clusters.** k3s works well for this: it uses containerd, so
 after step 1 it detects the NVIDIA runtime automatically and registers it as an
-`nvidia` RuntimeClass — but it does *not* make it the default, so deploy with
-`--gpu-runtime-class nvidia` or GPU pods will start without a device. Then
-apply the device plugin and label the single node. minikube needs `minikube start
+`nvidia` RuntimeClass — not as the default, which is exactly the case deploy
+detects and handles by putting that class on the GPU pods. Then apply the
+device plugin and label the single node. minikube needs `minikube start
 --driver=docker --container-runtime=docker --gpus all`. kind has no supported GPU
 passthrough — use k3s or a remote cluster instead.
 
@@ -599,7 +693,7 @@ in this release.
 | Concept | Behavior |
 | --- | --- |
 | `flow_type=REALTIME` | broker keeps only the freshest message per edge — stale frames are dropped, producers never block |
-| `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream blocks the publisher instead of dropping) |
+| `flow_type=BATCH` | **at-least-once, loss-free** delivery: interest-retention streams bound the backlog and apply real backpressure (a full stream, or a full payload store, blocks the publisher instead of dropping) |
 | `ProcessorNode(nb_tasks=N)` | N competing-consumer replicas (Deployment replicas, each claiming a replica slot through the run ledger at start; an Indexed Job of N completions in a BATCH flow) |
 | `ProcessorNode(nb_tasks=N, partition_by=...)` | N **partitioned** replicas (StatefulSet); each message is owned by one replica by key hash — this is how a multi-parent **join can scale** (`partition_by='trace_id'`) |
 | `device_type=GPU` | pod requests `gpu_count` × `nvidia.com/gpu` (or `--gpu-resource-name`) plus a GPU-pool nodeSelector/toleration — exclusive whole physical devices; under `--gpu-mode mix`, nodes with `gpu_memory_gib` request a solver-chosen exclusive MIG slice instead |
@@ -757,7 +851,8 @@ top of it with your dependencies and your node package, then point the deploy at
 # Dockerfile (see docker/user-image.example.Dockerfile)
 FROM videoflow-base:latest
 RUN pip install torch my-libs        # your deps
-COPY . . && RUN pip install .        # your package, importable by its module path
+COPY . .
+RUN pip install .                    # your package, importable by its module path
 ```
 
 ```bash
@@ -767,6 +862,15 @@ docker build -t ghcr.io/me/app:v1 .      # your image, FROM videoflow-base
 
 videoflow deploy my_flow.py:build_flow --nats nats://... --image ghcr.io/me/app:v1
 ```
+
+A solution that ships its Dockerfile next to the graph does not need any of
+this: `deploy` and `run-local` build it (and `videoflow-base` first, from your
+checkout), deploy it under a content-addressed tag, and push it when a
+`--registry` is set. Two environment variables reach every docker command they
+run — `VF_DOCKER_BUILD_ARGS` for each `docker build` and `VF_DOCKER_RUN_ARGS`
+for each `docker run` (a corporate proxy as `--build-arg http_proxy=...`, say);
+the `docker` section of the cluster profile file sets them for a machine.
+Contrib components name their GPU variant `gpu.Dockerfile`.
 
 `--image` is the default for every node. A node that needs a different environment
 declares its own image in the graph — `MyDetector(name='det', image='ghcr.io/me/gpu:v1')`

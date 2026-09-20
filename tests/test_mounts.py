@@ -251,3 +251,35 @@ def test_priority_class_lands_on_every_pod_and_defaults_to_none():
     manifests = render_manifests(compile_flow(_flow(REALTIME, partitioned = True)), 'demo', REALTIME,
                                  'nats://x:4222', 'run1', default_image = IMG)
     assert all('priorityClassName' not in spec for spec in _pod_specs(manifests).values())
+
+
+def test_a_remapped_hostpath_under_the_claim_is_served_by_the_claim_with_a_subpath():
+    '''
+    The multi-node cache case: the operator's caches live inside the claim's
+    directory (``--mount-home /share/home``) and the template maps them onto the
+    container root's home. The pods mount the claim there, at the subdirectory —
+    one claim volume, several mounts of it — instead of a node-local hostPath.
+    '''
+    mounts = parse_mounts(['/share/home/.videoflow:/root/.videoflow', '/share/run/out',
+                           '/share/models:/root/.torch:ro', '/elsewhere:/root/.cache']) \
+        + parse_pvc_mounts(['work:/share'])
+    kept = pod_mounts(mounts)
+    assert kept == [
+        Mount(name = 'vf-pvc-0', host_path = '', container_path = '/root/.videoflow', read_only = False,
+              claim = 'work', sub_path = 'home/.videoflow'),
+        Mount(name = 'vf-pvc-0', host_path = '', container_path = '/root/.torch', read_only = True,
+              claim = 'work', sub_path = 'models'),
+        Mount(name = 'vf-mount-3', host_path = '/elsewhere', container_path = '/root/.cache', read_only = False),
+        Mount(name = 'vf-pvc-0', host_path = '', container_path = '/share', read_only = False, claim = 'work')]
+    _, by = _by_kind(BATCH, mounts)
+    volumes, vmounts = _volumes_and_mounts(by[('Job', 'vf-demo-run1-work')])
+    assert volumes == [{'name': 'vf-mount-3', 'hostPath': {'path': '/elsewhere'}},
+                       {'name': 'vf-pvc-0', 'persistentVolumeClaim': {'claimName': 'work'}}]
+    assert vmounts == [
+        {'name': 'vf-pvc-0', 'mountPath': '/root/.videoflow', 'readOnly': False, 'subPath': 'home/.videoflow'},
+        {'name': 'vf-pvc-0', 'mountPath': '/root/.torch', 'readOnly': True, 'subPath': 'models'},
+        {'name': 'vf-mount-3', 'mountPath': '/root/.cache', 'readOnly': False},
+        {'name': 'vf-pvc-0', 'mountPath': '/share', 'readOnly': False}]
+    # A claim at the root serves everything, subPath relative to it.
+    everything = parse_mounts(['/data/models:/root/.videoflow']) + parse_pvc_mounts(['all:/'])
+    assert pod_mounts(everything)[0].sub_path == 'data/models'

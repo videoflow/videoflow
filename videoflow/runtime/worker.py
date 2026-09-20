@@ -93,6 +93,16 @@ the original graph-building script::
                         check). A stall found this way is written to the
                         termination log and ends the process with the error's
                         exit code (ProgressStalled: 5)
+    VF_STORE_ADMISSION  optional; the share (0, 1] of the payload store's budget
+                        this publisher may fill before its publications hold —
+                        the compiler grades it by depth so a source stalls first
+                        and the stages below it keep room to drain (BLOB-16;
+                        default 1)
+    VF_STORE_BACKPRESSURE_SECONDS optional; how long a BATCH publisher holds a
+                        publication the payload store refused for memory —
+                        retrying while the store's readers drain it, its
+                        liveness beat kept alive — before the refusal is its
+                        failure (BLOB-16; default 600; 0 never waits)
     VF_TERMINATION_LOG  optional; path the structured termination reason is written
                         to (default /dev/termination-log, which Kubernetes surfaces
                         in the pod's containerStatuses)
@@ -234,6 +244,51 @@ def watchdog_interval_from_env() -> float:
             remedy = 'Set it to the seconds between progress checks, or 0 to disable '
                     'the watchdog thread.')
     return interval
+
+def store_admission_from_env() -> float:
+    '''
+    ``VF_STORE_ADMISSION`` as a share in (0, 1]: 1.0 when unset.
+
+    - Raises:
+        - ConfigError: if the value is not a number in (0, 1].
+    '''
+    raw = os.environ.get('VF_STORE_ADMISSION')
+    if raw in (None, ''):
+        return 1.0
+    try:
+        share = float(raw)
+    except ValueError as e:
+        raise ConfigError(f'VF_STORE_ADMISSION={raw!r} is not a number.',
+                          remedy = 'Set it to the share of the payload store this node may fill, in (0, 1].') from e
+    if not 0.0 < share <= 1.0:
+        raise ConfigError(f'VF_STORE_ADMISSION={raw!r} is not in (0, 1].',
+                          remedy = 'Set it to the share of the payload store this node may fill, in (0, 1].')
+    return share
+
+def store_backpressure_from_env() -> Optional[float]:
+    '''
+    ``VF_STORE_BACKPRESSURE_SECONDS`` as a number of seconds: None when unset
+    (the messenger's default), 0 for "never wait".
+
+    - Raises:
+        - ConfigError: if the value is not a number, or is negative.
+    '''
+    raw = os.environ.get('VF_STORE_BACKPRESSURE_SECONDS')
+    if raw in (None, ''):
+        return None
+    try:
+        seconds = float(raw)
+    except ValueError as e:
+        raise ConfigError(
+            f'VF_STORE_BACKPRESSURE_SECONDS={raw!r} is not a number.',
+            remedy = 'Set it to the seconds a publisher may wait for a full payload store to '
+                    'drain, or 0 to fail the publication at once.') from e
+    if seconds < 0:
+        raise ConfigError(
+            f'VF_STORE_BACKPRESSURE_SECONDS={raw!r} is negative.',
+            remedy = 'Set it to the seconds a publisher may wait for a full payload store to '
+                    'drain, or 0 to fail the publication at once.')
+    return seconds
 
 def build_watchdog(deadline : ProgressDeadline, interval_seconds : float,
                 progress_timeout : float, node_name : str,
@@ -518,7 +573,7 @@ def run_from_env() -> None:
         if urlparse(blob_redis_url).scheme in ('redis', 'rediss'):
             # Obligation-keeping store (RFC 0006 BLOB-13..15) on the same keys the
             # counter store used, so a blob written either way is readable both ways.
-            payload_store = RedisPayloadStore(blob_redis_url)
+            payload_store = RedisPayloadStore(blob_redis_url, admission = store_admission_from_env())
         else:
             # Deferred: serialization imports the optional `msgpack`/`protobuf` deps at module scope.
             from ..wire.serialization import make_blob_store
@@ -571,6 +626,14 @@ def run_from_env() -> None:
                               parent_replicas, lease_seconds = lease_seconds)
     replayable = isinstance(node, ProducerNode) and node.replayable
 
+    # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
+    # engine where several workers share a host and would collide on the port).
+    # Its state exists before the messenger so the messenger can beat it while it
+    # deliberately holds a publication for a full payload store (BLOB-16) —
+    # liveness would otherwise read that hold as a wedge and restart the pod.
+    health_port = int(os.environ.get('VF_HEALTH_PORT', '0'))
+    state = HealthState(node_name) if health_port > 0 else None
+
     messenger: Messenger = NATSMessenger(
         node, parent_names, nats_url, flow_id, flow_type, run_id,
         blob_store = blob_store, replica_id = replica_id,
@@ -582,14 +645,12 @@ def run_from_env() -> None:
         payload_store = payload_store, blob_reader_ids = blob_reader_ids,
         runtime = runtime, replayable = replayable,
         prefetch_bytes = int(os.environ['VF_PREFETCH_BYTES']) if os.environ.get('VF_PREFETCH_BYTES') else None,
+        store_backpressure_seconds = store_backpressure_from_env(),
+        keepalive = state.beat if state is not None else None,
     )
 
-    # Health/metrics server: reads VF_HEALTH_PORT (0 disables, e.g. under the local
-    # engine where several workers share a host and would collide on the port).
-    health_port = int(os.environ.get('VF_HEALTH_PORT', '0'))
     health_server = None
-    if health_port > 0:
-        state = HealthState(node_name)
+    if state is not None:
         health_server = HealthServer(state, port = health_port)
         health_server.start()
         # The resolved policy lets the instrumented messenger count drops by the

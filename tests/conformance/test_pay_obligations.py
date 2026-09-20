@@ -507,7 +507,7 @@ def test_pay_006_crash_after_confirmed_settlement_does_not_leak_a_payload(nats_u
     evidence : Dict[str, Any] = {}
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
                                     marker_dir = str(evidence_dir / 'markers'))
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 5)
     try:
         _oracle_pay_006(rig, _subprocess_child(rig, redis_url, schedule), evidence)
     finally:
@@ -556,7 +556,7 @@ def test_pay_006_the_runtime_ledger_reconciles_on_worker_start(nats_url, redis_u
     root = str(tmp_path / 'ledger')
     schedule = faults.FaultSchedule({'settle.after': faults.Nth(1, faults.Crash(137))},
                                     marker_dir = str(evidence_dir / 'markers'))
-    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 30)
+    rig = JetStreamRig(nats_url, BATCH, _specs(), redis_url = redis_url, max_retries = 3, ack_wait = 5)
 
     def runtime(node : str) -> FlowRuntime:
         return FlowRuntime(FileRuntimeStore(root), rig.flow_id, rig.run_id, node, lease_seconds = 2)

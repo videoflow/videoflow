@@ -215,12 +215,6 @@ class _K3sFlavor(ClusterFlavorHandler):
 
     def load_images(self, images : List[str], kubectl : str = 'kubectl') -> None:
         for image in images:
-            if is_registry_qualified(image):
-                # Pushed to a registry the nodes pull from (containerd's
-                # registries.yaml): importing it into this node's containerd would
-                # be redundant, needs sudo, and reaches only one of the nodes.
-                print(f'Image {image} is registry-qualified; the nodes pull it, no import needed.')
-                continue
             _k3s_import(image)
 
 class _GenericRemoteFlavor(ClusterFlavorHandler):
@@ -308,13 +302,23 @@ def detect_cluster(kubectl : str = 'kubectl') -> str:
 def load_images(cluster : str, images : List[str], kubectl : str = 'kubectl') -> None:
     '''
     Loads locally built docker images into the detected cluster so pods can pull
-    them without a registry.
+    them without a registry. A registry-qualified ref (``host:port/name:tag``,
+    ``ghcr.io/org/name:tag``) is skipped on every flavor: it was pushed somewhere
+    the nodes pull from, and side-loading it would be redundant on a single-node
+    cluster, need sudo on k3s, and reach only one node of a multi-node one.
 
     - Raises:
         - ``RuntimeError`` when the cluster is remote (push to a registry instead), \
             when a required tool is missing, or when a load command fails.
     '''
-    get_cluster_flavor(cluster).load_images(images, kubectl)
+    local = []
+    for image in images:
+        if is_registry_qualified(image):
+            print(f'Image {image} is registry-qualified; the nodes pull it, no import needed.')
+        else:
+            local.append(image)
+    if local:
+        get_cluster_flavor(cluster).load_images(local, kubectl)
 
 def _run_load(cmd : List[str]) -> None:
     try:

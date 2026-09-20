@@ -130,7 +130,7 @@ def test_resolve_mounts_scalar_path_and_host_container_pair(tmp_path):
     config = {'input_video': '/data/clip.mp4'}
     mounts = solution.resolve_mounts(template, config, str(tmp_path))
     assert mounts == ['/data/clip.mp4:ro',
-                      os.path.expanduser('~/.videoflow') + ':/root/.videoflow']
+                      os.path.realpath(os.path.expanduser('~/.videoflow')) + ':/root/.videoflow']
 
 
 def test_resolve_mounts_fans_out_and_dedupes(tmp_path):
@@ -142,7 +142,7 @@ def test_resolve_mounts_fans_out_and_dedupes(tmp_path):
     mounts = solution.resolve_mounts(template, config, str(tmp_path))
     assert mounts == ['/data/a.mp4:ro', '/data/b.mp4:ro',
                       str(tmp_path / 'out'),
-                      os.path.expanduser('~/.videoflow') + ':/root/.videoflow']
+                      os.path.realpath(os.path.expanduser('~/.videoflow')) + ':/root/.videoflow']
 
 
 # -- question-type registry ------------------------------------------------
@@ -244,3 +244,66 @@ def test_split_mount_specs_leaves_host_specs_untouched():
     host, claims = solution.split_mount_specs(['/a:ro', '/h:/c', 'pvc:x:/p:ro'])
     assert host == ['/a:ro', '/h:/c'] and claims == ['x:/p:ro']
     assert solution.split_mount_specs([]) == ([], [])
+
+
+# -- x-gpu: which image the solution needs ----------------------------------------------
+
+def test_resolve_gpu_reads_the_named_config_values():
+    template = {'x-gpu': ['{device}']}
+    assert solution.resolve_gpu(template, {'device': 'gpu'}) is True
+    assert solution.resolve_gpu(template, {'device': 'GPU '}) is True
+    assert solution.resolve_gpu(template, {'device': 'cpu'}) is False
+    assert solution.resolve_gpu(template, {}) is False              # nothing resolves: no gpu stage
+    # Fan-out over per-stage placement: one gpu stage is enough.
+    per_stage = {'x-gpu': ['{device.*}']}
+    assert solution.resolve_gpu(per_stage, {'device': {'detector': 'gpu', 'tracker': 'cpu'}}) is True
+    assert solution.resolve_gpu(per_stage, {'device': {'detector': 'cpu', 'tracker': 'cpu'}}) is False
+    # Literals work too, and several entries OR together.
+    assert solution.resolve_gpu({'x-gpu': ['gpu']}, {}) is True
+    assert solution.resolve_gpu({'x-gpu': ['{a}', '{b}']}, {'a': 'cpu', 'b': 'gpu'}) is True
+
+
+def test_resolve_gpu_is_none_without_the_block_and_rejects_a_scalar():
+    assert solution.resolve_gpu(None, {}) is None
+    assert solution.resolve_gpu({'x-mounts': []}, {}) is None
+    with pytest.raises(ValueError, match = 'x-gpu must be a list'):
+        solution.resolve_gpu({'x-gpu': '{device}'}, {'device': 'gpu'})
+
+
+def test_generated_config_strips_x_gpu(tmp_path):
+    (tmp_path / 'config.template.yaml').write_text("device: cpu\nx-questions: []\nx-gpu: ['{device}']\n")
+    path = solution.ensure_config(str(tmp_path), interactive = True, input_fn = lambda p: '')
+    assert yaml.safe_load(open(path)) == {'device': 'cpu'}
+
+
+# -- --mount-home and real host paths ---------------------------------------------------
+
+def test_mount_home_reroots_tilde_on_the_host_side_only(tmp_path):
+    template = {'x-mounts': ['~/.videoflow:/root/.videoflow', '~/.cache:/root/.cache:ro', '{work_dir}']}
+    mounts = solution.resolve_mounts(template, {'work_dir': './out'}, str(tmp_path), home = '/share/home/')
+    assert mounts == ['/share/home/.videoflow:/root/.videoflow', '/share/home/.cache:/root/.cache:ro',
+                      os.path.realpath(str(tmp_path / 'out'))]
+    assert solution.expand_home('~user/x', '/share/home') == os.path.expanduser('~user/x')
+    assert solution.expand_home('/abs', '/share/home') == '/abs'
+
+
+def test_host_paths_are_real_and_a_symlinked_same_path_entry_keeps_the_written_container_path(tmp_path):
+    real = tmp_path / 'real'
+    real.mkdir()
+    link = tmp_path / 'link'
+    link.symlink_to(real)
+    template = {'x-mounts': ['{work_dir}', '{clip}:ro', f'{link}/models:/root/.videoflow']}
+    config = {'work_dir': 'link/out', 'clip': str(link / 'clip.mp4')}
+    mounts = solution.resolve_mounts(template, config, str(tmp_path))
+    written_out = os.path.abspath(str(link / 'out'))
+    assert mounts == [f'{os.path.realpath(real / "out")}:{written_out}',
+                      f'{os.path.realpath(real / "clip.mp4")}:{os.path.abspath(str(link / "clip.mp4"))}:ro',
+                      f'{os.path.realpath(real / "models")}:/root/.videoflow']
+
+
+def test_an_unset_input_produces_no_mount(tmp_path):
+    '''An empty or null config value (a bundled sample the prep hook fetches) is not a path to mount.'''
+    template = {'x-mounts': ['{input_video}:ro', '{work_dir}']}
+    for unset in ('', None):
+        mounts = solution.resolve_mounts(template, {'input_video': unset, 'work_dir': './out'}, str(tmp_path))
+        assert mounts == [os.path.realpath(str(tmp_path / 'out'))]

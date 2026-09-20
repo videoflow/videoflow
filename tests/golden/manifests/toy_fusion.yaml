@@ -156,6 +156,7 @@ data:
   VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: fuse
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job
@@ -222,6 +223,7 @@ data:
   VF_NODE_CLASS: toy_fusion_nodes.SimCameraProducer
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: fuse
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job
@@ -382,6 +384,7 @@ data:
   VF_NODE_CLASS: toy_fusion_nodes.SimSensorProducer
   VF_BLOB_READERS: '1'
   VF_BLOB_READER_IDS: fuse
+  VF_STORE_ADMISSION: '0.5'
 ---
 apiVersion: batch/v1
 kind: Job

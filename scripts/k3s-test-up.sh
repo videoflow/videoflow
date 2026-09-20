@@ -143,7 +143,8 @@ docker build "${build_args[@]}" -f tests/integration/k8s/Dockerfile --build-arg 
 images="$BASE_IMAGE $FIXTURE_IMAGE"
 for solution in $SOLUTIONS; do
     # videoflow-<dirname>:latest, underscores and all — deploy.build.default_tag
-    # computes the same string, so a later autobuild agrees with what is pushed.
+    # computes the same string (an autobuild then deploys it under a
+    # content-addressed tag, and reaches this registry only with --registry).
     tag="videoflow-${solution}:latest"
     echo "==> building $tag"
     docker build "${build_args[@]}" -f "solutions/${solution}/Dockerfile" \

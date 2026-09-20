@@ -106,6 +106,8 @@ depend on any other configuration channel for routing.
 | `VF_BLOB_REDIS_URL` | no | unset | Enables the external blob store for large payloads (§13). |
 | `VF_BLOB_READERS` | no | unset | Downstream read count of this node's published messages; enables refcounted blob reclamation (`BLOB-5`). Unset ⇒ TTL-only blobs. |
 | `VF_BLOB_TTL_SECONDS` | no | unset | Blob (and counter) TTL override. Unset ⇒ flow-type default: 3600 realtime / 86400 batch (`BLOB-7`). |
+| `VF_STORE_ADMISSION` | no | `1` | The share `(0, 1]` of the payload store's budget this publisher may fill before its publications hold (`BLOB-16`): the compiler grades it by depth, `0.5` for a source up to `1` for the deepest publisher, emitted only below `1`. |
+| `VF_STORE_BACKPRESSURE_SECONDS` | no | `600` | How long a BATCH publisher holds a publication the payload store refused for memory, retrying while the store's readers drain it, before the refusal is its failure (`BLOB-16`); `0` never waits. |
 | `VF_GPU_COUNT` | no | `1` | Devices **delivered** to this worker (GPU nodes only). The visible devices are exactly the delivered devices, numbered `0..count-1` (RFC 0003, amended). Informational — not routing. |
 | `VF_GPU_RESOURCE_NAME` | no | unset | Kubernetes extended-resource name the devices were requested as — strategy-resolved, e.g. the mix solver's MIG profile (RFC 0003/0004). Informational — not routing. |
 | `VF_STRUCTURED_LOGS` | no | unset | Truthy ⇒ JSON structured logs. Cosmetic; not protocol. |
@@ -499,7 +501,8 @@ it yields exactly-once-ish effects. Reference: `nats_messenger.py`.
   backpressure to upstream. A stopping flow (termination signalled) MAY abandon
   the publish. The reference backoff is `[0.05, 0.1, 0.2, 0.5, 1.0]s` (capped,
   repeated); the exact schedule is `implementation-defined`, the blocking behavior
-  is not.
+  is not. A payload store that refuses a put for memory applies the same
+  backpressure and gets the same answer (`BLOB-16`).
 
 ### 7.3 Failure, retry, dead-letter
 
@@ -1004,6 +1007,31 @@ Reference: `videoflow/wire/serialization.py`.
   `missing` / `corrupt`. `decode_envelope` takes `resolve_blobs = True` so a
   receiver can decide ownership (`PART-3`) and replay scope (`DELIV-16`) from
   metadata before fetching bytes.
+- **BLOB-16** (a full store is backpressure; RFC 0006): a store MUST refuse a
+  put it cannot hold under its budget (`noeviction` under `maxmemory`; the
+  reference store's `max_bytes`) with the typed `PayloadStoreFull` (a
+  `ResourceUnavailable`, code `VF_PAYLOAD_STORE_FULL`) rather than evict what
+  a reader still holds. Because the server refuses *every* memory-taking command
+  at its limit — a put's own obligation set and metadata, a reader's lease, the
+  run ledger's records when it shares the server — the reference store stops
+  admitting payload bytes with headroom to spare (10% of `maxmemory`, checked
+  against `INFO memory` before a byte is written), so the bookkeeping that drains
+  the store keeps working while publishers hold. And because a store filled by
+  an upstream backlog would leave the stages below it no memory to publish into
+  (every stage held, nothing draining — a deadlock), the budget is graded by
+  depth: a source may fill `0.5` of it, the deepest publisher all of it, the
+  stages between in proportion (`VF_STORE_ADMISSION`, compiled from the longest
+  path from a source), so the store always drains from the sinks up. A BATCH
+  publisher MUST treat that refusal as it treats a
+  full stream (`DELIV-5`): hold the publication and retry with backoff — the
+  reference ladder is `[0.1, 0.2, 0.5, 1.0]s` (capped, repeated) — while the
+  store's readers release what they hold, for at most
+  `VF_STORE_BACKPRESSURE_SECONDS` (reference default 600) and never past the
+  termination flag; only then is the refusal the publication's failure. The hold
+  keeps the worker's liveness beat (§12) alive but does not extend the progress
+  deadline (`ERR-7`): a processor holding an input past its progress timeout is
+  stalled and the input goes to another replica. A REALTIME publisher never
+  waits (`DELIV-4`).
 
 ---
 

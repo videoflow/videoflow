@@ -167,7 +167,16 @@ Override it with ``--blob-ttl-seconds`` on ``deploy``/``run-local`` if your batc
 flows drain slower than that. The provisioned Redis runs with an append-only file,
 ``noeviction`` and ``maxmemory 4gb``: a payload is never dropped while a reader
 still holds it — which is what a BATCH flow's ``reliable_work`` channels require of
-the store — and a server that fills up refuses the write (the publisher sees a
-typed transient failure) rather than growing without bound or silently evicting
-someone's frame. Steady-state size is the in-flight backlog; the TTL and the
-obligation reconciler are what bound orphans.
+the store — and a server that fills up refuses the write rather than growing
+without bound or silently evicting someone's frame (the store stops admitting
+payloads 10% below ``maxmemory``, so the obligation records and the run ledger
+that share the server keep working while it is full, and a source may fill only
+half of it, deeper stages proportionally more, so the stages below a backlog
+always keep room to publish and the store drains from the sinks up). A BATCH
+publisher answers
+that refusal the way it answers a full stream: it holds the publication and
+retries while the readers drain the store, for up to
+``VF_STORE_BACKPRESSURE_SECONDS`` (default 600), so a fast reader ahead of slow
+inference is throttled to the inference's pace instead of failing. Steady-state
+size is the in-flight backlog; the TTL and the obligation reconciler are what
+bound orphans.

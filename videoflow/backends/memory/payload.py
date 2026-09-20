@@ -35,7 +35,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, Mapping
 
-from ...core.errors import ResourceUnavailable
+from ...core.errors import PayloadStoreFull
 from ...core.errors import TransientFailure as TransientError
 from .. import faults
 from ..capabilities import PayloadCapabilities
@@ -147,7 +147,7 @@ class MemoryPayloadStore(PayloadStore):
                 if self._tier == TIER_EVICTABLE:
                     self._evict_until(len(data))
                 if self._bytes() + len(data) > self._max_bytes:
-                    raise ResourceUnavailable(
+                    raise PayloadStoreFull(
                         f'payload store budget of {self._max_bytes} bytes cannot admit {len(data)} more bytes',
                         remedy = 'Backpressure the producer, raise the budget, or release obligations.',
                         stored_bytes = self._bytes(), requested = len(data))

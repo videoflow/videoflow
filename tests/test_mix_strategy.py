@@ -11,6 +11,8 @@ from __future__ import absolute_import, division, print_function
 import json
 import logging
 import subprocess
+import time
+import types
 
 import pytest
 from support_kubectl import FakeKubectl as _FakeKubectl
@@ -20,6 +22,15 @@ from videoflow.core.compiler import NodeSpec
 from videoflow.core.errors import OwnershipConflict, UnobservableState
 from videoflow.deploy import cluster, gpu
 from videoflow.deploy.mig import LayoutError, NodeInventory
+
+
+def _without_sleep():
+    """The gpu module's ``time`` with a no-op ``sleep`` — rebinding the module's own name, never the
+    global module, so no other test's thread spins through it."""
+    ns = types.SimpleNamespace(**{name: getattr(time, name) for name in dir(time) if not name.startswith('_')})
+    ns.sleep = lambda seconds: None
+    return ns
+
 
 
 @pytest.fixture(autouse = True)
@@ -527,7 +538,7 @@ def test_prepare_rollout_timeout_fails_before_labeling(monkeypatch):
     fake = _FakeKubectl(responses)
     monkeypatch.setattr(subprocess, 'run', fake)
     monkeypatch.setattr(gpu, 'MIG_MANAGER_ROLLOUT_TIMEOUT_SECONDS', 0)
-    monkeypatch.setattr(gpu.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(gpu, 'time', _without_sleep())
     with pytest.raises(RuntimeError, match = 'remount'):
         strategy.prepare(flow_id = 'flow1')
     # The owner stamp may land (it precedes the geometry), but no node may be
@@ -869,7 +880,7 @@ def test_cleanup_keeps_retry_state_when_the_revert_fails(monkeypatch, caplog):
     })
     monkeypatch.setattr(subprocess, 'run', fake)
     monkeypatch.setattr(gpu, 'MIG_APPLY_TIMEOUT_SECONDS', 0)
-    monkeypatch.setattr(gpu.time, 'sleep', lambda seconds: None)
+    monkeypatch.setattr(gpu, 'time', _without_sleep())
     with caplog.at_level(logging.WARNING):
         gpu.MixGpu().cleanup()                     # warns, never raises
     joined = fake.joined_calls()

@@ -20,24 +20,34 @@ What ``videoflow deploy`` does, step by step
    full list of missing inputs instead of hanging on a prompt.
 
 2. **Image build** — with no ``--image``, deploy looks for a Dockerfile next to
-   the graph: ``gpu.Dockerfile`` when the local docker daemon has the NVIDIA
-   runtime, else ``Dockerfile`` (falling back to whichever exists). The build
-   context is the **git root** enclosing the graph (solution Dockerfiles COPY
-   sibling packages from the repo root); override with ``--build-context``. If
-   the Dockerfile is ``FROM`` a ``videoflow-base:*`` image that is not built
-   locally, deploy builds it first from the videoflow source checkout (this
-   requires an editable/source install — a wheel-only install gets an error
-   with the exact manual commands). The image is tagged
-   ``videoflow-<solution-dir>:latest``. Docker's layer cache makes unchanged
-   rebuilds take about a second. ``--no-build`` disables all of this.
+   the graph: ``gpu.Dockerfile`` when the flow needs a GPU, else ``Dockerfile``
+   (falling back to whichever exists). Whether the flow needs a GPU is read from
+   the config keys the template names in ``x-gpu`` (``x-gpu: ['{device}']``),
+   else from the compiled graph's device placement when the graph imports on
+   this machine, else it is the CPU image with a note — never from whether this
+   machine's docker daemon has the NVIDIA runtime. The build context is the
+   **git root** enclosing the graph (solution Dockerfiles COPY sibling packages
+   from the repo root); override with ``--build-context``. If the Dockerfile is
+   ``FROM`` a ``videoflow-base:*`` image that is not built locally, deploy
+   builds it first from the videoflow source checkout (this requires an
+   editable/source install — a wheel-only install gets an error with the exact
+   manual commands). The image is built as ``videoflow-<solution-dir>:latest``
+   and deployed under a **content-addressed tag** (``:<12 hex of its id>``),
+   so a changed image is always a new tag. Docker's layer cache makes unchanged
+   rebuilds take about a second. ``--no-build`` disables all of this;
+   ``VF_DOCKER_BUILD_ARGS`` adds arguments to every ``docker build`` (a proxy).
+   With ``--registry`` (usually from the cluster profile, below) the image is
+   then pushed and the pods pull the registry-qualified ref.
 
 3. **Prepare hook** — if the solution ships a ``prepare.py``, deploy runs it
    *inside the built image* (``docker run``, with ``--gpus all`` when
-   available) before compiling, because its outputs (calibration files, model
-   weights, ...) get baked into the compiled node parameters. The solution
-   directory and every resolved mount (see step 5) are volume-mounted into the
-   container at their host paths, so all paths in the config resolve
-   identically. Skip with ``--no-prepare``. Hooks are expected to be
+   available, plus ``VF_DOCKER_RUN_ARGS``) before compiling, because its
+   outputs (calibration files, model weights, ...) get baked into the compiled
+   node parameters. The solution directory and every resolved mount (see step
+   5) are volume-mounted into the container at their host paths, so all paths
+   in the config resolve identically, and the resolved config path travels as
+   ``VF_SOLUTION_CONFIG`` (a ``build_flow`` that reads it honours ``--config``
+   kept elsewhere). Skip with ``--no-prepare``. Hooks are expected to be
    idempotent (skip finished steps), so re-running deploy is cheap.
 
 4. **Compile** — deploy calls your ``build_flow()`` factory and compiles the
@@ -59,9 +69,15 @@ What ``videoflow deploy`` does, step by step
    no node's own filesystem holds it — is mounted from an existing
    PersistentVolumeClaim with ``--mount-pvc claim:/path[:ro]`` (or an
    ``x-mounts`` entry ``pvc:claim:/path[:ro]``). The two compose by one rule: a
-   ``--mount`` host path at or under a claim's mount path is served by the claim
-   in the pods (a hostPath there would shadow it with an empty directory on every
-   node but one) and still by the host in the prepare/compile containers.
+   ``--mount`` or ``x-mounts`` host path at or under a claim's mount path is
+   served by the claim in the pods (a hostPath there would shadow it with an
+   empty directory on every node but one) and still by the host in the
+   prepare/compile containers — at the same path when the mount is a same-path
+   one, or, for an entry that remaps a directory onto the container's home
+   (``~/.videoflow:/root/.videoflow``), as a ``subPath`` of the claim.
+   ``--mount-home DIR`` is what makes those cache entries land inside the
+   claim's directory: it is what ``~`` resolves to on the host side. Host paths
+   are resolved to their real location (symlinks followed) before any of this.
 
 6. **Cluster mechanics** — deploy classifies the cluster kubectl points at
    (``k3s`` / ``kind`` / ``minikube`` / ``docker-desktop`` / generic remote)
@@ -70,7 +86,9 @@ What ``videoflow deploy`` does, step by step
    - loads every locally-built image into the cluster with the right mechanism
      (``kind load docker-image`` / ``minikube image load`` /
      ``docker save | k3s ctr images import``; docker-desktop needs nothing).
-     A remote cluster with a locally-built image is a hard error with push
+     A registry-qualified image (``--registry``, or an ``--image`` naming one)
+     is never side-loaded — the nodes pull it. A remote cluster with a
+     locally-built image and no ``--registry`` is a hard error with push
      instructions — pods there can never see your local docker daemon.
    - warns when hostPath mounts will not see your local filesystem (kind and
      minikube nodes are VMs/containers with their own filesystem) and what to
@@ -82,7 +100,9 @@ What ``videoflow deploy`` does, step by step
      **a placement for every pod on the per-node free counts** (the total and
      the largest node are necessary, not sufficient: two nodes with 3 free GPUs
      each hold only two of three ``gpu_count = 2`` replicas), and
-     a ``--gpu-runtime-class`` where the NVIDIA runtime is an opt-in RuntimeClass —
+     a RuntimeClass where the NVIDIA runtime is an opt-in one (deploy puts the
+     ``nvidia`` class the cluster registers on the GPU pods by itself, and
+     announces it; ``--gpu-runtime-class NAME`` chooses, ``none`` opts out) —
      and prints copy-pasteable fix commands. These are warnings by default;
      ``--strict-preflight`` turns them into a non-zero exit before anything is
      applied. A pod listing the API refused is reported as ``unobservable GPU
@@ -156,12 +176,68 @@ Prerequisites
 -------------
 
 - ``docker`` and ``kubectl`` on the operator machine, kubectl configured
-  against the target cluster.
-- ``pip install "videoflow[deploy]"`` — the graph's own dependencies are *not*
-  required on the operator machine (see step 4).
+  against the target cluster (deploy never switches contexts).
+- videoflow installed **from a source checkout** (``uv tool install --editable
+  './videoflow[all]'`` or ``pip install -e``, see :doc:`../first-steps/installing-videoflow`):
+  the ``videoflow-base`` image is built from it. The graph's own dependencies
+  are *not* required on the operator machine (see step 4).
 - For GPU flows: cluster nodes with the NVIDIA device plugin and the
   ``videoflow.io/gpu-pool=true`` label (deploy tells you the exact commands if
   they are missing).
+- For a multi-node or shared cluster: a cluster profile (next section).
+
+Multi-node and shared clusters
+------------------------------
+
+A laptop cluster (kind, minikube, k3s, Docker Desktop) needs nothing beyond the
+prerequisites. A cluster with several nodes has two things a single node hides:
+a locally built image side-loaded into one node's containerd is invisible to
+the others, and a hostPath is a different directory on every node. A shared
+cluster usually adds a namespace, a PriorityClass and a set of GPU nodes that
+are yours. The flags that address them — ``--registry`` (+ ``--push-tool
+crane`` for a plain-HTTP registry the docker daemon does not trust),
+``--mount-pvc`` with ``--mount-home``, ``--priority-class``, ``--gpu-nodes``,
+``--namespace`` — describe the *cluster*, not a solution or a run, so they live
+in a cluster profile keyed by the kubectl context::
+
+    # ~/.config/videoflow/clusters.yaml  (or $VF_CLUSTERS_FILE, or --clusters-file PATH)
+    docker:                                # machine-level; every docker build / run
+      build_args: '--build-arg http_proxy=http://proxy:3128'
+      run_args: ''
+    clusters:
+      lab:                                 # `--cluster lab`, or matched by `context`
+        context: default                   # the kubectl context this profile belongs to
+        namespace: videoflow
+        registry: 10.0.0.1:5000
+        push_tool: crane
+        mount_pvc: ['work-share:/shared/videoflow']
+        mount_home: /shared/videoflow/home
+        priority_class: cluster-batch
+        gpu_nodes: [gpu-01]                # optional
+        broker_profile: durable            # optional: broker + payload store on claims of
+        broker_storage_class: nfs-shared   #   this class, not on the nodes' disks
+        broker_replicas: 1                 #   (NATS servers; default 3)
+        nats: null                         # optional bring-your-own broker (+ blob_redis_url)
+
+Every cluster key is a ``deploy`` flag with underscores; lists stand for
+repeatable flags (``mount_pvc``, ``mount``, ``gpu_nodes``). ``deploy`` takes
+all of them, ``teardown`` the ones it has (``namespace``, ``nats``,
+``kubectl``, ``gpu_mode``), ``run-local`` only the
+``docker`` section. The profile is chosen by ``--cluster NAME``, else by the
+profile whose ``context`` is the current kubectl context; deploy prints which
+one it took and what it contributed. Precedence, everywhere: an explicit flag,
+then an environment variable (``VF_DOCKER_BUILD_ARGS`` / ``VF_DOCKER_RUN_ARGS``
+for the ``docker`` keys), then the profile, then the built-in default.
+
+The claim: an RWX PersistentVolumeClaim in the namespace, mounted at the
+directory it is served at on your machine (an NFS export, say — the same
+absolute path on every node and on the host). Put the solution's ``work_dir``
+and its inputs under that directory when the config Q&A asks (``work_dir`` is
+one of the questions), and point ``mount_home`` inside it so the caches the
+prepare hook fills (``~/.videoflow``, ``~/.torch``, ``~/.cache``) are the ones
+the pods mount. A hostPath under the claim's directory is then served by the
+claim in every pod (step 5), and the prepare container on your machine writes
+to the same files.
 
 A disposable cluster
 --------------------
@@ -200,7 +276,8 @@ can import your node classes by their module path::
     # Dockerfile (see docker/user-image.example.Dockerfile)
     FROM videoflow-base:latest
     RUN pip install torch my-libs        # your dependencies
-    COPY . . && RUN pip install .        # your package
+    COPY . .
+    RUN pip install .                    # your package
 
 ::
 
@@ -223,14 +300,28 @@ Option reference
     one node and wins over both (repeatable). ``--build-context`` overrides the
     git-root build context.
 
+``--registry HOST[:PORT][/PREFIX]`` / ``--push-tool {docker,crane}``
+    Push the built image (or a local ``--image``) to this registry and have the
+    pods pull the registry-qualified ref — the way onto a multi-node cluster,
+    where side-loading reaches one node only. ``docker`` pushes through the
+    daemon (which must trust the registry); ``crane`` pushes from user space
+    with ``--insecure``, for a plain-HTTP registry the daemon does not trust,
+    and needs ``crane`` on PATH (the error tells you how to install it). Both
+    usually come from the cluster profile.
+
 ``--image-pull-policy {Always,IfNotPresent,Never}``
     ``imagePullPolicy`` for every container, workers and the provision Job alike.
     Defaults to ``IfNotPresent``, which is what lets a locally built image run:
-    deploy loads it into the cluster itself, so there is nothing to pull. Left to
-    Kubernetes' own inference, a ``:latest`` tag — the tag auto-build produces —
-    would default to ``Always`` and the pod would try to pull from a registry that
-    has never seen the image, landing in ``ImagePullBackOff``. Use ``Always`` only
-    when every image comes from a registry the nodes can reach.
+    deploy loads it into the cluster itself, so there is nothing to pull — and
+    because an auto-built image is deployed under a content-addressed tag, it
+    stays right on a registry too: a changed image is a new tag. Use ``Always``
+    only for a registry image under a mutable tag you re-push yourself.
+
+``--cluster NAME`` / ``--clusters-file PATH``
+    The cluster profile to take defaults from (see *Multi-node and shared
+    clusters*), and where the profiles file is (default ``$VF_CLUSTERS_FILE``,
+    else ``~/.config/videoflow/clusters.yaml``). Without ``--cluster`` the
+    profile whose ``context`` is the current kubectl context applies.
 
 ``--no-prepare``
     Skip the solution's ``prepare.py`` hook.
@@ -242,10 +333,22 @@ Option reference
 
 ``--mount-pvc CLAIM:PATH[:ro]``
     An existing PersistentVolumeClaim (in ``--namespace``) mounted at ``PATH``
-    in every node workload. A ``--mount`` host path at or under ``PATH`` is served
-    by the claim in the pods and by the host in the prep/compile containers.
-    Repeatable; solution ``x-mounts`` of the form ``pvc:CLAIM:PATH`` are added
-    automatically.
+    in every node workload. A ``--mount`` or ``x-mounts`` host path at or under
+    ``PATH`` is served by the claim in the pods (as a ``subPath`` when the entry
+    remaps it) and by the host in the prep/compile containers. Repeatable;
+    solution ``x-mounts`` of the form ``pvc:CLAIM:PATH`` are added automatically.
+
+``--mount-home DIR``
+    What ``~`` in the solution's ``x-mounts`` resolves to on the host side
+    (default: your home directory). On a multi-node cluster point it inside the
+    directory passed to ``--mount-pvc``, so the caches the pods mount are the
+    ones the prepare hook filled.
+
+``--gpu-runtime-class NAME``
+    ``runtimeClassName`` for the GPU pods. Default: the NVIDIA RuntimeClass the
+    cluster registers (``nvidia`` on k3s, where the NVIDIA container runtime is
+    opt-in and a GPU pod without it starts device-less), detected at deploy time
+    and announced; a name chooses one, ``none`` sets no class.
 
 ``--priority-class NAME``
     ``priorityClassName`` for every pod this deploy creates — workers, the
@@ -365,7 +468,9 @@ Option reference
     limit (see :doc:`gpu-sharing`); needs a GPU DRA driver in the cluster.
 
 ``--dry-run`` / ``--render-only`` / ``--output``
-    Manifest generation without touching the cluster (see above).
+    Manifest generation without touching the cluster (see above). With a
+    ``--registry``, ``--render-only`` pushes the image (its output is meant to
+    be applied) while ``--dry-run`` only names the registry ref it would push.
 
 Other CLI commands
 ------------------
@@ -393,6 +498,17 @@ Other CLI commands
 ``python -m videoflow.compile graph.py[:factory]``
     Compile a graph to a JSON specs document on stdout — what deploy runs inside
     the solution image when the graph can't be imported on the operator machine.
+
+``videoflow run-local graph.py [--in-image] [--mount ...] [--mount-home DIR]``
+    The local twin of ``deploy``: the same config Q&A and prepare hook, a dev
+    NATS/Redis started in docker when nothing is listening, one worker
+    subprocess per node replica. When the graph's dependencies are not installed
+    on this machine — the ML solutions of videoflow-contrib — the prepare hook
+    and every worker run inside the solution image instead (built exactly as
+    deploy would, and reused by it), with the solution's ``x-mounts`` and any
+    ``--mount`` as bind mounts and, when the docker daemon has the NVIDIA
+    runtime, each worker's granted devices passed with ``--gpus``. ``--in-image``
+    forces that even for a graph that imports here.
 
 How graph concepts map onto Kubernetes
 --------------------------------------
