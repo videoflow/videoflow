@@ -486,6 +486,14 @@ Other CLI commands
 ``videoflow explain my_flow.py``
     Print a human-readable summary of the compiled graph — nodes, replicas, image
     families, partitioning, subjects, and the DLQ stream — without touching a cluster.
+    A solution's config is resolved exactly as ``deploy`` does it (``--config``,
+    else ``config.yaml`` beside the graph, else the template's questions —
+    ``--non-interactive`` lists them instead of asking), so ``explain`` works
+    before the first deploy has written one.
+
+``videoflow --version``
+    The installed version — also the tag ``<repo>://<name>`` references are
+    fetched at, and the ``ghcr.io/videoflow/videoflow-base`` tag a wheel install pulls.
 
 ``videoflow provision my_flow.py --nats ...``
     Create the flow's broker streams and durable consumers up front. This normally

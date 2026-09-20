@@ -20,8 +20,8 @@ has encountered this bug already.  Still having a problem? Open an issue on Gith
 to let us know.
 
 3. Make sure to provide us with useful information about
-your configuration: What OS are you using? Which videoflow version
-(``python -c 'import videoflow; print(videoflow.__version__)'``, and whether from PyPI or a checkout)? How did you run the flow (``run-local``, ``deploy``,
+your configuration: What OS are you using? Which videoflow version (``videoflow --version``, and
+whether from PyPI or a checkout)? How did you run the flow (``run-local``, ``deploy``,
 which cluster)? If on GPU: which GPU, driver and CUDA version?
 
 4. Provide us with a script to reproduce the issue.  This script should

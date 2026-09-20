@@ -295,7 +295,9 @@ manifests when `--nats` is omitted) — the prepare hook's output goes to stderr
 so stdout stays valid YAML, and nothing is pushed — or `--render-only` to write
 them plus a `kustomization.yaml` for `kubectl apply -k` (that one pushes the
 image when a `--registry` is set, since its output is meant to be applied). Other CLI commands:
-`videoflow explain my_flow.py` (human-readable graph/topology summary),
+`videoflow explain my_flow.py` (human-readable graph/topology summary; a
+solution gets the same `--config` / `config.yaml` / template Q&A as `deploy`),
+`videoflow --version`,
 `videoflow provision my_flow.py --nats ...` (create the broker streams up front),
 `videoflow teardown --flow-id ... --run-id ... --nats ... [--namespace ...] [--infra]`
 (stop a run and delete its streams and workloads — `--infra` also removes

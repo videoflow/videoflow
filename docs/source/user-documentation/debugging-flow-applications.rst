@@ -10,6 +10,9 @@ Inspect the graph without running it
 ``videoflow explain my_flow.py`` prints the compiled topology — every node with its
 kind, replicas, image, partitioning, its broker subject, and the DLQ stream name —
 so you can sanity-check wiring and naming before anything touches a broker or cluster.
+For a solution it resolves the config the way ``deploy`` does (``--config``, the
+``config.yaml`` beside the graph, or the template's questions), so it works on a
+fresh checkout too.
 
 Start locally
 -------------
