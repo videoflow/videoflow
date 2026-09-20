@@ -1,4 +1,5 @@
-# Build videoflow and publish it to PyPI (https://pypi.org/project/videoflow/).
+# Build videoflow, publish it to PyPI (https://pypi.org/project/videoflow/), and then release
+# videoflow-contrib at the same version.
 #
 # Releases are deliberate, not a side effect of merging: this workflow only runs when someone
 # presses "Run workflow" in the Actions tab (or `gh workflow run publish.yml --ref master`).
@@ -7,22 +8,48 @@
 #   1. bump __version__ in videoflow/version.py, commit, merge to master
 #   2. Actions -> "Publish to PyPI" -> Run workflow (branch: master)
 #
+# and that is the whole two-repo release: videoflow-contrib is versioned in lockstep with core
+# (contrib vX.Y.Z ships with core vX.Y.Z and pins videoflow>=X.Y.Z), so once the core tag
+# exists this workflow dispatches contrib's Release workflow with the same version. Nothing is
+# run by hand over there.
+#
 # The workflow reads the version from version.py — it never writes it — and refuses to run if
 # that version is already on PyPI or already has a vX.Y.Z tag, so forgetting the bump fails
 # loudly before anything irreversible happens.
+#
+# Before the upload, `check-contrib` installs the freshly built wheel and checks that contrib
+# master still validates its descriptors and builds every sub-package against it. A core change
+# that breaks contrib blocks the release rather than shipping a core nothing can follow.
 #
 # Auth is PyPI Trusted Publishing (OIDC), not an API token: pypi.org is configured to accept
 # uploads from this exact repo + workflow file + `pypi` environment, and GitHub mints a
 # short-lived identity token per run. There is no long-lived secret to leak or rotate; the
 # PYPI_TOKEN repository secret is unused.
 #
+# The one secret this workflow does need is CONTRIB_RELEASE_TOKEN: github.token cannot start a
+# workflow in another repository. It is a fine-grained PAT (resource owner: the videoflow org;
+# repository access: videoflow-contrib only; permissions: Actions read+write, nothing else).
+# The contrib run pushes and tags with its own GITHUB_TOKEN, so this one never touches
+# contents. When it expires, `release-contrib` fails with the manual command to run instead.
+#
 # The git tag and GitHub Release are created only AFTER the upload succeeds. A tag created
-# first would survive a failed upload and then block the retry.
+# first would survive a failed upload and then block the retry. The contrib dispatch comes
+# last, after the tag, and is fire-and-forget: watching the contrib run from here would pin a
+# runner for its whole duration, and its failures are already reported on that repo.
+#
+# `dry_run=true` runs `build` and `check-contrib` and stops; it also lifts the master-only and
+# already-released guards so the pipeline can be exercised from a branch at the current version.
 name: Publish to PyPI
 
 on:
-  # No inputs on purpose: the version is whatever videoflow/version.py says on the chosen ref.
   workflow_dispatch:
+    # No version input on purpose: the version is whatever videoflow/version.py says on the
+    # chosen ref.
+    inputs:
+      dry_run:
+        description: "Build and check contrib only; do not publish, tag, or dispatch contrib"
+        type: boolean
+        default: false
 
 # Default to nothing; each job asks for exactly what it needs.
 permissions: {}
@@ -44,9 +71,9 @@ jobs:
       # The `pypi` environment's branch rule also enforces this, but that lives in repo settings;
       # this check lives in code and fails before any work is done.
       - name: Refuse to release from anything but master
-        if: github.ref != 'refs/heads/master'
+        if: github.ref != 'refs/heads/master' && !inputs.dry_run
         run: |
-          echo "::error::Releases must be run from master (got ${{ github.ref }})."
+          echo "::error::Releases must be run from master (got ${{ github.ref }}). Use dry_run to test from a branch."
           exit 1
 
       - uses: actions/checkout@v4
@@ -72,6 +99,7 @@ jobs:
       # PyPI would reject a re-upload anyway, but a 400 from the upload step is far less
       # readable than this, and by then a tag might already be half-created.
       - name: Fail if this version is already on PyPI
+        if: ${{ !inputs.dry_run }}
         run: |
           v="${{ steps.version.outputs.version }}"
           if curl -sf -o /dev/null "https://pypi.org/pypi/videoflow/$v/json"; then
@@ -80,6 +108,7 @@ jobs:
           fi
 
       - name: Fail if tag v${{ steps.version.outputs.version }} already exists
+        if: ${{ !inputs.dry_run }}
         run: |
           v="${{ steps.version.outputs.version }}"
           if git ls-remote --exit-code --tags origin "refs/tags/v$v" >/dev/null; then
@@ -107,8 +136,59 @@ jobs:
           path: dist/
           if-no-files-found: error
 
-  publish:
+  # The gate: contrib master must still validate and build against this exact wheel. This is
+  # the released-core half of contrib's compatibility check; its own CI covers core's master.
+  check-contrib:
     needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Public repo; github.token is enough to read it.
+      - uses: actions/checkout@v4
+        with:
+          repository: videoflow/videoflow-contrib
+          ref: master
+
+      - name: Download dist
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # PEP 508 direct reference: the only portable way to install a local wheel with an extra.
+      # The deploy extra brings the component CLI and jsonschema for validate-components.sh.
+      - name: Install the freshly built wheel with the deploy extra
+        run: |
+          whl=$(ls dist/videoflow-*.whl)
+          pip install "videoflow[deploy] @ file://$PWD/$whl"
+          python -c "import videoflow; print('videoflow', videoflow.__version__)"
+
+      - name: Contrib sub-packages agree on a version
+        run: ./set-version.py --check
+
+      - name: Contrib descriptors validate against this core
+        run: ./validate-components.sh
+
+      - name: Every contrib sub-package still builds
+        run: |
+          set -euo pipefail
+          for d in */pyproject.toml; do
+            dir="$(dirname "$d")"
+            echo "== $dir =="
+            ( cd "$dir" && uv build --wheel )
+          done
+
+  publish:
+    needs: [build, check-contrib]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     # The environment name is part of the trusted-publisher registration on pypi.org; a
     # required-reviewer rule on it adds a confirmation click before anything is uploaded.
@@ -131,6 +211,7 @@ jobs:
 
   release:
     needs: [build, publish]
+    if: ${{ !inputs.dry_run }}
     runs-on: ubuntu-latest
     permissions:
       contents: write   # create the tag and the GitHub Release
@@ -154,3 +235,32 @@ jobs:
             --target "$GITHUB_SHA" \
             --title "v$v" \
             --generate-notes
+
+  # The other half of the release. Runs only after the core tag exists, because contrib's
+  # workflow installs videoflow==<version> from PyPI as its first step.
+  release-contrib:
+    needs: [build, release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    permissions: {}
+    env:
+      CONTRIB_RELEASE_TOKEN: ${{ secrets.CONTRIB_RELEASE_TOKEN }}
+    steps:
+      # A red job, not a skipped one: at this point core is on PyPI and tagged, and the
+      # correct signal is that the contrib half did NOT happen.
+      - name: Fail if the cross-repo token is missing
+        if: env.CONTRIB_RELEASE_TOKEN == ''
+        run: |
+          v="${{ needs.build.outputs.version }}"
+          echo "::error::CONTRIB_RELEASE_TOKEN is not set (missing or expired). videoflow $v is on PyPI; release contrib by hand:"
+          echo "::error::  gh workflow run release.yml -R videoflow/videoflow-contrib --ref master -f version=$v"
+          exit 1
+
+      - name: Dispatch the videoflow-contrib release
+        env:
+          GH_TOKEN: ${{ env.CONTRIB_RELEASE_TOKEN }}
+        run: |
+          v="${{ needs.build.outputs.version }}"
+          gh workflow run release.yml -R videoflow/videoflow-contrib --ref master -f version="$v"
+          echo "Dispatched videoflow-contrib release v$v:"
+          echo "  https://github.com/videoflow/videoflow-contrib/actions/workflows/release.yml"
