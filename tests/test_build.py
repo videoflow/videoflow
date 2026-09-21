@@ -4,11 +4,17 @@ context via the enclosing git root, ARG BASE_IMAGE parsing, and the default tag.
 
 Pure/unit: subprocess is monkeypatched — no docker.
 '''
+import hashlib
 import subprocess
 
 import pytest
 
 from videoflow.deploy import build
+
+
+def _tag_of(layers_json : str) -> str:
+    '''The 12 hex a content tag takes for this `{{json .RootFS.Layers}}` output.'''
+    return hashlib.sha256(layers_json.strip().encode()).hexdigest()[:12]
 
 
 class _Proc:
@@ -56,10 +62,11 @@ def test_default_tag_from_graph_dir_name():
 def test_autobuild_builds_base_then_solution(monkeypatch, tmp_path):
     (tmp_path / 'gpu.Dockerfile').write_text('ARG BASE_IMAGE=videoflow-base:py3.12-cuda\nFROM ${BASE_IMAGE}\n')
     calls = []
+    layers = '["sha256:aaa","sha256:bbb"]\n'
     def run(cmd, **kwargs):
         calls.append(cmd)
         if cmd[:4] == ['docker', 'image', 'inspect', '--format']:
-            return _Proc(stdout = 'sha256:0123456789abcdef0123456789abcdef\n')   # the built image's id
+            return _Proc(stdout = layers)                     # the built image's layers
         if cmd[:3] == ['docker', 'image', 'inspect']:
             return _Proc(returncode = 1)                      # base missing → build it
         if cmd[0] == 'git':
@@ -68,7 +75,7 @@ def test_autobuild_builds_base_then_solution(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, 'run', run)
     tag = build.autobuild(str(tmp_path), needs_gpu = True)
     # Deployed under a content-addressed tag; :latest keeps the layer cache warm.
-    assert tag == f'videoflow-{tmp_path.name}:0123456789ab'
+    assert tag == f'videoflow-{tmp_path.name}:{_tag_of(layers)}'
     builds = [c for c in calls if c[:2] == ['docker', 'build']]
     assert len(builds) == 2
     assert '-t' in builds[0] and 'videoflow-base:py3.12-cuda' in builds[0]
@@ -212,6 +219,33 @@ def test_ensure_base_keeps_a_hand_built_base_when_the_pull_fails(monkeypatch, tm
     assert 'WARNING' in err and 'videoflow-base:py3.12' in err and '1.0.3.dev0' in err
 
 
+# -- default_image: the base image when nothing names one ---------------------
+
+def test_default_image_from_a_checkout_is_the_built_base_under_a_content_tag(monkeypatch, tmp_path):
+    _source_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch, ids = {'videoflow-base:py3.12': '["sha256:0123456789abcdef"]'})
+    assert build.default_image(needs_gpu = False) == f'videoflow-base:{_tag_of("[\"sha256:0123456789abcdef\"]")}'
+    assert [c[:2] for c in _actions(calls)] == [['docker', 'build'], ['docker', 'tag']]
+    assert 'videoflow-base:py3.12' in _actions(calls)[0] and 'Dockerfile' in _actions(calls)[0][3]
+
+
+def test_default_image_from_a_wheel_is_the_published_ref(monkeypatch, tmp_path):
+    # Registry-qualified: the pods pull it; nothing to build, push or side-load here.
+    _wheel_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch)
+    assert build.default_image(needs_gpu = False) == 'ghcr.io/videoflow/videoflow-base:1.0.2'
+    assert build.default_image(needs_gpu = True) == 'ghcr.io/videoflow/videoflow-base:1.0.2-cuda'
+    assert calls == []
+
+
+def test_default_image_gpu_flavour_from_a_checkout(monkeypatch, tmp_path):
+    _source_install(monkeypatch, tmp_path)
+    (tmp_path / 'docker' / 'base' / 'Dockerfile.gpu').write_text('FROM y')
+    calls = _recorder(monkeypatch, ids = {'videoflow-base:py3.12-cuda': '["sha256:fedcba9876543210"]'})
+    assert build.default_image(needs_gpu = True) == f'videoflow-base:{_tag_of("[\"sha256:fedcba9876543210\"]")}'
+    assert 'Dockerfile.gpu' in _actions(calls)[0][3]
+
+
 def test_build_context_without_git_falls_back_to_graph_dir(monkeypatch, tmp_path):
     def run(cmd, **kwargs):
         raise FileNotFoundError('git')
@@ -350,19 +384,26 @@ def test_run_args_env_and_env_pairs_reach_run_in_image(monkeypatch):
 
 # -- content-addressed tags and the registry push --------------------------------------
 
-def test_content_tag_names_the_image_by_its_id(monkeypatch):
+def test_content_tag_names_the_image_by_its_layers(monkeypatch):
+    # The layer digests, not the image id: with BuildKit + the containerd store every
+    # build gets a fresh id (provenance carries timestamps), while an unchanged
+    # rebuild has the very same layers — and must keep the very same tag.
     calls = []
+    layers = '["sha256:fedcba9876543210","sha256:0123456789abcdef"]\n'
     def run(cmd, **kw):
         calls.append(cmd)
         if cmd[:4] == ['docker', 'image', 'inspect', '--format']:
-            return _Proc(stdout = 'sha256:fedcba9876543210fedcba9876543210\n')
+            assert cmd[4] == '{{json .RootFS.Layers}}'
+            return _Proc(stdout = layers)
         return _Proc()
     monkeypatch.setattr(subprocess, 'run', run)
-    assert build.content_tag('videoflow-x:latest') == 'videoflow-x:fedcba987654'
-    assert ['docker', 'tag', 'videoflow-x:latest', 'videoflow-x:fedcba987654'] in calls
+    expected = f'videoflow-x:{_tag_of(layers)}'
+    assert build.content_tag('videoflow-x:latest') == expected
+    assert ['docker', 'tag', 'videoflow-x:latest', expected] in calls
+    assert build.content_tag('videoflow-x:latest') == expected            # stable
     # A registry port is not a tag.
-    assert build.content_tag('10.0.0.1:5000/videoflow-x:latest') == '10.0.0.1:5000/videoflow-x:fedcba987654'
-    assert build.content_tag('10.0.0.1:5000/videoflow-x') == '10.0.0.1:5000/videoflow-x:fedcba987654'
+    assert build.content_tag('10.0.0.1:5000/videoflow-x:latest') == f'10.0.0.1:5000/videoflow-x:{_tag_of(layers)}'
+    assert build.content_tag('10.0.0.1:5000/videoflow-x') == f'10.0.0.1:5000/videoflow-x:{_tag_of(layers)}'
 
 
 def test_content_tag_falls_back_to_the_mutable_tag_with_a_warning(monkeypatch, capsys):
