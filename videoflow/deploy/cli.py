@@ -34,6 +34,7 @@ import uuid
 from typing import Any
 
 import numpy as np
+import yaml
 
 from .. import __version__
 from ..backends.capabilities import kubernetes_execution_capabilities, local_execution_capabilities
@@ -119,6 +120,34 @@ GRAPH_HELP = ('path/to/graph.py[:build_flow], or <repo>://<name> for a solution 
               'videoflow repository (e.g. videoflow-contrib://human_tracking), fetched at this '
               'version into ~/.videoflow/solutions')
 
+#: `pip install videoflow` is the core; the broker client, wire format, OpenCV, Redis
+#: and oras are extras (pyproject.toml). Top-level module -> (distribution, the
+#: smallest extra that provides it), for turning a bare ModuleNotFoundError into
+#: the install command the operator needs.
+_OPTIONAL_MODULES = {
+    'nats': ('nats-py', 'distributed'),
+    'msgpack': ('msgpack', 'distributed'),
+    'google': ('protobuf', 'distributed'),          # google.protobuf
+    'redis': ('redis', 'blob'),
+    'oras': ('oras', 'deploy'),
+    'cv2': ('opencv-python-headless', 'vision'),
+}
+
+def _missing_extra(error : ModuleNotFoundError, command : str) -> ResourceUnavailable | None:
+    '''
+    The operator-facing error for a ``ModuleNotFoundError`` on one of videoflow's
+    own optional dependencies, or None when the module is not one of them (a real
+    bug, whose traceback must stay).
+    '''
+    entry = _OPTIONAL_MODULES.get((error.name or '').split('.')[0])
+    if entry is None:
+        return None
+    distribution, extra = entry
+    return ResourceUnavailable(
+        f'`videoflow {command}` needs the {distribution} package, which this install does not include.',
+        remedy = f"Install the CLI extras: pip install 'videoflow[all]'  (videoflow[{extra}] is the "
+                 f'minimum for this one).')
+
 
 def _load_flow(target : str) -> Flow:
     '''
@@ -142,10 +171,16 @@ def _graph_location(graph_arg : str) -> tuple[str, str, str, str | None]:
             path, its directory, the ``path[:factory]`` target ``load_flow`` takes, \
             and the docker build context a reference implies (its checkout root; \
             None for a plain path, which keeps the enclosing-git-root default).
+
+    - Raises:
+        - ``ConfigError``: a malformed reference (anything with ``://`` that is \
+            not ``<repo>://<name>[:factory]``), or a path that is not a file.
     '''
-    from .solution_refs import parse_solution_ref, resolve_solution_ref
+    from .solution_refs import resolve_solution_ref
     build_context = None
-    if parse_solution_ref(graph_arg) is not None:
+    # Anything with '://' is meant as a reference — a path never has one — so a
+    # malformed ref is reported as such, not as a missing file called 'videoflow'.
+    if '://' in graph_arg:
         resolved = resolve_solution_ref(graph_arg)
         graph_path, factory, build_context = resolved.graph_path, resolved.factory, resolved.build_context
     else:
@@ -186,23 +221,22 @@ def _export_solution_config(config_path : str | None) -> None:
     worker it spawns) runs, so a solution reading ``VF_SOLUTION_CONFIG`` honours
     ``--config`` instead of always opening the ``config.yaml`` beside its module.
     '''
-    from .solution import CONFIG_ENV  # optional dep: solution imports yaml at module scope
+    from .solution import CONFIG_ENV
     if config_path:
         os.environ[CONFIG_ENV] = config_path
 
 def _solution_env(config_path : str | None) -> dict[str, str]:
     '''The same variable for a container (``run_in_image(env=...)``).'''
-    from .solution import CONFIG_ENV  # optional dep: solution imports yaml at module scope
+    from .solution import CONFIG_ENV
     return {CONFIG_ENV: config_path} if config_path else {}
 
 def _solution_template(graph_dir : str, config_path : str | None) -> tuple[dict | None, dict]:
     '''The solution's ``config.template.yaml`` (None without one) and the resolved config (``{}`` without one).'''
-    from .solution import find_template, load_template  # optional dep: solution imports yaml at module scope
+    from .solution import find_template, load_template
     template_path = find_template(graph_dir)
     template = load_template(template_path) if template_path else None
     config : dict = {}
     if config_path:
-        import yaml  # optional dep (deploy extra)
         with open(config_path) as f:
             config = yaml.safe_load(f) or {}
     return template, config
@@ -213,7 +247,7 @@ def _config_mounts(graph_dir : str, config_path : str | None) -> list:
     at its own path so the prepare/compile containers (which see the solution
     directory only) can read it.
     '''
-    from .manifests import parse_mounts  # optional dep: manifests imports yaml at module scope
+    from .manifests import parse_mounts
     if not config_path:
         return []
     real = os.path.realpath(config_path)
@@ -370,7 +404,6 @@ def _placement_options(args : argparse.Namespace) -> dict[str, Any]:
     return options
 
 def _cmd_deploy(args : argparse.Namespace) -> None:
-    # optional dep: manifests imports yaml at module scope
     from .manifests import parse_mounts, parse_pvc_mounts
 
     overrides = {}
@@ -386,7 +419,6 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists), collect its x-mounts, and read what
     # it says about the image to build (x-gpu).
-    # optional dep: solution imports yaml at module scope
     from .solution import ensure_config, resolve_gpu, resolve_mounts, split_mount_specs
     interactive = not args.non_interactive and sys.stdin.isatty()
     config_path = ensure_config(graph_dir, args.config, interactive)
@@ -439,7 +471,6 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
             raise ResourceUnavailable(str(e)) from e
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
     # baked into the compiled specs).
-    # optional dep: solution imports yaml at module scope
     from .solution import find_prepare, prepare_command, run_prepare_local
     if find_prepare(graph_dir) is not None and not args.no_prepare:
         try:
@@ -508,7 +539,6 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # preflight's advice, the manifests and the teardown hint all see one value.
     gpu_runtime_class = _resolve_gpu_runtime_class(args.gpu_runtime_class, gpu_specs, args.kubectl)
     if gpu_specs:
-        # optional dep: manifests imports yaml at module scope
         from .manifests import _is_partitioned, gpu_demand, gpu_max_per_pod, gpu_pod_claims
         # The strategy decides names and geometry first (mix resolves each
         # sharer's MIG profile into its spec) so that everything downstream —
@@ -585,7 +615,6 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     explicit_profiles = parse_profile_requests(args.require_profile, specs)
     verify_topology_shape(flow_type, flow_id, run_id, explicit_profiles)
     store_configured = args.blob_redis_url is not None or args.nats is None
-    # optional dep: infra imports yaml at module scope
     from .infra import adopt_profiles, ensure_infra, ensure_namespace, reused_infra, teardown_infra, wait_infra_ready
     judged_broker : BrokerProfile | None = broker_profile
     judged_redis : RedisProfile | None = redis_profile
@@ -662,7 +691,6 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
                     # strategy's cleanup() and undo whatever prepare() set up.
                     + (f' --gpu-mode {args.gpu_mode}' if gpu_specs else ''))
 
-    # optional dep: the k8s engine pulls in yaml (via manifests) at module scope
     from ..engines.kubernetes import KubernetesExecutionEngine
     engine_options : dict[str, Any] = {}
     if args.priority_class:
@@ -833,7 +861,6 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
     manifests that referenced none and died with "node 'x' has no container image",
     while the same command without ``--render-only`` deployed fine.
     '''
-    # optional dep: infra and manifests both import yaml at module scope
     from .infra import infra_urls, nats_manifests, redis_manifests
     from .manifests import dump_manifests, render_manifests
 
@@ -896,7 +923,6 @@ def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flo
             f"{m['kind'].lower()}-{m['metadata']['name']}.yaml" for m in manifests
         ],
     }
-    import yaml  # optional dep (deploy extra)
     with open(os.path.join(args.output, 'kustomization.yaml'), 'w') as f:
         f.write(yaml.dump(kustomization, default_flow_style = False, sort_keys = False))
 
@@ -984,7 +1010,6 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     # 0. Solution conventions: ensure a config (interactive Q&A over the solution's
     # config.template.yaml when none exists) and collect its x-mounts — locally
     # they matter only for workers that run inside the solution image.
-    # optional dep: solution and manifests import yaml at module scope
     from .manifests import parse_mounts
     from .solution import (
         ensure_config,
@@ -1066,7 +1091,6 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
 
     # 3. Broker: bring-your-own via --nats, else reuse whatever already listens on
     # localhost and start dev containers for whatever doesn't.
-    # optional dep: localinfra imports yaml at module scope
     from .localinfra import DEFAULT_NATS_URL, ensure_local_infra, teardown_local_infra, wait_local_infra_ready
     nats_url = args.nats
     blob_redis_url = args.blob_redis_url or os.environ.get('VIDEOFLOW_BLOB_REDIS_URL')
@@ -1200,16 +1224,14 @@ def _warn_missing_solution_inputs(graph_dir : str, config_path : str | None) -> 
     nothing is mounted, so this is purely an early check — and only a warning,
     since an output directory legitimately may not exist yet.
     '''
-    # optional dep: solution imports yaml at module scope
     from .solution import find_template, load_template, resolve_mounts
 
     template_path = find_template(graph_dir)
     if not (template_path and config_path):
         return
-    import yaml  # optional dep (deploy extra)
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    from .solution import split_mount_specs  # optional dep: solution imports yaml at module scope
+    from .solution import split_mount_specs
     # Only host paths can be checked here; a claim mount names data inside the
     # cluster, which a local run neither needs nor can see.
     host_specs, _claim_specs = split_mount_specs(
@@ -1229,7 +1251,6 @@ def _load_solution_flow(args : argparse.Namespace) -> Flow:
     solution whose ``build_flow`` reads its config never fails with a bare
     ``FileNotFoundError`` before the first deploy has written one.
     '''
-    # optional dep: solution imports yaml at module scope
     from .solution import ensure_config
     graph_path, graph_dir, graph_target, _ = _graph_location(args.graph)
     interactive = not args.non_interactive and sys.stdin.isatty()
@@ -1276,7 +1297,7 @@ def _cmd_explain(args : argparse.Namespace) -> None:
     # what explain prints is exactly what deploy will request.
     gpu_specs = [s for s in specs if s.device_type == 'gpu']
     if gpu_specs:
-        from .manifests import gpu_demand, gpu_max_per_pod  # optional dep: manifests imports yaml at module scope
+        from .manifests import gpu_demand, gpu_max_per_pod
         default_resource = args.gpu_resource_name
         demand = gpu_demand(specs, default_resource = default_resource)
         lines.append('GPU demand (exclusive mode — whole devices per replica):')
@@ -1361,7 +1382,7 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
     except Exception as e:
         print(f'Broker teardown skipped (could not reach NATS at {args.nats}): {e}', file = sys.stderr)
     if args.namespace:
-        from .manifests import delete_resources  # optional dep: manifests imports yaml
+        from .manifests import delete_resources
         # Scope to this run (matches the run-id label the deploy stamps on every
         # resource); the broker phase above is already run-scoped.
         delete_resources(args.kubectl, args.namespace, args.flow_id, args.run_id)
@@ -1369,7 +1390,6 @@ def _cmd_teardown(args : argparse.Namespace) -> None:
     if args.infra:
         if not args.namespace:
             raise ConfigError('--infra requires --namespace.')
-        # optional dep: infra imports yaml at module scope
         from .infra import LABEL_PROFILE, NATS_SERVICE, service_labels, teardown_infra
         # The profile decides the kinds deleted (a durable NATS is a StatefulSet);
         # the persistent claims of a durable profile are kept, see deploy.infra.
@@ -2176,6 +2196,16 @@ def main(argv : list[str] | None = None) -> int:
         if os.environ.get('VF_DEBUG'):
             traceback.print_exc()
         return e.exit_code
+    except ModuleNotFoundError as e:
+        # A bare `pip install videoflow` has the console script but not the extras
+        # most commands need; say which one to install instead of dumping a stack.
+        error = _missing_extra(e, args.command)
+        if error is None:
+            raise
+        render_error(error)
+        if os.environ.get('VF_DEBUG'):
+            traceback.print_exc()
+        return error.exit_code
     except KeyboardInterrupt:
         print('\nInterrupted.', file = sys.stderr)
         return EXIT_INTERRUPTED

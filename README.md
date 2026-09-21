@@ -57,16 +57,16 @@ runtime, and `run-local` starts one for you (see below). Videoflow is on
 [PyPI](https://pypi.org/project/videoflow/):
 
 ```bash
-pip install 'videoflow[all]'           # into an environment of your own
+pip install -U 'videoflow[all]'        # into an environment of your own
 # or, as a standalone command on your PATH:
 uv tool install 'videoflow[all]'
 videoflow --help
 ```
 
 The extras: `distributed` (broker client + wire format), `vision` / `video`
-(OpenCV, ffmpeg), `deploy` (Kubernetes manifests, component descriptors), `blob`
-(the Redis payload store), or `all`. That is the whole install: the
-`videoflow-base` container image that solutions build on is pulled from
+(OpenCV, ffmpeg), `deploy` (the broker client + oras, for publishing components
+as OCI artifacts), `blob` (the Redis payload store), or `all`. That is the whole
+install: the `videoflow-base` container image that solutions build on is pulled from
 `ghcr.io/videoflow/videoflow-base:<your version>` the first time `deploy` or
 `run-local` needs it, and the shipped solutions are fetched on demand (see
 [Example solutions](#example-solutions)). Nothing is cloned or built by hand.

@@ -88,45 +88,60 @@ def _wheel_install(monkeypatch, tmp_path, version = '1.0.2'):
     monkeypatch.setattr(videoflow, '__version__', version)
 
 
-def _recorder(monkeypatch, returncode = 0):
+def _source_install(monkeypatch, tmp_path, version = '1.0.2'):
+    '''Simulate a source checkout: docker/base/Dockerfile next to the package.'''
+    import videoflow
+    (tmp_path / 'docker' / 'base').mkdir(parents = True)
+    (tmp_path / 'docker' / 'base' / 'Dockerfile').write_text('FROM x')
+    monkeypatch.setattr(videoflow, '__file__', str(tmp_path / 'videoflow' / '__init__.py'))
+    monkeypatch.setattr(videoflow, '__version__', version)
+
+
+def _recorder(monkeypatch, returncode = 0, ids = None):
+    '''
+    Records every subprocess call. ``ids`` maps a local image ref to its id and
+    answers ``docker image inspect [--format {{.Id}}] <ref>`` (a ref not in it does
+    not exist); everything else returns ``returncode``.
+    '''
     calls = []
 
     def run(cmd, **kwargs):
         calls.append(list(cmd))
+        if cmd[:3] == ['docker', 'image', 'inspect']:
+            ident = (ids or {}).get(cmd[-1])
+            return _Proc(returncode = 0 if ident else 1, stdout = f'{ident}\n' if ident else '')
         return _Proc(returncode = returncode)
 
     monkeypatch.setattr(subprocess, 'run', run)
     return calls
 
 
+def _actions(calls):
+    '''The calls that change something (build/pull/tag) — the inspects are just questions.'''
+    return [c for c in calls if c[:3] != ['docker', 'image', 'inspect']]
+
+
 def test_ensure_base_errors_for_wheel_installs_when_pull_fails(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
     _wheel_install(monkeypatch, tmp_path)
     calls = _recorder(monkeypatch, returncode = 1)
     with pytest.raises(RuntimeError, match = 'build-images.sh') as e:
         build.ensure_base_image('videoflow-base:py3.12')
     assert 'ghcr.io/videoflow/videoflow-base:1.0.2' in str(e.value)
-    assert calls == [['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2']]
+    assert _actions(calls) == [['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2']]
 
 
 def test_ensure_base_pulls_published_image_for_wheel_installs(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
     _wheel_install(monkeypatch, tmp_path)
     calls = _recorder(monkeypatch)
     build.ensure_base_image('videoflow-base:py3.12-cuda')
-    assert calls == [
+    assert _actions(calls) == [
         ['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2-cuda'],
         ['docker', 'tag', 'ghcr.io/videoflow/videoflow-base:1.0.2-cuda', 'videoflow-base:py3.12-cuda'],
     ]
 
 
 def test_ensure_base_builds_from_source_even_when_published(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
-    import videoflow
-    (tmp_path / 'docker' / 'base').mkdir(parents = True)
-    (tmp_path / 'docker' / 'base' / 'Dockerfile').write_text('FROM x')
-    monkeypatch.setattr(videoflow, '__file__', str(tmp_path / 'videoflow' / '__init__.py'))
-    monkeypatch.setattr(videoflow, '__version__', '1.0.2')
+    _source_install(monkeypatch, tmp_path)
     calls = _recorder(monkeypatch)
     build.ensure_base_image('videoflow-base:py3.12')
     assert len(calls) == 1 and calls[0][:2] == ['docker', 'build']
@@ -135,16 +150,14 @@ def test_ensure_base_builds_from_source_even_when_published(monkeypatch, tmp_pat
 
 
 def test_base_registry_env_override(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
     _wheel_install(monkeypatch, tmp_path)
     monkeypatch.setenv(build.BASE_IMAGE_REGISTRY_ENV, 'localhost:5000/')
     calls = _recorder(monkeypatch)
     build.ensure_base_image('videoflow-base:py3.12')
-    assert calls[0] == ['docker', 'pull', 'localhost:5000/videoflow-base:1.0.2']
+    assert _actions(calls)[0] == ['docker', 'pull', 'localhost:5000/videoflow-base:1.0.2']
 
 
 def test_pull_without_docker_is_a_runtime_error(monkeypatch, tmp_path):
-    monkeypatch.setattr(build, 'image_exists', lambda ref: False)
     _wheel_install(monkeypatch, tmp_path)
 
     def run(cmd, **kwargs):
@@ -153,6 +166,50 @@ def test_pull_without_docker_is_a_runtime_error(monkeypatch, tmp_path):
     monkeypatch.setattr(subprocess, 'run', run)
     with pytest.raises(RuntimeError, match = 'docker not found'):
         build.ensure_base_image('videoflow-base:py3.12')
+
+
+# -- freshness: a base_ref that exists is not necessarily the right one --------
+
+def test_ensure_base_rebuilds_from_source_even_when_the_image_exists(monkeypatch, tmp_path):
+    # The whole point: an old checkout's base under a new solution image is how a
+    # worker ends up running last month's videoflow. Docker's cache keeps it cheap.
+    _source_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch, ids = {'videoflow-base:py3.12': 'sha256:july'})
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert [c[:2] for c in _actions(calls)] == [['docker', 'build']]
+
+
+def test_ensure_base_reuses_the_pull_for_this_version(monkeypatch, tmp_path):
+    _wheel_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch, ids = {'ghcr.io/videoflow/videoflow-base:1.0.2': 'sha256:v102',
+                                          'videoflow-base:py3.12': 'sha256:v102'})
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert _actions(calls) == []
+
+
+@pytest.mark.parametrize('ids', [
+    {'videoflow-base:py3.12': 'sha256:old'},                                                   # never pulled here
+    {'videoflow-base:py3.12': 'sha256:old', 'ghcr.io/videoflow/videoflow-base:1.0.2': 'sha256:v102'},  # retag lost
+])
+def test_ensure_base_replaces_a_stale_base_ref_after_an_upgrade(monkeypatch, tmp_path, ids):
+    _wheel_install(monkeypatch, tmp_path)
+    calls = _recorder(monkeypatch, ids = ids)
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert _actions(calls) == [
+        ['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.2'],
+        ['docker', 'tag', 'ghcr.io/videoflow/videoflow-base:1.0.2', 'videoflow-base:py3.12'],
+    ]
+
+
+def test_ensure_base_keeps_a_hand_built_base_when_the_pull_fails(monkeypatch, tmp_path, capsys):
+    # A dev version has no published image; ./docker/build-images.sh is the documented
+    # way to get one, and it must keep working — with a warning, since nothing confirms it.
+    _wheel_install(monkeypatch, tmp_path, version = '1.0.3.dev0')
+    calls = _recorder(monkeypatch, returncode = 1, ids = {'videoflow-base:py3.12': 'sha256:byhand'})
+    build.ensure_base_image('videoflow-base:py3.12')
+    assert _actions(calls) == [['docker', 'pull', 'ghcr.io/videoflow/videoflow-base:1.0.3.dev0']]
+    err = capsys.readouterr().err
+    assert 'WARNING' in err and 'videoflow-base:py3.12' in err and '1.0.3.dev0' in err
 
 
 def test_build_context_without_git_falls_back_to_graph_dir(monkeypatch, tmp_path):

@@ -10,12 +10,17 @@ readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Jadiel de Armas", email = "jadielam@gmail.com" }]
 requires-python = ">=3.12"
-# Core is deliberately lean: the graph model, serialization and worker runtime.
-# Heavy or environment-specific dependencies live in optional-dependencies so each
-# per-component Docker image installs only what its node family needs.
+# Core is deliberately lean: the graph model, serialization and worker runtime, plus
+# what every `videoflow` command reads before doing anything — YAML (solution configs,
+# profiles, manifests, descriptors) and JSON Schema (descriptor validation). Heavy or
+# environment-specific dependencies (broker client, wire format, OpenCV, Redis, oras)
+# live in optional-dependencies so each per-component Docker image installs only what
+# its node family needs.
 dependencies = [
     "numpy>=1.9.1",
     "six>=1.9.0",
+    "PyYAML>=5.1",
+    "jsonschema>=4.0",
 ]
 classifiers = [
     "Intended Audience :: Developers",
@@ -51,15 +56,12 @@ video = [
     "protobuf>=5.27",
     "opencv-python-headless>=4.0.0",
 ]
-# Used by the deploy CLI to render Kubernetes manifests, validate component
-# descriptors, and push/pull them as OCI artifacts.
+# Used by the deploy CLI to push/pull component descriptors as OCI artifacts.
 deploy = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "protobuf>=5.27",
-    "PyYAML>=5.1",
     "oras>=0.1",
-    "jsonschema>=4.0",
 ]
 # Optional external blob store for payloads over the inline size threshold.
 blob = [
@@ -70,11 +72,9 @@ all = [
     "msgpack>=1.0.0",
     "protobuf>=5.27",
     "opencv-python-headless>=4.0.0",
-    "PyYAML>=5.1",
     "redis>=4.0.0",
     "requests>=2.22.0",
     "oras>=0.1",
-    "jsonschema>=4.0",
 ]
 
 [project.scripts]
@@ -89,7 +89,6 @@ dev = [
     "nats-py>=2.6.0",
     "msgpack>=1.0.0",
     "protobuf>=5.27",
-    "PyYAML>=5.1",
     "redis>=4.0.0",
     "opencv-python-headless>=4.0.0",
     "requests>=2.22.0",
@@ -118,10 +117,16 @@ path = "videoflow/version.py"
 
 [tool.hatch.build.targets.wheel]
 packages = ["videoflow"]
+# The descriptor schema's source of truth is spec/descriptor/ (the language-agnostic
+# spec, referenced by the docs and RFCs); a copy rides inside the package so
+# videoflow.components.descriptor can validate against it from a wheel install.
+[tool.hatch.build.targets.wheel.force-include]
+"spec/descriptor/component-schema.json" = "videoflow/spec/descriptor/component-schema.json"
 
 [tool.hatch.build.targets.sdist]
 include = [
     "videoflow",
+    "spec/descriptor",
     "README.md",
     "LICENSE",
 ]

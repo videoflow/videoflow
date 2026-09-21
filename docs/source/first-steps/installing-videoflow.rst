@@ -10,7 +10,7 @@ Videoflow is on `PyPI <https://pypi.org/project/videoflow/>`_. Pick one of:
 
 - A virtual environment of your own::
 
-    python3 -m venv .venv && .venv/bin/pip install 'videoflow[all]'
+    python3 -m venv .venv && .venv/bin/pip install -U 'videoflow[all]'
 
 - A tool install with `uv <https://docs.astral.sh/uv/>`_, which puts the
   ``videoflow`` command on your PATH for every shell and directory::
@@ -18,9 +18,9 @@ Videoflow is on `PyPI <https://pypi.org/project/videoflow/>`_. Pick one of:
     uv tool install 'videoflow[all]'
 
 The extras are the same in every form: ``distributed`` (core + broker client +
-wire format), ``vision`` / ``video`` (OpenCV, ffmpeg), ``deploy`` (Kubernetes
-manifests, component descriptors), ``blob`` (the Redis payload store), or
-``all``.
+wire format), ``vision`` / ``video`` (OpenCV, ffmpeg), ``deploy`` (the broker
+client + oras, for publishing components as OCI artifacts), ``blob`` (the Redis
+payload store), or ``all``.
 
 That is the whole install. The two other things a run may need arrive on
 their own:

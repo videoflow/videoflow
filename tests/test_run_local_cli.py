@@ -237,6 +237,32 @@ def test_missing_graph_is_reported(tmp_path, capsys):
     assert 'Traceback' not in err       # a message, not a stack of framework internals
 
 
+# -- <repo>://<name> solution references ---------------------------------------
+
+def test_solution_ref_is_resolved_then_run(wiring, monkeypatch):
+    tmp_path, calls = wiring
+    from videoflow.deploy import solution_refs
+
+    def resolve(arg, cache_root = None):
+        assert arg == 'videoflow://mygraph'
+        return solution_refs.ResolvedSolution(graph_path = str(tmp_path / 'graph.py'),
+                                              factory = None, build_context = str(tmp_path))
+    monkeypatch.setattr(solution_refs, 'resolve_solution_ref', resolve)
+    assert cli.main(['run-local', 'videoflow://mygraph']) == 0
+    assert 'load' in calls
+
+
+def test_malformed_solution_ref_is_reported_as_a_ref_error(tmp_path, capsys):
+    # Anything with '://' is meant as a reference. Before, a ref the strict parser
+    # rejected fell through to the path branch and was reported as a missing file
+    # called 'videoflow' — the same message a pre-1.0.3 install prints, and no
+    # help either way. The parse fails before any clone, so no network here.
+    assert cli.main(['run-local', 'videoflow://solutions/toy_calculator']) == EXIT_USER
+    err = capsys.readouterr().err
+    assert 'is not a solution reference' in err and '<repo>://<name>' in err
+    assert 'Graph module not found' not in err
+
+
 def _spec(name, node_class = None, image = None, descriptor = None):
     '''A NodeSpec with the routing fields defaulted; only the image-related ones vary.'''
     from videoflow.core.compiler import NODE_KIND_PROCESSOR, NodeSpec

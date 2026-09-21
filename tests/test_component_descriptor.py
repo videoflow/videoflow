@@ -83,6 +83,20 @@ def test_bad_descriptor_shapes_rejected():
             ComponentDescriptor.from_dict(d)
 
 
+def test_descriptor_schema_is_found_and_enforced():
+    # The schema is the spec's file (spec/descriptor/), bundled into the wheel; a
+    # violation is reported with jsonschema's sentence and the path to it. Only the
+    # full schema catches an unknown key — the old hand-written subset never did.
+    import os
+
+    from videoflow.components import descriptor
+    assert os.path.isfile(descriptor._schema_path())
+    with pytest.raises(ValueError, match = r"spec\.role: 'pilot' is not one of"):
+        ComponentDescriptor.from_dict(_desc(role = 'pilot'))
+    with pytest.raises(ValueError, match = r"spec: Additional properties are not allowed \('colour' was unexpected\)"):
+        ComponentDescriptor.from_dict(_desc(colour = 'blue'))
+
+
 def test_descriptor_resources_gpu_parses_count():
     d = ComponentDescriptor.from_dict(_desc(resources = {'gpu': {'count': 2}}))
     assert d.gpu_count == 2
