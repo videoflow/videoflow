@@ -41,6 +41,16 @@ class _FakeEngine:
     def report_failures(self):
         print('reported', file = sys.stderr)
 
+    # The in-image path runs precompiled specs through the engine directly.
+    def allocate_and_run_tasks(self, *args):
+        self.ran = args
+
+    def join_task_processes(self):
+        pass
+
+    def cleanup_containers(self):
+        pass
+
 
 class _FakeFlow:
     flow_type = 'realtime'          # run-local admits the composition per flow type
@@ -252,6 +262,26 @@ def test_solution_ref_is_resolved_then_run(wiring, monkeypatch):
     assert 'load' in calls
 
 
+def test_a_solution_directory_names_its_graph_module(wiring):
+    # `run-local path/to/<name>` is `path/to/<name>/<name>.py`: the convention a
+    # <repo>://<name> reference resolves to, available to a local directory too.
+    tmp_path, calls = wiring
+    solution = tmp_path / 'demo'
+    solution.mkdir()
+    (tmp_path / 'graph.py').rename(solution / 'demo.py')
+    assert cli.main(['run-local', str(solution)]) == 0
+    assert 'load' in calls
+    assert cli.main(['run-local', f'{solution}:build_flow']) == 0
+
+
+def test_a_directory_without_its_graph_module_is_a_config_error(tmp_path, capsys):
+    (tmp_path / 'demo').mkdir()
+    (tmp_path / 'demo' / 'other.py').write_text('')
+    assert cli.main(['run-local', str(tmp_path / 'demo')]) == EXIT_USER
+    err = capsys.readouterr().err
+    assert 'no demo.py' in err and 'other.py' in err
+
+
 def test_malformed_solution_ref_is_reported_as_a_ref_error(tmp_path, capsys):
     # Anything with '://' is meant as a reference. Before, a ref the strict parser
     # rejected fell through to the path branch and was reported as a missing file
@@ -317,6 +347,33 @@ def test_explicit_image_suppresses_the_build(wiring, monkeypatch):
     _run(tmp_path, '--image', 'ghcr.io/acme/app:v1')
     assert built == []
     assert _FakeEngine.instances[-1].kwargs['default_image'] == 'ghcr.io/acme/app:v1'
+
+
+def test_in_image_without_a_dockerfile_runs_in_the_base_image(wiring, monkeypatch):
+    # --in-image asks for a container; with nothing to build, the base image is it
+    # (a flow of built-in nodes), and the compile happens inside it.
+    tmp_path, _calls = wiring
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: None)
+    monkeypatch.setattr(cli, 'default_image', lambda needs_gpu: 'videoflow-base:abc123')
+    from videoflow.deploy.compile import requirements_from_document
+    monkeypatch.setattr(cli, '_compile_in_image',
+                        lambda args, target, graph_dir, image, *a, **kw:
+                            ('demo', 'batch', [_spec('producer', node_class = 'videoflow.producers.IntProducer',
+                                                     image = image)], requirements_from_document({})))
+    assert _run(tmp_path, '--in-image') == 0
+    assert _FakeEngine.instances[-1].kwargs['worker_image'] == 'videoflow-base:abc123'
+
+
+def test_in_image_with_own_nodes_is_refused_for_the_base_image(wiring, monkeypatch, capsys):
+    tmp_path, _calls = wiring
+    monkeypatch.setattr(cli, 'autobuild', lambda *a, **kw: None)
+    monkeypatch.setattr(cli, 'default_image', lambda needs_gpu: 'videoflow-base:abc123')
+    from videoflow.deploy.compile import requirements_from_document
+    monkeypatch.setattr(cli, '_compile_in_image',
+                        lambda *a, **kw: ('demo', 'batch', [_spec('mine', node_class = 'my_flow.Mine')],
+                                          requirements_from_document({})))
+    assert _run(tmp_path, '--in-image') == EXIT_USER
+    assert 'my_flow.Mine' in capsys.readouterr().err
 
 
 def test_no_build_skips_the_build_even_when_needed(wiring, monkeypatch):

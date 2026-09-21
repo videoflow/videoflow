@@ -5,6 +5,13 @@ On a dev cluster, deploying a flow is one command::
 
     videoflow deploy my_flow.py
 
+A graph with no Dockerfile next to it — the Quickstart's ``my_flow.py`` — runs
+its built-in nodes in the videoflow base image for your version (deploy says
+so); a ``Dockerfile`` next to the graph, your nodes and their dependencies on
+top of that base, is built and used instead, and ``--image`` overrides either.
+The argument names a solution directory in one of three ways; see
+*Prerequisites* below.
+
 ``deploy`` is a one-stop pipeline: every step below runs automatically by
 default, and every step has an explicit flag to do it manually instead. The
 same graph you run locally deploys unchanged.
@@ -33,12 +40,20 @@ What ``videoflow deploy`` does, step by step
    it under that name — or, on a source install, builds it from the checkout
    (a development version with no published image gets an error with the exact
    manual commands). The image is built as ``videoflow-<solution-dir>:latest``
-   and deployed under a **content-addressed tag** (``:<12 hex of its id>``),
+   and deployed under a **content-addressed tag** (``:<12 hex of its content digest>``),
    so a changed image is always a new tag. Docker's layer cache makes unchanged
-   rebuilds take about a second. ``--no-build`` disables all of this;
-   ``VF_DOCKER_BUILD_ARGS`` adds arguments to every ``docker build`` (a proxy).
-   With ``--registry`` (usually from the cluster profile, below) the image is
-   then pushed and the pods pull the registry-qualified ref.
+   rebuilds take about a second. With no Dockerfile at all, the image is the
+   base image itself — built from a source checkout (under a content-addressed
+   tag, side-loaded or pushed like any built image), or
+   ``ghcr.io/videoflow/videoflow-base:<version>[-cuda]`` on a wheel install,
+   which the pods pull — after a check that every Python node is one of
+   videoflow's built-ins, since the base image holds nothing else (a graph with
+   its own node classes, or one that does not import on this machine, is
+   refused with the fix: add a Dockerfile or pass ``--image``). ``--no-build``
+   disables all of this; ``VF_DOCKER_BUILD_ARGS`` adds arguments to every
+   ``docker build`` (a proxy). With ``--registry`` (usually from the cluster
+   profile, below) a locally built image is then pushed and the pods pull the
+   registry-qualified ref.
 
 3. **Prepare hook** — if the solution ships a ``prepare.py``, deploy runs it
    *inside the built image* (``docker run``, with ``--gpus all`` when
@@ -181,12 +196,50 @@ Prerequisites
 - videoflow installed (``pip install 'videoflow[all]'``, see
   :doc:`../first-steps/installing-videoflow`). The graph's own dependencies
   are *not* required on the operator machine (see step 4).
-- The graph: a path (``path/to/graph.py[:factory]``), or a solution shipped in
-  a videoflow repository as ``<repo>://<name>`` — ``videoflow://toy_calculator``,
-  ``videoflow-contrib://human_tracking`` — which deploy fetches at your version
-  into ``~/.videoflow/solutions/<repo>@v<version>/`` (one shallow clone, reused
-  afterwards; its ``config.yaml`` and outputs live there, ``--config`` keeps
-  them elsewhere).
+- The graph: the ``build_flow()`` module of a **solution directory** (the
+  module plus whatever the solution ships next to it — ``config.template.yaml``,
+  ``prepare.py``, ``[gpu.]Dockerfile``, ``requirements.txt``), named in one of
+  three ways that differ only in where the directory comes from:
+
+  .. list-table::
+     :header-rows: 1
+     :widths: 18 30 22 30
+
+     * -
+       - A solution shipped with videoflow
+       - A solution in another git repository
+       - A solution on your disk
+     * - Command
+       - ``videoflow deploy videoflow://toy_calculator``,
+         ``videoflow deploy videoflow-contrib://human_tracking``
+       - ``git clone <url>``, then the local form
+       - ``videoflow deploy path/to/my_solution/my_solution.py[:factory]``, or
+         the directory itself: ``videoflow deploy path/to/my_solution``
+     * - The directory
+       - ``solutions/<name>/`` of ``github.com/videoflow/<repo>``, fetched at
+         the tag of your installed version into
+         ``~/.videoflow/solutions/<repo>@v<version>/`` (``$VF_SOLUTION_REF``
+         picks another ref); ``<repo>://`` reaches the videoflow repositories
+         only
+       - the clone
+       - the one you named; the directory form expects ``<name>/<name>.py``,
+         the convention the shipped solutions follow
+     * - The image
+       - built from the solution's ``[gpu.]Dockerfile`` with the clone root as
+         build context
+       - as local
+       - built from the ``[gpu.]Dockerfile`` next to the graph, with the
+         enclosing git root (else the directory, or ``--build-context``) as
+         context — your ``COPY`` paths are relative to it. No Dockerfile: the
+         base image for your version, for a flow of built-in nodes. ``--image``
+         or a node's own ``image=`` wins over both
+     * - ``config.yaml``, outputs
+       - next to the graph, in the clone (``--config`` keeps them elsewhere)
+       - next to the graph
+       - next to the graph
+
+  Where the deploy goes is never part of the argument: the current kubectl
+  context, plus the cluster profile that names it (next section).
 - For GPU flows: cluster nodes with the NVIDIA device plugin and the
   ``videoflow.io/gpu-pool=true`` label (deploy tells you the exact commands if
   they are missing).
@@ -291,8 +344,8 @@ package so the worker can import your node classes by their module path::
     docker build -t ghcr.io/acme/app:v1 .        # your image, FROM videoflow-base
     docker push ghcr.io/acme/app:v1
 
-A pure built-in flow can just deploy with ``--image
-ghcr.io/videoflow/videoflow-base:1.0.2``. From a source checkout,
+A pure built-in flow needs none of this: with no Dockerfile and no ``--image``
+it deploys in ``ghcr.io/videoflow/videoflow-base:<version>``. From a source checkout,
 ``./docker/build-images.sh`` builds both bases locally (as
 ``videoflow-base:py3.12`` and ``:py3.12-cuda``) from the code you are editing.
 

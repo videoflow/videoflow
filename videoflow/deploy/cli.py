@@ -78,6 +78,7 @@ from .broker_profiles import BROKER_PROFILE_NAMES, BrokerProfile, RedisProfile, 
 from .build import (
     PUSH_TOOLS,
     autobuild,
+    default_image,
     docker_gpus_available,
     find_dockerfile,
     image_exists,
@@ -116,9 +117,10 @@ from .profiles import PROFILES_FILE_ENV, apply_docker_env, command_defaults, loa
 #: The commands a cluster profile feeds (see ``deploy.profiles``).
 PROFILE_COMMANDS = ('deploy', 'run-local', 'teardown')
 
-GRAPH_HELP = ('path/to/graph.py[:build_flow], or <repo>://<name> for a solution shipped in a '
-              'videoflow repository (e.g. videoflow-contrib://human_tracking), fetched at this '
-              'version into ~/.videoflow/solutions')
+GRAPH_HELP = ('path/to/<name>/<name>.py[:build_flow] — or the solution directory path/to/<name> '
+              'itself — or <repo>://<name> for a solution shipped in a videoflow repository '
+              '(e.g. videoflow-contrib://human_tracking), fetched at this version into '
+              '~/.videoflow/solutions')
 
 #: `pip install videoflow` is the core; the broker client, wire format, OpenCV, Redis
 #: and oras are extras (pyproject.toml). Top-level module -> (distribution, the
@@ -172,9 +174,13 @@ def _graph_location(graph_arg : str) -> tuple[str, str, str, str | None]:
             and the docker build context a reference implies (its checkout root; \
             None for a plain path, which keeps the enclosing-git-root default).
 
+    A path may name the solution directory instead of its graph module — the
+    same ``<name>/<name>.py`` convention a reference resolves to.
+
     - Raises:
         - ``ConfigError``: a malformed reference (anything with ``://`` that is \
-            not ``<repo>://<name>[:factory]``), or a path that is not a file.
+            not ``<repo>://<name>[:factory]``), a path that is not a file, or a \
+            directory without a ``<name>.py`` of its own name.
     '''
     from .solution_refs import resolve_solution_ref
     build_context = None
@@ -185,11 +191,25 @@ def _graph_location(graph_arg : str) -> tuple[str, str, str, str | None]:
         graph_path, factory, build_context = resolved.graph_path, resolved.factory, resolved.build_context
     else:
         graph_path, factory = (graph_arg.rsplit(':', 1) if ':' in graph_arg else (graph_arg, None))
+        if os.path.isdir(graph_path):
+            graph_path = _solution_graph_in(graph_path)
     if not os.path.isfile(graph_path):
         raise ConfigError(f'Graph module not found: {graph_path}')
     graph_dir = os.path.dirname(os.path.abspath(graph_path))
     graph_target = os.path.abspath(graph_path) + (f':{factory}' if factory else '')
     return graph_path, graph_dir, graph_target, build_context
+
+def _solution_graph_in(directory : str) -> str:
+    '''``<dir>/<basename>.py`` — the graph module of a solution directory named by its path.'''
+    name = os.path.basename(os.path.abspath(directory).rstrip(os.sep))
+    graph_path = os.path.join(directory, f'{name}.py')
+    if not os.path.isfile(graph_path):
+        modules = sorted(f for f in os.listdir(directory) if f.endswith('.py'))
+        raise ConfigError(f'{directory} is a directory with no {name}.py: a solution directory '
+                          f'is named after its graph module.',
+                          remedy = (f'Name the module: {directory}/{modules[0]}' if modules
+                                    else 'Point at the graph module (path/to/graph.py[:factory]).'))
+    return graph_path
 
 def _probe_host_import(graph_target : str) -> ImportError | None:
     '''
@@ -454,12 +474,15 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
 
     # 1. Image: --image wins; else build from the solution's [gpu.]Dockerfile
     # (base image built from a source checkout when missing, or pulled from
-    # ghcr.io on a wheel install). Which of the
-    # two is decided by the flow (x-gpu / device placement), never by whether
-    # this machine's docker daemon happens to have the NVIDIA runtime — that
-    # only decides whether the prepare/compile containers get --gpus.
+    # ghcr.io on a wheel install); else the base image itself, which runs any
+    # flow of built-in nodes (a graph it cannot run is refused below, before a
+    # pod finds out). Which of the two base flavours is decided by the flow
+    # (x-gpu / device placement), never by whether this machine's docker daemon
+    # happens to have the NVIDIA runtime — that only decides whether the
+    # prepare/compile containers get --gpus.
     gpus = docker_gpus_available()
     image = args.image
+    image_defaulted = False
     if image is None and not args.no_build:
         needs_gpu, note = _needs_gpu_for_build(graph_dir, graph_target, declared_gpu)
         if note:
@@ -467,6 +490,10 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
         try:
             image = autobuild(graph_dir, needs_gpu = needs_gpu,
                               context_override = args.build_context or ref_context)
+            if image is None:
+                image, image_defaulted = default_image(needs_gpu), True
+                print(f'Using the videoflow base image {image} (no --image and no Dockerfile next '
+                      f'to the graph; built-in nodes only).', file = sys.stderr)
         except RuntimeError as e:
             raise ResourceUnavailable(str(e)) from e
     # 2. Prepare hook: runs inside the image, before compiling (its outputs get
@@ -486,7 +513,8 @@ def _cmd_deploy(args : argparse.Namespace) -> None:
     # 3. Compile: locally when the graph's deps import on the host, else inside
     # the image (specs round-trip as JSON — same format as the specs ConfigMap).
     flow_id, flow_type, specs, declared = _compile_graph(args, graph_target, graph_dir, image,
-                                                         container_mounts, gpus, config_path)
+                                                         container_mounts, gpus, config_path,
+                                                         image_defaulted = image_defaulted)
     if args.flow_id:
         flow_id = args.flow_id
     run_id = args.run_id or uuid.uuid4().hex[:12]
@@ -826,11 +854,17 @@ def _compile_in_image(args : argparse.Namespace, graph_target : str, graph_dir :
 
 def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : str,
                    image : str | None, container_mounts : list, gpus : bool,
-                   config_path : str | None = None) -> tuple:
+                   config_path : str | None = None, image_defaulted : bool = False) -> tuple:
     '''
     ``(flow_id, flow_type, specs, declared requirements)`` — via a local import when
     the graph's deps are installed on the host (cheap), else compiled inside the
     solution image (``_compile_in_image``).
+
+    - Arguments:
+        - image_defaulted: ``image`` is the videoflow base image chosen for want \
+            of anything else (``default_image``). It holds only the built-in nodes, \
+            so a graph it cannot run is refused here, with the fix, rather than \
+            compiled inside it or left to fail in a pod.
     '''
     try:
         flow = _load_flow(graph_target)
@@ -839,6 +873,11 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
             raise ConfigError(
                 f'Cannot import the graph on this machine ({e}) and there is no '
                 f'solution image to compile it in — pass --image or drop --no-build.') from e
+        if image_defaulted:
+            raise ConfigError(
+                f'The graph does not import on this machine ({e}), and it has no Dockerfile or '
+                f'--image — the default base image holds only videoflow\'s built-in nodes.',
+                remedy = _OWN_IMAGE_REMEDY) from e
         return _compile_in_image(args, graph_target, graph_dir, image, container_mounts, gpus, config_path)
 
     # Building the Flow already ran GraphEngine's cycle/uniqueness validation.
@@ -846,7 +885,26 @@ def _compile_graph(args : argparse.Namespace, graph_target : str, graph_dir : st
         specs = compile_flow(flow, envelope_version = args.envelope_version)
     except ValueError as e:
         raise ConfigError(str(e)) from e
+    if image_defaulted:
+        _check_runs_in_base_image(specs)
     return flow.flow_id, flow.flow_type, specs, declared_requirements(flow)
+
+_OWN_IMAGE_REMEDY = ('Add a Dockerfile next to the graph (see docker/user-image.example.Dockerfile) '
+                     'or pass --image <ref>.')
+
+def _check_runs_in_base_image(specs : list) -> None:
+    '''
+    The base image ships videoflow and nothing else: every Python node must be a
+    built-in (``videoflow.*``). A remote component carries its own image and is
+    not the base image's problem.
+    '''
+    foreign = [(s.name, s.node_class) for s in specs
+               if not s.is_remote and s.node_class and not s.node_class.startswith('videoflow.')]
+    if foreign:
+        listed = ', '.join(f'{name} ({node_class})' for name, node_class in foreign)
+        raise ConfigError(
+            f'The default base image holds only videoflow\'s built-in nodes, and this graph has '
+            f'its own: {listed}.', remedy = _OWN_IMAGE_REMEDY)
 
 def _render_manifests_to_disk(args : argparse.Namespace, image : str | None, flow_id : str,
                               flow_type : str, specs : list, run_id : str, overrides : dict,
@@ -1044,6 +1102,7 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
     in_image = args.in_image or import_error is not None
     gpus = docker_gpus_available()
     image = args.image
+    image_defaulted = False
     flow : Flow | None = None
     if in_image:
         if image is None and not args.no_build:
@@ -1053,6 +1112,12 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
             try:
                 image = autobuild(graph_dir, needs_gpu = needs_gpu,
                               context_override = args.build_context or ref_context)
+                if image is None and args.in_image:
+                    # Asked for a container and there is nothing to build: the base
+                    # image, for a flow of built-in nodes (checked once compiled).
+                    image, image_defaulted = default_image(needs_gpu), True
+                    print(f'Using the videoflow base image {image} (no --image and no Dockerfile next '
+                          f'to the graph; built-in nodes only).', file = sys.stderr)
             except RuntimeError as e:
                 raise ResourceUnavailable(str(e)) from e
         if image is None:
@@ -1077,6 +1142,8 @@ def _cmd_run_local(args : argparse.Namespace) -> None:
         # 3. Compile inside the image; the specs are all the engine needs.
         flow_id, flow_type, local_specs, declared = _compile_in_image(
             args, graph_target, graph_dir, image, container_mounts, gpus, config_path)
+        if image_defaulted:
+            _check_runs_in_base_image(local_specs)
     elif not args.no_prepare:
         # 2. Prepare hook, on this host (the workers are local processes too). Runs
         # before the graph is loaded, because the factory reads the hook's outputs.

@@ -3,12 +3,15 @@ Resolve the container image a node's worker runs in on Kubernetes.
 
 There is no module-path "family" inference: a user defines their processors in their
 own package and builds their own image (their code + deps on top of
-``videoflow-base``), so the image must be stated explicitly. Resolution order, first
-match wins:
+``videoflow-base``), so the image must be stated. Resolution order, first match
+wins:
 
 1. a deploy-time override for the node (``--image-override <name>=<ref>``)
 2. the node's own ``image=`` kwarg (declared in graph code)
-3. the deploy-time default (``--image <ref>``)
+3. the deploy-time default: ``--image <ref>``, else the image the CLI auto-built
+   from the solution's Dockerfile, else the videoflow base image for this version
+   (``build.default_image``) — which the CLI hands over only after checking that
+   every Python node is a built-in, since the base image holds nothing else.
 
 If none apply, resolution raises with an actionable message instead of guessing.
 

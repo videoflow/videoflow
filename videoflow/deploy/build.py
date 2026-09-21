@@ -22,6 +22,7 @@ to pass a corporate proxy as ``--build-arg http_proxy=...``, say.
 '''
 from __future__ import absolute_import, division, print_function
 
+import hashlib
 import os
 import re
 import shlex
@@ -236,6 +237,24 @@ def image_id(ref : str) -> Optional[str]:
     out = proc.stdout.strip() if proc.returncode == 0 else ''
     return out or None
 
+def image_content_id(ref : str) -> Optional[str]:
+    '''
+    A digest of the local image's *layers* (``sha256:...``), or None when docker
+    cannot read it. Unlike ``image_id`` this is the same for two builds of the
+    same content: with BuildKit and the containerd image store every build gets
+    a fresh manifest (provenance attestations carry timestamps) and so a fresh
+    ``.Id``, while the layer digests only change when a layer does.
+    '''
+    try:
+        proc = subprocess.run(['docker', 'image', 'inspect', '--format', '{{json .RootFS.Layers}}', ref],
+                              capture_output = True, text = True, check = False)
+    except FileNotFoundError:
+        return None
+    out = proc.stdout.strip() if proc.returncode == 0 else ''
+    if not out:
+        return None
+    return 'sha256:' + hashlib.sha256(out.encode()).hexdigest()
+
 def _repository(ref : str) -> str:
     '''``ref`` without its tag (a ``:`` after the last ``/`` is a tag, not a port).'''
     name = ref.rsplit('/', 1)[-1]
@@ -243,17 +262,19 @@ def _repository(ref : str) -> str:
 
 def content_tag(ref : str) -> str:
     '''
-    ``<repository>:<first 12 hex of the image id>`` — a tag that changes exactly
-    when the image does, tagged onto the local image beside ``ref``. It is what a
-    deploy uses: ``imagePullPolicy: IfNotPresent`` is then always right, on a
-    registry as much as for a side-loaded image (a node that cached last week's
-    ``:latest`` never runs it by mistake), while ``ref`` keeps docker's layer cache
-    warm for the next build. Falls back to ``ref`` (with a warning) when the id
-    cannot be read or the tag cannot be applied.
+    ``<repository>:<first 12 hex of the image's layer digest>`` — a tag that
+    changes exactly when the image content does (``image_content_id``), tagged
+    onto the local image beside ``ref``. It is what a deploy uses:
+    ``imagePullPolicy: IfNotPresent`` is then always right, on a registry as much
+    as for a side-loaded image (a node that cached last week's ``:latest`` never
+    runs it by mistake, and an unchanged rebuild is not loaded again), while
+    ``ref`` keeps docker's layer cache warm for the next build. Falls back to
+    ``ref`` (with a warning) when the digest cannot be read or the tag cannot be
+    applied.
     '''
-    ident = image_id(ref)
+    ident = image_content_id(ref)
     if not ident:
-        print(f'WARNING: could not read the image id of {ref}; deploying it under that mutable tag.',
+        print(f'WARNING: could not read the layers of {ref}; deploying it under that mutable tag.',
               file = sys.stderr)
         return ref
     tagged = f'{_repository(ref)}:{ident.split(":", 1)[-1][:12]}'
@@ -403,8 +424,8 @@ def autobuild(graph_dir : str, needs_gpu : bool,
     '''
     The whole auto-build path: find the Dockerfile, ensure its base image, build
     the solution image. Returns the image's content-addressed ref
-    (``content_tag``), or None when the solution ships no Dockerfile (caller falls
-    back to explicit-image resolution).
+    (``content_tag``), or None when the solution ships no Dockerfile (the caller
+    falls back to ``default_image``).
     '''
     dockerfile = find_dockerfile(graph_dir, needs_gpu)
     if dockerfile is None:
@@ -418,3 +439,24 @@ def autobuild(graph_dir : str, needs_gpu : bool,
     if deployed != tag:
         print(f'Built {tag}; deploying it as {deployed}.', file = sys.stderr)
     return deployed
+
+def default_image(needs_gpu : bool) -> str:
+    '''
+    The image a graph runs in when nothing names one — no ``--image``, no
+    ``image=`` on the node, no Dockerfile next to the graph: the videoflow base
+    image for this version, which runs any flow of built-in nodes.
+
+    - Returns:
+        - from a source checkout, the base built from it (``ensure_base_image``, \
+            cached) under its content-addressed tag, so ``deploy`` side-loads or \
+            pushes it like any auto-built image and no node keeps a stale base \
+            under the mutable ``videoflow-base:py3.12`` tag;
+        - from a wheel install, ``<registry>/videoflow-base:<version>[-cuda]`` \
+            (``published_base_ref``): registry-qualified, so the pods pull it and \
+            nothing is built, pushed or side-loaded here.
+    '''
+    base_ref = 'videoflow-base:py3.12-cuda' if needs_gpu else 'videoflow-base:py3.12'
+    if _source_base_dockerfile(needs_gpu) is None:
+        return published_base_ref(base_ref)
+    ensure_base_image(base_ref)
+    return content_tag(base_ref)

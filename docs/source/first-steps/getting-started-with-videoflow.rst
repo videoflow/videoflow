@@ -144,7 +144,11 @@ The ML solutions live in `videoflow-contrib
 <https://github.com/videoflow/videoflow-contrib>`_ and run the same way —
 ``videoflow run-local videoflow-contrib://human_tracking`` — with their stacks
 inside the solution image, never on your machine. From a checkout, the path
-form does the same: ``videoflow run-local solutions/toy_calculator/toy_calculator.py``.
+form does the same: ``videoflow run-local solutions/toy_calculator/toy_calculator.py``
+(or just ``solutions/toy_calculator``). The three ways to name a solution — shipped
+with videoflow, cloned from another repository, on your disk — and what each
+implies for the image are laid out under *Prerequisites* in
+:doc:`../distributed/deploying-to-kubernetes`.
 
 Next, read :doc:`../distributed/distributed-execution` to understand how the same
 graph runs locally versus on Kubernetes.

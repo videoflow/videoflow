@@ -11,7 +11,13 @@
 # image in the graph — MyDetector(name='det', image='ghcr.io/me/gpu:v1') — or be
 # overridden at deploy time with --image-override det=ghcr.io/me/gpu:v1.
 
-FROM videoflow-base:latest
+# The local name of the videoflow base image. `videoflow deploy` / `run-local` make
+# sure it exists at your videoflow version before building this file (pulled from
+# ghcr.io/videoflow/videoflow-base:<version> on a wheel install, built from the
+# checkout on a source install). For a plain `docker build`, pull and tag it
+# yourself, or run ./docker/build-images.sh from a checkout.
+ARG BASE_IMAGE=videoflow-base:py3.12
+FROM ${BASE_IMAGE}
 
 WORKDIR /app
 

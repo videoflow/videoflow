@@ -189,6 +189,28 @@ videoflow run-local videoflow-contrib://human_tracking   # builds the image (min
 videoflow deploy videoflow-contrib://human_tracking      # the same image, as pods
 ```
 
+### Naming a flow
+
+`run-local`, `deploy` and `explain` all take the same argument: the graph module
+of a **solution directory** — the `build_flow()` module plus whatever the
+solution ships next to it (`config.template.yaml`, `prepare.py`,
+`[gpu.]Dockerfile`, `requirements.txt`). The three ways to name one differ only
+in where that directory comes from:
+
+| | A solution shipped with videoflow | A solution in some other git repository | A solution on your disk |
+|---|---|---|---|
+| Command | `videoflow deploy videoflow://toy_calculator`<br>`videoflow run-local videoflow-contrib://human_tracking` | `git clone <url>`, then the local form | `videoflow deploy path/to/my_solution/my_solution.py[:factory]`<br>or the directory itself: `videoflow deploy path/to/my_solution` |
+| The directory | `solutions/<name>/` of `github.com/videoflow/<repo>`, fetched at the tag of your installed version into `~/.videoflow/solutions/<repo>@v<version>/` (or `$VF_SOLUTION_REF`); `<repo>://` reaches the videoflow repositories only | the clone | the one you named; the directory form expects `<name>/<name>.py`, the convention the shipped solutions follow |
+| The image | built from the solution's `[gpu.]Dockerfile` with the clone root as build context | as local | built from the `[gpu.]Dockerfile` next to the graph, with the enclosing git root (else the directory, or `--build-context`) as context — mind that your `COPY` paths are relative to it. No Dockerfile: the videoflow base image for your version, which runs any flow of built-in nodes; `--image` or a node's own `image=` wins over both |
+| `config.yaml`, outputs | next to the graph, in the clone (`--config` keeps them elsewhere) | next to the graph | next to the graph |
+
+Where a `deploy` goes is never part of the argument: it is the current kubectl
+context, plus the cluster profile that names that context (or `--cluster NAME`)
+in `~/.config/videoflow/clusters.yaml` — nothing for a laptop cluster, the
+registry / namespace / claims of a shared one (see [Multi-node and shared
+clusters](#multi-node-and-shared-clusters)). `deploy` never switches contexts, and prints
+the profile it took.
+
 ---
 
 ## Deploying to Kubernetes
@@ -199,6 +221,12 @@ command:
 ```bash
 videoflow deploy my_flow.py
 ```
+
+The Quickstart's `my_flow.py` has no Dockerfile, so its built-in nodes run in
+the videoflow base image for your version (`deploy` says so); a `Dockerfile`
+next to the graph — your nodes and their dependencies on top of that base — is
+built and used instead, and `--image` overrides either (see [Naming a
+flow](#naming-a-flow)).
 
 `deploy` compiles the graph and renders one Deployment (or a Job, for finite
 producers) plus a ConfigMap per node, every object named for the run
@@ -261,7 +289,7 @@ the worker containers' host requests, over whatever a component's descriptor
 declares in `spec.resources`.
 
 An auto-built image is deployed under a **content-addressed tag**
-(`videoflow-<solution>:<12 hex of its id>`, tagged beside the `:latest` that
+(`videoflow-<solution>:<12 hex of its content digest>`, tagged beside the `:latest` that
 keeps docker's layer cache warm), and every container is rendered with
 `imagePullPolicy: IfNotPresent`. Together they are what makes both paths right
 without a flag: a side-loaded image has nothing to pull, and on a registry a
@@ -884,7 +912,8 @@ them for a machine. Contrib components name their GPU variant `gpu.Dockerfile`.
 declares its own image in the graph — `MyDetector(name='det', image='ghcr.io/me/gpu:v1')`
 — or is overridden at deploy time with `--image-override det=ghcr.io/me/gpu:v1`
 (override wins over the node's own image, which wins over `--image`). A pure built-in
-flow can just use `--image ghcr.io/videoflow/videoflow-base:1.0.2`.
+flow needs none of this: with no Dockerfile and no `--image` it runs in the base image
+for your version, `ghcr.io/videoflow/videoflow-base:<version>`.
 
 ---
 

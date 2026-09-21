@@ -251,3 +251,61 @@ def test_unresolvable_solution_ref_is_a_clean_error(harness, monkeypatch, capsys
     monkeypatch.setattr(solution_refs, 'resolve_solution_ref', resolve)
     assert cli.main(['deploy', 'videoflow://mygraph', '--non-interactive', '--run-id', 'r1', '--dry-run']) == 3
     assert 'clone by hand' in capsys.readouterr().err
+
+
+# -- no --image, no Dockerfile: the base image ----------------------------------
+# A flow of built-in nodes needs nothing but videoflow, so the base image for this
+# version is the default; a graph it cannot run is refused with the fix, before a
+# pod finds out.
+
+def _without_dockerfile(harness, monkeypatch, image = 'ghcr.io/videoflow/videoflow-base:9.9.9'):
+    tmp_path, seen = harness
+    monkeypatch.setattr(cli, 'autobuild', lambda graph_dir, **kw: seen['build'].append(kw) or None)
+    monkeypatch.setattr(cli, 'default_image', lambda needs_gpu: seen.setdefault('default', []).append(needs_gpu) or image)
+    return tmp_path, seen
+
+
+def test_no_dockerfile_deploys_the_base_image(harness, monkeypatch, capsys):
+    tmp_path, seen = _without_dockerfile(harness, monkeypatch)
+    assert _deploy(tmp_path) == 0
+    out, err = capsys.readouterr()
+    assert 'image: ghcr.io/videoflow/videoflow-base:9.9.9' in out
+    assert 'Using the videoflow base image' in err and seen['default'] == [False]
+
+
+def test_no_build_still_requires_an_image(harness, monkeypatch, capsys):
+    # --no-build says the operator manages images: nothing is built and nothing is assumed.
+    tmp_path, seen = _without_dockerfile(harness, monkeypatch)
+    assert _deploy(tmp_path, '--no-build') == 2
+    assert 'has no container image' in capsys.readouterr().err and 'default' not in seen
+
+
+def test_a_graph_with_its_own_nodes_is_refused_for_the_base_image(harness, monkeypatch, capsys):
+    tmp_path, seen = _without_dockerfile(harness, monkeypatch)
+
+    class Twice(IdentityProcessor):
+        pass
+
+    def own_flow():
+        p = IntProducer(0, 3, name = 'numbers')
+        return Flow([CommandlineConsumer(name = 'printer')(Twice(name = 'twice')(p))],
+                    flow_type = BATCH, flow_id = 'render')
+    seen['flow'] = own_flow
+    assert _deploy(tmp_path) == 2
+    err = capsys.readouterr().err
+    assert 'twice' in err and 'Twice' in err and 'docker/user-image.example.Dockerfile' in err
+
+
+def test_a_graph_that_does_not_import_here_is_refused_for_the_base_image(harness, monkeypatch, capsys):
+    # Without the default, the graph would be compiled inside the image; the base
+    # image cannot hold what this machine lacks, so say so instead of trying.
+    tmp_path, seen = _without_dockerfile(harness, monkeypatch)
+    compiled = []
+    monkeypatch.setattr(cli, '_compile_in_image', lambda *a, **kw: compiled.append(a))
+
+    def missing_dep():
+        raise ImportError("No module named 'torch'")
+    seen['flow'] = missing_dep
+    assert _deploy(tmp_path) == 2
+    err = capsys.readouterr().err
+    assert 'torch' in err and 'docker/user-image.example.Dockerfile' in err and compiled == []
